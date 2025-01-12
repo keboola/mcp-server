@@ -56,8 +56,19 @@ def initialize_client():
         
     return KeboolaClient(token, api_url)
 
-# Create Keboola client instance
-keboola = initialize_client()
+# Set up logging
+import logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+logger.debug("Initializing Keboola client...")
+try:
+    # Create Keboola client instance
+    keboola = initialize_client()
+    logger.info("Successfully initialized Keboola client")
+except Exception as e:
+    logger.error(f"Failed to initialize Keboola client: {e}")
+    raise
 
 # Resources
 @mcp.resource("keboola://buckets")
@@ -142,6 +153,37 @@ async def list_component_configs(component_id: str) -> str:
         f"Created: {config['created']}\n"
         f"---"
         for config in configs
+    )
+
+@mcp.tool()
+async def list_all_buckets() -> str:
+    """List all buckets in the project with their basic information"""
+    buckets = await keboola.get("buckets")
+    return "\n".join(
+        f"Bucket: {bucket['id']}\n"
+        f"Name: {bucket['name']}\n"
+        f"Description: {bucket['description']}\n"
+        f"Tables Count: {bucket['tablesCount']}\n"
+        f"---"
+        for bucket in buckets
+    )
+
+@mcp.tool()
+async def list_bucket_tables_tool(bucket_id: str) -> str:
+    """List all tables in a specific bucket with their basic information
+    
+    Args:
+        bucket_id: ID of the bucket to list tables from
+    """
+    tables = await keboola.get(f"buckets/{bucket_id}/tables")
+    return "\n".join(
+        f"Table: {table['id']}\n"
+        f"Name: {table['name']}\n"
+        f"Rows: {table['rowsCount']}\n"
+        f"Size: {table['dataSizeBytes']} bytes\n"
+        f"Columns: {', '.join(table['columns'])}\n"
+        f"---"
+        for table in tables
     )
 
 if __name__ == "__main__":
