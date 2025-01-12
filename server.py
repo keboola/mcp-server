@@ -111,15 +111,30 @@ async def get_bucket_info(bucket_id: str) -> str:
 
 @mcp.tool()
 async def get_table_preview(table_id: str, limit: int = 100) -> str:
-    """Get a preview of data from a specific table
+    """Get a preview of data from a specific table as CSV
     
     Args:
         table_id: ID of the table to preview
         limit: Maximum number of rows to return (default: 100)
     """
-    csv_data = await keboola.get_csv(f"tables/{table_id}/preview?limit={limit}")
-    df = pd.read_csv(StringIO(csv_data))
-    return df.to_string()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{keboola.base_url}/tables/{table_id}/data-preview/",
+            headers={
+                'X-StorageApi-Token': keboola.token,
+                'Content-Type': 'text/csv',
+                'Accept-encoding': 'gzip'
+            }
+        )
+        response.raise_for_status()
+        
+        # Read into pandas to handle the row limit
+        df = pd.read_csv(StringIO(response.text))
+        df = df.head(limit)
+        
+        # Convert back to CSV and add metadata header for Claude
+        csv_data = df.to_csv(index=False)
+        return f"```csv\n{csv_data}```"
 
 @mcp.tool()
 async def get_table_info(table_id: str) -> str:
