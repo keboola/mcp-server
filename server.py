@@ -131,12 +131,12 @@ async def get_table_info(table_id: str) -> str:
     table = await keboola.get(f"tables/{table_id}")
     return (f"Table Information:\n"
             f"ID: {table['id']}\n"
-            f"Name: {table['name']}\n"
-            f"Primary Key: {', '.join(table['primaryKey'])}\n"
-            f"Created: {table['created']}\n"
-            f"Row Count: {table['rowsCount']}\n"
-            f"Data Size Bytes: {table['dataSizeBytes']}\n"
-            f"Columns: {', '.join(table['columns'])}")
+            f"Name: {table.get('name', 'N/A')}\n"
+            f"Primary Key: {', '.join(table.get('primaryKey', []))}\n"
+            f"Created: {table.get('created', 'N/A')}\n"
+            f"Row Count: {table.get('rowsCount', 'N/A')}\n"
+            f"Data Size Bytes: {table.get('dataSizeBytes', 'N/A')}\n"
+            f"Columns: {', '.join(table.get('columns', []))}")
 
 @mcp.tool()
 async def list_component_configs(component_id: str) -> str:
@@ -179,10 +179,10 @@ async def list_bucket_tables_tool(bucket_id: str) -> str:
     tables = await keboola.get(f"buckets/{bucket_id}/tables")
     return "\n".join(
         f"Table: {table['id']}\n"
-        f"Name: {table['name']}\n"
-        f"Rows: {table['rowsCount']}\n"
-        f"Size: {table['dataSizeBytes']} bytes\n"
-        f"Columns: {', '.join(table['columns'])}\n"
+        f"Name: {table.get('name', 'N/A')}\n"
+        f"Rows: {table.get('rowsCount', 'N/A')}\n"
+        f"Size: {table.get('dataSizeBytes', 'N/A')} bytes\n"
+        f"Columns: {', '.join(table.get('columns', []))}\n"
         f"---"
         for table in tables
     )
