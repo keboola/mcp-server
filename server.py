@@ -161,9 +161,10 @@ async def list_all_buckets() -> str:
     buckets = await keboola.get("buckets")
     return "\n".join(
         f"Bucket: {bucket['id']}\n"
-        f"Name: {bucket['name']}\n"
-        f"Description: {bucket['description']}\n"
-        f"Tables Count: {bucket['tablesCount']}\n"
+        f"Name: {bucket.get('name', 'N/A')}\n"
+        f"Description: {bucket.get('description', 'N/A')}\n"
+        f"Stage: {bucket.get('stage', 'N/A')}\n"
+        f"Created: {bucket.get('created', 'N/A')}\n"
         f"---"
         for bucket in buckets
     )
