@@ -1,0 +1,11 @@
+[project]
+name = "keboola-mcp-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "mcp[cli]>=1.2.0",
+    "pandas>=2.2.3",
+]
