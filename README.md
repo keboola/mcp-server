@@ -2,6 +2,8 @@
 
 A Claude MCP server for exploring and managing your Keboola Connection project. This server provides tools and resources to interact with Keboola's Storage API, allowing you to browse buckets, tables, and components.
 
+<a href="https://glama.ai/mcp/servers/72mwt1x862"><img width="380" height="200" src="https://glama.ai/mcp/servers/72mwt1x862/badge" alt="Keboola Explorer Server MCP server" /></a>
+
 ## Prerequisites
 
 - [Claude Desktop](https://claude.ai/download) installed and updated to the latest version
