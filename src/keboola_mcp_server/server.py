@@ -142,7 +142,9 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def list_component_configs(component_id: str) -> str:
         """List all configurations for a specific component."""
-        configs = cast(List[Dict[str, Any]], await keboola.get(f"components/{component_id}/configs"))
+        configs = cast(
+            List[Dict[str, Any]], await keboola.get(f"components/{component_id}/configs")
+        )
         return "\n".join(
             f"Configuration: {config['id']}\n"
             f"Name: {config['name']}\n"
