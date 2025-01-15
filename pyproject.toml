@@ -1,12 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "keboola-mcp-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = [
-    "httpx>=0.28.1",
-    "kbcstorage>=0.9.2",
-    "mcp[cli]>=1.2.0",
-    "pandas>=2.2.3",
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
 ]
+dependencies = [
+    "mcp[cli]",
+    "kbcstorage",
+    "httpx",
+    "pandas"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "black",
+    "isort",
+    "mypy"
+]
+
+[project.scripts]
+keboola-mcp = "keboola_mcp_server.cli:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/keboola_mcp_server"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=keboola_mcp_server --cov-report=term-missing --cov-report=xml"
+testpaths = ["tests"]
+asyncio_mode = "strict"
