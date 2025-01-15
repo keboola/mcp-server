@@ -3,11 +3,12 @@
 import os
 
 import pytest
+from pytest import MonkeyPatch
 
 from keboola_mcp_server.config import Config
 
 
-def test_config_from_env(monkeypatch):
+def test_config_from_env(monkeypatch: MonkeyPatch) -> None:
     """Test creating config from environment variables."""
     monkeypatch.setenv("KBC_STORAGE_TOKEN", "test-token")
     monkeypatch.setenv("KBC_STORAGE_API_URL", "https://test.keboola.com")
@@ -19,7 +20,7 @@ def test_config_from_env(monkeypatch):
     assert config.log_level == "DEBUG"
 
 
-def test_config_missing_token(monkeypatch):
+def test_config_missing_token(monkeypatch: MonkeyPatch) -> None:
     """Test error when storage token is missing."""
     monkeypatch.delenv("KBC_STORAGE_TOKEN", raising=False)
 
@@ -27,7 +28,7 @@ def test_config_missing_token(monkeypatch):
         Config.from_env()
 
 
-def test_config_defaults(monkeypatch):
+def test_config_defaults(monkeypatch: MonkeyPatch) -> None:
     """Test default values are used when optional vars not set."""
     monkeypatch.setenv("KBC_STORAGE_TOKEN", "test-token")
     monkeypatch.delenv("KBC_STORAGE_API_URL", raising=False)
@@ -39,7 +40,7 @@ def test_config_defaults(monkeypatch):
     assert config.log_level == "INFO"
 
 
-def test_config_validate():
+def test_config_validate() -> None:
     """Test config validation."""
     # Valid config
     config = Config(

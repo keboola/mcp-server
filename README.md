@@ -1,5 +1,6 @@
 # Keboola MCP Server
 
+
 [![codecov](https://codecov.io/gh/jordanrburger/keboola-mcp-server/branch/master/graph/badge.svg?token=4JMT6ZBZMO)](https://codecov.io/gh/jordanrburger/keboola-mcp-server)
 
 <a href="https://glama.ai/mcp/servers/72mwt1x862"><img width="380" height="200" src="https://glama.ai/mcp/servers/72mwt1x862/badge" alt="Keboola Explorer Server MCP server" /></a>

@@ -3,7 +3,7 @@
 import logging
 import os
 import tempfile
-from typing import Optional
+from typing import Any, Dict, List, Optional, cast
 
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
@@ -50,7 +50,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.resource("keboola://buckets")
     async def list_buckets() -> str:
         """List all available buckets in Keboola project."""
-        buckets = keboola.storage_client.buckets.list()
+        buckets = cast(List[Dict[str, Any]], keboola.storage_client.buckets.list())
         return "\n".join(
             f"- {bucket['id']}: {bucket['name']} ({bucket.get('description', 'No description')})"
             for bucket in buckets
@@ -59,7 +59,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.resource("keboola://buckets/{bucket_id}/tables")
     async def list_bucket_tables(bucket_id: str) -> str:
         """List all tables in a specific bucket."""
-        tables = keboola.storage_client.buckets.list_tables(bucket_id)
+        tables = cast(List[Dict[str, Any]], keboola.storage_client.buckets.list_tables(bucket_id))
         return "\n".join(
             f"- {table['id']}: {table['name']} (Rows: {table.get('rowsCount', 'unknown')})"
             for table in tables
@@ -68,14 +68,14 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.resource("keboola://components")
     async def list_components() -> str:
         """List all available components and their configurations."""
-        components = await keboola.get("components")
+        components = cast(List[Dict[str, Any]], await keboola.get("components"))
         return "\n".join(f"- {comp['id']}: {comp['name']}" for comp in components)
 
     # Tools
     @mcp.tool()
     async def list_all_buckets() -> str:
         """List all buckets in the project with their basic information."""
-        buckets = keboola.storage_client.buckets.list()
+        buckets = cast(List[Dict[str, Any]], keboola.storage_client.buckets.list())
         return "\n".join(
             f"Bucket: {bucket['id']}\n"
             f"Name: {bucket.get('name', 'N/A')}\n"
@@ -89,7 +89,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def get_bucket_info(bucket_id: str) -> str:
         """Get detailed information about a specific bucket."""
-        bucket = keboola.storage_client.buckets.detail(bucket_id)
+        bucket = cast(Dict[str, Any], keboola.storage_client.buckets.detail(bucket_id))
         return (
             f"Bucket Information:\n"
             f"ID: {bucket['id']}\n"
@@ -105,7 +105,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         """Get a preview of data from a specific table as CSV."""
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
-                table_name = table_id.split(".")[-1]
+                parts = table_id.split(".")
+                table_name = parts[-1] if parts else table_id
                 keboola.storage_client.tables.export_to_file(table_id, temp_dir)
                 actual_file = os.path.join(temp_dir, table_name)
                 df = pd.read_csv(actual_file)
@@ -126,7 +127,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def get_table_info(table_id: str) -> str:
         """Get detailed information about a specific table."""
-        table = keboola.storage_client.tables.detail(table_id)
+        table = cast(Dict[str, Any], keboola.storage_client.tables.detail(table_id))
         return (
             f"Table Information:\n"
             f"ID: {table['id']}\n"
@@ -141,7 +142,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def list_component_configs(component_id: str) -> str:
         """List all configurations for a specific component."""
-        configs = await keboola.get(f"components/{component_id}/configs")
+        configs = cast(List[Dict[str, Any]], await keboola.get(f"components/{component_id}/configs"))
         return "\n".join(
             f"Configuration: {config['id']}\n"
             f"Name: {config['name']}\n"
@@ -154,7 +155,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def list_bucket_tables_tool(bucket_id: str) -> str:
         """List all tables in a specific bucket with their basic information."""
-        tables = keboola.storage_client.buckets.list_tables(bucket_id)
+        tables = cast(List[Dict[str, Any]], keboola.storage_client.buckets.list_tables(bucket_id))
         return "\n".join(
             f"Table: {table['id']}\n"
             f"Name: {table.get('name', 'N/A')}\n"
@@ -170,7 +171,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         """Export a table as CSV for analysis in Claude."""
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
-                table_name = table_id.split(".")[-1]
+                parts = table_id.split(".")
+                table_name = parts[-1] if parts else table_id
                 keboola.storage_client.tables.export_to_file(table_id, temp_dir)
                 actual_file = os.path.join(temp_dir, table_name)
                 df = pd.read_csv(actual_file)

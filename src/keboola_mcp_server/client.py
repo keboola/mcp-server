@@ -3,7 +3,7 @@
 import logging
 import os
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import httpx
 from kbcstorage.client import Client
@@ -16,7 +16,7 @@ class KeboolaClient:
 
     def __init__(
         self, storage_api_token: str, storage_api_url: str = "https://connection.keboola.com"
-    ):
+    ) -> None:
         """Initialize the client.
 
         Args:
@@ -50,7 +50,7 @@ class KeboolaClient:
                 f"{self.base_url}/v2/storage/{endpoint}", headers=self.headers
             )
             response.raise_for_status()
-            return response.json()
+            return cast(Dict[str, Any], response.json())
 
     async def post(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Make a POST request to Keboola Storage API.
@@ -69,7 +69,7 @@ class KeboolaClient:
                 json=data if data is not None else {},
             )
             response.raise_for_status()
-            return response.json()
+            return cast(Dict[str, Any], response.json())
 
     async def download_table_data_async(self, table_id: str) -> str:
         """Download table data using the export endpoint.
