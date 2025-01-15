@@ -10,12 +10,13 @@ from .server import create_server
 
 logger = logging.getLogger(__name__)
 
+
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse command line arguments.
-    
+
     Args:
         args: Command line arguments. If None, uses sys.argv[1:].
-        
+
     Returns:
         Parsed arguments
     """
@@ -24,35 +25,35 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         "--transport",
         choices=["stdio"],
         default="stdio",
-        help="Transport to use for MCP communication"
+        help="Transport to use for MCP communication",
     )
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         default="INFO",
-        help="Logging level"
+        help="Logging level",
     )
     parser.add_argument(
-        "--api-url",
-        help="Keboola Storage API URL (defaults to https://connection.keboola.com)"
+        "--api-url", help="Keboola Storage API URL (defaults to https://connection.keboola.com)"
     )
-    
+
     return parser.parse_args(args)
+
 
 def main(args: Optional[List[str]] = None) -> None:
     """Run the MCP server.
-    
+
     Args:
         args: Command line arguments. If None, uses sys.argv[1:].
     """
     parsed_args = parse_args(args)
-    
+
     # Create config from environment, but override with CLI args
     config = Config.from_env()
     if parsed_args.api_url:
         config.storage_api_url = parsed_args.api_url
     config.log_level = parsed_args.log_level
-    
+
     try:
         # Create and run server
         mcp = create_server(config)
@@ -61,5 +62,6 @@ def main(args: Optional[List[str]] = None) -> None:
         logger.error(f"Server failed: {e}")
         sys.exit(1)
 
+
 if __name__ == "__main__":
-    main() 
+    main()

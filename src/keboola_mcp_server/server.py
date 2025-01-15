@@ -13,31 +13,31 @@ from .config import Config
 
 logger = logging.getLogger(__name__)
 
+
 def create_server(config: Optional[Config] = None) -> FastMCP:
     """Create and configure the MCP server.
-    
+
     Args:
         config: Server configuration. If None, loads from environment.
-        
+
     Returns:
         Configured FastMCP server instance
     """
     if config is None:
         config = Config.from_env()
     config.validate()
-    
+
     # Configure logging
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(config.log_level)
-    
+
     # Initialize FastMCP server
     mcp = FastMCP(
-        "Keboola Explorer",
-        dependencies=["keboola.storage-api-client", "httpx", "pandas"]
+        "Keboola Explorer", dependencies=["keboola.storage-api-client", "httpx", "pandas"]
     )
-    
+
     # Create Keboola client instance
     try:
         keboola = KeboolaClient(config.storage_token, config.storage_api_url)
@@ -45,28 +45,31 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         logger.error(f"Failed to initialize Keboola client: {e}")
         raise
     logger.info("Successfully initialized Keboola client")
-    
+
     # Resources
     @mcp.resource("keboola://buckets")
     async def list_buckets() -> str:
         """List all available buckets in Keboola project."""
         buckets = keboola.storage_client.buckets.list()
-        return "\n".join(f"- {bucket['id']}: {bucket['name']} ({bucket.get('description', 'No description')})" 
-                        for bucket in buckets)
+        return "\n".join(
+            f"- {bucket['id']}: {bucket['name']} ({bucket.get('description', 'No description')})"
+            for bucket in buckets
+        )
 
     @mcp.resource("keboola://buckets/{bucket_id}/tables")
     async def list_bucket_tables(bucket_id: str) -> str:
         """List all tables in a specific bucket."""
         tables = keboola.storage_client.buckets.list_tables(bucket_id)
-        return "\n".join(f"- {table['id']}: {table['name']} (Rows: {table.get('rowsCount', 'unknown')})" 
-                        for table in tables)
+        return "\n".join(
+            f"- {table['id']}: {table['name']} (Rows: {table.get('rowsCount', 'unknown')})"
+            for table in tables
+        )
 
     @mcp.resource("keboola://components")
     async def list_components() -> str:
         """List all available components and their configurations."""
         components = await keboola.get("components")
-        return "\n".join(f"- {comp['id']}: {comp['name']}" 
-                        for comp in components)
+        return "\n".join(f"- {comp['id']}: {comp['name']}" for comp in components)
 
     # Tools
     @mcp.tool()
@@ -87,20 +90,22 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     async def get_bucket_info(bucket_id: str) -> str:
         """Get detailed information about a specific bucket."""
         bucket = keboola.storage_client.buckets.detail(bucket_id)
-        return (f"Bucket Information:\n"
-                f"ID: {bucket['id']}\n"
-                f"Name: {bucket['name']}\n"
-                f"Description: {bucket.get('description', 'No description')}\n"
-                f"Created: {bucket['created']}\n"
-                f"Tables Count: {bucket.get('tablesCount', 0)}\n"
-                f"Data Size Bytes: {bucket.get('dataSizeBytes', 0)}")
+        return (
+            f"Bucket Information:\n"
+            f"ID: {bucket['id']}\n"
+            f"Name: {bucket['name']}\n"
+            f"Description: {bucket.get('description', 'No description')}\n"
+            f"Created: {bucket['created']}\n"
+            f"Tables Count: {bucket.get('tablesCount', 0)}\n"
+            f"Data Size Bytes: {bucket.get('dataSizeBytes', 0)}"
+        )
 
     @mcp.tool()
     async def get_table_preview(table_id: str, limit: int = 100) -> str:
         """Get a preview of data from a specific table as CSV."""
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
-                table_name = table_id.split('.')[-1]
+                table_name = table_id.split(".")[-1]
                 keboola.storage_client.tables.export_to_file(table_id, temp_dir)
                 actual_file = os.path.join(temp_dir, table_name)
                 df = pd.read_csv(actual_file)
@@ -122,14 +127,16 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     async def get_table_info(table_id: str) -> str:
         """Get detailed information about a specific table."""
         table = keboola.storage_client.tables.detail(table_id)
-        return (f"Table Information:\n"
-                f"ID: {table['id']}\n"
-                f"Name: {table.get('name', 'N/A')}\n"
-                f"Primary Key: {', '.join(table.get('primaryKey', []))}\n"
-                f"Created: {table.get('created', 'N/A')}\n"
-                f"Row Count: {table.get('rowsCount', 'N/A')}\n"
-                f"Data Size Bytes: {table.get('dataSizeBytes', 'N/A')}\n"
-                f"Columns: {', '.join(table.get('columns', []))}")
+        return (
+            f"Table Information:\n"
+            f"ID: {table['id']}\n"
+            f"Name: {table.get('name', 'N/A')}\n"
+            f"Primary Key: {', '.join(table.get('primaryKey', []))}\n"
+            f"Created: {table.get('created', 'N/A')}\n"
+            f"Row Count: {table.get('rowsCount', 'N/A')}\n"
+            f"Data Size Bytes: {table.get('dataSizeBytes', 'N/A')}\n"
+            f"Columns: {', '.join(table.get('columns', []))}"
+        )
 
     @mcp.tool()
     async def list_component_configs(component_id: str) -> str:
@@ -163,7 +170,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         """Export a table as CSV for analysis in Claude."""
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
-                table_name = table_id.split('.')[-1]
+                table_name = table_id.split(".")[-1]
                 keboola.storage_client.tables.export_to_file(table_id, temp_dir)
                 actual_file = os.path.join(temp_dir, table_name)
                 df = pd.read_csv(actual_file)
@@ -180,5 +187,5 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         except Exception as e:
             logger.error(f"Error exporting table: {str(e)}")
             return f"Error exporting table: {str(e)}"
-            
-    return mcp 
+
+    return mcp
