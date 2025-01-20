@@ -1,0 +1,22 @@
+# Smithery configuration file: https://smithery.ai/docs/deployments
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - kbcStorageToken
+      - apiUrl
+    properties:
+      kbcStorageToken:
+        type: string
+        description: The Keboola Storage API token.
+      apiUrl:
+        type: string
+        description: The API URL for the Keboola region (e.g.,
+          https://connection.YOUR_REGION.keboola.com).
+  commandFunction:
+    # A function that produces the CLI command to start the MCP on stdio.
+    |-
+    (config) => ({command: 'python', args: ['-m', 'keboola_mcp_server.cli', '--api-url', config.apiUrl, '--log-level', 'DEBUG'], env: { KBC_STORAGE_TOKEN: config.kbcStorageToken }})
