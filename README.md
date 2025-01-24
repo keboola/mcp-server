@@ -3,11 +3,21 @@
 [![CI](https://github.com/jordanburger/keboola-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/jordanburger/keboola-mcp-server/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jordanburger/keboola-mcp-server/branch/main/graph/badge.svg)](https://codecov.io/gh/jordanburger/keboola-mcp-server)
 <a href="https://glama.ai/mcp/servers/72mwt1x862"><img width="380" height="200" src="https://glama.ai/mcp/servers/72mwt1x862/badge" alt="Keboola Explorer Server MCP server" /></a>
+[![smithery badge](https://smithery.ai/badge/keboola-mcp-server)](https://smithery.ai/server/keboola-mcp-server)
 
 A Model Context Protocol (MCP) server for interacting with Keboola Connection. This server provides tools for listing and accessing data from Keboola Storage API.
 
 ## Installation
 
+### Installing via Smithery
+
+To install Keboola Explorer for Claude Desktop automatically via [Smithery](https://smithery.ai/server/keboola-mcp-server):
+
+```bash
+npx -y @smithery/cli install keboola-mcp-server --client claude
+```
+
+### Manual Installation
 First, clone the repository and create a virtual environment:
 
 ```bash
