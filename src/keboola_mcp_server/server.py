@@ -1,20 +1,20 @@
 """MCP server implementation for Keboola Connection."""
 
+import csv
+import json
 import logging
 import os
 import tempfile
-import json
-import csv
-from typing import Any, Dict, List, Optional, TypedDict, cast, AsyncGenerator
-from io import StringIO
 from contextlib import asynccontextmanager
+from io import StringIO
+from typing import Any, AsyncGenerator, Dict, List, Optional, TypedDict, cast
 
 import pandas as pd
+import snowflake.connector
 from mcp.server.fastmcp import FastMCP
+from snowflake.connector.connection import SnowflakeConnection
 from snowflake.snowpark import Session
 from snowflake.snowpark.functions import col
-import snowflake.connector
-from snowflake.connector.connection import SnowflakeConnection
 
 from .client import KeboolaClient
 from .config import Config
@@ -132,12 +132,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
         # Get column info
         columns = table.get("columns", [])
-        column_info = [
-            TableColumnInfo(
-                name=col,
-                db_identifier=f'"{col}"'
-            ) for col in columns
-        ]
+        column_info = [TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in columns]
 
         return {
             "id": table["id"],
@@ -186,7 +181,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         """Execute a Snowflake SQL query to get data from the Storage."""
         # Get current database
         db = await get_current_db()
-        
+
         # Execute query
         async with snowflake_connection() as conn:
             async with conn.cursor() as cursor:
@@ -194,7 +189,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
                 await cursor.execute(sql_query)
                 result = await cursor.fetchall()
                 columns = [col[0] for col in cursor.description]
-                
+
                 # Convert to CSV
                 output = StringIO()
                 writer = csv.writer(output)
