@@ -16,7 +16,8 @@ dependencies = [
     "mcp[cli]",
     "kbcstorage",
     "httpx",
-    "pandas"
+    "pandas",
+    "snowflake-snowpark-python"
 ]
 
 [project.optional-dependencies]
