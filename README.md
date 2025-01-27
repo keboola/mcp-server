@@ -64,7 +64,13 @@ To use this server with Claude Desktop, follow these steps:
       ],
       "env": {
         "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
-        "PYTHONPATH": "/path/to/keboola-mcp-server/src"
+        "PYTHONPATH": "/path/to/keboola-mcp-server/src",
+        "KBC_SNOWFLAKE_ACCOUNT": "your-snowflake-account",
+        "KBC_SNOWFLAKE_USER": "your-snowflake-user",
+        "KBC_SNOWFLAKE_PASSWORD": "your-snowflake-password",
+        "KBC_SNOWFLAKE_WAREHOUSE": "your-snowflake-warehouse",
+        "KBC_SNOWFLAKE_DATABASE": "your-snowflake-database",
+        "KBC_SNOWFLAKE_ROLE": "your-snowflake-role"
       }
     }
   }
@@ -75,6 +81,14 @@ Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `your-keboola-storage-token` with your Keboola Storage API token
 - `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, `connection`, etc.)
+- `your-snowflake-account` with your Snowflake account identifier
+- `your-snowflake-user` with your Snowflake username
+- `your-snowflake-password` with your Snowflake password
+- `your-snowflake-warehouse` with your Snowflake warehouse name
+- `your-snowflake-database` with your Snowflake database name
+- `your-snowflake-role` with your Snowflake role name
+
+Note: The Snowflake credentials can be obtained by creating a Read Only Snowflake Workspace in your Keboola project (the same project where you got your Storage Token). The workspace will provide all the necessary Snowflake connection parameters.
 
 3. After updating the configuration:
    - Completely quit Claude Desktop (don't just close the window)
