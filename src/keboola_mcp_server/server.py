@@ -3,13 +3,13 @@
 import logging
 import os
 import tempfile
-from typing import Any, Dict, List, Optional, cast, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict, cast
 
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
-
 from snowflake.snowpark import Session
 from snowflake.snowpark.functions import col
+
 from .client import KeboolaClient
 from .config import Config
 
@@ -58,15 +58,13 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
     # Configure logging
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(config.log_level)
 
     # Initialize FastMCP server with system instructions
     mcp = FastMCP(
-        "Keboola Explorer", 
-        dependencies=["keboola.storage-api-client", "httpx", "pandas"]
+        "Keboola Explorer", dependencies=["keboola.storage-api-client", "httpx", "pandas"]
     )
 
     # Create Keboola client instance
@@ -79,13 +77,13 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
     async def get_table_db_path(table: dict) -> str:
         """Get the database path for a specific table."""
-        
+
         db_path = await get_current_db()
-        table_name = table['name']
-        table_path = table['id']
-        if table.get('sourceTable'):
+        table_name = table["name"]
+        table_path = table["id"]
+        if table.get("sourceTable"):
             db_path = f"KEBOOLA_{table['sourceTable']['project']['id']}"
-            table_path = table['sourceTable']['id']
+            table_path = table["sourceTable"]["id"]
 
         table_identifier = f'"{db_path}"."{".".join(table_path.split(".")[:-1])}"."{table_name}"'
         return table_identifier
@@ -93,6 +91,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     async def get_current_db() -> str:
         """Get the current database."""
         return f"KEBOOLA_{config.storage_token.split('-')[0]}"
+
     # Resources
 
     @mcp.resource("keboola://buckets")
@@ -104,8 +103,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.resource("keboola://buckets/{bucket_id}/tables")
     async def list_bucket_tables(bucket_id: str) -> str:
         """List all tables in a specific bucket."""
-        tables = cast(List[Dict[str, Any]],
-                      keboola.storage_client.buckets.list_tables(bucket_id))
+        tables = cast(List[Dict[str, Any]], keboola.storage_client.buckets.list_tables(bucket_id))
         return "\n".join(
             f"- {table['id']}: {table['name']} (Rows: {table.get('rowsCount', 'unknown')})"
             for table in tables
@@ -119,35 +117,36 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
     @mcp.resource(
         "keboola://tables/{table_id}",
-        description="Get detailed information about a Keboola table including its DB identifier and column information"
+        description="Get detailed information about a Keboola table including its DB identifier and column information",
     )
     async def get_table_detail(table_id: str) -> TableDetail:
         """Get structured information about a specific table including its DB identifier."""
         table = cast(Dict[str, Any], keboola.storage_client.tables.detail(table_id))
-        
-        columns = table.get('columns', [])
-        column_info = [
-            {
-                "name": col,
-                "db_identifier": f'"{col}"'
-            } for col in columns
-        ]
-        
+
+        columns = table.get("columns", [])
+        column_info = [{"name": col, "db_identifier": f'"{col}"'} for col in columns]
+
         return {
-            "id": table['id'],
-            "name": table.get('name', 'N/A'),
-            "primary_key": table.get('primaryKey', []),
-            "created": table.get('created', 'N/A'),
-            "row_count": table.get('rowsCount', 0),
-            "data_size_bytes": table.get('dataSizeBytes', 0),
+            "id": table["id"],
+            "name": table.get("name", "N/A"),
+            "primary_key": table.get("primaryKey", []),
+            "created": table.get("created", "N/A"),
+            "row_count": table.get("rowsCount", 0),
+            "data_size_bytes": table.get("dataSizeBytes", 0),
             "columns": columns,
             "column_identifiers": column_info,
-            "db_identifier": await get_table_db_path(table)
+            "db_identifier": await get_table_db_path(table),
         }
+
     @mcp.tool()
-    async def query_table_data(table_id: str, columns: Optional[List[str]] = None, where: Optional[str] = None, limit: Optional[int] = None) -> str:
+    async def query_table_data(
+        table_id: str,
+        columns: Optional[List[str]] = None,
+        where: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> str:
         """Query table data using proper DB identifiers.
-        
+
         Args:
             table_id: The table ID in Keboola
             columns: List of column names to select. If None, selects all columns
@@ -155,31 +154,33 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             limit: Maximum number of rows to return
         """
         table_info = await get_table_detail(table_id)
-        
+
         # Build column list with proper identifiers
         if columns:
-            column_map = {col["name"]: col["db_identifier"] for col in table_info["column_identifiers"]}
+            column_map = {
+                col["name"]: col["db_identifier"] for col in table_info["column_identifiers"]
+            }
             select_clause = ", ".join(column_map[col] for col in columns)
         else:
             select_clause = "*"
-            
+
         query = f"SELECT {select_clause} FROM {table_info['db_identifier']}"
-        
+
         if where:
             query += f" WHERE {where}"
-            
+
         if limit:
             query += f" LIMIT {limit}"
-            
+
         return await query_table(query)
-    
+
     @mcp.tool()
     async def query_table(sql_query: str) -> str:
         """Execute a Snowflake SQL query to get data from the Storage.
 
         Args:
-            sql_query: SQL query to execute (Snowflake syntax). All database identifiers 
-                      (table names, column names, schema names) must be enclosed in 
+            sql_query: SQL query to execute (Snowflake syntax). All database identifiers
+                      (table names, column names, schema names) must be enclosed in
                       double quotes, e.g. SELECT "column" FROM "database"."schema"."table";
 
         Returns:
@@ -187,14 +188,16 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         """
         try:
 
-            if not all([
-                config.snowflake_account,
-                config.snowflake_user,
-                config.snowflake_password,
-                config.snowflake_warehouse,
-                config.snowflake_database,
-                config.snowflake_role
-            ]):
+            if not all(
+                [
+                    config.snowflake_account,
+                    config.snowflake_user,
+                    config.snowflake_password,
+                    config.snowflake_warehouse,
+                    config.snowflake_database,
+                    config.snowflake_role,
+                ]
+            ):
                 return "Snowflake credentials not fully configured in environment variables"
 
             # Create Snowpark session using config
@@ -204,7 +207,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
                 "password": config.snowflake_password,
                 "warehouse": config.snowflake_warehouse,
                 "database": config.snowflake_database,
-                "role": config.snowflake_role
+                "role": config.snowflake_role,
             }
 
             session = Session.builder.configs(connection_parameters).create()
@@ -218,8 +221,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
                 # Convert results to pandas for consistent output formatting
                 df = pd.DataFrame(result)
-                return (f"Query results ({len(df)} rows):\n\n" +
-                        df.to_string(index=False))
+                return f"Query results ({len(df)} rows):\n\n" + df.to_string(index=False)
 
             except Exception as e:
                 return f"Error executing query: {str(e)}"
@@ -234,11 +236,11 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     async def list_all_buckets() -> str:
         """List all buckets in the project with their basic information."""
         buckets = await list_buckets()
-        
+
         header = "# Bucket List\n\n"
         header += f"Total Buckets: {len(buckets)}\n\n"
         header += "## Details"
-        
+
         bucket_details = []
         for bucket in buckets:
             detail = f"### {bucket['name']} ({bucket['id']})"
@@ -248,14 +250,13 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             detail += f"\n    - Tables: {bucket.get('tablesCount', 0)}"
             detail += f"\n    - Size: {bucket.get('dataSizeBytes', 0)} bytes"
             bucket_details.append(detail)
-        
+
         return header + "\n" + "\n".join(bucket_details)
 
     @mcp.tool()
     async def get_bucket_metadata(bucket_id: str) -> str:
         """Get detailed information about a specific bucket."""
-        bucket = cast(Dict[str, Any],
-                      keboola.storage_client.buckets.detail(bucket_id))
+        bucket = cast(Dict[str, Any], keboola.storage_client.buckets.detail(bucket_id))
         return (
             f"Bucket Information:\n"
             f"ID: {bucket['id']}\n"
@@ -270,11 +271,11 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     async def get_table_metadata(table_id: str) -> str:
         """Get detailed information about a specific table including its DB identifier and column information."""
         table = await get_table_detail(table_id)
-        
+
         header = "# Table Details\n\n"
         header += f"Table ID: {table['id']}\n\n"
         header += "## Properties\n"
-        
+
         details = [
             f"- Name: {table['name']}",
             f"- Primary Key: {', '.join(table['primary_key'])}",
@@ -284,14 +285,12 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             f"- Database Identifier: {table['db_identifier']}",
             "\n## Columns",
         ]
-        
+
         # Add column details with their database identifiers
         column_details = []
-        for col_info in table['column_identifiers']:
-            column_details.append(
-                f"- {col_info['name']} (DB: {col_info['db_identifier']})"
-            )
-        
+        for col_info in table["column_identifiers"]:
+            column_details.append(f"- {col_info['name']} (DB: {col_info['db_identifier']})")
+
         return header + "\n".join(details) + "\n" + "\n".join(column_details)
 
     @mcp.tool()
@@ -312,8 +311,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def list_bucket_tables_tool(bucket_id: str) -> str:
         """List all tables in a specific bucket with their basic information."""
-        tables = cast(List[Dict[str, Any]],
-                      keboola.storage_client.buckets.list_tables(bucket_id))
+        tables = cast(List[Dict[str, Any]], keboola.storage_client.buckets.list_tables(bucket_id))
         return "\n".join(
             f"Table: {table['id']}\n"
             f"Name: {table.get('name', 'N/A')}\n"
@@ -323,7 +321,5 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             f"---"
             for table in tables
         )
-
-
 
     return mcp
