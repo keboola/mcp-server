@@ -79,8 +79,18 @@ class Config:
     def validate(self) -> None:
         """Validate the configuration."""
         if not self.storage_token:
-            raise ValueError("Storage token is required")
+            raise ValueError("Storage token not configured")
         if not self.storage_api_url:
             raise ValueError("Storage API URL is required")
         if self.log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             raise ValueError(f"Invalid log level: {self.log_level}")
+
+    def has_snowflake_config(self) -> bool:
+        """Check if Snowflake configuration is complete."""
+        return all([
+            self.snowflake_account,
+            self.snowflake_user,
+            self.snowflake_password,
+            self.snowflake_warehouse,
+            self.snowflake_database,
+        ])

@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import tempfile
-from contextlib import asynccontextmanager
 from io import StringIO
 from typing import Any, AsyncGenerator, Dict, List, Optional, TypedDict, cast
 
@@ -47,6 +46,23 @@ class TableDetail(TypedDict):
     columns: List[str]
     column_identifiers: List[TableColumnInfo]
     db_identifier: str
+
+
+async def snowflake_connection(config: Config):
+    """Create a Snowflake connection."""
+    if not config.has_snowflake_config():
+        raise ValueError("Snowflake credentials not fully configured")
+
+    conn = snowflake.connector.connect(
+        account=config.snowflake_account,
+        user=config.snowflake_user,
+        password=config.snowflake_password,
+        warehouse=config.snowflake_warehouse,
+        database=config.snowflake_database,
+        schema=config.snowflake_schema,
+        role=config.snowflake_role,
+    )
+    return conn
 
 
 def create_server(config: Optional[Config] = None) -> FastMCP:
@@ -128,7 +144,6 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     async def get_table_detail(table_id: str) -> TableDetail:
         """Get detailed information about a table."""
         table = await get_table_metadata(table_id)
-        table = json.loads(table)
 
         # Get column info
         columns = table.get("columns", [])
@@ -183,11 +198,25 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         db = await get_current_db()
 
         # Execute query
-        async with snowflake_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(f"USE DATABASE {db}")
-                await cursor.execute(sql_query)
-                result = await cursor.fetchall()
+        if not config.has_snowflake_config():
+            raise ValueError("Snowflake credentials not fully configured")
+
+        conn = snowflake.connector.connect(
+            account=config.snowflake_account,
+            user=config.snowflake_user,
+            password=config.snowflake_password,
+            warehouse=config.snowflake_warehouse,
+            database=config.snowflake_database,
+            schema=config.snowflake_schema,
+            role=config.snowflake_role,
+        )
+
+        try:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(f"USE DATABASE {db}")
+                cursor.execute(sql_query)
+                result = cursor.fetchall()
                 columns = [col[0] for col in cursor.description]
 
                 # Convert to CSV
@@ -196,6 +225,10 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
                 writer.writerow(columns)
                 writer.writerows(result)
                 return output.getvalue()
+            finally:
+                cursor.close()
+        finally:
+            conn.close()
 
     # Tools
     @mcp.tool()
@@ -234,30 +267,11 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         )
 
     @mcp.tool()
-    async def get_table_metadata(table_id: str) -> str:
+    async def get_table_metadata(table_id: str) -> Dict[str, Any]:
         """Get detailed information about a specific table including its DB identifier and column information."""
-        table = await get_table_detail(table_id)
-
-        header = "# Table Details\n\n"
-        header += f"Table ID: {table['id']}\n\n"
-        header += "## Properties\n"
-
-        details = [
-            f"- Name: {table['name']}",
-            f"- Primary Key: {', '.join(table['primary_key'])}",
-            f"- Created: {table['created']}",
-            f"- Row Count: {table['row_count']}",
-            f"- Data Size: {table['data_size_bytes']} bytes",
-            f"- Database Identifier: {table['db_identifier']}",
-            "\n## Columns",
-        ]
-
-        # Add column details with their database identifiers
-        column_details = []
-        for col_info in table["column_identifiers"]:
-            column_details.append(f"- {col_info['name']} (DB: {col_info['db_identifier']})")
-
-        return header + "\n".join(details) + "\n" + "\n".join(column_details)
+        # Get table details directly from the storage client
+        table = cast(Dict[str, Any], keboola.storage_client.tables.detail(table_id))
+        return table
 
     @mcp.tool()
     async def list_component_configs(component_id: str) -> str:
@@ -287,33 +301,5 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             f"---"
             for table in tables
         )
-
-    @asynccontextmanager
-    async def snowflake_connection() -> AsyncGenerator[SnowflakeConnection, None]:
-        """Create a Snowflake connection."""
-        if not all(
-            [
-                config.snowflake_account,
-                config.snowflake_user,
-                config.snowflake_password,
-                config.snowflake_warehouse,
-                config.snowflake_database,
-                config.snowflake_role,
-            ]
-        ):
-            raise ValueError("Snowflake credentials not fully configured in environment variables")
-
-        conn: SnowflakeConnection = snowflake.connector.connect(
-            account=config.snowflake_account,
-            user=config.snowflake_user,
-            password=config.snowflake_password,
-            warehouse=config.snowflake_warehouse,
-            database=config.snowflake_database,
-            role=config.snowflake_role,
-        )
-        try:
-            yield conn
-        finally:
-            conn.close()
 
     return mcp
