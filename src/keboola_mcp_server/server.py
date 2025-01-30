@@ -48,23 +48,6 @@ class TableDetail(TypedDict):
     db_identifier: str
 
 
-async def snowflake_connection(config: Config):
-    """Create a Snowflake connection."""
-    if not config.has_snowflake_config():
-        raise ValueError("Snowflake credentials not fully configured")
-
-    conn = snowflake.connector.connect(
-        account=config.snowflake_account,
-        user=config.snowflake_user,
-        password=config.snowflake_password,
-        warehouse=config.snowflake_warehouse,
-        database=config.snowflake_database,
-        schema=config.snowflake_schema,
-        role=config.snowflake_role,
-    )
-    return conn
-
-
 def create_server(config: Optional[Config] = None) -> FastMCP:
     """Create and configure the MCP server.
 
@@ -161,7 +144,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             "db_identifier": await get_table_db_path(table),
         }
 
-    @mcp.tool()
+    # TODO: fix the implementation of query_table_data
+    # @mcp.tool()
     async def query_table_data(
         table_id: str,
         columns: Optional[List[str]] = None,
@@ -190,45 +174,57 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
         result: str = await query_table(query)
         return result
-
+        
     @mcp.tool()
     async def query_table(sql_query: str) -> str:
-        """Execute a Snowflake SQL query to get data from the Storage."""
-        # Get current database
-        db = await get_current_db()
+        """
+            Execute a Snowflake SQL query to get data from the Storage.
+        
+            Note: SQL queries must include the full path including database name, e.g.:
+            'SELECT * FROM SAPI_10025."in.c-fraudDetection"."test_identify"'
+        """
 
         # Execute query
         if not config.has_snowflake_config():
             raise ValueError("Snowflake credentials not fully configured")
 
-        conn = snowflake.connector.connect(
-            account=config.snowflake_account,
-            user=config.snowflake_user,
-            password=config.snowflake_password,
-            warehouse=config.snowflake_warehouse,
-            database=config.snowflake_database,
-            schema=config.snowflake_schema,
-            role=config.snowflake_role,
-        )
+        conn = None
+        cursor = None
 
         try:
+            conn = snowflake.connector.connect(
+                account=config.snowflake_account,
+                user=config.snowflake_user,
+                password=config.snowflake_password,
+                warehouse=config.snowflake_warehouse,
+                database=config.snowflake_database,
+                schema=config.snowflake_schema,
+                role=config.snowflake_role,
+            )
+            
             cursor = conn.cursor()
-            try:
-                cursor.execute(f"USE DATABASE {db}")
-                cursor.execute(sql_query)
-                result = cursor.fetchall()
-                columns = [col[0] for col in cursor.description]
+            cursor.execute(sql_query)
+            result = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
 
-                # Convert to CSV
-                output = StringIO()
-                writer = csv.writer(output)
-                writer.writerow(columns)
-                writer.writerows(result)
-                return output.getvalue()
-            finally:
-                cursor.close()
+            # Convert to CSV
+            output = StringIO()
+            writer = csv.writer(output)
+            writer.writerow(columns)
+            writer.writerows(result)
+            return output.getvalue()
+
+        except snowflake.connector.errors.ProgrammingError as e:
+            raise ValueError(f"Snowflake query error: {str(e)}")
+
+        except Exception as e:
+            raise ValueError(f"Unexpected error during query execution: {str(e)}")
+
         finally:
-            conn.close()
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
 
     # Tools
     @mcp.tool()

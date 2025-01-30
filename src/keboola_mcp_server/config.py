@@ -34,6 +34,7 @@ class Config:
         snowflake_warehouse: Optional[str] = None,
         snowflake_database: Optional[str] = None,
         snowflake_role: Optional[str] = None,
+        snowflake_schema: Optional[str] = None,
         log_level: str = "INFO",
     ):
         self.storage_token = storage_token
@@ -44,6 +45,7 @@ class Config:
         self.snowflake_warehouse = snowflake_warehouse
         self.snowflake_database = snowflake_database
         self.snowflake_role = snowflake_role
+        self.snowflake_schema = snowflake_schema
         self.log_level = log_level
 
     @classmethod
@@ -57,6 +59,7 @@ class Config:
             "KBC_SNOWFLAKE_WAREHOUSE",
             "KBC_SNOWFLAKE_DATABASE",
             "KBC_SNOWFLAKE_ROLE",
+            "KBC_SNOWFLAKE_SCHEMA",
         ]:
             logger.debug(f"Reading {env_var}: {'set' if os.getenv(env_var) else 'not set'}")
 
@@ -73,6 +76,7 @@ class Config:
             snowflake_warehouse=os.getenv("KBC_SNOWFLAKE_WAREHOUSE"),
             snowflake_database=os.getenv("KBC_SNOWFLAKE_DATABASE"),
             snowflake_role=os.getenv("KBC_SNOWFLAKE_ROLE"),
+            snowflake_schema=os.getenv("KBC_SNOWFLAKE_SCHEMA"),
             log_level=os.getenv("KBC_LOG_LEVEL", "INFO"),
         )
 

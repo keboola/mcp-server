@@ -7,6 +7,13 @@
 
 A Model Context Protocol (MCP) server for interacting with Keboola Connection. This server provides tools for listing and accessing data from Keboola Storage API.
 
+## Requirements
+
+- Keboola Storage API token
+- Snowflake Read Only Workspace
+
+> Note: The Snowflake package doesn't work with the latest version of Python. If you're using Python 3.12 and above, you'll need to downgrade to Python 3.11.
+
 ## Installation
 
 ### Installing via Smithery
@@ -18,6 +25,7 @@ npx -y @smithery/cli install keboola-mcp-server --client claude
 ```
 
 ### Manual Installation
+
 First, clone the repository and create a virtual environment:
 
 ```bash
@@ -70,6 +78,7 @@ To use this server with Claude Desktop, follow these steps:
         "KBC_SNOWFLAKE_PASSWORD": "your-snowflake-password",
         "KBC_SNOWFLAKE_WAREHOUSE": "your-snowflake-warehouse",
         "KBC_SNOWFLAKE_DATABASE": "your-snowflake-database",
+        "KBC_SNOWFLAKE_SCHEMA": "your-snowflake-schema",
         "KBC_SNOWFLAKE_ROLE": "your-snowflake-role"
       }
     }
@@ -80,13 +89,16 @@ To use this server with Claude Desktop, follow these steps:
 Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `your-keboola-storage-token` with your Keboola Storage API token
-- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, `connection`, etc.)
+- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if you region is just `connection` explicitly
 - `your-snowflake-account` with your Snowflake account identifier
 - `your-snowflake-user` with your Snowflake username
 - `your-snowflake-password` with your Snowflake password
 - `your-snowflake-warehouse` with your Snowflake warehouse name
 - `your-snowflake-database` with your Snowflake database name
+- `your-snowflake-schema` with your Snowflake schema name
 - `your-snowflake-role` with your Snowflake role name
+
+> Note: If you are using a specific version of Python (e.g. 3.11 due to some package compatibility issues), you'll need to update the `command` into using that specific version, e.g. `/path/to/keboola-mcp-server/.venv/bin/python3.11`
 
 Note: The Snowflake credentials can be obtained by creating a Read Only Snowflake Workspace in your Keboola project (the same project where you got your Storage Token). The workspace will provide all the necessary Snowflake connection parameters.
 
