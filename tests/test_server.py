@@ -1,15 +1,16 @@
 """Tests for server functionality."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from typing import AsyncGenerator, Dict, List
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import snowflake.connector
 
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.server import create_server, TableDetail, TableColumnInfo
-
+from keboola_mcp_server.server import TableColumnInfo, TableDetail, create_server
 
 @pytest.fixture
-def test_config():
+def test_config() -> Config:
     return Config(
         storage_token="test-token",
         storage_api_url="https://connection.test.keboola.com",
@@ -44,7 +45,7 @@ def mock_table_detail() -> TableDetail:
 
 
 @pytest.mark.asyncio
-async def test_table_detail_resource(test_config):
+async def test_table_detail_resource(test_config: Config) -> None:
     # Mock table data
     mock_table = {
         "id": "in.c-test.test-table",
@@ -74,7 +75,7 @@ async def test_table_detail_resource(test_config):
 
 
 @pytest.mark.asyncio
-async def test_query_table_data_tool(test_config):
+async def test_query_table_data_tool(test_config: Config) -> None:
     mock_table_info = {
         "db_identifier": 'SAPI_10025."in.c-test"."test_table"',
         "column_identifiers": [
@@ -119,7 +120,7 @@ async def test_query_table_data_tool(test_config):
 
 
 @pytest.mark.asyncio
-async def test_query_table_tool(test_config):
+async def test_query_table_tool(test_config: Config) -> None:
     mock_cursor = MagicMock()
     mock_cursor.fetchall.return_value = [(1, "test", 100)]
     mock_cursor.description = [("id",), ("name",), ("value",)]
@@ -143,7 +144,7 @@ async def test_query_table_tool(test_config):
 
 
 @pytest.mark.asyncio
-async def test_query_table_error_handling(test_config):
+async def test_query_table_error_handling(test_config: Config) -> None:
     mock_cursor = MagicMock()
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor

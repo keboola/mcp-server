@@ -48,7 +48,7 @@ class TableDetail(TypedDict):
     db_identifier: str
 
 
-def create_snowflake_connection(config):
+def create_snowflake_connection(config: Config) -> snowflake.connector.Connection:
     """Create a return a Snowflake connection using configured credentials.
 
     Args:
@@ -125,11 +125,23 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         return table_identifier
 
     async def get_current_db() -> str:
-        """Get the current database."""
-        return config.snowflake_database
+        """
+        Get the current database.
+
+        Returns:
+            str: The database name
+
+        Raises:
+            ValueError: If database name is not configured or not a string
+        """
+        db_name = config.snowflake_database
+        if db_name is None:
+            raise ValueError("Database name is not configured")
+        if not isinstance(db_name, str):
+            raise ValueError(f"Database name must be a string, got {type(db_name)}")
+        return db_name
 
     # Resources
-
     @mcp.resource("keboola://buckets")
     async def list_buckets() -> List[BucketInfo]:
         """List all available buckets in Keboola project."""
