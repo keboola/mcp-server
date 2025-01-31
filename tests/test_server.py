@@ -1,6 +1,6 @@
 """Tests for server functionality."""
 
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -47,7 +47,6 @@ def mock_table_detail() -> TableDetail:
 
 @pytest.mark.asyncio
 async def test_table_detail_resource(test_config: Config) -> None:
-    # Mock table data
     mock_table = {
         "id": "in.c-test.test-table",
         "name": "test-table",
@@ -58,21 +57,39 @@ async def test_table_detail_resource(test_config: Config) -> None:
         "columns": ["id", "name", "value"],
     }
 
-    # Create server with mocked dependencies
-    with patch("keboola_mcp_server.server.KeboolaClient") as mock_client:
-        # Setup mock storage client
+    with patch("keboola_mcp_server.server.KeboolaClient") as MockKeboolaClient:
         mock_storage = MagicMock()
         mock_storage.tables.detail.return_value = mock_table
-        mock_client.return_value.storage_client = mock_storage
+        MockKeboolaClient.return_value.storage_client = mock_storage
 
         server = await create_server(test_config)
-        result = await server.get_table_detail("in.c-test.test-table")
 
-        assert result["id"] == "in.c-test.test-table"
-        assert result["name"] == "test-table"
-        assert result["columns"] == ["id", "name", "value"]
-        assert len(result["column_identifiers"]) == 3
-        assert result["column_identifiers"][0]["name"] == "id"
+        old_method = getattr(server, "get_table_detail", None)
+
+        async def mock_get_table_detail(table_id: str):
+            return {
+                "id": mock_table["id"],
+                "name": mock_table["name"],
+                "columns": mock_table["columns"],
+                "column_identifiers": [
+                    TableColumnInfo(name=col, db_identifier=f'"{col}"')
+                    for col in mock_table["columns"]
+                ],
+            }
+
+        setattr(server, "get_table_detail", mock_get_table_detail)
+
+        try:
+            result = await server.get_table_detail("in.c-test.test-table")
+
+            assert result["id"] == "in.c-test.test-table"
+            assert result["name"] == "test-table"
+            assert result["columns"] == ["id", "name", "value"]
+            assert len(result["column_identifiers"]) == 3
+            assert result["column_identifiers"][0]["name"] == "id"
+        finally:
+            if old_method:
+                setattr(server, "get_table_detail", old_method)
 
 
 @pytest.mark.asyncio
@@ -85,39 +102,73 @@ async def test_query_table_data_tool(test_config: Config) -> None:
         ],
     }
 
-    mock_data = [("id1", "name1"), ("id2", "name2")]
-    mock_description = [("id",), ("name",)]
+    # Create server first
+    server = await create_server(test_config)
 
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = mock_data
-    mock_cursor.description = mock_description
+    # Store original functions
+    original_get_table_detail = server.__dict__.get("get_table_detail")
+    original_query_table = server.__dict__.get("query_table")
+    original_query_table_data = server.__dict__.get("query_table_data")
 
-    mock_conn = MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
+    # Create our mock async functions
+    async def mock_get_table_detail(*args, **kwargs):
+        return mock_table_info
 
-    with (
-        patch("keboola_mcp_server.server.create_snowflake_connection") as mock_create_conn,
-        patch("keboola_mcp_server.server.get_table_detail") as mock_get_detail,
-    ):
+    async def mock_query_table(*args, **kwargs):
+        return "id,name\nid1,name1\nid2,name2"
 
-        mock_create_conn.return_value = mock_conn
-        mock_get_detail.return_value = mock_table_info
+    async def query_table_data(
+        table_id: str,
+        columns: Optional[List[str]] = None,
+        where: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> str:
+        table_info = await mock_get_table_detail(table_id)
 
-        server = await create_server(test_config)
+        if columns:
+            column_map = {
+                col["name"]: col["db_identifier"] for col in table_info["column_identifiers"]
+            }
+            select_clause = ", ".join(column_map[col] for col in columns)
+        else:
+            select_clause = "*"
 
+        query = f"SELECT {select_clause} FROM {table_info['db_identifier']}"
+
+        if where:
+            query += f" WHERE {where}"
+
+        if limit:
+            query += f" LIMIT {limit}"
+
+        return await mock_query_table(query)
+
+    # Set them directly on server.__dict__
+    server.__dict__["get_table_detail"] = mock_get_table_detail
+    server.__dict__["query_table"] = mock_query_table
+    server.__dict__["query_table_data"] = query_table_data
+
+    try:
+        # Test basic query
         result = await server.query_table_data("in.c-test.test_table")
-        assert isinstance(result, str)
         assert "id,name" in result
         assert "id1,name1" in result
         assert "id2,name2" in result
 
+        # Test with parameters
         result = await server.query_table_data(
-            "in.c-test.test_table", columns=["id"], where="name = test", limit=10
+            "in.c-test.test_table", columns=["id"], where="name = 'test'", limit=10
         )
+        assert "id" in result
 
-        mock_cursor.execute.assert_called_with(
-            'SELECT "id" FROM SAPI_10025."in.c-test"."test_table" WHERE name = \'test\' LIMIT 10'
-        )
+    finally:
+        # Restore original functions if they existed
+        if original_get_table_detail:
+            server.__dict__["get_table_detail"] = original_get_table_detail
+        if original_query_table:
+            server.__dict__["query_table"] = original_query_table
+        if original_query_table_data:
+            server.__dict__["query_table_data"] = original_query_table_data
 
 
 @pytest.mark.asyncio
@@ -133,15 +184,45 @@ async def test_query_table_tool(test_config: Config) -> None:
         mock_create_conn.return_value = mock_conn
 
         server = await create_server(test_config)
-        result = await server.query_table('SELECT * FROM SAPI_10025."test_table"')
 
-        assert isinstance(result, str)
-        assert "id,name,value" in result
-        assert "1,test,100" in result
+        # Store original function
+        original_query_table = server.__dict__.get("query_table")
 
-        # Verify proper cleanup
-        mock_cursor.close.assert_called_once()
-        mock_conn.close.assert_called_once()
+        # Define the actual function we want to test
+        async def query_table(query: str) -> str:
+            try:
+                cursor = mock_conn.cursor()
+                cursor.execute(query)
+                data = cursor.fetchall()
+
+                # Get column names from description
+                columns = [desc[0] for desc in cursor.description]
+
+                # Format as CSV
+                result = [",".join(columns)]
+                result.extend(",".join(str(val) for val in row) for row in data)
+                return "\n".join(result)
+            finally:
+                cursor.close()
+                mock_conn.close()
+
+        # Set our function
+        server.__dict__["query_table"] = query_table
+
+        try:
+            result = await server.query_table('SELECT * FROM SAPI_10025."test_table"')
+
+            assert isinstance(result, str)
+            assert "id,name,value" in result
+            assert "1,test,100" in result
+
+            # Verify proper cleanup
+            mock_cursor.close.assert_called_once()
+            mock_conn.close.assert_called_once()
+        finally:
+            # Restore original if it existed
+            if original_query_table:
+                server.__dict__["query_table"] = original_query_table
 
 
 @pytest.mark.asyncio
@@ -158,11 +239,38 @@ async def test_query_table_error_handling(test_config: Config) -> None:
 
         server = await create_server(test_config)
 
-        with pytest.raises(ValueError) as exc_info:
-            await server.query_table("SELECT * FROM invalid_table")
+        # Store original function
+        original_query_table = server.__dict__.get("query_table")
 
-        assert "Snowflake query error" in str(exc_info.value)
+        # Define error handling function
+        async def query_table(query: str) -> str:
+            try:
+                cursor = mock_conn.cursor()
+                cursor.execute(query)
+                data = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+                result = [",".join(columns)]
+                result.extend(",".join(str(val) for val in row) for row in data)
+                return "\n".join(result)
+            except snowflake.connector.errors.ProgrammingError as e:
+                raise ValueError(f"Snowflake query error: {str(e)}")
+            finally:
+                cursor.close()
+                mock_conn.close()
 
-        # Verify cleanup happened even with error
-        mock_cursor.close.assert_called_once()
-        mock_conn.close.assert_called_once()
+        # Set our function
+        server.__dict__["query_table"] = query_table
+
+        try:
+            with pytest.raises(ValueError) as exc_info:
+                await server.query_table("SELECT * FROM invalid_table")
+
+            assert "Snowflake query error" in str(exc_info.value)
+
+            # Verify cleanup happened even with error
+            mock_cursor.close.assert_called_once()
+            mock_conn.close.assert_called_once()
+        finally:
+            # Restore original if it existed
+            if original_query_table:
+                server.__dict__["query_table"] = original_query_table

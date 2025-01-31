@@ -48,14 +48,14 @@ class TableDetail(TypedDict):
     db_identifier: str
 
 
-def create_snowflake_connection(config: Config) -> snowflake.connector.Connection:
+def create_snowflake_connection(config: Config) -> snowflake.connector.connection:
     """Create a return a Snowflake connection using configured credentials.
 
     Args:
         config: Configuration object containing Snowflake credentials
 
     Returns:
-        snowflake.connector.Connection: established Snowflake connection
+        snowflake.connector.connection: established Snowflake connection
 
     Raises:
         ValueError: If credentials are not fully configured or connection fails
@@ -79,7 +79,7 @@ def create_snowflake_connection(config: Config) -> snowflake.connector.Connectio
         raise ValueError(f"Failed to create Snowflake connection: {str(e)}")
 
 
-def create_server(config: Optional[Config] = None) -> FastMCP:
+async def create_server(config: Optional[Config] = None) -> FastMCP:
     """Create and configure the MCP server.
 
     Args:
