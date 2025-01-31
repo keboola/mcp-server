@@ -79,7 +79,7 @@ def create_snowflake_connection(config: Config) -> snowflake.connector.connectio
         raise ValueError(f"Failed to create Snowflake connection: {str(e)}")
 
 
-async def create_server(config: Optional[Config] = None) -> FastMCP:
+def create_server(config: Optional[Config] = None) -> FastMCP:
     """Create and configure the MCP server.
 
     Args:
