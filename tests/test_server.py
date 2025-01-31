@@ -9,6 +9,7 @@ import snowflake.connector
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.server import TableColumnInfo, TableDetail, create_server
 
+
 @pytest.fixture
 def test_config() -> Config:
     return Config(
