@@ -9,14 +9,11 @@ from io import StringIO
 from typing import Any, AsyncGenerator, Dict, List, Optional, TypedDict, cast
 
 import pandas as pd
-import snowflake.connector
 from mcp.server.fastmcp import FastMCP
-from snowflake.connector.connection import SnowflakeConnection
-from snowflake.snowpark import Session
-from snowflake.snowpark.functions import col
 
 from .client import KeboolaClient
 from .config import Config
+from .database import create_snowflake_connection, ConnectionManager, DatabasePathManager
 
 logger = logging.getLogger(__name__)
 
@@ -47,38 +44,6 @@ class TableDetail(TypedDict):
     column_identifiers: List[TableColumnInfo]
     db_identifier: str
 
-
-def create_snowflake_connection(config: Config) -> snowflake.connector.connection:
-    """Create a return a Snowflake connection using configured credentials.
-
-    Args:
-        config: Configuration object containing Snowflake credentials
-
-    Returns:
-        snowflake.connector.connection: established Snowflake connection
-
-    Raises:
-        ValueError: If credentials are not fully configured or connection fails
-    """
-    if not config.has_snowflake_config():
-        raise ValueError("Snowflake credentials are not fully configured")
-
-    try:
-        conn = snowflake.connector.connect(
-            account=config.snowflake_account,
-            user=config.snowflake_user,
-            password=config.snowflake_password,
-            warehouse=config.snowflake_warehouse,
-            database=config.snowflake_database,
-            schema=config.snowflake_schema,
-            role=config.snowflake_role,
-        )
-
-        return conn
-    except Exception as e:
-        raise ValueError(f"Failed to create Snowflake connection: {str(e)}")
-
-
 def create_server(config: Optional[Config] = None) -> FastMCP:
     """Create and configure the MCP server.
 
@@ -103,6 +68,9 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         "Keboola Explorer", dependencies=["keboola.storage-api-client", "httpx", "pandas"]
     )
 
+    connection_manager = ConnectionManager(config)
+    db_path_manager = DatabasePathManager(config, connection_manager)
+
     # Create Keboola client instance
     try:
         keboola = KeboolaClient(config.storage_token, config.storage_api_url)
@@ -110,36 +78,6 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         logger.error(f"Failed to initialize Keboola client: {e}")
         raise
     logger.info("Successfully initialized Keboola client")
-
-    async def get_table_db_path(table: dict) -> str:
-        """Get the database path for a specific table."""
-
-        db_path = await get_current_db()
-        table_name = table["name"]
-        table_path = table["id"]
-        if table.get("sourceTable"):
-            db_path = f"KEBOOLA_{table['sourceTable']['project']['id']}"
-            table_path = table["sourceTable"]["id"]
-
-        table_identifier = f'"{db_path}"."{".".join(table_path.split(".")[:-1])}"."{table_name}"'
-        return table_identifier
-
-    async def get_current_db() -> str:
-        """
-        Get the current database.
-
-        Returns:
-            str: The database name
-
-        Raises:
-            ValueError: If database name is not configured or not a string
-        """
-        db_name = config.snowflake_database
-        if db_name is None:
-            raise ValueError("Database name is not configured")
-        if not isinstance(db_name, str):
-            raise ValueError(f"Database name must be a string, got {type(db_name)}")
-        return db_name
 
     # Resources
     @mcp.resource("keboola://buckets")
@@ -184,7 +122,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             "data_size_bytes": table.get("dataSizeBytes", 0),
             "columns": columns,
             "column_identifiers": column_info,
-            "db_identifier": await get_table_db_path(table),
+            "db_identifier": db_path_manager.get_table_db_path(table),
         }
 
     @mcp.tool()
