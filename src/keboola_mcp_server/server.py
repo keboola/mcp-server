@@ -5,7 +5,9 @@ import logging
 from io import StringIO
 from typing import Any, Dict, List, Optional, TypedDict, cast
 
+
 import snowflake.connector
+
 from mcp.server.fastmcp import FastMCP
 
 from .client import KeboolaClient

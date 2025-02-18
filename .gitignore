@@ -6,8 +6,14 @@ dist/
 wheels/
 *.egg-info
 .idea/
+.vscode/
 
 # Virtual environments
 .venv
 
 .env
+# Coverage files
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
