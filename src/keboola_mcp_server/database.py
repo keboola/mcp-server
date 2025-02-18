@@ -11,13 +11,17 @@ from .config import Config
 
 logger = logging.getLogger(__name__)
 
+
 class DatabaseConnectionError(Exception):
     """Raised when database connection fails after trying all available patterns."""
+
     pass
+
 
 @dataclass
 class ConnectionPattern:
     """Represents a database connection pattern to try."""
+
     name: str
     get_database: callable
     required_config: List[str] = None
@@ -25,6 +29,7 @@ class ConnectionPattern:
     def __post_init__(self):
         if self.required_config is None:
             self.required_config = []
+
 
 class DatabasePathManager:
     """Manages database paths and connections for Keboola tables."""
@@ -45,7 +50,9 @@ class DatabasePathManager:
             # Try to get a working DB connection from our patterns
             return self.connection_manager.find_working_connection()
         except Exception as e:
-            logger.warning(f"Failed to get working connection, falling back to token-based path: {e}")
+            logger.warning(
+                f"Failed to get working connection, falling back to token-based path: {e}"
+            )
             return f"KEBOOLA_{self.config.storage_token.split('-')[0]}"
 
     def get_table_db_path(self, table: Dict[str, Any]) -> str:
@@ -89,13 +96,13 @@ class ConnectionManager:
             ConnectionPattern(
                 name="Configured Environment",
                 get_database=lambda: self.config.snowflake_database,
-                required_config=['snowflake_database']
+                required_config=["snowflake_database"],
             ),
             ConnectionPattern(
                 name="KEBOOLA Token Pattern",
                 get_database=lambda: f"KEBOOLA_{self.config.storage_token.split('-')[0]}",
-                required_config=['storage_token']
-            )
+                required_config=["storage_token"],
+            ),
         ]
 
     def _validate_config_for_pattern(self, pattern: ConnectionPattern) -> bool:
@@ -126,13 +133,12 @@ class ConnectionManager:
         finally:
             conn.close()
 
-
     def _test_connection(self, database: str) -> bool:
         """Test if connection works with a simple query."""
         try:
             with self._create_test_connection(database) as conn:
                 cur = conn.cursor()
-                cur.execute('SELECT 1')
+                cur.execute("SELECT 1")
                 return True
         except Exception as e:
             logger.debug(f"Connection test failed for {database}: {str(e)}")
