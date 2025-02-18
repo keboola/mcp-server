@@ -1,14 +1,11 @@
 """MCP server implementation for Keboola Connection."""
 
 import csv
-import json
 import logging
-import os
-import tempfile
 from io import StringIO
-from typing import Any, AsyncGenerator, Dict, List, Optional, TypedDict, cast
+from typing import Any, Dict, List, Optional, TypedDict, cast
 
-import pandas as pd
+import snowflake.connector
 from mcp.server.fastmcp import FastMCP
 
 from .client import KeboolaClient
@@ -67,7 +64,13 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
     # Initialize FastMCP server with system instructions
     mcp = FastMCP(
-        "Keboola Explorer", dependencies=["keboola.storage-api-client", "httpx", "pandas"]
+        "Keboola Explorer",
+        dependencies=[
+            "keboola.storage-api-client",
+            "httpx",
+            "pandas",
+            "snowflake-connector-python"
+        ]
     )
 
     connection_manager = ConnectionManager(config)
@@ -110,7 +113,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     )
     async def get_table_detail(table_id: str) -> TableDetail:
         """Get detailed information about a table."""
-        table = await get_table_metadata(table_id)
+        table = cast(Dict[str, Any], keboola.storage_client.tables.detail(table_id))
 
         # Get column info
         columns = table.get("columns", [])
@@ -127,76 +130,20 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             "columns": columns,
             "column_identifiers": column_info,
             "db_identifier": db_path_manager.get_table_db_path(table),
+            "schema_identifier": table["id"].split(".")[0],
+            "table_identifier": table["id"].split(".")[1],
         }
-
-    @mcp.tool()
-    async def query_table_data(
-        table_id: str,
-        columns: Optional[List[str]] = None,
-        where: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> str:
-        """
-        Query table data using database identifiers with proper formatting. This method safely constructs
-        and executes SQL queries by handling database identifiers and query parameters.
-
-        Parameters:
-            table_id (str): The table identifier in format 'bucket.table_name' (e.g., 'in.c-fraudDetection.test_identify')
-            columns (List[str], optional): List of column names to select. If None, selects all columns (*)
-            where (str, optional): WHERE clause conditions without the 'WHERE' keyword
-            limit (int, optional): Maximum number of rows to return
-
-        Returns:
-            str: Query results in string format
-
-        Examples:
-            # Select all columns with limit
-            query_table_data('in.c-fraudDetection.test_identify', limit=5)
-
-            # Select specific columns with condition
-            query_table_data(
-                'in.c-fraudDetection.test_identify',
-                columns=['TransactionID', 'DeviceType'],
-                where="DeviceType = 'mobile'",
-                limit=10
-            )
-
-        Note:
-            This method is preferred over direct SQL queries as it:
-                - Automatically handles proper database identifiers
-                - Prevents SQL injection through proper parameter handling
-                - Uses configuration for database name
-                - Provides a simpler interface for common query patterns
-        """
-        table_info = await get_table_detail(table_id)
-
-        if columns:
-            column_map = {
-                col["name"]: col["db_identifier"] for col in table_info["column_identifiers"]
-            }
-            select_clause = ", ".join(column_map[col] for col in columns)
-        else:
-            select_clause = "*"
-
-        query = f"SELECT {select_clause} FROM {table_info['db_identifier']}"
-
-        if where:
-            query += f" WHERE {where}"
-
-        if limit:
-            query += f" LIMIT {limit}"
-
-        result: str = await query_table(query)
-        return result
 
     @mcp.tool()
     async def query_table(sql_query: str) -> str:
         """
-        Execute a Snowflake SQL query to get data from the Storage. Before forming the query always check the 
-        get_table_metadata tool to get the correct database name and table name. 
+        Execute a SQL query through the proxy service to get data from Storage.
+        Before forming the query always check the get_table_metadata tool to get
+        the correct database name and table name.
+        - The {{db_identifier}} is available in the tool response.
 
         Note: SQL queries must include the full path including database name, e.g.:
-        'SELECT * FROM SAPI_10025."in.c-fraudDetection"."test_identify"'. Snowflake is case sensitive so always
+        'SELECT * FROM {{db_identifier}}."test_identify"'. Snowflake is case sensitive so always
         wrap the column names in double quotes.
         """
         conn = None
@@ -271,9 +218,20 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     async def get_table_metadata(table_id: str) -> Dict[str, Any]:
         """Get detailed information about a specific table including its DB identifier and column information."""
         # Get table details directly from the storage client
-        table = cast(Dict[str, Any],
-                     keboola.storage_client.tables.detail(table_id))
-        return table
+        table = await get_table_detail(table_id)
+        return (
+            f"Table Information:\n"
+            f"ID: {table['id']}\n"
+            f"Name: {table['name']}\n"
+            f"Primary Key: {', '.join(table['primary_key']) if table['primary_key'] else 'None'}\n"
+            f"Created: {table['created']}\n"
+            f"Row Count: {table['row_count']}\n"
+            f"Data Size: {table['data_size_bytes']} bytes\n"
+            f"Columns: {', '.join(table['columns'])}\n"
+            f"Database Identifier: {table['db_identifier']}\n"
+            f"Schema: {table['schema_identifier']}\n"
+            f"Table: {table['table_identifier']}"
+        )
 
     @mcp.tool()
     async def list_component_configs(component_id: str) -> str:
