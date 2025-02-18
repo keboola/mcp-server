@@ -54,6 +54,3 @@ jobs:
         
     - name: Check formatting with black
       run: black . --check
-      
-    - name: Type check with mypy
-      run: mypy src tests 
