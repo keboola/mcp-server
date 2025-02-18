@@ -62,7 +62,7 @@ async def test_table_detail_resource(test_config: Config) -> None:
         mock_storage.tables.detail.return_value = mock_table
         MockKeboolaClient.return_value.storage_client = mock_storage
 
-        server = await create_server(test_config)
+        server = create_server(test_config)
 
         old_method = getattr(server, "get_table_detail", None)
 
@@ -103,7 +103,7 @@ async def test_query_table_data_tool(test_config: Config) -> None:
     }
 
     # Create server first
-    server = await create_server(test_config)
+    server = create_server(test_config)
 
     # Store original functions
     original_get_table_detail = server.__dict__.get("get_table_detail")
@@ -183,7 +183,7 @@ async def test_query_table_tool(test_config: Config) -> None:
     with patch("keboola_mcp_server.server.create_snowflake_connection") as mock_create_conn:
         mock_create_conn.return_value = mock_conn
 
-        server = await create_server(test_config)
+        server = create_server(test_config)
 
         # Store original function
         original_query_table = server.__dict__.get("query_table")
@@ -237,7 +237,7 @@ async def test_query_table_error_handling(test_config: Config) -> None:
     with patch("keboola_mcp_server.server.create_snowflake_connection") as mock_create_conn:
         mock_create_conn.return_value = mock_conn
 
-        server = await create_server(test_config)
+        server = create_server(test_config)
 
         # Store original function
         original_query_table = server.__dict__.get("query_table")
