@@ -91,10 +91,12 @@ class Config:
 
     def has_snowflake_config(self) -> bool:
         """Check if Snowflake configuration is complete."""
-        return all([
-            self.snowflake_account,
-            self.snowflake_user,
-            self.snowflake_password,
-            self.snowflake_warehouse,
-            self.snowflake_database,
-        ])
+        return all(
+            [
+                self.snowflake_account,
+                self.snowflake_user,
+                self.snowflake_password,
+                self.snowflake_warehouse,
+                self.snowflake_database,
+            ]
+        )

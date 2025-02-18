@@ -55,5 +55,5 @@ def test_config_validate() -> None:
 
     # Missing token
     config = Config(storage_token="", storage_api_url="https://test.keboola.com")
-    with pytest.raises(ValueError, match="Storage token is required"):
+    with pytest.raises(ValueError, match="Storage token not configured"):
         config.validate()

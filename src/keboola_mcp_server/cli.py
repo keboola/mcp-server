@@ -1,6 +1,7 @@
 """Command-line interface for the Keboola MCP server."""
 
 import argparse
+import asyncio
 import logging
 import sys
 from typing import List, Optional
