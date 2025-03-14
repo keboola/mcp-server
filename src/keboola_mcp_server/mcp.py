@@ -49,11 +49,11 @@ def _default_session_state_factory(params: SessionParams) -> SessionState:
 
 class StatefullServerSession(ServerSession):
     def __init__(
-            self,
-            read_stream: MemoryObjectReceiveStream[types.JSONRPCMessage | Exception],
-            write_stream: MemoryObjectSendStream[types.JSONRPCMessage],
-            init_options: InitializationOptions,
-            state: SessionState | None = None
+        self,
+        read_stream: MemoryObjectReceiveStream[types.JSONRPCMessage | Exception],
+        write_stream: MemoryObjectSendStream[types.JSONRPCMessage],
+        init_options: InitializationOptions,
+        state: SessionState | None = None,
     ) -> None:
         super().__init__(read_stream, write_stream, init_options)
         self._state = state or {}
@@ -65,11 +65,11 @@ class StatefullServerSession(ServerSession):
 
 class _KeboolaServer(Server):
     def __init__(
-            self,
-            name: str,
-            version: str | None = None,
-            instructions: str | None = None,
-            lifespan: Callable[["Server"], AbstractAsyncContextManager[LifespanResultT]] | None = None,
+        self,
+        name: str,
+        version: str | None = None,
+        instructions: str | None = None,
+        lifespan: Callable[["Server"], AbstractAsyncContextManager[LifespanResultT]] | None = None,
     ) -> None:
         super().__init__(name, version=version, instructions=instructions, lifespan=lifespan)
 
@@ -83,7 +83,7 @@ class _KeboolaServer(Server):
         # but also make tracing exceptions much easier during testing and when using
         # in-process servers.
         raise_exceptions: bool = False,
-        state: SessionState | None = None
+        state: SessionState | None = None,
     ):
         async with AsyncExitStack() as stack:
             lifespan_context = await stack.enter_async_context(self.lifespan(self))
@@ -93,7 +93,7 @@ class _KeboolaServer(Server):
 
             async with anyio.create_task_group() as tg:
                 async for message in session.incoming_messages:
-                    logger.debug(f'Received message: {message}')
+                    logger.debug(f"Received message: {message}")
 
                     tg.start_soon(
                         self._handle_message,
@@ -106,18 +106,18 @@ class _KeboolaServer(Server):
 
 class KeboolaMcpServer(FastMCP):
     def __init__(
-            self,
-            name: str | None = None,
-            instructions: str | None = None,
-            *,
-            session_state_factory: SessionStateFactory | None = None,
-            **settings: Any
+        self,
+        name: str | None = None,
+        instructions: str | None = None,
+        *,
+        session_state_factory: SessionStateFactory | None = None,
+        **settings: Any,
     ) -> None:
         super().__init__(name, instructions, **settings)
         self._mcp_server = _KeboolaServer(
             name=self._mcp_server.name,
             instructions=self._mcp_server.instructions,
-            lifespan=self._mcp_server.lifespan
+            lifespan=self._mcp_server.lifespan,
         )
         self._setup_handlers()
         self._session_state_factory = session_state_factory or _default_session_state_factory
@@ -129,7 +129,7 @@ class KeboolaMcpServer(FastMCP):
                 read_stream,
                 write_stream,
                 initialization_options=self._mcp_server.create_initialization_options(),
-                state=self._session_state_factory(dict(os.environ))
+                state=self._session_state_factory(dict(os.environ)),
             )
 
     async def run_sse_async(self) -> None:
@@ -139,24 +139,22 @@ class KeboolaMcpServer(FastMCP):
         from starlette.requests import Request
         import uvicorn
 
-        sse = SseServerTransport('/messages/')
+        sse = SseServerTransport("/messages/")
 
         async def handle_sse(request: Request):
-            async with sse.connect_sse(
-                    request.scope, request.receive, request._send
-            ) as streams:
+            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
                 await self._mcp_server.run(
                     streams[0],
                     streams[1],
                     initialization_options=self._mcp_server.create_initialization_options(),
-                    state=self._session_state_factory(dict(request.query_params))
+                    state=self._session_state_factory(dict(request.query_params)),
                 )
 
         starlette_app = Starlette(
             debug=self.settings.debug,
             routes=[
-                Route('/sse', endpoint=handle_sse),
-                Mount('/messages/', app=sse.handle_post_message),
+                Route("/sse", endpoint=handle_sse),
+                Mount("/messages/", app=sse.handle_post_message),
                 # TODO: add endpoints for health-check and info
             ],
         )
