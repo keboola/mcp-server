@@ -1,59 +1,88 @@
-"""Tests for the config module."""
-
-import os
+from typing import Mapping
 
 import pytest
-from pytest import MonkeyPatch
 
 from keboola_mcp_server.config import Config
 
 
-def test_config_from_env(monkeypatch: MonkeyPatch) -> None:
-    """Test creating config from environment variables."""
-    monkeypatch.setenv("KBC_STORAGE_TOKEN", "test-token")
-    monkeypatch.setenv("KBC_STORAGE_API_URL", "https://test.keboola.com")
-    monkeypatch.setenv("KBC_LOG_LEVEL", "DEBUG")
-
-    config = Config.from_env()
-    assert config.storage_token == "test-token"
-    assert config.storage_api_url == "https://test.keboola.com"
-    assert config.log_level == "DEBUG"
+class TestConfig:
+    @pytest.mark.parametrize('d, expected', [
+        ({'storage_token': 'foo', 'log_level': 'DEBUG'}, Config(storage_token='foo', log_level='DEBUG')),
+        ({'KBC_STORAGE_TOKEN': 'foo', 'KBC_LOG_LEVEL': 'DEBUG'}, Config(storage_token='foo', log_level='DEBUG')),
+        ({'foo': 'bar', 'storage_api_url': 'http://nowhere'}, Config(storage_api_url='http://nowhere')),
+    ])
+    def test_from_dict(self, d: Mapping[str, str], expected: Config) -> None:
+        assert Config.from_dict(d) == expected
 
 
-def test_config_missing_token(monkeypatch: MonkeyPatch) -> None:
-    """Test error when storage token is missing."""
-    monkeypatch.delenv("KBC_STORAGE_TOKEN", raising=False)
+    @pytest.mark.parametrize('orig, d, expected', [
+        (
+            Config(),
+            {'storage_token': 'foo', 'log_level': 'DEBUG'},
+            Config(storage_token='foo', log_level='DEBUG')
+        ),
+        (
+            Config(),
+            {'KBC_STORAGE_TOKEN': 'foo', 'KBC_LOG_LEVEL': 'DEBUG'},
+            Config(storage_token='foo', log_level='DEBUG')
+        ),
+        (
+            Config(storage_token='bar'),
+            {'storage_token': 'foo', 'log_level': 'DEBUG'},
+            Config(storage_token='foo', log_level='DEBUG')
+        ),
+        (
+            Config(storage_token='bar'),
+            {'storage_token': None, 'log_level': 'DEBUG'},
+            Config(log_level='DEBUG')
+        ),
+    ])
+    def test_replace_by(self, orig: Config, d: Mapping[str, str], expected: Config) -> None:
+        assert orig.replace_by(d) == expected
 
-    with pytest.raises(ValueError, match="KBC_STORAGE_TOKEN environment variable is required"):
-        Config.from_env()
+
+    def test_defaults(self) -> None:
+        config = Config()
+        assert config.storage_token is None
+        assert config.storage_api_url == "https://connection.keboola.com"
+        assert config.log_level == "INFO"
+        assert config.snowflake_account is None
+        assert config.snowflake_user is None
+        assert config.snowflake_password is None
+        assert config.snowflake_warehouse is None
+        assert config.snowflake_database is None
+        assert config.snowflake_schema is None
+        assert config.snowflake_role is None
 
 
-def test_config_defaults(monkeypatch: MonkeyPatch) -> None:
-    """Test default values are used when optional vars not set."""
-    monkeypatch.setenv("KBC_STORAGE_TOKEN", "test-token")
-    monkeypatch.delenv("KBC_STORAGE_API_URL", raising=False)
-    monkeypatch.delenv("KBC_LOG_LEVEL", raising=False)
+    @pytest.mark.parametrize('d, expected', [
+        ({}, False),
+        ({'storage_token': 'foo'}, True),  # relies on the default value of storage_api_url
+        ({'storage_token': 'foo', 'storage_api_url': ''}, False),
+        ({'storage_token': 'foo', 'storage_api_url': 'bar'}, True),
+    ])
+    def test_has_storage_config(self, d: Mapping[str, str], expected: bool) -> None:
+        assert Config.from_dict(d).has_storage_config() == expected
 
-    config = Config.from_env()
-    assert config.storage_token == "test-token"
-    assert config.storage_api_url == "https://connection.keboola.com"
-    assert config.log_level == "INFO"
-
-
-def test_config_validate() -> None:
-    """Test config validation."""
-    # Valid config
-    config = Config(
-        storage_token="test-token", storage_api_url="https://test.keboola.com", log_level="INFO"
-    )
-    config.validate()  # Should not raise
-
-    # Invalid log level
-    config.log_level = "INVALID"
-    with pytest.raises(ValueError, match="Invalid log level"):
-        config.validate()
-
-    # Missing token
-    config = Config(storage_token="", storage_api_url="https://test.keboola.com")
-    with pytest.raises(ValueError, match="Storage token not configured"):
-        config.validate()
+    @pytest.mark.parametrize('d, expected', [
+        ({}, False),
+        ({'snowflake_account': 'foo'}, False),
+        ({'snowflake_account': 'foo', 'snowflake_user': 'bar'}, False),
+        ({'snowflake_account': 'foo', 'snowflake_user': 'bar', 'snowflake_password': 'baz'}, False),
+        (
+            {
+                'snowflake_account': 'foo', 'snowflake_user': 'bar', 'snowflake_password': 'baz',
+                'snowflake_warehouse': 'baf'
+            },
+            False
+        ),
+        (
+            {
+                'snowflake_account': 'foo', 'snowflake_user': 'bar', 'snowflake_password': 'baz',
+                'snowflake_warehouse': 'baf', 'snowflake_database': 'bam'
+            },
+            True
+        ),
+    ])
+    def test_has_snowflake_config(self, d: Mapping[str, str], expected: bool) -> None:
+        assert Config.from_dict(d).has_snowflake_config() == expected

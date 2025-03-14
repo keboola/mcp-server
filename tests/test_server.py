@@ -1,13 +1,11 @@
 """Tests for server functionality."""
 
-from typing import AsyncGenerator, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import List, Optional
 
 import pytest
-import snowflake.connector
 
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.server import TableColumnInfo, TableDetail, create_server
+from keboola_mcp_server.server import create_server, TableColumnInfo, TableDetail
 
 
 @pytest.fixture
@@ -46,54 +44,11 @@ def mock_table_detail() -> TableDetail:
 
 
 @pytest.mark.asyncio
-async def test_table_detail_resource(test_config: Config) -> None:
-    mock_table = {
-        "id": "in.c-test.test-table",
-        "name": "test-table",
-        "primaryKey": ["id"],
-        "created": "2024-01-01",
-        "rowsCount": 100,
-        "dataSizeBytes": 1000,
-        "columns": ["id", "name", "value"],
-    }
-
-    with patch("keboola_mcp_server.server.KeboolaClient") as MockKeboolaClient:
-        mock_storage = MagicMock()
-        mock_storage.tables.detail.return_value = mock_table
-        MockKeboolaClient.return_value.storage_client = mock_storage
-
-        server = create_server(test_config)
-
-        old_method = getattr(server, "get_table_detail", None)
-
-        async def mock_get_table_detail(table_id: str):
-            return {
-                "id": mock_table["id"],
-                "name": mock_table["name"],
-                "columns": mock_table["columns"],
-                "column_identifiers": [
-                    TableColumnInfo(name=col, db_identifier=f'"{col}"')
-                    for col in mock_table["columns"]
-                ],
-            }
-
-        setattr(server, "get_table_detail", mock_get_table_detail)
-
-        try:
-            result = await server.get_table_detail("in.c-test.test-table")
-
-            assert result["id"] == "in.c-test.test-table"
-            assert result["name"] == "test-table"
-            assert result["columns"] == ["id", "name", "value"]
-            assert len(result["column_identifiers"]) == 3
-            assert result["column_identifiers"][0]["name"] == "id"
-        finally:
-            if old_method:
-                setattr(server, "get_table_detail", old_method)
-
-
-@pytest.mark.asyncio
 async def test_query_table_data_tool(test_config: Config) -> None:
+    # TODO -- make this test to actually test something; in its current shape it only calls the mock function
+    #   Testing the MCP tools is tricky. Ideally, we would need a test client similar to
+    #   `starlette.testclient.TestClient`, but for the statefull MCP.
+
     mock_table_info = {
         "db_identifier": 'SAPI_10025."in.c-test"."test_table"',
         "column_identifiers": [
@@ -169,108 +124,3 @@ async def test_query_table_data_tool(test_config: Config) -> None:
             server.__dict__["query_table"] = original_query_table
         if original_query_table_data:
             server.__dict__["query_table_data"] = original_query_table_data
-
-
-@pytest.mark.asyncio
-async def test_query_table_tool(test_config: Config) -> None:
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = [(1, "test", 100)]
-    mock_cursor.description = [("id",), ("name",), ("value",)]
-
-    mock_conn = MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-
-    with patch("keboola_mcp_server.server.create_snowflake_connection") as mock_create_conn:
-        mock_create_conn.return_value = mock_conn
-
-        server = create_server(test_config)
-
-        # Store original function
-        original_query_table = server.__dict__.get("query_table")
-
-        # Define the actual function we want to test
-        async def query_table(query: str) -> str:
-            try:
-                cursor = mock_conn.cursor()
-                cursor.execute(query)
-                data = cursor.fetchall()
-
-                # Get column names from description
-                columns = [desc[0] for desc in cursor.description]
-
-                # Format as CSV
-                result = [",".join(columns)]
-                result.extend(",".join(str(val) for val in row) for row in data)
-                return "\n".join(result)
-            finally:
-                cursor.close()
-                mock_conn.close()
-
-        # Set our function
-        server.__dict__["query_table"] = query_table
-
-        try:
-            result = await server.query_table('SELECT * FROM SAPI_10025."test_table"')
-
-            assert isinstance(result, str)
-            assert "id,name,value" in result
-            assert "1,test,100" in result
-
-            # Verify proper cleanup
-            mock_cursor.close.assert_called_once()
-            mock_conn.close.assert_called_once()
-        finally:
-            # Restore original if it existed
-            if original_query_table:
-                server.__dict__["query_table"] = original_query_table
-
-
-@pytest.mark.asyncio
-async def test_query_table_error_handling(test_config: Config) -> None:
-    mock_cursor = MagicMock()
-    mock_conn = MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-
-    # Test Snowflake programming error
-    mock_cursor.execute.side_effect = snowflake.connector.errors.ProgrammingError("Invalid query")
-
-    with patch("keboola_mcp_server.server.create_snowflake_connection") as mock_create_conn:
-        mock_create_conn.return_value = mock_conn
-
-        server = create_server(test_config)
-
-        # Store original function
-        original_query_table = server.__dict__.get("query_table")
-
-        # Define error handling function
-        async def query_table(query: str) -> str:
-            try:
-                cursor = mock_conn.cursor()
-                cursor.execute(query)
-                data = cursor.fetchall()
-                columns = [desc[0] for desc in cursor.description]
-                result = [",".join(columns)]
-                result.extend(",".join(str(val) for val in row) for row in data)
-                return "\n".join(result)
-            except snowflake.connector.errors.ProgrammingError as e:
-                raise ValueError(f"Snowflake query error: {str(e)}")
-            finally:
-                cursor.close()
-                mock_conn.close()
-
-        # Set our function
-        server.__dict__["query_table"] = query_table
-
-        try:
-            with pytest.raises(ValueError) as exc_info:
-                await server.query_table("SELECT * FROM invalid_table")
-
-            assert "Snowflake query error" in str(exc_info.value)
-
-            # Verify cleanup happened even with error
-            mock_cursor.close.assert_called_once()
-            mock_conn.close.assert_called_once()
-        finally:
-            # Restore original if it existed
-            if original_query_table:
-                server.__dict__["query_table"] = original_query_table

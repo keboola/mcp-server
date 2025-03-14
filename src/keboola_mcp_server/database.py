@@ -2,12 +2,10 @@
 
 import logging
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any, Dict, List
 
 import snowflake.connector
-from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict, Any
-
-from .config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -179,38 +177,25 @@ class ConnectionManager:
             error_msg += f" - {pattern} ({db}): {error}\n"
         raise DatabaseConnectionError(error_msg)
 
+    def create_snowflake_connection(self) -> snowflake.connector.connection:
+        """Create and return a Snowflake connection using configured credentials.
+        Raises:
+            ValueError: If credentials are not fully configured or connection fails
+        """
+        try:
+            database = self.find_working_connection()
+            conn = snowflake.connector.connect(
+                account=self.config.snowflake_account,
+                user=self.config.snowflake_user,
+                password=self.config.snowflake_password,
+                warehouse=self.config.snowflake_warehouse,
+                database=database,
+                schema=self.config.snowflake_schema,
+                role=self.config.snowflake_role,
+            )
 
-def create_snowflake_connection(config: Config) -> snowflake.connector.connection:
-    """Create a return a Snowflake connection using configured credentials.
-
-    Args:
-        config: Configuration object containing Snowflake credentials
-
-    Returns:
-        snowflake.connector.connection: established Snowflake connection
-
-    Raises:
-        ValueError: If credentials are not fully configured or connection fails
-    """
-    if not config.has_snowflake_config():
-        raise ValueError("Snowflake credentials are not fully configured")
-
-    try:
-        connection_manager = ConnectionManager(config)
-        database = connection_manager.find_working_connection()
-
-        conn = snowflake.connector.connect(
-            account=config.snowflake_account,
-            user=config.snowflake_user,
-            password=config.snowflake_password,
-            warehouse=config.snowflake_warehouse,
-            database=database,
-            schema=config.snowflake_schema,
-            role=config.snowflake_role,
-        )
-
-        return conn
-    except DatabaseConnectionError as e:
-        raise ValueError(f"Failed to find working database connection: {str(e)}")
-    except Exception as e:
-        raise ValueError(f"Failed to create Snowflake connection: {str(e)}")
+            return conn
+        except DatabaseConnectionError as e:
+            raise ValueError(f"Failed to find working database connection: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Failed to create Snowflake connection: {str(e)}")
