@@ -50,7 +50,7 @@ class TableDetail(TypedDict):
 
 def _create_session_state_factory(config: Optional[Config] = None) -> SessionStateFactory:
     def _(params: SessionParams) -> SessionState:
-        logger.info(f"Creating SessionState for params: {params}.")
+        logger.info(f"Creating SessionState for params: {params.keys()}.")
 
         if not config:
             cfg = Config.from_dict(params)

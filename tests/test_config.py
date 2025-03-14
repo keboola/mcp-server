@@ -86,3 +86,17 @@ class TestConfig:
     ])
     def test_has_snowflake_config(self, d: Mapping[str, str], expected: bool) -> None:
         assert Config.from_dict(d).has_snowflake_config() == expected
+
+    def test_no_token_password_in_repr(self) -> None:
+        config = Config(storage_token='foo', snowflake_password='bar', snowflake_user='baz')
+        assert str(config) == ('Config('
+                               'storage_token=\'****\', '
+                               'storage_api_url=\'https://connection.keboola.com\', '
+                               'log_level=\'INFO\', '
+                               'snowflake_account=None, '
+                               'snowflake_user=\'baz\', '
+                               'snowflake_password=\'****\', '
+                               'snowflake_warehouse=None, '
+                               'snowflake_database=None, '
+                               'snowflake_schema=None, '
+                               'snowflake_role=None)')

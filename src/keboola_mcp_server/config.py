@@ -71,3 +71,16 @@ class Config:
                 self.snowflake_database,
             ]
         )
+
+    def __repr__(self):
+        params: list[str] = []
+        for f in dataclasses.fields(self):
+            value = getattr(self, f.name)
+            if value:
+                if 'token' in f.name or 'password' in f.name:
+                    params.append(f'{f.name}=\'****\'')
+                else:
+                    params.append(f'{f.name}=\'{value}\'')
+            else:
+                params.append(f'{f.name}=None')
+        return f'Config({", ".join(params)})'
