@@ -8,6 +8,7 @@ from typing import Any, cast, Dict, List, Optional, TypedDict
 import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
 
+from keboola_mcp_server.component_tools import add_component_tools
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
@@ -106,6 +107,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             "snowflake-connector-python",
         ],
     )
+
+    add_component_tools(mcp)
 
     @mcp.tool()
     async def query_table(sql_query: str, ctx: Context) -> str:
@@ -218,29 +221,6 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             f"Database Identifier: {db_path_manager.get_table_db_path(table)}\n"
             f"Schema: {table['id'].split('.')[0]}\n"
             f"Table: {table['id'].split('.')[1]}"
-        )
-
-    @mcp.tool()
-    async def list_components(ctx: Context) -> str:
-        """List all available components and their configurations."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
-        components = cast(List[Dict[str, Any]], await client.get("components"))
-        return "\n".join(f"- {comp['id']}: {comp['name']}" for comp in components)
-
-    @mcp.tool()
-    async def list_component_configs(component_id: str, ctx: Context) -> str:
-        """List all configurations for a specific component."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
-        configs = cast(List[Dict[str, Any]], await client.get(f"components/{component_id}/configs"))
-        return "\n".join(
-            f"Configuration: {config['id']}\n"
-            f"Name: {config['name']}\n"
-            f"Description: {config.get('description', 'No description')}\n"
-            f"Created: {config['created']}\n"
-            f"---"
-            for config in configs
         )
 
     @mcp.tool()
