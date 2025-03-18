@@ -21,7 +21,11 @@ class ComponentConfig(BaseModel):
 def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     mcp.add_tool(list_components, "list_components", "List all available components.")
-    mcp.add_tool(list_component_configs, "list_component_configs", "List all configurations for a given component.")
+    mcp.add_tool(
+        list_component_configs,
+        "list_component_configs",
+        "List all configurations for a given component.",
+    )
 
 
 async def list_components(ctx: Context) -> List[Component]:
