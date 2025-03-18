@@ -8,7 +8,7 @@ from typing import Any, cast, Dict, List, Optional, TypedDict
 import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
 
-from src.keboola_mcp_server.mcp import (
+from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
     SessionState,
