@@ -1,7 +1,6 @@
 """Command-line interface for the Keboola MCP server."""
 
 import argparse
-import asyncio
 import logging
 import sys
 from typing import List, Optional
@@ -24,7 +23,7 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Keboola MCP Server")
     parser.add_argument(
         "--transport",
-        choices=["stdio"],
+        choices=["stdio", "sse"],
         default="stdio",
         help="Transport to use for MCP communication",
     )
@@ -35,7 +34,7 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Logging level",
     )
     parser.add_argument(
-        "--api-url", help="Keboola Storage API URL (defaults to https://connection.keboola.com)"
+        "--api-url", default="https://connection.keboola.com", help="Keboola Storage API URL"
     )
 
     return parser.parse_args(args)
@@ -49,11 +48,10 @@ def main(args: Optional[List[str]] = None) -> None:
     """
     parsed_args = parse_args(args)
 
-    # Create config from environment, but override with CLI args
-    config = Config.from_env()
-    if parsed_args.api_url:
-        config.storage_api_url = parsed_args.api_url
-    config.log_level = parsed_args.log_level
+    # Create config from the CLI arguments
+    config = Config.from_dict(
+        {"storage_api_url": parsed_args.api_url, "log_level": parsed_args.log_level}
+    )
 
     try:
         # Create and run server
