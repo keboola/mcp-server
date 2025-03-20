@@ -1,7 +1,7 @@
 # Keboola MCP Server
 
-[![CI](https://github.com/jordanburger/keboola-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/jordanburger/keboola-mcp-server/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/jordanburger/keboola-mcp-server/branch/main/graph/badge.svg)](https://codecov.io/gh/jordanburger/keboola-mcp-server)
+[![CI](https://github.com/keboola/keboola-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/keboola/keboola-mcp-server/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/keboola/keboola-mcp-server/branch/main/graph/badge.svg)](https://codecov.io/gh/keboola/keboola-mcp-server)
 <a href="https://glama.ai/mcp/servers/72mwt1x862"><img width="380" height="200" src="https://glama.ai/mcp/servers/72mwt1x862/badge" alt="Keboola Explorer Server MCP server" /></a>
 [![smithery badge](https://smithery.ai/badge/keboola-mcp-server)](https://smithery.ai/server/keboola-mcp-server)
 
@@ -29,7 +29,7 @@ npx -y @smithery/cli install keboola-mcp-server --client claude
 First, clone the repository and create a virtual environment:
 
 ```bash
-git clone https://github.com/jordanburger/keboola-mcp-server.git
+git clone https://github.com/keboola/keboola-mcp-server.git
 cd keboola-mcp-server
 python3 -m venv .venv
 source .venv/bin/activate
@@ -115,6 +115,60 @@ If you encounter connection issues:
 3. Ensure all paths in the configuration are absolute paths
 4. Confirm the virtual environment is properly activated and all dependencies are installed
 5. Make sure the PYTHONPATH points to the `src` directory
+
+## Cursor AI Setup
+
+To use this server with Cursor AI, you have two options for configuring the transport method: Server-Sent Events (SSE) or Standard I/O (stdio).
+
+1. Create or edit the Cursor AI configuration file:
+   - Location: `~/.cursor/mcp.json`
+
+2. Add one of the following configurations (or both) based on your preferred transport method:
+
+### Option 1: Using Server-Sent Events (SSE)
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "url": "http://localhost:8000/sse?storage_token=YOUR_STORAGE_TOKEN&snowflake_account=YOUR_ACCOUNT&snowflake_user=YOUR_USER&snowflake_password=YOUR_PASSWORD&snowflake_database=YOUR_DATABASE&snowflake_schema=YOUR_SCHEMA&snowflake_warehouse=YOUR_WAREHOUSE"
+    }
+  }
+}
+```
+
+### Option 2: Using Standard I/O (stdio)
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "/path/to/keboola-mcp-server/venv/bin/python",
+      "args": [
+        "-m",
+        "keboola_mcp_server.cli",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
+        "KBC_SNOWFLAKE_ACCOUNT": "your-snowflake-account",
+        "KBC_SNOWFLAKE_USER": "your-snowflake-user",
+        "KBC_SNOWFLAKE_PASSWORD": "your-snowflake-password",
+        "KBC_SNOWFLAKE_DATABASE": "your-snowflake-database",
+        "KBC_SNOWFLAKE_SCHEMA": "your-snowflake-schema",
+        "KBC_SNOWFLAKE_WAREHOUSE": "your-snowflake-warehouse"
+      }
+    }
+  }
+}
+```
+
+Replace all placeholder values (YOUR_*) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
+
+After updating the configuration:
+1. Restart Cursor AI
+2. The MCP server should be automatically detected and available for use
 
 ## Available Tools
 
