@@ -64,6 +64,7 @@ class DatabasePathManager:
                 cursor = conn.cursor(DictCursor)
 
                 if source_table := table.get("sourceTable"):
+                    # a table linked from some other project
                     schema_name, table_name = source_table["id"].rsplit(sep=".", maxsplit=1)
                     source_project_id = source_table["project"]["id"]
                     result = cursor.execute(
@@ -80,8 +81,16 @@ class DatabasePathManager:
                     result = cursor.execute(
                         f'select CURRENT_DATABASE() as "current_database", CURRENT_SCHEMA() as "current_schema";'
                     ).fetchone()
-                    db_name, schema_name = result["current_database"], result["current_schema"]
-                    table_name = table["name"]
+                    db_name = result["current_database"]
+                    if "." in table_id:
+                        # a table local in a project for which the snowflake connection/workspace is open
+                        schema_name, table_name = table_id.rsplit(sep=".", maxsplit=1)
+                    else:
+                        # a table not in the project, but in the writable schema created for the workspace
+                        # TODO: we should never come here, because the tools for listing tables can only see
+                        #  tables that are in the project
+                        schema_name = result["current_schema"]
+                        table_name = table["name"]
 
                 fqn = TableFqn(db_name, schema_name, table_name)
                 self._table_fqn_cache[table_id] = fqn
