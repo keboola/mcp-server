@@ -204,8 +204,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         assert isinstance(client, KeboolaClient)
         tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
         return "\n".join(
-            f"Table: {table['id']}\n"
-            f"Name: {table.get('name', 'N/A')}\n"
+            f"Table ID: {table['id']}\n"
+            f"Table Name: {table.get('name', 'N/A')}\n"
             f"Rows: {table.get('rowsCount', 'N/A')}\n"
             f"Size: {table.get('dataSizeBytes', 'N/A')} bytes\n"
             f"Columns: {', '.join(table.get('columns', []))}\n"
