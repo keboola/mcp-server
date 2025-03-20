@@ -3,9 +3,12 @@
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, List, Optional
 
 import snowflake.connector
+from snowflake.connector import DictCursor
+
+from keboola_mcp_server.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -29,56 +32,65 @@ class ConnectionPattern:
             self.required_config = []
 
 
+@dataclass(frozen=True)
+class TableFqn:
+    db_name: str
+    schema_name: str
+    table_name: str
+
+    @property
+    def snowflake_fqn(self) -> str:
+        """Returns the properly quoted Snowflake identifier."""
+        return f'"{self.db_name}"."{self.schema_name}"."{self.table_name}"'
+
+
 class DatabasePathManager:
     """Manages database paths and connections for Keboola tables."""
 
-    def __init__(self, config, connection_manager):
+    def __init__(self, config: Config, connection_manager: "ConnectionManager"):
         self.config = config
         self.connection_manager = connection_manager
-        self._db_path_cache = {}
+        self._table_fqn_cache: dict[str, TableFqn] = {}
 
-    def get_current_db(self) -> str:
-        """
-        Get the current database path, using the connection manager's patterns.
-
-        Returns:
-            str: The database path to use
-        """
-        try:
-            # Try to get a working DB connection from our patterns
-            return self.connection_manager.find_working_connection()
-        except Exception as e:
-            logger.warning(
-                f"Failed to get working connection, falling back to token-based path: {e}"
-            )
-            return f"KEBOOLA_{self.config.storage_token.split('-')[0]}"
-
-    def get_table_db_path(self, table: Dict[str, Any]) -> str:
-        """
-        Get the database path for a specific table.
-
-        Args:
-            table: Dictionary containing table information
-
-        Returns:
-            str: The full database path for the table
-        """
+    def get_table_fqn(self, table: dict[str, Any]) -> Optional[TableFqn]:
+        """Gets the fully qualified name of a Keboola table."""
+        # TODO: use a pydantic class for the 'table' param
         table_id = table["id"]
-        if table_id in self._db_path_cache:
-            return self._db_path_cache[table_id]
+        if table_id in self._table_fqn_cache:
+            return self._table_fqn_cache[table_id]
 
-        db_path = self.get_current_db()
-        table_name = table["name"]
-        table_path = table["id"]
+        try:
+            with self.connection_manager.create_snowflake_connection() as conn:
+                cursor = conn.cursor(DictCursor)
 
-        if table.get("sourceTable"):
-            db_path = f"KEBOOLA_{table['sourceTable']['project']['id']}"
-            table_path = table["sourceTable"]["id"]
+                if source_table := table.get("sourceTable"):
+                    schema_name, table_name = source_table["id"].rsplit(sep=".", maxsplit=1)
+                    source_project_id = source_table["project"]["id"]
+                    result = cursor.execute(
+                        f"show databases like '%_{source_project_id}';"
+                    ).fetchone()
+                    if result:
+                        db_name = result["name"]
+                    else:
+                        raise ValueError(
+                            f"No database found for Keboola project: {source_project_id}"
+                        )
 
-        table_identifier = f'"{db_path}"."{".".join(table_path.split(".")[:-1])}"."{table_name}"'
+                else:
+                    result = cursor.execute(
+                        f'select CURRENT_DATABASE() as "current_database", CURRENT_SCHEMA() as "current_schema";'
+                    ).fetchone()
+                    db_name, schema_name = result["current_database"], result["current_schema"]
+                    table_name = table["name"]
 
-        self._db_path_cache[table_id] = table_identifier
-        return table_identifier
+                fqn = TableFqn(db_name, schema_name, table_name)
+                self._table_fqn_cache[table_id] = fqn
+
+                return fqn
+
+        except snowflake.connector.errors.Error:
+            # most likely no connection to the DB, perhaps the database credentials were not specified
+            return None
 
 
 class ConnectionManager:
@@ -99,6 +111,11 @@ class ConnectionManager:
             ConnectionPattern(
                 name="KEBOOLA Token Pattern",
                 get_database=lambda: f"KEBOOLA_{self.config.storage_token.split('-')[0]}",
+                required_config=["storage_token"],
+            ),
+            ConnectionPattern(
+                name="SAPI Token Pattern",
+                get_database=lambda: f"SAPI_{self.config.storage_token.split('-')[0]}",
                 required_config=["storage_token"],
             ),
         ]
@@ -177,25 +194,16 @@ class ConnectionManager:
             error_msg += f" - {pattern} ({db}): {error}\n"
         raise DatabaseConnectionError(error_msg)
 
+    @contextmanager
     def create_snowflake_connection(self) -> snowflake.connector.connection:
-        """Create and return a Snowflake connection using configured credentials.
-        Raises:
-            ValueError: If credentials are not fully configured or connection fails
-        """
-        try:
-            database = self.find_working_connection()
-            conn = snowflake.connector.connect(
-                account=self.config.snowflake_account,
-                user=self.config.snowflake_user,
-                password=self.config.snowflake_password,
-                warehouse=self.config.snowflake_warehouse,
-                database=database,
-                schema=self.config.snowflake_schema,
-                role=self.config.snowflake_role,
-            )
-
-            return conn
-        except DatabaseConnectionError as e:
-            raise ValueError(f"Failed to find working database connection: {str(e)}")
-        except Exception as e:
-            raise ValueError(f"Failed to create Snowflake connection: {str(e)}")
+        """Create and return a Snowflake connection using configured credentials."""
+        database = self.find_working_connection()
+        yield snowflake.connector.connect(
+            account=self.config.snowflake_account,
+            user=self.config.snowflake_user,
+            password=self.config.snowflake_password,
+            warehouse=self.config.snowflake_warehouse,
+            database=database,
+            schema=self.config.snowflake_schema,
+            role=self.config.snowflake_role,
+        )
