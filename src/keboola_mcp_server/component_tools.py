@@ -9,16 +9,41 @@ from keboola_mcp_server.client import KeboolaClient
 logger = logging.getLogger(__name__)
 
 
-class Component(BaseModel):
+class ComponentListItem(BaseModel):
+    """A list item representing a Keboola component."""
+
     id: str = Field(description="The ID of the component")
     name: str = Field(description="The name of the component")
+    type: str = Field(description="The type of the component")
+    description: Optional[str] = Field(description="The description of the component")
+
+
+class Component(ComponentListItem):
+    """Detailed information about a Keboola component."""
+
+    long_description: Optional[str] = Field(description="The long description of the component")
+    categories: List[str] = Field(description="The categories of the component")
+    version: str = Field(description="The version of the component")
+    created: str = Field(description="The creation date of the component")
 
 
 class ComponentConfig(BaseModel):
+    """A list item representing a Keboola component configuration."""
+
     id: str = Field(description="The ID of the component configuration")
     name: str = Field(description="The name of the component configuration")
     description: Optional[str] = Field(description="The description of the component configuration")
     created: str = Field(description="The creation date of the component configuration")
+    is_disabled: bool = Field(
+        description="Whether the component configuration is disabled", alias="isDisabled"
+    )
+    is_deleted: bool = Field(
+        description="Whether the component configuration is deleted", alias="isDeleted"
+    )
+    version: int = Field(description="The version of the component configuration")
+    configuration: Dict[str, Any] = Field(
+        description="The configuration of the component configuration"
+    )
 
 
 def add_component_tools(mcp: FastMCP) -> None:
@@ -26,7 +51,6 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(list_components)
     mcp.add_tool(list_component_configs)
     mcp.add_tool(get_component_details)
-
     logger.info("Component tools added to the MCP server.")
 
 
@@ -56,7 +80,9 @@ async def list_component_configs(
 
 
 async def get_component_details(
-    component_id: Annotated[str, "Unique identifier of the Keboola component you want details about"],
+    component_id: Annotated[
+        str, "Unique identifier of the Keboola component you want details about"
+    ],
     ctx: Context,
 ) -> Component:
     """Retrieve detailed information about a specific Keboola component."""
