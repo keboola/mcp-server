@@ -27,30 +27,18 @@ class JobDetail(JobListItem):
     """Detailed information about a Keboola job."""
 
     url: str = Field(description="The URL of the job.")
-    table_id: Optional[str] = Field(description="The ID of the table that the job is running on.")
+    table_id: Optional[str] = Field(
+        description="The ID of the table that the job is running on.", alias="tableId"
+    )
     operation_name: str = Field(description="The name of the operation.", alias="operationName")
     operation_params: Dict[str, Any] = Field(
         description="The parameters of the operation.", alias="operationParams"
     )
-    run_id: Optional[STR_INT] = Field(description="The ID of the run that the job is running on.")
+    run_id: Optional[STR_INT] = Field(
+        description="The ID of the run that the job is running on.", alias="runId"
+    )
     results: Optional[str] = Field(description="The results of the job.")
     metrics: Optional[Dict[str, Any]] = Field(description="The metrics of the job.")
-
-    def __init__(self, **data: Any) -> None:
-        """Initialize Job model and populate additional_details from remaining fields."""
-
-        model_fields = set(self.model_fields.keys())
-        # Extract fields that are not part of the model definition
-        additional = {k: v for k, v in data.items() if k not in model_fields}
-
-        for k in additional:
-            data.pop(k)
-
-        # Initialize the model with defined fields
-        super().__init__(**data)
-
-        # Set additional_details with remaining fields
-        self.additional_details = additional
 
 
 def add_jobs_tools(mcp: FastMCP) -> None:
