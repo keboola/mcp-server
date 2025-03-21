@@ -1,9 +1,12 @@
-from typing import Any, Dict, List, Optional, cast
+import logging
+from typing import Annotated, Any, Dict, List, Optional, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
+
+logger = logging.getLogger(__name__)
 
 
 class Component(BaseModel):
@@ -20,12 +23,10 @@ class ComponentConfig(BaseModel):
 
 def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    mcp.add_tool(list_components, "list_components", "List all available components.")
-    mcp.add_tool(
-        list_component_configs,
-        "list_component_configs",
-        "List all configurations for a given component.",
-    )
+    mcp.add_tool(list_components)
+    mcp.add_tool(list_component_configs)
+
+    logger.info("Component tools added to the MCP server.")
 
 
 async def list_components(ctx: Context) -> List[Component]:
@@ -33,23 +34,21 @@ async def list_components(ctx: Context) -> List[Component]:
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
     r_components = client.storage_client.components.list()
-    return [Component(id=r_comp["id"], name=r_comp["name"]) for r_comp in r_components]
+
+    logger.info(f"Found {len(r_components)} components.")
+    return [Component.model_validate(r_comp) for r_comp in r_components]
 
 
 async def list_component_configs(
-    component_id: str,
+    component_id: Annotated[
+        str, "The ID of the component for which configurations should be listed."
+    ],
     ctx: Context,
 ) -> List[ComponentConfig]:
     """List all configurations for a given component."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
     r_configs = client.storage_client.configurations.list(component_id)
-    return [
-        ComponentConfig(
-            id=r_config["id"],
-            name=r_config["name"],
-            description=r_config["description"],
-            created=r_config["created"],
-        )
-        for r_config in r_configs
-    ]
+
+    logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
+    return [ComponentConfig.model_validate(r_config) for r_config in r_configs]

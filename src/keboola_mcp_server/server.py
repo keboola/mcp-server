@@ -107,7 +107,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             "snowflake-connector-python",
         ],
     )
-
+    # Add component tools to the server inplace.
     add_component_tools(mcp)
 
     @mcp.tool()
