@@ -51,6 +51,8 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(list_components)
     mcp.add_tool(list_component_configs)
     mcp.add_tool(get_component_details)
+    mcp.add_tool(get_component_config_details)
+
     logger.info("Component tools added to the MCP server.")
 
 
@@ -92,3 +94,23 @@ async def get_component_details(
     endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
     r_component = await client.get(endpoint)
     return Component.model_validate(r_component)
+
+
+async def get_component_config_details(
+    component_id: Annotated[
+        str, "Unique identifier of the Keboola component whose configurations you want to list"
+    ],
+    config_id: Annotated[
+        str, "Unique identifier of the Keboola component configuration you want details about"
+    ],
+    ctx: Context,
+) -> ComponentConfig:
+    """
+    Retrieve detailed information about a specific Keboola component configuration
+    given component ID and config ID.
+    """
+    client = ctx.session.state["sapi_client"]
+    assert isinstance(client, KeboolaClient)
+
+    r_config = await client.storage_client.configurations.detail(component_id, config_id)
+    return ComponentConfig.model_validate(r_config)
