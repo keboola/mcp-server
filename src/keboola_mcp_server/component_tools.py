@@ -34,7 +34,7 @@ async def list_components(ctx: Context) -> List[Component]:
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
-    r_components = client.component_client.list_components()
+    r_components = await client.storage_client.components.list()
     logger.info(f"Found {len(r_components)} components.")
     return [Component.model_validate(r_comp) for r_comp in r_components]
 
@@ -49,7 +49,7 @@ async def list_component_configs(
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
-    r_configs = client.component_client.list_component_configs(component_id)
+    r_configs = await client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
     return [ComponentConfig.model_validate(r_config) for r_config in r_configs]
 
@@ -62,5 +62,6 @@ async def get_component_details(
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
-    r_component = client.component_client.get_component_details(component_id)
+    endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
+    r_component = await client.get(endpoint)
     return Component.model_validate(r_component)

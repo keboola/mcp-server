@@ -3,7 +3,7 @@
 import logging
 import os
 import tempfile
-from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
+from typing import Any, Dict, Optional, cast
 
 import httpx
 from kbcstorage.client import Client
@@ -35,7 +35,6 @@ class KeboolaClient:
         }
         # Initialize the official client for operations it handles well
         self.storage_client = Client(self.base_url, self.token)
-        self.component_client = ComponentClient(self.storage_client, self.get, self.post)
 
     async def get(self, endpoint: str) -> Dict[str, Any]:
         """Make a GET request to Keboola Storage API.
@@ -95,42 +94,3 @@ class KeboolaClient:
         except Exception as e:
             logger.error(f"Error downloading table {table_id}: {str(e)}")
             return f"Error downloading table: {str(e)}"
-
-
-class ModuleClient:
-    """Module client."""
-
-    def __init__(
-        self,
-        storage_client: Client,
-        get: Callable[[str], Awaitable[Dict[str, Any]]],
-        post: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
-    ) -> None:
-        self.storage_client = storage_client
-        self.branch_id = self.storage_client._branch_id
-        self.get: Callable[[str], Awaitable[Dict[str, Any]]] = get
-        self.post: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]] = post
-
-
-class ComponentClient(ModuleClient):
-    """Helper class to interact with Keboola Component API."""
-
-    async def list_components(self) -> List[Dict[str, Any]]:
-        """List all components."""
-        return await self.storage_client.components.list()
-
-    async def list_component_configs(self, component_id: str) -> Dict[str, Any]:
-        """List all configurations for a given component."""
-        return await self.storage_client.configurations.list(component_id)
-
-    async def get_component_config_details(
-        self, component_id: str, configuration_id: str
-    ) -> Dict[str, Any]:
-        """Detail a given component configuration."""
-        return await self.storage_client.configurations.detail(component_id, configuration_id)
-
-    async def get_component_details(self, component_id: str) -> Dict[str, Any]:
-        """Detail a given component."""
-        endpoint = "branch/{}/components/{}".format(self.branch_id, component_id)
-        component = await self.get(endpoint)
-        return component
