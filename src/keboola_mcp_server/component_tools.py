@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any, Dict, List, Optional, cast
+from typing import Annotated, Any, Dict, List, Optional, Union, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
@@ -8,6 +8,7 @@ from keboola_mcp_server.client import KeboolaClient
 
 logger = logging.getLogger(__name__)
 
+STR_INT = Union[str, int]
 
 class ComponentListItem(BaseModel):
     """A list item representing a Keboola component."""
@@ -23,14 +24,25 @@ class Component(ComponentListItem):
 
     long_description: Optional[str] = Field(description="The long description of the component")
     categories: List[str] = Field(description="The categories of the component")
-    version: str = Field(description="The version of the component")
+    version: STR_INT = Field(description="The version of the component")
     created: str = Field(description="The creation date of the component")
+    data: Optional[Dict[str, Any]] = Field(description="The data of the component", default=None)
+    flags: Optional[List[str]] = Field(description="The flags of the component", default=None)
+    configuration_schema: Optional[Dict[str, Any]] = Field(
+        description="The configuration schema of the component", alias="configurationSchema", default=None
+    )
+    configuration_description: Optional[str] = Field(
+        description="The configuration description of the component", alias="configurationDescription", default=None
+    )
+    empty_configuration: Optional[Dict[str, Any]] = Field(
+        description="The empty configuration of the component", alias="emptyConfiguration", default=None
+    )
 
 
 class ComponentConfig(BaseModel):
     """A list item representing a Keboola component configuration."""
 
-    id: str = Field(description="The ID of the component configuration")
+    id: STR_INT = Field(description="The ID of the component configuration")
     name: str = Field(description="The name of the component configuration")
     description: Optional[str] = Field(description="The description of the component configuration")
     created: str = Field(description="The creation date of the component configuration")
@@ -40,7 +52,7 @@ class ComponentConfig(BaseModel):
     is_deleted: bool = Field(
         description="Whether the component configuration is deleted", alias="isDeleted"
     )
-    version: int = Field(description="The version of the component configuration")
+    version: STR_INT = Field(description="The version of the component configuration")
     configuration: Dict[str, Any] = Field(
         description="The configuration of the component configuration"
     )
@@ -56,14 +68,14 @@ def add_component_tools(mcp: FastMCP) -> None:
     logger.info("Component tools added to the MCP server.")
 
 
-async def list_components(ctx: Context) -> List[Component]:
+async def list_components(ctx: Context) -> List[ComponentListItem]:
     """Retrieve a list of all available Keboola components in the project."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
     r_components = await client.storage_client.components.list()
     logger.info(f"Found {len(r_components)} components.")
-    return [Component.model_validate(r_comp) for r_comp in r_components]
+    return [ComponentListItem.model_validate(r_comp) for r_comp in r_components]
 
 
 async def list_component_configs(
