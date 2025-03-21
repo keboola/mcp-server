@@ -132,7 +132,7 @@ async def test_get_component_config_details(mock_context):
         "isDisabled": False,
         "isDeleted": False,
         "version": 1,
-        "configuration": {}
+        "configuration": {},
     }
 
     # Setup mock to return test data
@@ -145,4 +145,6 @@ async def test_get_component_config_details(mock_context):
     assert result.name == "My Config"
     assert result.description == "Test configuration"
 
-    mock_client.storage_client.configurations.detail.assert_called_once_with("keboola.ex-aws-s3", "123")
+    mock_client.storage_client.configurations.detail.assert_called_once_with(
+        "keboola.ex-aws-s3", "123"
+    )

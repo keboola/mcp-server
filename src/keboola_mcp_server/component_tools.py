@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 STR_INT = Union[str, int]
 
+
 class ComponentListItem(BaseModel):
     """A list item representing a Keboola component."""
 
@@ -29,13 +30,19 @@ class Component(ComponentListItem):
     data: Optional[Dict[str, Any]] = Field(description="The data of the component", default=None)
     flags: Optional[List[str]] = Field(description="The flags of the component", default=None)
     configuration_schema: Optional[Dict[str, Any]] = Field(
-        description="The configuration schema of the component", alias="configurationSchema", default=None
+        description="The configuration schema of the component",
+        alias="configurationSchema",
+        default=None,
     )
     configuration_description: Optional[str] = Field(
-        description="The configuration description of the component", alias="configurationDescription", default=None
+        description="The configuration description of the component",
+        alias="configurationDescription",
+        default=None,
     )
     empty_configuration: Optional[Dict[str, Any]] = Field(
-        description="The empty configuration of the component", alias="emptyConfiguration", default=None
+        description="The empty configuration of the component",
+        alias="emptyConfiguration",
+        default=None,
     )
 
 
