@@ -149,10 +149,8 @@ async def test_query_table_data_tool(test_config: Config) -> None:
 @pytest.mark.asyncio
 async def test_list_all_buckets(test_config: Config, mock_buckets: List[Dict[str, Any]]) -> None:
     """Test the list_all_buckets tool."""
-    # Create server first
     server = create_server(test_config)
 
-    # Mock the storage client
     original_list_buckets = server.__dict__.get("list_all_buckets")
 
     async def mock_list_all_buckets(ctx):
@@ -161,14 +159,11 @@ async def test_list_all_buckets(test_config: Config, mock_buckets: List[Dict[str
     server.__dict__["list_all_buckets"] = mock_list_all_buckets
 
     try:
-        # Call the tool
         result = await server.list_all_buckets(None)
 
-        # Assert the result is a list of BucketInfo
         assert isinstance(result, list)
         assert all(isinstance(bucket, BucketInfo) for bucket in result)
 
-        # Check the content of the first bucket
         assert result[0].id == "bucket1"
         assert result[0].name == "Test Bucket 1"
         assert result[0].description == "A test bucket"
