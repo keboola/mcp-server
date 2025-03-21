@@ -25,12 +25,13 @@ def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     mcp.add_tool(list_components)
     mcp.add_tool(list_component_configs)
+    mcp.add_tool(get_component_details)
 
     logger.info("Component tools added to the MCP server.")
 
 
 async def list_components(ctx: Context) -> List[Component]:
-    """List all available components."""
+    """Retrieve a list of all available Keboola components in the project."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
@@ -41,11 +42,11 @@ async def list_components(ctx: Context) -> List[Component]:
 
 async def list_component_configs(
     component_id: Annotated[
-        str, "The ID of the component for which configurations should be listed."
+        str, "Unique identifier of the Keboola component whose configurations you want to list"
     ],
     ctx: Context,
 ) -> List[ComponentConfig]:
-    """List all configurations for a given component."""
+    """Retrieve all configurations that exist for a specific Keboola component."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
@@ -55,10 +56,10 @@ async def list_component_configs(
 
 
 async def get_component_details(
-    component_id: Annotated[str, "The ID of the component for which details should be retrieved."],
+    component_id: Annotated[str, "Unique identifier of the Keboola component you want details about"],
     ctx: Context,
 ) -> Component:
-    """Detail a given component."""
+    """Retrieve detailed information about a specific Keboola component."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
