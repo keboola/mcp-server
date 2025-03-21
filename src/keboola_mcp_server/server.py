@@ -3,7 +3,7 @@
 import csv
 import logging
 from io import StringIO
-from typing import Any, Dict, List, Optional, TypedDict, cast
+from typing import Any, cast, Dict, List, Optional, TypedDict
 
 import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
@@ -15,7 +15,6 @@ from keboola_mcp_server.mcp import (
     SessionState,
     SessionStateFactory,
 )
-
 from .client import KeboolaClient
 from .config import Config
 from .database import ConnectionManager, DatabasePathManager

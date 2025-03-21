@@ -5,7 +5,7 @@ from typing import List, Optional
 import pytest
 
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.server import create_server, TableColumnInfo, TableDetail
+from keboola_mcp_server.server import TableColumnInfo, TableDetail, create_server
 
 
 @pytest.fixture

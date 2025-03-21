@@ -115,19 +115,19 @@ class ModuleClient:
 class ComponentClient(ModuleClient):
     """Helper class to interact with Keboola Component API."""
 
-    async def list_components(self) -> Any:
+    async def list_components(self) -> List[Dict[str, Any]]:
         """List all components."""
         return await self.storage_client.components.list()
 
-    async def list_component_configs(self, component_id: str) -> Any:
+    async def list_component_configs(self, component_id: str) -> Dict[str, Any]:
         """List all configurations for a given component."""
         return await self.storage_client.configurations.list(component_id)
 
-    async def get_component_config_details(self, component_id: str, configuration_id: str) -> Any:
+    async def get_component_config_details(self, component_id: str, configuration_id: str) -> Dict[str, Any]:
         """Detail a given component configuration."""
         return await self.storage_client.configurations.detail(component_id, configuration_id)
 
-    async def get_component_details(self, component_id: str) -> Any:
+    async def get_component_details(self, component_id: str) -> Dict[str, Any]:
         """Detail a given component."""
         endpoint = "branch/{}/components/{}".format(self.branch_id, component_id)
         component = await self.get(endpoint)
