@@ -9,6 +9,7 @@ import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
 
 from keboola_mcp_server.component_tools import add_component_tools
+from keboola_mcp_server.jobs_tools import add_jobs_tools
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
@@ -110,6 +111,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     )
     # Add component tools to the server inplace.
     add_component_tools(mcp)
+    # Add jobs tools to the server inplace.
+    add_jobs_tools(mcp)
 
     @mcp.tool()
     async def query_table(sql_query: str, ctx: Context) -> str:
