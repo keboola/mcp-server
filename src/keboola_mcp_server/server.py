@@ -3,11 +3,11 @@
 import csv
 import logging
 from io import StringIO
-from typing import Any, cast, Dict, List, Optional, TypedDict
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional, TypedDict, cast
 
 import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import BaseModel, Field
 
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
@@ -15,6 +15,7 @@ from keboola_mcp_server.mcp import (
     SessionState,
     SessionStateFactory,
 )
+
 from .client import KeboolaClient
 from .config import Config
 from .database import ConnectionManager, DatabasePathManager
@@ -26,11 +27,12 @@ class BucketInfo(BaseModel):
     id: str = Field(..., description="Unique identifier for the bucket")
     name: str = Field(..., description="Name of the bucket")
     description: Optional[str] = Field(None, description="Description of the bucket")
-    stage: Optional[str] = Field(None, description="Stage of the bucket (e.g., production, development)")
+    stage: Optional[str] = Field(
+        None, description="Stage of the bucket (e.g., production, development)"
+    )
     created: Optional[str] = Field(None, description="Creation timestamp of the bucket")
     tables_count: int = Field(..., description="Number of tables in the bucket")
     data_size_bytes: int = Field(..., description="Total data size of the bucket in bytes")
-
 
 
 class TableColumnInfo(TypedDict):
