@@ -123,7 +123,9 @@ class ComponentClient(ModuleClient):
         """List all configurations for a given component."""
         return await self.storage_client.configurations.list(component_id)
 
-    async def get_component_config_details(self, component_id: str, configuration_id: str) -> Dict[str, Any]:
+    async def get_component_config_details(
+        self, component_id: str, configuration_id: str
+    ) -> Dict[str, Any]:
         """Detail a given component configuration."""
         return await self.storage_client.configurations.detail(component_id, configuration_id)
 
