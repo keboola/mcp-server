@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.server import create_server, TableColumnInfo, TableDetail, BucketInfo
+from keboola_mcp_server.server import BucketInfo, TableColumnInfo, TableDetail, create_server
 
 
 @pytest.fixture
@@ -42,6 +42,7 @@ def mock_table_detail() -> TableDetail:
         "db_identifier": '"KEBOOLA_test"."in.c-test"."test-table"',
     }
 
+
 @pytest.fixture
 def mock_buckets() -> List[Dict[str, Any]]:
     """Fixture for mock bucket data."""
@@ -63,6 +64,7 @@ def mock_buckets() -> List[Dict[str, Any]]:
             "data_size_bytes": 2048,
         },
     ]
+
 
 @pytest.mark.asyncio
 async def test_query_table_data_tool(test_config: Config) -> None:
@@ -145,6 +147,7 @@ async def test_query_table_data_tool(test_config: Config) -> None:
             server.__dict__["query_table"] = original_query_table
         if original_query_table_data:
             server.__dict__["query_table_data"] = original_query_table_data
+
 
 @pytest.mark.asyncio
 async def test_list_all_buckets(test_config: Config, mock_buckets: List[Dict[str, Any]]) -> None:
