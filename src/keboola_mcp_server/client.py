@@ -8,8 +8,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 import httpx
 from kbcstorage.client import Client
 
-from keboola_mcp_server.component_tools import ComponentClient
-
 logger = logging.getLogger(__name__)
 
 
