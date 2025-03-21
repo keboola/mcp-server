@@ -4,6 +4,7 @@ import csv
 import logging
 from io import StringIO
 from typing import Any, cast, Dict, List, Optional, TypedDict
+from pydantic import BaseModel, Field
 
 import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
@@ -21,14 +22,15 @@ from .database import ConnectionManager, DatabasePathManager
 logger = logging.getLogger(__name__)
 
 
-class BucketInfo(TypedDict):
-    id: str
-    name: str
-    description: str
-    stage: str
-    created: str
-    tablesCount: int
-    dataSizeBytes: int
+class BucketInfo(BaseModel):
+    id: str = Field(..., description="Unique identifier for the bucket")
+    name: str = Field(..., description="Name of the bucket")
+    description: Optional[str] = Field(None, description="Description of the bucket")
+    stage: Optional[str] = Field(None, description="Stage of the bucket (e.g., production, development)")
+    created: Optional[str] = Field(None, description="Creation timestamp of the bucket")
+    tables_count: int = Field(..., description="Number of tables in the bucket")
+    data_size_bytes: int = Field(..., description="Total data size of the bucket in bytes")
+
 
 
 class TableColumnInfo(TypedDict):
@@ -154,27 +156,14 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
     # Tools
     @mcp.tool()
-    async def list_all_buckets(ctx: Context) -> str:
+    async def list_all_buckets(ctx: Context) -> List[BucketInfo]:
         """List all buckets in the project with their basic information."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
-        buckets = cast(List[BucketInfo], client.storage_client.buckets.list())
+        buckets = client.storage_client.buckets.list()
+        bucket_info_list = [BucketInfo(**bucket) for bucket in buckets]
 
-        header = "# Bucket List\n\n"
-        header += f"Total Buckets: {len(buckets)}\n\n"
-        header += "## Details"
-
-        bucket_details = []
-        for bucket in buckets:
-            detail = f"### {bucket['name']} ({bucket['id']})"
-            detail += f"\n    - Stage: {bucket.get('stage', 'N/A')}"
-            detail += f"\n    - Description: {bucket.get('description', 'N/A')}"
-            detail += f"\n    - Created: {bucket.get('created', 'N/A')}"
-            detail += f"\n    - Tables: {bucket.get('tablesCount', 0)}"
-            detail += f"\n    - Size: {bucket.get('dataSizeBytes', 0)} bytes"
-            bucket_details.append(detail)
-
-        return header + "\n" + "\n".join(bucket_details)
+        return bucket_info_list
 
     @mcp.tool()
     async def get_bucket_metadata(bucket_id: str, ctx: Context) -> str:
