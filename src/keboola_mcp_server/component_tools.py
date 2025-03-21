@@ -60,9 +60,7 @@ class ComponentConfig(BaseModel):
         description="Whether the component configuration is deleted", alias="isDeleted"
     )
     version: STR_INT = Field(description="The version of the component configuration")
-    configuration: Dict[str, Any] = Field(
-        description="The configuration of the component configuration"
-    )
+    configuration: Dict[str, Any] = Field(description="The configuration of the component")
 
 
 def add_component_tools(mcp: FastMCP) -> None:
