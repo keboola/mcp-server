@@ -12,8 +12,6 @@ A Model Context Protocol (MCP) server for interacting with Keboola Connection. T
 - Keboola Storage API token
 - Snowflake Read Only Workspace
 
-> Note: The Snowflake package doesn't work with the latest version of Python. If you're using Python 3.12 and above, you'll need to downgrade to Python 3.11.
-
 ## Installation
 
 ### Installing via Smithery
