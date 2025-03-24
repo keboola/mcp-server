@@ -34,6 +34,17 @@ class BucketInfo(BaseModel):
     tables_count: Optional[int] = Field(..., description="Number of tables in the bucket")
     data_size_bytes: Optional[int] = Field(..., description="Total data size of the bucket in bytes")
 
+class BucketInfo(BaseModel):
+    id: str = Field(..., description="Unique identifier for the bucket")
+    name: str = Field(..., description="Name of the bucket")
+    description: Optional[str] = Field(None, description="Description of the bucket")
+    stage: Optional[str] = Field(
+        None, description="Stage of the bucket (e.g., production, development)"
+    )
+    created: Optional[str] = Field(None, description="Creation timestamp of the bucket")
+    tables_count: Optional[int] = Field(None, description="Number of tables in the bucket")
+    data_size_bytes: Optional[int] = Field(None, description="Total data size of the bucket in bytes")
+
 
 # class TableColumnInfo(TypedDict):
 #     name: str
@@ -178,7 +189,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
         raw_bucket_data = client.storage_client.buckets.list()
-
+        print(raw_bucket_data)
+        logger.info(raw_bucket_data)
         return [BucketInfo(**raw_bucket) for raw_bucket in raw_bucket_data]
 
     @mcp.tool()
