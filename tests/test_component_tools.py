@@ -37,7 +37,7 @@ async def test_list_components(mock_context):
             "description": "Extract data from Google Drive",
         },
     ]
-    mock_client.storage_client.components.list = AsyncMock(return_value=mock_components)
+    mock_client.storage_client.components.list = MagicMock(return_value=mock_components)
 
     result = await list_components(context)
 
@@ -70,7 +70,7 @@ async def test_list_component_configs(mock_context):
             "configuration": {},
         }
     ]
-    mock_client.storage_client.configurations.list = AsyncMock(return_value=mock_configs)
+    mock_client.storage_client.configurations.list = MagicMock(return_value=mock_configs)
 
     result = await list_component_configs("keboola.ex-aws-s3", context)
 
