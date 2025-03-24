@@ -37,7 +37,7 @@ class JobDetail(JobListItem):
     run_id: Optional[STR_INT] = Field(
         description="The ID of the run that the job is running on.", alias="runId"
     )
-    results: Optional[str] = Field(description="The results of the job.")
+    results: Optional[Dict[str, Any]] = Field(description="The results of the job.")
     metrics: Optional[Dict[str, Any]] = Field(description="The metrics of the job.")
 
 
