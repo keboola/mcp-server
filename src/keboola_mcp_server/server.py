@@ -31,26 +31,41 @@ class BucketInfo(BaseModel):
         None, description="Stage of the bucket (e.g., production, development)"
     )
     created: Optional[str] = Field(None, description="Creation timestamp of the bucket")
-    tables_count: int = Field(..., description="Number of tables in the bucket")
-    data_size_bytes: int = Field(..., description="Total data size of the bucket in bytes")
+    tables_count: Optional[int] = Field(..., description="Number of tables in the bucket")
+    data_size_bytes: Optional[int] = Field(..., description="Total data size of the bucket in bytes")
 
 
-class TableColumnInfo(TypedDict):
-    name: str
-    db_identifier: str
+# class TableColumnInfo(TypedDict):
+#     name: str
+#     db_identifier: str
 
+class TableColumnInfo(BaseModel):
+    name: str = Field(..., description="Name of the column")
+    db_identifier: str = Field(..., description="Database identifier for the column")
 
-class TableDetail(TypedDict):
-    id: str
-    name: str
-    primary_key: List[str]
-    created: str
-    row_count: int
-    data_size_bytes: int
-    columns: List[str]
-    column_identifiers: List[TableColumnInfo]
-    db_identifier: str
+# class TableDetail(TypedDict):
+#     id: str
+#     name: str
+#     primary_key: List[str]
+#     created: str
+#     row_count: int
+#     data_size_bytes: int
+#     columns: List[str]
+#     column_identifiers: List[TableColumnInfo]
+#     db_identifier: str
 
+class TableDetail(BaseModel):
+    id: str = Field(..., description="Unique identifier for the table")
+    name: str = Field(..., description="Name of the table")
+    primary_key: Optional[List[str]] = Field(default_factory=list, description="List of primary key columns")
+    created: Optional[str] = Field(..., description="Creation timestamp of the table")
+    row_count: Optional[int] = Field(..., description="Number of rows in the table")
+    data_size_bytes: Optional[int] = Field(..., description="Total data size of the table in bytes")
+    columns: Optional[List[str]] = Field(default_factory=list, description="List of column names")
+    column_identifiers: Optional[List[TableColumnInfo]] = Field(
+        default_factory=list, description="List of column information including database identifiers"
+    )
+    db_identifier: Optional[str] = Field(..., description="Full database identifier for the table")
 
 def _create_session_state_factory(config: Optional[Config] = None) -> SessionStateFactory:
     def _(params: SessionParams) -> SessionState:
@@ -163,6 +178,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
         raw_bucket_data = client.storage_client.buckets.list()
+
         return [BucketInfo(**raw_bucket) for raw_bucket in raw_bucket_data]
 
     @mcp.tool()
@@ -170,36 +186,28 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         """Get detailed information about a specific bucket."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
-        raw_bucket = client.storage_client.buckets.detail(bucket_id)
+        raw_bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
 
         return BucketInfo(**raw_bucket)
 
     @mcp.tool()
-    async def get_table_metadata(table_id: str, ctx: Context) -> str:
+    async def get_table_metadata(table_id: str, ctx: Context) -> TableDetail:
         """Get detailed information about a specific table including its DB identifier and column information."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
-        table = cast(Dict[str, Any], client.storage_client.tables.detail(table_id))
+        raw_table = cast(Dict[str, Any], client.storage_client.tables.detail(table_id))
 
         # Get column info
-        columns = table.get("columns", [])
+        columns = raw_table.get("columns", [])
         column_info = [TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in columns]
 
         db_path_manager = ctx.session.state["db_path_manager"]
         assert isinstance(db_path_manager, DatabasePathManager)
 
-        return (
-            f"Table Information:\n"
-            f"ID: {table['id']}\n"
-            f"Name: {table['name']}\n"
-            f"Primary Key: {', '.join(table['primaryKey']) if table['primaryKey'] else 'None'}\n"
-            f"Created: {table['created']}\n"
-            f"Row Count: {table['rowsCount']}\n"
-            f"Data Size: {table['dataSizeBytes']} bytes\n"
-            f"Columns: {', '.join(str(ci) for ci in column_info)}\n"
-            f"Database Identifier: {db_path_manager.get_table_db_path(table)}\n"
-            f"Schema: {table['id'].split('.')[0]}\n"
-            f"Table: {table['id'].split('.')[1]}"
+        return TableDetail(
+            **raw_table,
+            column_identifiers=column_info,
+            db_identifier=db_path_manager.get_table_db_path(raw_table)
         )
 
     @mcp.tool()
@@ -226,19 +234,11 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         )
 
     @mcp.tool()
-    async def list_bucket_tables(bucket_id: str, ctx: Context) -> str:
+    async def list_bucket_tables(bucket_id: str, ctx: Context) -> list[TableDetail]:
         """List all tables in a specific bucket with their basic information."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
-        tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
-        return "\n".join(
-            f"Table: {table['id']}\n"
-            f"Name: {table.get('name', 'N/A')}\n"
-            f"Rows: {table.get('rowsCount', 'N/A')}\n"
-            f"Size: {table.get('dataSizeBytes', 'N/A')} bytes\n"
-            f"Columns: {', '.join(table.get('columns', []))}\n"
-            f"---"
-            for table in tables
-        )
+        raw_tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
+        return [TableDetail(**raw_table) for raw_table in raw_tables]
 
     return mcp
