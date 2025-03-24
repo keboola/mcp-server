@@ -28,20 +28,9 @@ class BucketInfo(BaseModel):
     name: str = Field(..., description="Name of the bucket")
     description: Optional[str] = Field(None, description="Description of the bucket")
     stage: Optional[str] = Field(
-        None, description="Stage of the bucket (e.g., production, development)"
+        None, description="Stage of the bucket ('in' for input stage, 'out' for output stage)"
     )
-    created: Optional[str] = Field(None, description="Creation timestamp of the bucket")
-    tables_count: Optional[int] = Field(..., description="Number of tables in the bucket")
-    data_size_bytes: Optional[int] = Field(..., description="Total data size of the bucket in bytes")
-
-class BucketInfo(BaseModel):
-    id: str = Field(..., description="Unique identifier for the bucket")
-    name: str = Field(..., description="Name of the bucket")
-    description: Optional[str] = Field(None, description="Description of the bucket")
-    stage: Optional[str] = Field(
-        None, description="Stage of the bucket (e.g., production, development)"
-    )
-    created: Optional[str] = Field(None, description="Creation timestamp of the bucket")
+    created: str = Field(..., description="Creation timestamp of the bucket")
     tables_count: Optional[int] = Field(None, description="Number of tables in the bucket")
     data_size_bytes: Optional[int] = Field(None, description="Total data size of the bucket in bytes")
 
