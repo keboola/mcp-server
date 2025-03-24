@@ -69,7 +69,7 @@ async def test_get_job_details(mock_context):
         "operationName": "tableImport",
         "operationParams": {"source": "file.csv"},
         "runId": "456",
-        "results": "Import successful",
+        "results": {"import": "successful"},
         "metrics": {"rows": 1000},
         "additional_field": "some value",  # This will go to additional_details
     }
@@ -87,7 +87,7 @@ async def test_get_job_details(mock_context):
     assert result.operation_name == "tableImport"
     assert result.operation_params == {"source": "file.csv"}
     assert result.run_id == "456"
-    assert result.results == "Import successful"
+    assert result.results == {"import": "successful"}
     assert result.metrics == {"rows": 1000}
 
     mock_client.storage_client.jobs.detail.assert_called_once_with("123")
