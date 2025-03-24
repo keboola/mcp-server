@@ -123,7 +123,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 1. Create or edit the Cursor AI configuration file:
    - Location: `~/.cursor/mcp.json`
 
-2. Add one of the following configurations (or both) based on your preferred transport method:
+2. Add one of the following configurations (or all) based on your preferred transport method:
 
 ### Option 1: Using Server-Sent Events (SSE)
 
@@ -137,7 +137,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 }
 ```
 
-### Option 2: Using Standard I/O (stdio)
+### Option 2a: Using Standard I/O (stdio)
 
 ```json
 {
@@ -164,7 +164,8 @@ To use this server with Cursor AI, you have two options for configuring the tran
 }
 ```
 
-### Option 3: Using WSL Standard I/O (wsl stdio)
+### Option 2b: Using WSL Standard I/O (wsl stdio)
+When running the MCP server from Windows Subsystem for Linux, use this.
 
 ```json
 {
@@ -181,22 +182,18 @@ To use this server with Cursor AI, you have two options for configuring the tran
 }
 ```
 
-- where `run_mcp.sh` follows:
+- where `run_mcp.sh` includes:
 ```shell
 #!/bin/bash
-
-PATH_TO_THE_ENV_VARS=~/wsl/path/to/the/file/.env
-PATH_TO_VENV=~/wsl/path/to/the/virtual/environment
-
-source $PATH_TO_THE_ENV_VARS
-$PATH_TO_VENV/bin/python3 -m keboola_mcp_server.cli --log-level DEBUG --api-url https://connection.keboola.com
+source /wsl/path/to/the/file/.env
+/wsl/path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --log-level DEBUG --api-url https://connection.keboola.com
 ```
 
 - and where `.env` file contains following lines
 
 ```shell
 export KBC_STORAGE_TOKEN="your-keboola-storage-token"
-export PYTHONPATH="/path/to/your/project/src"
+export PYTHONPATH="/wsl/path/to/your/project/src"
 export KBC_SNOWFLAKE_ACCOUNT="your-snowflake-account"
 export KBC_SNOWFLAKE_USER="your-snowflake-user"
 export KBC_SNOWFLAKE_PASSWORD="your-snowflake-password"
