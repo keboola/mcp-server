@@ -32,16 +32,20 @@ class BucketInfo(BaseModel):
     )
     created: str = Field(..., description="Creation timestamp of the bucket")
     tables_count: Optional[int] = Field(None, description="Number of tables in the bucket")
-    data_size_bytes: Optional[int] = Field(None, description="Total data size of the bucket in bytes")
+    data_size_bytes: Optional[int] = Field(
+        None, description="Total data size of the bucket in bytes"
+    )
 
 
 # class TableColumnInfo(TypedDict):
 #     name: str
 #     db_identifier: str
 
+
 class TableColumnInfo(BaseModel):
     name: str = Field(..., description="Name of the column")
     db_identifier: str = Field(..., description="Database identifier for the column")
+
 
 # class TableDetail(TypedDict):
 #     id: str
@@ -54,18 +58,23 @@ class TableColumnInfo(BaseModel):
 #     column_identifiers: List[TableColumnInfo]
 #     db_identifier: str
 
+
 class TableDetail(BaseModel):
     id: str = Field(..., description="Unique identifier for the table")
     name: str = Field(..., description="Name of the table")
-    primary_key: Optional[List[str]] = Field(default_factory=list, description="List of primary key columns")
+    primary_key: Optional[List[str]] = Field(
+        default_factory=list, description="List of primary key columns"
+    )
     created: Optional[str] = Field(..., description="Creation timestamp of the table")
     row_count: Optional[int] = Field(..., description="Number of rows in the table")
     data_size_bytes: Optional[int] = Field(..., description="Total data size of the table in bytes")
     columns: Optional[List[str]] = Field(default_factory=list, description="List of column names")
     column_identifiers: Optional[List[TableColumnInfo]] = Field(
-        default_factory=list, description="List of column information including database identifiers"
+        default_factory=list,
+        description="List of column information including database identifiers",
     )
     db_identifier: Optional[str] = Field(..., description="Full database identifier for the table")
+
 
 def _create_session_state_factory(config: Optional[Config] = None) -> SessionStateFactory:
     def _(params: SessionParams) -> SessionState:
@@ -208,7 +217,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         return TableDetail(
             **raw_table,
             column_identifiers=column_info,
-            db_identifier=db_path_manager.get_table_db_path(raw_table)
+            db_identifier=db_path_manager.get_table_db_path(raw_table),
         )
 
     @mcp.tool()
@@ -239,7 +248,9 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         """List all tables in a specific bucket with their basic information."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
-        raw_tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
+        raw_tables = cast(
+            List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id)
+        )
         return [TableDetail(**raw_table) for raw_table in raw_tables]
 
     return mcp
