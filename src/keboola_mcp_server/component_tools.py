@@ -129,5 +129,5 @@ async def get_component_config_details(
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
-    r_config = await client.storage_client.configurations.detail(component_id, config_id)
+    r_config = client.storage_client.configurations.detail(component_id, config_id)
     return ComponentConfig.model_validate(r_config)

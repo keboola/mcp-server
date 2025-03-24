@@ -136,7 +136,7 @@ async def test_get_component_config_details(mock_context):
     }
 
     # Setup mock to return test data
-    mock_client.storage_client.configurations.detail = AsyncMock(return_value=mock_config)
+    mock_client.storage_client.configurations.detail = MagicMock(return_value=mock_config)
 
     result = await get_component_config_details("keboola.ex-aws-s3", "123", context)
 
