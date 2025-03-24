@@ -165,18 +165,18 @@ To use this server with Cursor AI, you have two options for configuring the tran
 ```
 
 ### Option 2b: Using WSL Standard I/O (wsl stdio)
-When running the MCP server from Windows Subsystem for Linux, use this.
+When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this.
 
 ```json
 {
   "mcpServers": {
     "keboola_wsl": {
-        "command": "wsl.exe",
-        "args": [
-            "bash",
-            "-c",
-            "'source ~/wsl/path/to/the/script/run_mcp.sh'"
-        ],
+      "command": "wsl.exe",
+      "args": [
+        "bash",
+        "-c",
+        "'source /wsl/path/to/the/script/run_mcp.sh'"
+      ],
     }
   }
 }
@@ -190,7 +190,6 @@ source /wsl/path/to/the/file/.env
 ```
 
 - and where `.env` file contains following lines
-
 ```shell
 export KBC_STORAGE_TOKEN="your-keboola-storage-token"
 export PYTHONPATH="/wsl/path/to/your/project/src"
