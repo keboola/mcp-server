@@ -182,7 +182,7 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 }
 ```
 
-- where `run_mcp.sh` includes:
+- where `run_mcp.sh` includes: (don't forget to add permissions with cmd: `chmod +x /wsl/path/to/the/run_mcp.sh`)
 ```shell
 #!/bin/bash
 source /wsl/path/to/the/file/.env
