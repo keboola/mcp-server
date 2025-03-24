@@ -25,7 +25,7 @@ async def test_list_components(mock_context):
         {"id": "keboola.ex-aws-s3", "name": "AWS S3 Extractor"},
         {"id": "keboola.ex-google-drive", "name": "Google Drive Extractor"},
     ]
-    mock_client.storage_client.components.list = AsyncMock(return_value=mock_components)
+    mock_client.storage_client.components.list = MagicMock(return_value=mock_components)
 
     result = await list_components(context)
 
@@ -52,7 +52,7 @@ async def test_list_component_configs(mock_context):
             "created": "2024-01-01T00:00:00Z",
         }
     ]
-    mock_client.storage_client.configurations.list = AsyncMock(return_value=mock_configs)
+    mock_client.storage_client.configurations.list = MagicMock(return_value=mock_configs)
 
     result = await list_component_configs("keboola.ex-aws-s3", context)
 
