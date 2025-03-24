@@ -164,6 +164,48 @@ To use this server with Cursor AI, you have two options for configuring the tran
 }
 ```
 
+### Option 3: Using WSL Standard I/O (wsl stdio)
+
+```json
+{
+  "mcpServers": {
+    "keboola_wsl": {
+        "command": "wsl.exe",
+        "args": [
+            "bash",
+            "-c",
+            "'source ~/wsl/path/to/the/script/run_mcp.sh'"
+        ],
+    }
+  }
+}
+```
+
+- where `run_mcp.sh` follows:
+```shell
+#!/bin/bash
+
+PATH_TO_THE_ENV_VARS=~/wsl/path/to/the/file/.env
+PATH_TO_VENV=~/wsl/path/to/the/virtual/environment
+
+source $PATH_TO_THE_ENV_VARS
+$PATH_TO_VENV/bin/python3 -m keboola_mcp_server.cli --log-level DEBUG --api-url https://connection.keboola.com
+```
+
+- and where `.env` file contains following lines
+
+```shell
+export KBC_STORAGE_TOKEN="your-keboola-storage-token"
+export PYTHONPATH="/path/to/your/project/src"
+export KBC_SNOWFLAKE_ACCOUNT="your-snowflake-account"
+export KBC_SNOWFLAKE_USER="your-snowflake-user"
+export KBC_SNOWFLAKE_PASSWORD="your-snowflake-password"
+export KBC_SNOWFLAKE_WAREHOUSE="your-snowflake-warehouse"
+export KBC_SNOWFLAKE_DATABASE="your-snowflake-database"
+export KBC_SNOWFLAKE_SCHEMA="your-snowflake-schema"
+export KBC_SNOWFLAKE_ROLE="your-snowflake-role"
+```
+
 Replace all placeholder values (YOUR_*) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
 
 After updating the configuration:
