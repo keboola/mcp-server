@@ -171,7 +171,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
         raw_bucket = client.storage_client.buckets.detail(bucket_id)
-        
+
         return BucketInfo(**raw_bucket)
 
     @mcp.tool()

@@ -180,6 +180,7 @@ async def test_list_all_buckets(test_config: Config, mock_buckets: List[Dict[str
         if original_list_buckets:
             server.__dict__["list_all_buckets"] = original_list_buckets
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bucket_id", ["bucket1", "bucket2"])
 async def test_get_bucket_metadata(
