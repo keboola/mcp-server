@@ -179,3 +179,40 @@ async def test_list_all_buckets(test_config: Config, mock_buckets: List[Dict[str
         # Restore original function if it existed
         if original_list_buckets:
             server.__dict__["list_all_buckets"] = original_list_buckets
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bucket_id", ["bucket1", "bucket2"])
+async def test_get_bucket_metadata(
+    test_config: Config, mock_buckets: List[Dict[str, Any]], bucket_id: str
+) -> None:
+    """Test the get_bucket_metadata tool."""
+    server = create_server(test_config)
+    original_get_bucket_metadata = server.__dict__.get("get_bucket_metadata")
+
+    async def mock_get_bucket_metadata(bid: str, ctx):
+        bucket = next((b for b in mock_buckets if b["id"] == bid), None)
+        if not bucket:
+            raise ValueError(f"Bucket {bid} not found")
+        return BucketInfo(**bucket)
+
+    server.__dict__["get_bucket_metadata"] = mock_get_bucket_metadata
+
+    try:
+        # Get the expected data from our mock fixture
+        expected_bucket = next(b for b in mock_buckets if b["id"] == bucket_id)
+        result = await server.get_bucket_metadata(bucket_id, None)
+
+        # Verify the result is a BucketInfo instance
+        assert isinstance(result, BucketInfo)
+
+        # Check all fields match our mock data
+        for field, value in expected_bucket.items():
+            assert getattr(result, field) == value
+
+        # Test getting a non-existent bucket
+        with pytest.raises(ValueError, match="Bucket nonexistent-bucket not found"):
+            await server.get_bucket_metadata("nonexistent-bucket", None)
+
+    finally:
+        if original_get_bucket_metadata:
+            server.__dict__["get_bucket_metadata"] = original_get_bucket_metadata

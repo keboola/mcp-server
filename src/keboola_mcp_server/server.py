@@ -158,30 +158,21 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
     # Tools
     @mcp.tool()
-    async def list_all_buckets(ctx: Context) -> List[BucketInfo]:
-        """List all buckets in the project with their basic information."""
+    async def list_bucket_info(ctx: Context) -> List[BucketInfo]:
+        """List information about all buckets in the project."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
-        buckets = client.storage_client.buckets.list()
-        bucket_info_list = [BucketInfo(**bucket) for bucket in buckets]
-
-        return bucket_info_list
+        raw_bucket_data = client.storage_client.buckets.list()
+        return [BucketInfo(**raw_bucket) for raw_bucket in raw_bucket_data]
 
     @mcp.tool()
-    async def get_bucket_metadata(bucket_id: str, ctx: Context) -> str:
+    async def get_bucket_metadata(bucket_id: str, ctx: Context) -> BucketInfo:
         """Get detailed information about a specific bucket."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
-        bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
-        return (
-            f"Bucket Information:\n"
-            f"ID: {bucket['id']}\n"
-            f"Name: {bucket['name']}\n"
-            f"Description: {bucket.get('description', 'No description')}\n"
-            f"Created: {bucket['created']}\n"
-            f"Tables Count: {bucket.get('tablesCount', 0)}\n"
-            f"Data Size Bytes: {bucket.get('dataSizeBytes', 0)}"
-        )
+        raw_bucket = client.storage_client.buckets.detail(bucket_id)
+        
+        return BucketInfo(**raw_bucket)
 
     @mcp.tool()
     async def get_table_metadata(table_id: str, ctx: Context) -> str:
