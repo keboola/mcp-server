@@ -199,18 +199,14 @@ async def test_get_bucket_metadata(
     server.__dict__["get_bucket_metadata"] = mock_get_bucket_metadata
 
     try:
-        # Get the expected data from our mock fixture
         expected_bucket = next(b for b in mock_buckets if b["id"] == bucket_id)
         result = await server.get_bucket_metadata(bucket_id, None)
 
-        # Verify the result is a BucketInfo instance
         assert isinstance(result, BucketInfo)
 
-        # Check all fields match our mock data
         for field, value in expected_bucket.items():
             assert getattr(result, field) == value
 
-        # Test getting a non-existent bucket
         with pytest.raises(ValueError, match="Bucket nonexistent-bucket not found"):
             await server.get_bucket_metadata("nonexistent-bucket", None)
 
