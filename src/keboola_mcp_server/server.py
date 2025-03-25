@@ -37,26 +37,9 @@ class BucketInfo(BaseModel):
     )
 
 
-# class TableColumnInfo(TypedDict):
-#     name: str
-#     db_identifier: str
-
-
 class TableColumnInfo(BaseModel):
     name: str = Field(..., description="Name of the column")
     db_identifier: str = Field(..., description="Database identifier for the column")
-
-
-# class TableDetail(TypedDict):
-#     id: str
-#     name: str
-#     primary_key: List[str]
-#     created: str
-#     row_count: int
-#     data_size_bytes: int
-#     columns: List[str]
-#     column_identifiers: List[TableColumnInfo]
-#     db_identifier: str
 
 
 class TableDetail(BaseModel):
