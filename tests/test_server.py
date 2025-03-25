@@ -60,6 +60,7 @@ def mock_buckets() -> List[Dict[str, Any]]:
             "id": "bucket2",
             "name": "Test Bucket 2",
             "description": "Another test bucket",
+            "created": "2025-01-01T00:00:00Z",
             "tables_count": 3,
             "data_size_bytes": 2048,
         },
