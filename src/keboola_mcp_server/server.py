@@ -24,13 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 class BucketInfo(BaseModel):
-    id: str = Field(..., description="Unique identifier for the bucket")
-    name: str = Field(..., description="Name of the bucket")
+    id: str = Field(description="Unique identifier for the bucket")
+    name: str = Field(description="Name of the bucket")
     description: Optional[str] = Field(None, description="Description of the bucket")
     stage: Optional[str] = Field(
         None, description="Stage of the bucket ('in' for input stage, 'out' for output stage)"
     )
-    created: str = Field(..., description="Creation timestamp of the bucket")
+    created: str = Field(description="Creation timestamp of the bucket")
     tables_count: Optional[int] = Field(None, description="Number of tables in the bucket")
     data_size_bytes: Optional[int] = Field(
         None, description="Total data size of the bucket in bytes"
@@ -38,13 +38,13 @@ class BucketInfo(BaseModel):
 
 
 class TableColumnInfo(BaseModel):
-    name: str = Field(..., description="Name of the column")
-    db_identifier: str = Field(..., description="Database identifier for the column")
+    name: str = Field(description="Name of the column")
+    db_identifier: str = Field(description="Database identifier for the column")
 
 
 class TableDetail(BaseModel):
-    id: str = Field(..., description="Unique identifier for the table")
-    name: str = Field(..., description="Name of the table")
+    id: str = Field(description="Unique identifier for the table")
+    name: str = Field(description="Name of the table")
     primary_key: Optional[List[str]] = Field(
         default_factory=list, description="List of primary key columns"
     )
