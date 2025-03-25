@@ -237,4 +237,14 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         )
         return [TableDetail(**raw_table) for raw_table in raw_tables]
 
+        # QUESTION: why does get_table_metadata add this additional info - column_identifiers and db_identifier?
+        # db_path_manager = ctx.session.state["db_path_manager"]
+        # assert isinstance(db_path_manager, DatabasePathManager)
+
+        # return TableDetail(
+        #     **raw_table,
+        #     column_identifiers=column_info,
+        #     db_identifier=db_path_manager.get_table_db_path(raw_table),
+        # )
+
     return mcp
