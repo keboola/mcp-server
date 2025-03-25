@@ -56,7 +56,9 @@ class TableDetail(BaseModel):
         None,
         description="List of column information including database identifiers",
     )
-    db_identifier: Optional[str] = Field(None, description="Full database identifier for the table")
+    db_identifier: Optional[str] = Field(
+        None, description="Fully qualified database identifier for the table"
+    )
 
 
 def _create_session_state_factory(config: Optional[Config] = None) -> SessionStateFactory:
