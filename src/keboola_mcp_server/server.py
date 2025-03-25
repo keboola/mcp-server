@@ -45,17 +45,15 @@ class TableColumnInfo(BaseModel):
 class TableDetail(BaseModel):
     id: str = Field(description="Unique identifier for the table")
     name: str = Field(description="Name of the table")
-    primary_key: Optional[List[str]] = Field(
-        default_factory=list, description="List of primary key columns"
-    )
+    primary_key: Optional[List[str]] = Field(None, description="List of primary key columns")
     created: Optional[str] = Field(None, description="Creation timestamp of the table")
     row_count: Optional[int] = Field(None, description="Number of rows in the table")
     data_size_bytes: Optional[int] = Field(
         None, description="Total data size of the table in bytes"
     )
-    columns: Optional[List[str]] = Field(default_factory=list, description="List of column names")
+    columns: Optional[List[str]] = Field(None, description="List of column names")
     column_identifiers: Optional[List[TableColumnInfo]] = Field(
-        default_factory=list,
+        None,
         description="List of column information including database identifiers",
     )
     db_identifier: Optional[str] = Field(None, description="Full database identifier for the table")
