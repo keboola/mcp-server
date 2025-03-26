@@ -61,7 +61,7 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
         # Create Keboola client instance
         try:
             client = KeboolaClient(cfg.storage_token, cfg.storage_api_url)
-            state["sapi_client"] = client
+            state[KeboolaClient.STATE_KEY] = client
             logger.info("Successfully initialized Storage API client.")
         except Exception as e:
             logger.error(f"Failed to initialize Keboola client: {e}")
@@ -69,7 +69,7 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
 
         try:
             workspace_manager = WorkspaceManager(client, cfg.workspace_user)
-            state["workspace_manager"] = workspace_manager
+            state[WorkspaceManager.STATE_KEY] = workspace_manager
             logger.info("Successfully initialized Storage API Workspace manager.")
         except Exception as e:
             logger.error(f"Failed to initialize Storage API Workspace manager: {e}")
@@ -113,8 +113,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def list_all_buckets(ctx: Context) -> str:
         """List all buckets in the project with their basic information."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
+        client = KeboolaClient.from_state(ctx.session.state)
         buckets = cast(List[BucketInfo], client.storage_client.buckets.list())
 
         header = "# Bucket List\n\n"
@@ -136,8 +135,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def get_bucket_metadata(bucket_id: str, ctx: Context) -> str:
         """Get detailed information about a specific bucket."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
+        client = KeboolaClient.from_state(ctx.session.state)
         bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
         return (
             f"Bucket Information:\n"
@@ -152,16 +150,14 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def get_table_metadata(table_id: str, ctx: Context) -> str:
         """Get detailed information about a specific table including its DB identifier and column information."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
+        client = KeboolaClient.from_state(ctx.session.state)
         table = cast(Dict[str, Any], client.storage_client.tables.detail(table_id))
 
         # Get column info
         columns = table.get("columns", [])
         column_info = [TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in columns]
 
-        workspace_manager = ctx.session.state["workspace_manager"]
-        assert isinstance(workspace_manager, WorkspaceManager)
+        workspace_manager = WorkspaceManager.from_state(ctx.session.state)
         table_fqn = await workspace_manager.get_table_fqn(table) or "N/A"
 
         return (
@@ -179,16 +175,14 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def list_components(ctx: Context) -> str:
         """List all available components and their configurations."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
+        client = KeboolaClient.from_state(ctx.session.state)
         components = cast(List[Dict[str, Any]], await client.get("components"))
         return "\n".join(f"- {comp['id']}: {comp['name']}" for comp in components)
 
     @mcp.tool()
     async def list_component_configs(component_id: str, ctx: Context) -> str:
         """List all configurations for a specific component."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
+        client = KeboolaClient.from_state(ctx.session.state)
         configs = cast(List[Dict[str, Any]], await client.get(f"components/{component_id}/configs"))
         return "\n".join(
             f"Configuration: {config['id']}\n"
@@ -202,8 +196,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     @mcp.tool()
     async def list_bucket_tables(bucket_id: str, ctx: Context) -> str:
         """List all tables in a specific bucket with their basic information."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
+        client = KeboolaClient.from_state(ctx.session.state)
         tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
         return "\n".join(
             f"Table ID: {table['id']}\n"

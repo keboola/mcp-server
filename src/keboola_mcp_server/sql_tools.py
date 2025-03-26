@@ -54,6 +54,14 @@ class QueryResult:
 
 
 class WorkspaceManager:
+    STATE_KEY = "workspace_manager"
+
+    @classmethod
+    def from_state(cls, state: Mapping[str, Any]) -> "WorkspaceManager":
+        instance = state[cls.STATE_KEY]
+        assert isinstance(instance, WorkspaceManager)
+        return instance
+
     def __init__(self, client: KeboolaClient, workspace_user: str):
         self._client = client
         self._workspace_user = workspace_user
@@ -144,9 +152,7 @@ async def query_table(
     * SQL queries must include the fully qualified table names including the database name, e.g.:
       SELECT * FROM "db_name"."db_schema_name"."table_name";
     """
-    workspace_manager = ctx.session.state["workspace_manager"]
-    assert isinstance(workspace_manager, WorkspaceManager)
-
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     result = await workspace_manager.execute_query(sql_query)
     if result.is_ok:
         if result.data:

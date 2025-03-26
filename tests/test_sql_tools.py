@@ -22,8 +22,8 @@ def context(client: KeboolaClient, mocker) -> Context:
     ctx.session = (session := mocker.MagicMock(StatefullServerSession))
     type(session).state = (state := mocker.PropertyMock())
     state.return_value = {
-        "sapi_client": client,
-        "workspace_manager": WorkspaceManager(client=client, workspace_user="user_1234"),
+        KeboolaClient.STATE_KEY: client,
+        WorkspaceManager.STATE_KEY: WorkspaceManager(client=client, workspace_user="user_1234"),
     }
 
     return ctx
