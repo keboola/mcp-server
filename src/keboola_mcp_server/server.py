@@ -8,13 +8,13 @@ from mcp.server.fastmcp import Context, FastMCP
 from keboola_mcp_server import sql_tools
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.database import ConnectionManager, DatabasePathManager
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
     SessionState,
     SessionStateFactory,
 )
+from keboola_mcp_server.sql_tools import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +67,13 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
             logger.error(f"Failed to initialize Keboola client: {e}")
             raise
 
-        connection_manager = ConnectionManager(cfg)
-        db_path_manager = DatabasePathManager(cfg, connection_manager)
-        state["connection_manager"] = connection_manager
-        state["db_path_manager"] = db_path_manager
-        logger.info("Successfully initialized DB connection and path managers.")
+        try:
+            workspace_manager = WorkspaceManager(client, cfg.workspace_user)
+            state["workspace_manager"] = workspace_manager
+            logger.info("Successfully initialized Storage API Workspace manager.")
+        except Exception as e:
+            logger.error(f"Failed to initialize Storage API Workspace manager: {e}")
+            raise
 
         return state
 
@@ -158,9 +160,9 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         columns = table.get("columns", [])
         column_info = [TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in columns]
 
-        db_path_manager = ctx.session.state["db_path_manager"]
-        assert isinstance(db_path_manager, DatabasePathManager)
-        table_fqn = db_path_manager.get_table_fqn(table) or "N/A"
+        workspace_manager = ctx.session.state["workspace_manager"]
+        assert isinstance(workspace_manager, WorkspaceManager)
+        table_fqn = await workspace_manager.get_table_fqn(table) or "N/A"
 
         return (
             f"Table Information:\n"

@@ -58,73 +58,15 @@ class TestConfig:
         config = Config()
         assert config.storage_token is None
         assert config.storage_api_url == "https://connection.keboola.com"
+        assert config.workspace_user is None
         assert config.log_level == "INFO"
-        assert config.snowflake_account is None
-        assert config.snowflake_user is None
-        assert config.snowflake_password is None
-        assert config.snowflake_warehouse is None
-        assert config.snowflake_database is None
-        assert config.snowflake_schema is None
-        assert config.snowflake_role is None
-
-    @pytest.mark.parametrize(
-        "d, expected",
-        [
-            ({}, False),
-            ({"storage_token": "foo"}, True),  # relies on the default value of storage_api_url
-            ({"storage_token": "foo", "storage_api_url": ""}, False),
-            ({"storage_token": "foo", "storage_api_url": "bar"}, True),
-        ],
-    )
-    def test_has_storage_config(self, d: Mapping[str, str], expected: bool) -> None:
-        assert Config.from_dict(d).has_storage_config() == expected
-
-    @pytest.mark.parametrize(
-        "d, expected",
-        [
-            ({}, False),
-            ({"snowflake_account": "foo"}, False),
-            ({"snowflake_account": "foo", "snowflake_user": "bar"}, False),
-            (
-                {"snowflake_account": "foo", "snowflake_user": "bar", "snowflake_password": "baz"},
-                False,
-            ),
-            (
-                {
-                    "snowflake_account": "foo",
-                    "snowflake_user": "bar",
-                    "snowflake_password": "baz",
-                    "snowflake_warehouse": "baf",
-                },
-                False,
-            ),
-            (
-                {
-                    "snowflake_account": "foo",
-                    "snowflake_user": "bar",
-                    "snowflake_password": "baz",
-                    "snowflake_warehouse": "baf",
-                    "snowflake_database": "bam",
-                },
-                True,
-            ),
-        ],
-    )
-    def test_has_snowflake_config(self, d: Mapping[str, str], expected: bool) -> None:
-        assert Config.from_dict(d).has_snowflake_config() == expected
 
     def test_no_token_password_in_repr(self) -> None:
-        config = Config(storage_token="foo", snowflake_password="bar", snowflake_user="baz")
+        config = Config(storage_token="foo")
         assert str(config) == (
             "Config("
             "storage_token='****', "
             "storage_api_url='https://connection.keboola.com', "
-            "log_level='INFO', "
-            "snowflake_account=None, "
-            "snowflake_user='baz', "
-            "snowflake_password='****', "
-            "snowflake_warehouse=None, "
-            "snowflake_database=None, "
-            "snowflake_schema=None, "
-            "snowflake_role=None)"
+            "workspace_user=None, "
+            "log_level='INFO')"
         )
