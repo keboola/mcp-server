@@ -1,12 +1,10 @@
-from typing import Any, Dict, Tuple
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from kbcstorage.client import Client
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.database import ConnectionManager, DatabasePathManager
 
 
 @pytest.fixture

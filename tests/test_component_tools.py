@@ -1,10 +1,7 @@
-from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from mcp.server.fastmcp import Context
 
-from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.component_tools import (
     Component,
     ComponentConfig,
