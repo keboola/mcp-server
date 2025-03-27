@@ -89,12 +89,6 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     Returns:
         Configured FastMCP server instance
     """
-    # Configure logging
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(config.log_level)
-
     # Initialize FastMCP server with system instructions
     mcp = KeboolaMcpServer(
         "Keboola Explorer",
