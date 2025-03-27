@@ -134,10 +134,10 @@ class KeboolaMcpServer(FastMCP):
 
     async def run_sse_async(self) -> None:
         """Run the server using SSE transport."""
-        from starlette.applications import Starlette
-        from starlette.routing import Mount, Route
-        from starlette.requests import Request
         import uvicorn
+        from starlette.applications import Starlette
+        from starlette.requests import Request
+        from starlette.routing import Mount, Route
 
         sse = SseServerTransport("/messages/")
 

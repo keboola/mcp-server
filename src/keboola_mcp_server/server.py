@@ -223,7 +223,16 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         description: Annotated[str, Field(description="The new description for the bucket.")],
         ctx: Context,
     ):
-        """Update the description for a given Keboola bucket."""
+        """
+        Update the description for a given Keboola bucket. This tool is used to update the description of a bucket.
+
+        Args:
+            bucket_id: The ID of the bucket to update.
+            description: The new description for the bucket.
+
+        Returns:
+            The response from the API.
+        """
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
 
@@ -240,7 +249,15 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         description: Annotated[str, Field(description="The new description for the table.")],
         ctx: Context,
     ):
-        """Update the description for a given Keboola table."""
+        """Update the description for a given Keboola table. This tool is used to update the description of a table.
+
+        Args:
+            table_id: The ID of the table to update.
+            description: The new description for the table.
+
+        Returns:
+            The response from the API.
+        """
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
 
@@ -257,10 +274,17 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         description: Annotated[str, Field(description="The new description for the component.")],
         ctx: Context,
     ):
-        """Update the description for a given Keboola component."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
+        """
+        Update the description for a given Keboola component. This tool is used to update the description of a component.
 
+        Args:
+            component_id: The ID of the component to update.
+            description: The new description for the component.
+
+        Returns:
+            The response from the API.
+        """
+        client = ctx.session.state["sapi_client"]
         metadata_endpoint = f"components/{component_id}/metadata"
 
         data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
