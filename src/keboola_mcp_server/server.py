@@ -269,6 +269,3 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         return response
 
     return mcp
-
-
-# bucket_id = "in.c-foo" description = "AI MCP generated bucket description"
