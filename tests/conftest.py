@@ -16,11 +16,13 @@ def keboola_client() -> KeboolaClient:
     mock_client.storage_client = MagicMock(spec=Client)
     return mock_client
 
+
 @pytest.fixture
 def mcp_context() -> Context:
     """Create a mock context."""
     context = MagicMock(spec=Context)
     return context
+
 
 @pytest.fixture
 def mcp_context_client(keboola_client: KeboolaClient, mcp_context: Context) -> Context:
@@ -30,6 +32,3 @@ def mcp_context_client(keboola_client: KeboolaClient, mcp_context: Context) -> C
     # Mock KeboolaClient
     context.session.state["sapi_client"] = keboola_client
     return context
-
-
-
