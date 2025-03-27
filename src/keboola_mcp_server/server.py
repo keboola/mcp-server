@@ -1,24 +1,33 @@
 """MCP server implementation for Keboola Connection."""
 
-import csv
 import logging
+<<<<<<< HEAD
 from io import StringIO
 from typing import Annotated, Any, Dict, List, Optional, TypedDict, cast
+=======
+from typing import Any, cast, Dict, List, Optional, TypedDict
+>>>>>>> master
 
-import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
 
+from keboola_mcp_server import sql_tools
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.database import ConnectionManager, DatabasePathManager
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
     SessionState,
     SessionStateFactory,
 )
+<<<<<<< HEAD
 
 from .client import KeboolaClient
 from .config import Config
 from .database import ConnectionManager, DatabasePathManager
+=======
+>>>>>>> master
 
 logger = logging.getLogger(__name__)
 
@@ -152,50 +161,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         ],
     )
 
-    @mcp.tool()
-    async def query_table(sql_query: str, ctx: Context) -> str:
-        """
-        Execute a SQL query through the proxy service to get data from Storage.
-        Before forming the query always check the get_table_metadata tool to get
-        the correct database name and table name.
-        - The {{db_identifier}} is available in the tool response.
-
-        Note: SQL queries must include the full path including database name, e.g.:
-        'SELECT * FROM {{db_identifier}}."test_identify"'. Snowflake is case sensitive so always
-        wrap the column names in double quotes.
-        """
-        connection_manager = ctx.session.state["connection_manager"]
-        assert isinstance(connection_manager, ConnectionManager)
-
-        conn = None
-        cursor = None
-
-        try:
-            conn = connection_manager.create_snowflake_connection()
-            cursor = conn.cursor()
-            cursor.execute(sql_query)
-            result = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
-
-            # Convert to CSV
-            output = StringIO()
-            writer = csv.writer(output)
-            writer.writerow(columns)
-            writer.writerows(result)
-
-            return output.getvalue()
-
-        except snowflake.connector.errors.ProgrammingError as e:
-            raise ValueError(f"Snowflake query error: {str(e)}")
-
-        except Exception as e:
-            raise ValueError(f"Unexpected error during query execution: {str(e)}")
-
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
+    mcp.add_tool(sql_tools.query_table)
 
     # Tools
     @mcp.tool()
@@ -233,11 +199,25 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
         db_path_manager = ctx.session.state["db_path_manager"]
         assert isinstance(db_path_manager, DatabasePathManager)
+        table_fqn = db_path_manager.get_table_fqn(table) or "N/A"
 
+<<<<<<< HEAD
         return TableDetail(
             **raw_table,
             column_identifiers=column_info,
             db_identifier=db_path_manager.get_table_db_path(raw_table),
+=======
+        return (
+            f"Table Information:\n"
+            f"ID: {table['id']}\n"
+            f"Name: {table['name']}\n"
+            f"Primary Key: {', '.join(table['primaryKey']) if table['primaryKey'] else 'None'}\n"
+            f"Created: {table['created']}\n"
+            f"Row Count: {table['rowsCount']}\n"
+            f"Data Size: {table['dataSizeBytes']} bytes\n"
+            f"Columns: {', '.join(str(ci) for ci in column_info)}\n"
+            f"Fully qualified table name: {table_fqn.snowflake_fqn}"
+>>>>>>> master
         )
 
     @mcp.tool()
@@ -270,8 +250,20 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         """List all tables in a specific bucket with their basic information."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
+<<<<<<< HEAD
         raw_tables = cast(
             List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id)
+=======
+        tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
+        return "\n".join(
+            f"Table ID: {table['id']}\n"
+            f"Table Name: {table.get('name', 'N/A')}\n"
+            f"Rows: {table.get('rowsCount', 'N/A')}\n"
+            f"Size: {table.get('dataSizeBytes', 'N/A')} bytes\n"
+            f"Columns: {', '.join(table.get('columns', []))}\n"
+            f"---"
+            for table in tables
+>>>>>>> master
         )
         return [TableDetail(**raw_table) for raw_table in raw_tables]
 

@@ -12,8 +12,6 @@ A Model Context Protocol (MCP) server for interacting with Keboola Connection. T
 - Keboola Storage API token
 - Snowflake Read Only Workspace
 
-> Note: The Snowflake package doesn't work with the latest version of Python. If you're using Python 3.12 and above, you'll need to downgrade to Python 3.11.
-
 ## Installation
 
 ### Installing via Smithery
@@ -64,9 +62,7 @@ To use this server with Claude Desktop, follow these steps:
       "command": "/path/to/keboola-mcp-server/.venv/bin/python",
       "args": [
         "-m",
-        "keboola_mcp_server.cli",
-        "--log-level",
-        "DEBUG",
+        "keboola_mcp_server",
         "--api-url",
         "https://connection.YOUR_REGION.keboola.com"
       ],
@@ -89,7 +85,7 @@ To use this server with Claude Desktop, follow these steps:
 Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `your-keboola-storage-token` with your Keboola Storage API token
-- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if you region is just `connection` explicitly
+- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
 - `your-snowflake-account` with your Snowflake account identifier
 - `your-snowflake-user` with your Snowflake username
 - `your-snowflake-password` with your Snowflake password
@@ -146,9 +142,11 @@ To use this server with Cursor AI, you have two options for configuring the tran
       "command": "/path/to/keboola-mcp-server/venv/bin/python",
       "args": [
         "-m",
-        "keboola_mcp_server.cli",
+        "keboola_mcp_server",
         "--transport",
-        "stdio"
+        "stdio",
+         "--api-url",
+         "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
         "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
@@ -164,11 +162,17 @@ To use this server with Cursor AI, you have two options for configuring the tran
 }
 ```
 
-Replace all placeholder values (YOUR_*) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
+Replace all placeholder values (`your_*`) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
+Replace `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly.
 
 After updating the configuration:
 1. Restart Cursor AI
-2. The MCP server should be automatically detected and available for use
+2. If you use the `sse` transport make sure to start your MCP server. You can do so by running this in the activated
+   virtual environment where you built the server:
+   ```
+   /path/to/keboola-mcp-server/venv/bin/python -m keboola_mcp_server --transport sse --api-url https://connection.YOUR_REGION.keboola.com
+   ```
+3. Cursor AI should be automatically detect your MCP server and enable it.
 
 ## Available Tools
 
