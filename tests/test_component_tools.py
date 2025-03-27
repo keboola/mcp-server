@@ -5,8 +5,10 @@ import pytest
 from keboola_mcp_server.component_tools import (
     Component,
     ComponentConfig,
+    ComponentConfigMetadata,
     ComponentListItem,
     get_component_config_details,
+    get_component_config_metadata,
     get_component_details,
     list_component_configs,
     list_components,
@@ -148,4 +150,39 @@ async def test_get_component_config_details(mcp_context_client):
 
     mock_client.storage_client.configurations.detail.assert_called_once_with(
         "keboola.ex-aws-s3", "123"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_component_config_metadata(mcp_context_client):
+    """Test get_component_config_metadata tool."""
+    context = mcp_context_client
+    mock_client = context.session.state["sapi_client"]
+    mock_client.storage_client._branch_id = "123"
+
+    # Mock data
+    mock_metadata = [
+        {
+            "id": "1",
+            "key": "test-key",
+            "value": "test-value",
+            "provider": "user",
+            "timestamp": "2024-01-01T00:00:00Z"
+        }
+    ]
+
+    # Setup mock to return test data
+    mock_client.get = AsyncMock(return_value=mock_metadata)
+
+    result = await get_component_config_metadata("keboola.ex-aws-s3", "456", context)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], ComponentConfigMetadata)
+    assert result[0].component_id == "keboola.ex-aws-s3"
+    assert result[0].config_id == "456"
+    assert result[0].metadata == mock_metadata[0]
+
+    mock_client.get.assert_called_once_with(
+        "branch/123/components/keboola.ex-aws-s3/configs/456/metadata"
     )
