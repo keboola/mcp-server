@@ -14,9 +14,10 @@ from keboola_mcp_server.jobs_tools import (
 
 
 @pytest.mark.asyncio
-async def test_list_jobs(mock_context):
+async def test_list_jobs(mcp_context_client):
     """Test list_jobs tool."""
-    context, mock_client = mock_context
+    context = mcp_context_client
+    mock_client = context.session.state["sapi_client"]
     mock_client.storage_client.jobs = MagicMock()
 
     # Mock data
@@ -52,9 +53,10 @@ async def test_list_jobs(mock_context):
 
 
 @pytest.mark.asyncio
-async def test_get_job_details(mock_context):
+async def test_get_job_details(mcp_context_client):
     """Test get_job_details tool."""
-    context, mock_client = mock_context
+    context = mcp_context_client
+    mock_client = context.session.state["sapi_client"]
     mock_client.storage_client.jobs = MagicMock()
 
     # Mock data
@@ -71,7 +73,7 @@ async def test_get_job_details(mock_context):
         "runId": "456",
         "results": {"import": "successful"},
         "metrics": {"rows": 1000},
-        "additional_field": "some value",  # This will go to additional_details
+        "additional_field": "some value", # this will be removed
     }
 
     # Setup mock to return test data
