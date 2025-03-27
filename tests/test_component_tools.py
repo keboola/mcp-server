@@ -17,10 +17,11 @@ from keboola_mcp_server.component_tools import (
 
 
 @pytest.mark.asyncio
-async def test_list_components(mock_context):
+async def test_list_components(mcp_context_client):
     """Test list_components tool."""
-    context, mock_client = mock_context
-    mock_client.storage_client.components = MagicMock()
+
+    keboola_client = mcp_context_client.session.state["sapi_client"]
+    keboola_client.storage_client.components = MagicMock()
 
     # Mock data
     mock_components = [
@@ -37,9 +38,9 @@ async def test_list_components(mock_context):
             "description": "Extract data from Google Drive",
         },
     ]
-    mock_client.storage_client.components.list = MagicMock(return_value=mock_components)
+    keboola_client.storage_client.components.list = MagicMock(return_value=mock_components)
 
-    result = await list_components(context)
+    result = await list_components(mcp_context_client)
 
     assert len(result) == 2
     assert all(isinstance(component, ComponentListItem) for component in result)
@@ -48,14 +49,15 @@ async def test_list_components(mock_context):
     assert all(c.type == item["type"] for c, item in zip(result, mock_components))
     assert all(c.description == item["description"] for c, item in zip(result, mock_components))
 
-    mock_client.storage_client.components.list.assert_called_once()
+    keboola_client.storage_client.components.list.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_list_component_configs(mock_context):
+async def test_list_component_configs(mcp_context_client):
     """Test list_component_configs tool."""
-    context, mock_client = mock_context
-    mock_client.storage_client.configurations = MagicMock()
+
+    keboola_client = mcp_context_client.session.state["sapi_client"]
+    keboola_client.storage_client.configurations = MagicMock()
 
     # Mock data
     mock_configs = [
@@ -70,9 +72,9 @@ async def test_list_component_configs(mock_context):
             "configuration": {},
         }
     ]
-    mock_client.storage_client.configurations.list = MagicMock(return_value=mock_configs)
+    keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configs)
 
-    result = await list_component_configs("keboola.ex-aws-s3", context)
+    result = await list_component_configs("keboola.ex-aws-s3", mcp_context_client)
 
     assert len(result) == 1
     assert isinstance(result[0], ComponentConfig)
@@ -80,13 +82,12 @@ async def test_list_component_configs(mock_context):
     assert result[0].name == "My Config"
     assert result[0].description == "Test configuration"
 
-    mock_client.storage_client.configurations.list.assert_called_once_with("keboola.ex-aws-s3")
+    keboola_client.storage_client.configurations.list.assert_called_once_with("keboola.ex-aws-s3")
 
 
 @pytest.mark.asyncio
-async def test_get_component_details(mock_context):
+async def test_get_component_details(mcp_context_client):
     """Test get_component_details tool."""
-    context, mock_client = mock_context
 
     # Mock data
     mock_component = {
@@ -105,23 +106,26 @@ async def test_get_component_details(mock_context):
         "emptyConfiguration": {},
     }
 
-    # Setup mock to return test data
-    mock_client.get = AsyncMock(return_value=mock_component)
-    mock_client.storage_client._branch_id = "123"
+    keboola_client = mcp_context_client.session.state["sapi_client"]
 
-    result = await get_component_details("keboola.ex-aws-s3", context)
+    # Setup mock to return test data
+    keboola_client.get = AsyncMock(return_value=mock_component)
+    keboola_client.storage_client._branch_id = "123"
+
+    result = await get_component_details("keboola.ex-aws-s3", mcp_context_client)
 
     assert isinstance(result, Component)
     assert result.id == "keboola.ex-aws-s3"
     assert result.name == "AWS S3 Extractor"
 
-    mock_client.get.assert_called_once_with("branch/123/components/keboola.ex-aws-s3")
+    keboola_client.get.assert_called_once_with("branch/123/components/keboola.ex-aws-s3")
 
 
 @pytest.mark.asyncio
-async def test_get_component_config_details(mock_context):
+async def test_get_component_config_details(mcp_context_client):
     """Test get_component_config_details tool."""
-    context, mock_client = mock_context
+    context = mcp_context_client
+    mock_client = context.session.state["sapi_client"]
     mock_client.storage_client.configurations = MagicMock()
     # Mock data
     mock_config = {
