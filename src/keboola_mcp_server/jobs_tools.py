@@ -47,6 +47,28 @@ class JobDetail(JobListItem):
     metrics: Optional[Dict[str, Any]] = Field(description="The metrics of the job.")
 
 
+#### Util functions ####
+
+
+def filter_by_config_id(
+    job: JobDetail,
+    config_id: Annotated[str, "The ID of the configuration by which the job is filtered."],
+) -> bool:
+    return job.operation_params and job.operation_params.get("configurationId", None) == config_id
+
+
+def filter_by_component_id(
+    job: JobDetail,
+    component_id: Annotated[str, "The ID of the component by which the job is filtered."],
+) -> bool:
+    return job.operation_params and job.operation_params.get("componentId", None) == component_id
+
+
+#### End of util functions ####
+
+#### MCP tools ####
+
+
 def add_jobs_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     mcp.add_tool(list_jobs)
@@ -76,20 +98,6 @@ async def get_job_details(
     r_job = client.storage_client.jobs.detail(job_id)
     logger.info(f"Found job details for {job_id}." if r_job else f"Job {job_id} not found.")
     return JobDetail.model_validate(r_job)
-
-
-def filter_by_config_id(
-    job: JobDetail,
-    config_id: Annotated[str, "The ID of the configuration by which the job is filtered."],
-) -> bool:
-    return job.operation_params and job.operation_params.get("configurationId", None) == config_id
-
-
-def filter_by_component_id(
-    job: JobDetail,
-    component_id: Annotated[str, "The ID of the component by which the job is filtered."],
-) -> bool:
-    return job.operation_params and job.operation_params.get("componentId", None) == component_id
 
 
 async def list_component_config_jobs(
