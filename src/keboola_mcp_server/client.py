@@ -71,6 +71,44 @@ class KeboolaClient:
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
 
+    async def put(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make a PUT request to Keboola Storage API.
+
+        Args:
+            endpoint: API endpoint to call
+            data: Request payload
+
+        Returns:
+            API response as dictionary
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"{self.base_url}/v2/storage/{endpoint}",
+                headers=self.headers,
+                data=data if data is not None else {},
+            )
+            response.raise_for_status()
+            return cast(Dict[str, Any], response.json())
+
+    async def delete(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make a DELETE request to Keboola Storage API.
+
+        Args:
+            endpoint: API endpoint to call
+            data: Request payload
+
+        Returns:
+            API response as dictionary
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{self.base_url}/v2/storage/{endpoint}",
+                headers=self.headers,
+            )
+            response.raise_for_status()
+
+            return cast(Dict[str, Any], response.json())
+
     async def download_table_data_async(self, table_id: str) -> str:
         """Download table data using the export endpoint.
 

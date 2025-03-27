@@ -1,9 +1,12 @@
 """MCP server implementation for Keboola Connection."""
 
 import logging
-from typing import Any, cast, Dict, List, Optional, TypedDict
+from enum import Enum
+from typing import Annotated, Any, Dict, List, Optional, TypedDict, cast
 
+import httpx
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import Field
 
 from keboola_mcp_server import sql_tools
 from keboola_mcp_server.client import KeboolaClient
@@ -137,6 +140,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
         bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
+
         return (
             f"Bucket Information:\n"
             f"ID: {bucket['id']}\n"
@@ -213,4 +217,58 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             for table in tables
         )
 
+    @mcp.tool()
+    async def update_bucket_description(
+        bucket_id: Annotated[str, Field(description="The ID of the bucket to update.")],
+        description: Annotated[str, Field(description="The new description for the bucket.")],
+        ctx: Context,
+    ):
+        """Update the description for a given Keboola bucket."""
+        client = ctx.session.state["sapi_client"]
+        assert isinstance(client, KeboolaClient)
+
+        metadata_endpoint = f"buckets/{bucket_id}/metadata"
+
+        data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+
+        response = await client.post(metadata_endpoint, data)
+        return response
+
+    @mcp.tool()
+    async def update_table_description(
+        table_id: Annotated[str, Field(description="The ID of the table to update.")],
+        description: Annotated[str, Field(description="The new description for the table.")],
+        ctx: Context,
+    ):
+        """Update the description for a given Keboola table."""
+        client = ctx.session.state["sapi_client"]
+        assert isinstance(client, KeboolaClient)
+
+        metadata_endpoint = f"tables/{table_id}/metadata"
+
+        data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+
+        response = await client.post(metadata_endpoint, data)
+        return response
+
+    @mcp.tool()
+    async def update_component_description(
+        component_id: Annotated[str, Field(description="The ID of the component to update.")],
+        description: Annotated[str, Field(description="The new description for the component.")],
+        ctx: Context,
+    ):
+        """Update the description for a given Keboola component."""
+        client = ctx.session.state["sapi_client"]
+        assert isinstance(client, KeboolaClient)
+
+        metadata_endpoint = f"components/{component_id}/metadata"
+
+        data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+
+        response = await client.post(metadata_endpoint, data)
+        return response
+
     return mcp
+
+
+# bucket_id = "in.c-foo" description = "AI MCP generated bucket description"
