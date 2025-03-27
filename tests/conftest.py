@@ -24,12 +24,7 @@ def mcp_context() -> Context:
 
 @pytest.fixture
 def mcp_context_client(keboola_client: KeboolaClient, mcp_context: Context) -> Context:
-    """Create a mock context with mocked SAPI client.
-
-    Returns:
-        Tuple containing:
-        - Mocked Context with mocked SAPI client
-    """
+    """Create a mock context with mocked SAPI client."""
     context = mcp_context
     context.session.state = {}
     # Mock KeboolaClient
