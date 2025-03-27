@@ -66,7 +66,9 @@ async def list_jobs(ctx: Context) -> List[JobListItem]:
     return [JobListItem.model_validate(r_job) for r_job in r_jobs]
 
 
-async def get_job_details(job_id: Annotated[str, "The ID of the job."], ctx: Context) -> JobDetail:
+async def get_job_details(
+    job_id: Annotated[str, "The ID of the job you want to get details about."], ctx: Context
+) -> JobDetail:
     """Get the details of a job."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
@@ -76,18 +78,30 @@ async def get_job_details(job_id: Annotated[str, "The ID of the job."], ctx: Con
     return JobDetail.model_validate(r_job)
 
 
-def filter_by_config_id(job: JobDetail, config_id: str) -> bool:
+def filter_by_config_id(
+    job: JobDetail,
+    config_id: Annotated[str, "The ID of the configuration by which the job is filtered."],
+) -> bool:
     return job.operation_params and job.operation_params.get("configurationId", None) == config_id
 
 
-def filter_by_component_id(job: JobDetail, component_id: str) -> bool:
+def filter_by_component_id(
+    job: JobDetail,
+    component_id: Annotated[str, "The ID of the component by which the job is filtered."],
+) -> bool:
     return job.operation_params and job.operation_params.get("componentId", None) == component_id
 
 
 async def list_component_config_jobs(
-    component_id: str, config_id: str, n_limit: Optional[int], ctx: Context
+    component_id: Annotated[str, "The ID of the component whose jobs you want to list."],
+    config_id: Annotated[str, "The ID of the component configuration whose jobs you want to list."],
+    n_limit: Annotated[
+        Optional[int],
+        "The maximum number of filtered jobs to return. If None, all filtered jobs are returned.",
+    ],
+    ctx: Context,
 ) -> List[JobListItem]:
-    """List all jobs for a given component id and configuration id, optionally limited listsize by the n_limit parameter."""
+    """List all jobs for a given component id and configuration id, optionally limited list size by the n_limit parameter."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
@@ -105,7 +119,12 @@ async def list_component_config_jobs(
 
 
 async def list_component_jobs(
-    component_id: str, n_limit: Optional[int], ctx: Context
+    component_id: Annotated[str, "The ID of the component whose jobs you want to list."],
+    n_limit: Annotated[
+        Optional[int],
+        "The maximum number of filtered jobs to return. If None, all filtered jobs are returned.",
+    ],
+    ctx: Context,
 ) -> List[JobListItem]:
     """List all jobs for a given component id, optionally limited list size by the n_limit parameter."""
     client = ctx.session.state["sapi_client"]
