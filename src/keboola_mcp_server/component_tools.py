@@ -8,7 +8,7 @@ from keboola_mcp_server.client import KeboolaClient
 
 logger = logging.getLogger(__name__)
 
-STR_INT = Union[str, int]
+ID_TYPE = Union[str, int]
 
 
 class ComponentListItem(BaseModel):
@@ -23,10 +23,11 @@ class ComponentListItem(BaseModel):
 class Component(ComponentListItem):
     """Detailed information about a Keboola component."""
 
-    long_description: Optional[str] = Field(description="The long description of the component")
-    categories: List[str] = Field(description="The categories of the component")
-    version: STR_INT = Field(description="The version of the component")
-    created: str = Field(description="The creation date of the component")
+    long_description: Optional[str] = Field(
+        description="The long description of the component", default=None
+    )
+    categories: List[str] = Field(description="The categories of the component", default=[])
+    version: ID_TYPE = Field(description="The version of the component")
     data: Optional[Dict[str, Any]] = Field(description="The data of the component", default=None)
     flags: Optional[List[str]] = Field(description="The flags of the component", default=None)
     configuration_schema: Optional[Dict[str, Any]] = Field(
@@ -46,21 +47,41 @@ class Component(ComponentListItem):
     )
 
 
-class ComponentConfig(BaseModel):
+class ComponentConfigListItem(BaseModel):
     """A list item representing a Keboola component configuration."""
 
-    id: STR_INT = Field(description="The ID of the component configuration")
+    id: ID_TYPE = Field(description="The ID of the component configuration")
     name: str = Field(description="The name of the component configuration")
     description: Optional[str] = Field(description="The description of the component configuration")
     created: str = Field(description="The creation date of the component configuration")
     is_disabled: bool = Field(
-        description="Whether the component configuration is disabled", alias="isDisabled"
+        description="Whether the component configuration is disabled",
+        alias="isDisabled",
+        default=False,
     )
     is_deleted: bool = Field(
-        description="Whether the component configuration is deleted", alias="isDeleted"
+        description="Whether the component configuration is deleted",
+        alias="isDeleted",
+        default=False,
     )
-    version: STR_INT = Field(description="The version of the component configuration")
+
+
+class ComponentConfig(ComponentConfigListItem):
+    """Detailed information about a Keboola component configuration."""
+
+    version: ID_TYPE = Field(description="The version of the component configuration")
     configuration: Dict[str, Any] = Field(description="The configuration of the component")
+    rows: Optional[List[Dict[str, Any]]] = Field(
+        description="The rows of the component configuration", default=None
+    )
+
+
+class ComponentConfigMetadata(BaseModel):
+    """Custom user created metadata associated with a Keboola component configuration."""
+
+    component_id: str = Field(description="The ID of the component")
+    config_id: str = Field(description="The ID of the component configuration")
+    metadata: Dict[str, Any] = Field(description="The metadata of the component configuration")
 
 
 def add_component_tools(mcp: FastMCP) -> None:
@@ -69,7 +90,7 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(list_component_configs)
     mcp.add_tool(get_component_details)
     mcp.add_tool(get_component_config_details)
-
+    mcp.add_tool(get_component_config_metadata)
     logger.info("Component tools added to the MCP server.")
 
 
@@ -131,3 +152,27 @@ async def get_component_config_details(
 
     r_config = client.storage_client.configurations.detail(component_id, config_id)
     return ComponentConfig.model_validate(r_config)
+
+
+async def get_component_config_metadata(
+    component_id: Annotated[
+        str, "Unique identifier of the Keboola component whose configurations you want to list"
+    ],
+    config_id: Annotated[
+        str, "Unique identifier of the Keboola component configuration you want details about"
+    ],
+    ctx: Context,
+) -> List[ComponentConfigMetadata]:
+    """Retrieve metadata about a specific Keboola component configuration."""
+    client = ctx.session.state["sapi_client"]
+    assert isinstance(client, KeboolaClient)
+
+    endpoint = "branch/{}/components/{}/configs/{}/metadata".format(
+        client.storage_client._branch_id, component_id, config_id
+    )
+    r_metadata = await client.get(endpoint)
+    r_metadata = [
+        {"component_id": component_id, "config_id": config_id, "metadata": r_meta}
+        for r_meta in r_metadata
+    ]
+    return [ComponentConfigMetadata.model_validate(r_meta) for r_meta in r_metadata]
