@@ -73,7 +73,7 @@ async def test_get_job_details(mcp_context_client):
         "runId": "456",
         "results": {"import": "successful"},
         "metrics": {"rows": 1000},
-        "additional_field": "some value", # this will be removed
+        "additional_field": "some value",  # this will be removed
     }
 
     # Setup mock to return test data
