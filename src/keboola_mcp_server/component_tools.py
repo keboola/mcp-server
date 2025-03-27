@@ -17,7 +17,7 @@ class ComponentListItem(BaseModel):
     id: str = Field(description="The ID of the component")
     name: str = Field(description="The name of the component")
     type: str = Field(description="The type of the component")
-    description: Optional[str] = Field(description="The description of the component")
+    description: Optional[str] = Field(description="The description of the component", default=None)
 
 
 class Component(ComponentListItem):
@@ -106,7 +106,7 @@ async def list_components(ctx: Context) -> List[ComponentListItem]:
 
 async def list_component_configs(
     component_id: Annotated[
-        str, "Unique identifier of the Keboola component whose configurations you want to list"
+        str, Field(str, description="The ID of the Keboola component whose configurations you want to list")
     ],
     ctx: Context,
 ) -> List[ComponentConfig]:
@@ -121,7 +121,7 @@ async def list_component_configs(
 
 async def get_component_details(
     component_id: Annotated[
-        str, "Unique identifier of the Keboola component you want details about"
+        str, Field(str, description="The ID of the Keboola component you want details about")
     ],
     ctx: Context,
 ) -> Component:
@@ -136,10 +136,10 @@ async def get_component_details(
 
 async def get_component_config_details(
     component_id: Annotated[
-        str, "Unique identifier of the Keboola component whose configurations you want to list"
+        str, Field(str, description="Unique identifier of the Keboola component")
     ],
     config_id: Annotated[
-        str, "Unique identifier of the Keboola component configuration you want details about"
+        str, Field(str, description="Unique identifier of the Keboola component configuration you want details about")
     ],
     ctx: Context,
 ) -> ComponentConfig:
@@ -147,6 +147,8 @@ async def get_component_config_details(
     Retrieve detailed information about a specific Keboola component configuration
     given component ID and config ID.
     """
+    if isinstance(config_id, int):
+        config_id = str(config_id)
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
@@ -156,10 +158,10 @@ async def get_component_config_details(
 
 async def get_component_config_metadata(
     component_id: Annotated[
-        str, "Unique identifier of the Keboola component whose configurations you want to list"
+        str, Field(str, description="Unique identifier of the Keboola component whose configurations you want to list")
     ],
     config_id: Annotated[
-        str, "Unique identifier of the Keboola component configuration you want details about"
+        str, Field(str, description="Unique identifier of the Keboola component configuration you want details about")
     ],
     ctx: Context,
 ) -> List[ComponentConfigMetadata]:

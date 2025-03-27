@@ -34,34 +34,51 @@ class JobDetail(JobListItem):
 
     url: str = Field(description="The URL of the job.")
     table_id: Optional[str] = Field(
-        description="The ID of the table that the job is running on.", alias="tableId"
+        description="The ID of the table that the job is running on.", alias="tableId",
+        default=None
     )
-    operation_name: str = Field(description="The name of the operation.", alias="operationName")
+    operation_name: str = Field(description="The name of the operation.", alias="operationName", default='')
     operation_params: Dict[str, Any] = Field(
-        description="The parameters of the operation.", alias="operationParams"
+        description="The parameters of the operation.", alias="operationParams", default={}
     )
     run_id: Optional[STR_INT] = Field(
-        description="The ID of the run that the job is running on.", alias="runId"
+        description="The ID of the run that the job is running on.", alias="runId",
+        default=None
     )
-    results: Optional[Dict[str, Any]] = Field(description="The results of the job.")
-    metrics: Optional[Dict[str, Any]] = Field(description="The metrics of the job.")
+    results: Optional[Dict[str, Any]] = Field(description="The results of the job.", default=None)
+    metrics: Optional[Dict[str, Any]] = Field(description="The metrics of the job.", default=None)
 
-
+    def to_job_list_item(self) -> JobListItem:
+        return JobListItem.model_validate(
+            {
+                "id": self.id,
+                "status": self.status,
+                "createdTime": self.created_time,
+                "startTime": self.start_time,
+                "endTime": self.end_time,
+            }
+        )
 #### Util functions ####
 
 
 def filter_by_config_id(
     job: JobDetail,
-    config_id: Annotated[str, "The ID of the configuration by which the job is filtered."],
+    config_id: Annotated[str, Field(str, description="The ID of the configuration by which the job is filtered.")],
 ) -> bool:
-    return job.operation_params and job.operation_params.get("configurationId", None) == config_id
+    if job.operation_params is None:
+        return False
+    else:
+        return job.operation_params.get("configurationId", None) == config_id
 
 
 def filter_by_component_id(
     job: JobDetail,
-    component_id: Annotated[str, "The ID of the component by which the job is filtered."],
+    component_id: Annotated[str, Field(str, description="The ID of the component by which the job is filtered.")],
 ) -> bool:
-    return job.operation_params and job.operation_params.get("componentId", None) == component_id
+    if job.operation_params is None:
+        return False
+    else:
+        return job.operation_params.get("componentId", None) == component_id
 
 
 #### End of util functions ####
@@ -89,9 +106,9 @@ async def list_jobs(ctx: Context) -> List[JobListItem]:
 
 
 async def get_job_details(
-    job_id: Annotated[str, "The ID of the job you want to get details about."], ctx: Context
+    job_id: Annotated[str, Field(str, description="The ID of the job you want to get details about.")], ctx: Context
 ) -> JobDetail:
-    """Get the details of a job."""
+    """Get the details of a job from the job ID."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
@@ -101,15 +118,11 @@ async def get_job_details(
 
 
 async def list_component_config_jobs(
-    component_id: Annotated[str, "The ID of the component whose jobs you want to list."],
-    config_id: Annotated[str, "The ID of the component configuration whose jobs you want to list."],
-    n_limit: Annotated[
-        Optional[int],
-        "The maximum number of filtered jobs to return. If None, all filtered jobs are returned.",
-    ],
+    component_id: Annotated[str, Field(str, description="The ID of the component whose jobs you want to list.")],
+    config_id: Annotated[str, Field(str, description="The ID of the component configuration whose jobs you want to list.")],
     ctx: Context,
 ) -> List[JobListItem]:
-    """List all jobs for a given component id and configuration id, optionally limited list size by the n_limit parameter."""
+    """List jobs that ran for a given component id and configuration id."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
@@ -121,20 +134,14 @@ async def list_component_config_jobs(
     )
     jobs = list(jobs)
     # Convert JobDetail to JobListItem
-    n_limit = n_limit or len(jobs)
-    n_limit = max(n_limit, 1)
-    return [JobListItem.model_validate(j.model_dump()) for j in jobs[:n_limit]]
+    return [j.to_job_list_item() for j in jobs]
 
 
 async def list_component_jobs(
-    component_id: Annotated[str, "The ID of the component whose jobs you want to list."],
-    n_limit: Annotated[
-        Optional[int],
-        "The maximum number of filtered jobs to return. If None, all filtered jobs are returned.",
-    ],
+    component_id: Annotated[str, Field(str, description="The ID of the component whose jobs you want to list.")],
     ctx: Context,
 ) -> List[JobListItem]:
-    """List all jobs for a given component id, optionally limited list size by the n_limit parameter."""
+    """List jobs that ran for a given component id."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
@@ -143,6 +150,4 @@ async def list_component_jobs(
     jobs = filter(lambda j: filter_by_component_id(j, component_id), jobs)
     jobs = list(jobs)
     # Convert JobDetail to JobListItem
-    n_limit = n_limit or len(jobs)
-    n_limit = max(n_limit, 1)
-    return [JobListItem.model_validate(j.model_dump()) for j in jobs[:n_limit]]
+    return [j.to_job_list_item() for j in jobs]
