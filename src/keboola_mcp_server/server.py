@@ -85,7 +85,8 @@ class TableDetail(BaseModel):
         None,
         description="Fully qualified database table name.",
         validation_alias=AliasChoices(
-            "fullyQualifiedTableName", "fully_qualified_table_name", "fully-qualified-table-name"),
+            "fullyQualifiedTableName", "fully_qualified_table_name", "fully-qualified-table-name"
+        ),
         serialization_alias="fullyQualifiedTableName",
     )
 
