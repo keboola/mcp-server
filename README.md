@@ -170,29 +170,22 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 ```json
 {
   "mcpServers": {
-    "keboola_wsl": {
+    "keboola": {
       "command": "wsl.exe",
       "args": [
         "bash",
         "-c",
-        "'source /wsl/path/to/the/script/run_mcp.sh'"
-      ],
+        "'source /wsl_path/to/keboola-mcp-server/.env &&",
+        "/wsl_path/to/keboola-mcp-server/venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
+      ]
     }
   }
 }
 ```
-
-- where `run_mcp.sh` includes: (don't forget to add permissions with cmd: `chmod +x /wsl/path/to/the/run_mcp.sh`)
-```shell
-#!/bin/bash
-source /wsl/path/to/the/file/.env
-/wsl/path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --log-level DEBUG --api-url https://connection.keboola.com
-```
-
-- and where `.env` file contains following lines
+- where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
 ```shell
 export KBC_STORAGE_TOKEN="your-keboola-storage-token"
-export PYTHONPATH="/wsl/path/to/your/project/src"
+export PYTHONPATH="/wsl_path/to/keboola-mcp-server/src"
 export KBC_SNOWFLAKE_ACCOUNT="your-snowflake-account"
 export KBC_SNOWFLAKE_USER="your-snowflake-user"
 export KBC_SNOWFLAKE_PASSWORD="your-snowflake-password"
