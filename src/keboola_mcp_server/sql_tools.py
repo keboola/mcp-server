@@ -96,6 +96,10 @@ class WorkspaceManager:
         if table_id in self._table_fqn_cache:
             return self._table_fqn_cache[table_id]
 
+        db_name: str | None = None
+        schema_name: str | None = None
+        table_name: str | None = None
+
         if source_table := table.get("sourceTable"):
             # a table linked from some other project
             schema_name, table_name = source_table["id"].rsplit(sep=".", maxsplit=1)
@@ -110,7 +114,6 @@ class WorkspaceManager:
                 db_name = result.data.rows[0]["DATABASE_NAME"]
             else:
                 LOG.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
-                raise ValueError(f"No database found for Keboola project: {source_project_id}")
 
         else:
             sql = f'select CURRENT_DATABASE() as "current_database", CURRENT_SCHEMA() as "current_schema";'
@@ -129,12 +132,13 @@ class WorkspaceManager:
                 table_name = table["name"]
             else:
                 LOG.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
-                raise ValueError(f"No current database found.")
 
-        fqn = TableFqn(db_name, schema_name, table_name)
-        self._table_fqn_cache[table_id] = fqn
-
-        return fqn
+        if db_name and schema_name and table_name:
+            fqn = TableFqn(db_name, schema_name, table_name)
+            self._table_fqn_cache[table_id] = fqn
+            return fqn
+        else:
+            return None
 
 
 async def query_table(

@@ -183,7 +183,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         return TableDetail(
             **raw_table,
             column_identifiers=column_info,
-            fully_qualified_table_name=table_fqn.snowflake_fqn,
+            fully_qualified_table_name=table_fqn.snowflake_fqn if table_fqn else "N/A",
         )
 
     @mcp.tool()
