@@ -173,7 +173,8 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
       "args": [
         "bash",
         "-c",
-        "'source /wsl_path/to/keboola-mcp-server/.env &&",
+        "'source /wsl_path/to/keboola-mcp-server/.env",
+        "&&",
         "/wsl_path/to/keboola-mcp-server/venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
       ]
     }
