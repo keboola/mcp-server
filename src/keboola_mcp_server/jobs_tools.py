@@ -104,11 +104,17 @@ async def list_jobs(ctx: Context) -> List[JobListItem]:
     logger.info(f"Found {len(r_jobs)} jobs.")
     return [JobListItem.model_validate(r_job) for r_job in r_jobs]
 
+class JobDetailsInputSchema(BaseModel):
+    job_id: str = Field(str, description="The ID of the job you want to get details about.")
 
+# @tool(args_schema=JobDetailsInputSchema)
 async def get_job_details(
-    job_id: Annotated[str, Field(str, description="The ID of the job you want to get details about.")], ctx: Context
+    job_id: Annotated[str, Field(description="The unique identifier of the job whose details should be retrieved.")], ctx: Context
 ) -> JobDetail:
-    """Get the details of a job from the job ID."""
+    """
+    Retrieves detailed information about a specific job, identified by the job_id (a string parameter), including its 
+    status, parameters, execution logs, and any relevant metadata.
+    """
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
