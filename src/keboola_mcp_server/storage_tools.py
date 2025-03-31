@@ -30,12 +30,6 @@ class BucketInfo(BaseModel):
         None, description="Stage of the bucket ('in' for input stage, 'out' for output stage)"
     )
     created: str = Field(description="Creation timestamp of the bucket")
-    # table_count: Optional[int] = Field(
-    #     None,
-    #     description="Number of tables in the bucket",
-    #     validation_alias=AliasChoices("tableCount", "table_count", "table-count"),
-    #     serialization_alias="tableCount",
-    # )
     data_size_bytes: Optional[int] = Field(
         None,
         description="Total data size of the bucket in bytes",
@@ -43,12 +37,20 @@ class BucketInfo(BaseModel):
         serialization_alias="dataSizeBytes",
     )
 
-    tables_count: int = 0  # Default value, updated dynamically
+    tables_count: Optional[int] = Field(
+        default=None,
+        description="Number of tables in the bucket",
+        validation_alias=AliasChoices("tablesCount", "tables_count", "tables-count"),
+        serialization_alias="tablesCount",
+    )
 
     @model_validator(mode="before")
     @classmethod
     def set_table_count(cls, values):
-        values["tables_count"] = len(values.get("tables", []))  # Count tables if provided
+        if isinstance(values.get("tables"), list):
+            values["tables_count"] = len(values["tables"])
+        else:
+            values["tables_count"] = None
         return values
 
 
@@ -106,8 +108,9 @@ async def get_bucket_metadata(
     """Get detailed information about a specific bucket."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
+    print(client.storage_client.buckets.detail(bucket_id))
     raw_bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
-    print(raw_bucket)
+    print(f"Inside bucket metadata: {raw_bucket}")
 
     return BucketInfo(**raw_bucket)
 
@@ -117,6 +120,7 @@ async def list_bucket_info(ctx: Context) -> List[BucketInfo]:
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = client.storage_client.buckets.list()
+    print(f"Inside list bucket info: {raw_bucket_data}")
 
     return [BucketInfo(**raw_bucket) for raw_bucket in raw_bucket_data]
 
