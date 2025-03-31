@@ -17,9 +17,9 @@ from keboola_mcp_server.mcp import (
 )
 from keboola_mcp_server.storage_tools import add_storage_tools
 
-from .client import KeboolaClient
-from .config import Config
-from .database import ConnectionManager, DatabasePathManager
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.database import ConnectionManager, DatabasePathManager
 
 logger = logging.getLogger(__name__)
 
@@ -152,3 +152,5 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             f"---"
             for config in configs
         )
+
+    return mcp

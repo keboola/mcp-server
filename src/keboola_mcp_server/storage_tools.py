@@ -4,7 +4,7 @@ import logging
 from typing import Annotated, Any, Dict, List, Optional, cast
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.database import DatabasePathManager
@@ -30,12 +30,12 @@ class BucketInfo(BaseModel):
         None, description="Stage of the bucket ('in' for input stage, 'out' for output stage)"
     )
     created: str = Field(description="Creation timestamp of the bucket")
-    table_count: Optional[int] = Field(
-        None,
-        description="Number of tables in the bucket",
-        validation_alias=AliasChoices("tableCount", "table_count", "table-count"),
-        serialization_alias="tableCount",
-    )
+    # table_count: Optional[int] = Field(
+    #     None,
+    #     description="Number of tables in the bucket",
+    #     validation_alias=AliasChoices("tableCount", "table_count", "table-count"),
+    #     serialization_alias="tableCount",
+    # )
     data_size_bytes: Optional[int] = Field(
         None,
         description="Total data size of the bucket in bytes",
@@ -43,6 +43,13 @@ class BucketInfo(BaseModel):
         serialization_alias="dataSizeBytes",
     )
 
+    tables_count: int = 0  # Default value, updated dynamically
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_table_count(cls, values):
+        values["tables_count"] = len(values.get("tables", []))  # Count tables if provided
+        return values
 
 class TableColumnInfo(BaseModel):
     name: str = Field(description="Name of the column")
@@ -99,6 +106,7 @@ async def get_bucket_metadata(
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
     raw_bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
+    print(raw_bucket)
 
     return BucketInfo(**raw_bucket)
 
