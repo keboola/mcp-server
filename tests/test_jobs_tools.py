@@ -83,7 +83,7 @@ async def test_get_job_details(mcp_context_client):
         "startTime": "2024-01-01T00:00:01Z",
         "endTime": "2024-01-01T00:00:02Z",
         "url": "https://connection.keboola.com/jobs/123",
-        "configData": {"source": "file.csv"},
+        "configData": [{"source": "file.csv"}],
         "configRowIds": ["1", "2", "3"],
         "runId": "456",
         "parentRunId": "789",

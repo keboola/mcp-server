@@ -13,11 +13,6 @@ JOB_STATUS = Literal[
     "processing",
     "success",
     "error",
-    "terminated",
-    "terminating",
-    "created",
-    "cancelled",
-    "unknown",
 ]
 
 
@@ -57,7 +52,7 @@ class JobDetail(JobListItem):
     table_id: Optional[str] = Field(
         description="The ID of the table that the job is running on.", alias="tableId", default=None
     )
-    config_data: Optional[Dict[str, Any]] = Field(
+    config_data: Optional[List[Any]] = Field(
         description="The data of the configuration.", alias="configData", default=None
     )
     config_row_ids: Optional[List[str]] = Field(
