@@ -3,7 +3,7 @@
 import logging
 import os
 import tempfile
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 import httpx
 from kbcstorage.client import Client
@@ -16,8 +16,10 @@ class KeboolaClient:
     """Helper class to interact with Keboola Storage API and Job Queue API."""
 
     def __init__(
-        self, storage_api_token: str, storage_api_url: str = "https://connection.keboola.com",
-        queue_api_url: str = "https://queue.keboola.com"
+        self,
+        storage_api_token: str,
+        storage_api_url: str = "https://connection.keboola.com",
+        queue_api_url: str = "https://queue.keboola.com",
     ) -> None:
         """Initialize the client.
 
@@ -30,7 +32,7 @@ class KeboolaClient:
         # Ensure the base URL has a scheme
         if not storage_api_url.startswith(("http://", "https://")):
             storage_api_url = f"https://{storage_api_url}"
-        
+
         if not queue_api_url.startswith(("http://", "https://")):
             queue_api_url = f"https://{queue_api_url}"
 
@@ -49,7 +51,6 @@ class KeboolaClient:
         self.storage_client = Client(self.base_url, self.token)
 
         self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
-        
 
     async def get(self, endpoint: str) -> Dict[str, Any]:
         """Make a GET request to Keboola Storage API.
@@ -121,30 +122,36 @@ class JobsQueue(Endpoint):
         base_url (str): The base URL for this endpoint.
         token (str): A key for the Storage API.
     """
+
     def __init__(self, root_url: str, token: str = None):
         """
         Create an JobsQueueClient.
         :param root_url: Root url of API. eg. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console.
         """
-        super().__init__(root_url, '', token)
-        
+        super().__init__(root_url, "", token)
+
         # Rewrite the base url to remove the /v2/storage/ part
         self.base_url = self.root_url.rstrip("/")
 
-
-    def list(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    def list(
+        self, limit: int = 100, offset: int = 0, status: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
         List most recent jobs details.
         :param limit: Limit the number of jobs returned, default 100, max 500
         :param offset: Offset the number of jobs returned, page offset, default 0
+        :param status: Filter jobs by status, default None = no filtering
         :return: The json from the HTTP response.
         :raise: requests.HTTPError: If the API request fails.
         """
-        params = {"limit": limit, "offset": offset,
-                  "sortBy": "createdTime",
-                  "sortOrder": "desc"}
-
+        params = {
+            "limit": limit,
+            "offset": offset,
+            **({"status": status} if status else {}),
+            "sortBy": "startTime",  # Sort by start time
+            "sortOrder": "desc",  # Descending order (newest first)
+        }
         return self.search(params)
 
     def detail(self, job_id: str) -> Dict[str, Any]:
@@ -154,7 +161,7 @@ class JobsQueue(Endpoint):
         :return: The json from the HTTP response.
         :raise: requests.HTTPError: If the API request fails.
         """
-        url = '{}/jobs/{}'.format(self.base_url, job_id)
+        url = "{}/jobs/{}".format(self.base_url, job_id)
 
         return self._get(url)
 
@@ -199,5 +206,6 @@ class JobsQueue(Endpoint):
             - sortOrder str: Sort the jobs by the given field, default "asc"
                 values: asc, desc
         """
-        url = '{}/search/jobs'.format(self.base_url)
+        url = "{}/search/jobs".format(self.base_url)
+
         return self._get(url, params=params)
