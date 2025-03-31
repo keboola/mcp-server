@@ -9,6 +9,9 @@ import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
 
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.database import ConnectionManager, DatabasePathManager
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
@@ -16,10 +19,6 @@ from keboola_mcp_server.mcp import (
     SessionStateFactory,
 )
 from keboola_mcp_server.storage_tools import add_storage_tools
-
-from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.config import Config
-from keboola_mcp_server.database import ConnectionManager, DatabasePathManager
 
 logger = logging.getLogger(__name__)
 
