@@ -51,6 +51,7 @@ class BucketInfo(BaseModel):
         values["tables_count"] = len(values.get("tables", []))  # Count tables if provided
         return values
 
+
 class TableColumnInfo(BaseModel):
     name: str = Field(description="Name of the column")
     db_identifier: str = Field(
