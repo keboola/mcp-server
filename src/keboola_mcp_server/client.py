@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, cast
 
 import httpx
 from kbcstorage.client import Client
+from kbcstorage.base import Endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,8 @@ class KeboolaClient:
     """Helper class to interact with Keboola Storage API."""
 
     def __init__(
-        self, storage_api_token: str, storage_api_url: str = "https://connection.keboola.com"
+        self, storage_api_token: str, storage_api_url: str = "https://connection.keboola.com",
+        queue_api_url: str = "https://queue.keboola.com"
     ) -> None:
         """Initialize the client.
 
@@ -27,14 +29,24 @@ class KeboolaClient:
         # Ensure the base URL has a scheme
         if not storage_api_url.startswith(("http://", "https://")):
             storage_api_url = f"https://{storage_api_url}"
+        
+        if not queue_api_url.startswith(("http://", "https://")):
+            queue_api_url = f"https://{queue_api_url}"
+
         self.base_url = storage_api_url
+        self.base_queue_api_url = queue_api_url
+
         self.headers = {
             "X-StorageApi-Token": self.token,
             "Content-Type": "application/json",
             "Accept-encoding": "gzip",
         }
         # Initialize the official client for operations it handles well
+        # DO not use self.storage_client.jobs, use self.queue_job_client instead
         self.storage_client = Client(self.base_url, self.token)
+
+        self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
+        
 
     async def get(self, endpoint: str) -> Dict[str, Any]:
         """Make a GET request to Keboola Storage API.
@@ -94,3 +106,104 @@ class KeboolaClient:
         except Exception as e:
             logger.error(f"Error downloading table {table_id}: {str(e)}")
             return f"Error downloading table: {str(e)}"
+
+
+class JobsQueue(Endpoint):
+    """
+    Client for the Job Queue API using the same token as the Storage API.
+    It is a wrapper around the Endpoint class from the kbcstorage library, in order to use
+    the inner methods of the Endpoint class, however the base url is different.
+
+    Attributes:
+        base_url (str): The base URL for this endpoint.
+        token (str): A key for the Storage API.
+    """
+    def __init__(self, root_url: str, token: str = None):
+        """
+        Create an JobsQueueClient.
+
+        Args
+            root_url (str): Root url of API. eg.
+                "https://queue.keboola.com/"
+            token (str): A key for the Storage API. Can be found in the storage
+                console.
+        """
+        if not token:
+            raise ValueError("Token is required.")
+        if not root_url:
+            raise ValueError("Root URL is required.")
+        
+        self.root_url = root_url
+        # Rewrite the base url to remove the /v2/storage/ part
+        self.base_url = self.root_url.rstrip("/")
+        self.token = token
+        self._auth_header = {'X-StorageApi-Token': self.token,
+                             'Accept-Encoding': 'gzip',
+                             'User-Agent': 'Keboola Job Queue API Python Client'}
+
+    def list(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """
+        List all jobs details.
+        :param limit: Limit the number of jobs returned, default 100
+        :param offset: Offset the number of jobs returned, page offset, default 0
+        :return: The json from the HTTP response.
+        :raise: requests.HTTPError: If the API request fails.
+        """
+        params = {"limit": limit, "offset": offset}
+
+        return self.search(params)
+
+    def detail(self, job_id: str) -> Dict[str, Any]:
+        """
+        Retrieves information about a given job.
+        :param job_id: The id of the job.
+        :return: The json from the HTTP response.
+        :raise: requests.HTTPError: If the API request fails.
+        """
+        url = '{}/jobs/{}'.format(self.base_url, job_id)
+
+        return self._get(url)
+
+    def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Search for jobs based on the provided parameters.
+        :param params: The parameters to search for.
+        :return: The json from the HTTP response.
+        :raise: requests.HTTPError: If the API request fails.
+
+        params:
+            - id str/lsit[str]: Search jobs by id
+            - runId str/list[str]: Search jobs by runId
+            - branchId str/list[str]: Search jobs by branchId
+            - tokenId str/list[str]: Search jobs by tokenId
+            - tokenDescription str/list[str]: Search jobs by tokenDescription
+            - componentId str/list[str]: Search jobs by componentId
+            - component str/list[str]: Search jobs by componentId alias..
+            - configId str/list[str]: Search jobs by configId
+            - config str/list[str]: Search jobs by configId alias..
+            - configRowIds str/list[str]: Search jobs by configRowIds
+            - status str/list[str]: Search jobs by status
+            - createdTimeFrom str: Jobs that were created after the given date
+                e.g. "2021-01-01, -8 hours, -1 week,..."
+            - createdTimeTo str: Jobs that were created before the given date
+                e.g. "2021-01-01, today, last monday,..."
+            - startTimeFrom str: Jobs that were started after the given date
+                e.g. "2021-01-01, -8 hours, -1 week,..."
+            - startTimeTo str: Jobs that were started before the given date
+                e.g. "2021-01-01, today, last monday,..."
+            - endTimeTo str: Jobs that were finished before the given date
+                e.g. "2021-01-01, today, last monday,..."
+            - endTimeFrom str: Jobs that were finished after the given date
+                e.g. "2021-01-01, -8 hours, -1 week,..."
+            - limit int: Limit the number of jobs returned, default 100
+                e.g. 100
+            - offset int: Offset the number of jobs returned, page offset, default 0
+                e.g. 100
+            - sortBy str: Sort the jobs by the given field, default "id"
+                values: id, runId, projectId, branchId, componentId, configId, tokenDescription, status, createdTime,
+                updatedTime, startTime, endTime, durationSeconds
+            - sortOrder str: Sort the jobs by the given field, default "asc"
+                values: asc, desc
+        """
+        url = '{}/search/jobs'.format(self.base_url)
+        return self._get(url, params=params)
