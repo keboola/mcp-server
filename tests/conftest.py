@@ -4,7 +4,7 @@ import pytest
 from kbcstorage.client import Client
 from mcp.server.fastmcp import Context
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import JobsQueue, KeboolaClient
 
 
 @pytest.fixture
@@ -12,6 +12,7 @@ def keboola_client() -> KeboolaClient:
     """Create a mock jobs client."""
     mock_client = MagicMock(spec=KeboolaClient)
     mock_client.storage_client = MagicMock(spec=Client)
+    mock_client.jobs_queue = MagicMock(spec=JobsQueue)
     return mock_client
 
 

@@ -1,16 +1,13 @@
-from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
-from mcp.server.fastmcp import Context
 
-from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.jobs_tools import (
+    JOB_STATUS,
     JobDetail,
     JobListItem,
-    filter_by_component_id,
-    filter_by_config_id,
     get_job_details,
+    handle_status_param,
     list_component_config_jobs,
     list_component_jobs,
     list_jobs,
@@ -22,26 +19,33 @@ async def test_list_jobs(mcp_context_client):
     """Test list_jobs tool."""
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
-    mock_client.storage_client.jobs = MagicMock()
 
     # Mock data
     mock_jobs = [
         {
             "id": "123",
             "status": "success",
+            "component": "keboola.ex-aws-s3",
+            "config": "config-123",
+            "isFinished": True,
             "createdTime": "2024-01-01T00:00:00Z",
             "startTime": "2024-01-01T00:00:01Z",
             "endTime": "2024-01-01T00:00:02Z",
+            "not_a_desired_field": "Should not be in the result",
         },
         {
             "id": "124",
             "status": "processing",
+            "component": "keboola.ex-aws-s3",
+            "config": "config-124",
+            "isFinished": False,
             "createdTime": "2024-01-01T00:00:00Z",
             "startTime": "2024-01-01T00:00:01Z",
             "endTime": "2024-01-01T00:00:02Z",
+            "not_a_desired_field": "Should not be in the result",
         },
     ]
-    mock_client.storage_client.jobs.list = MagicMock(return_value=mock_jobs)
+    mock_client.jobs_queue.list = MagicMock(return_value=mock_jobs)
 
     result = await list_jobs(context)
 
@@ -49,11 +53,17 @@ async def test_list_jobs(mcp_context_client):
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(j.id == item["id"] for j, item in zip(result, mock_jobs))
     assert all(j.status == item["status"] for j, item in zip(result, mock_jobs))
+    assert all(j.component_id == item["component"] for j, item in zip(result, mock_jobs))
+    assert all(j.config_id == item["config"] for j, item in zip(result, mock_jobs))
+    assert all(j.is_finished == item["isFinished"] for j, item in zip(result, mock_jobs))
     assert all(j.created_time == item["createdTime"] for j, item in zip(result, mock_jobs))
     assert all(j.start_time == item["startTime"] for j, item in zip(result, mock_jobs))
     assert all(j.end_time == item["endTime"] for j, item in zip(result, mock_jobs))
+    assert all(hasattr(j, "not_a_desired_field") is False for j in result)
 
-    mock_client.storage_client.jobs.list.assert_called_once()
+    mock_client.jobs_queue.list.assert_called_once_with(
+        limit=100, offset=0, status=list(JOB_STATUS.__args__)
+    )
 
 
 @pytest.mark.asyncio
@@ -61,40 +71,53 @@ async def test_get_job_details(mcp_context_client):
     """Test get_job_details tool."""
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
-    mock_client.storage_client.jobs = MagicMock()
 
     # Mock data
     mock_job = {
         "id": "123",
         "status": "success",
+        "component": "keboola.ex-aws-s3",
+        "config": "config-123",
+        "isFinished": True,
         "createdTime": "2024-01-01T00:00:00Z",
         "startTime": "2024-01-01T00:00:01Z",
         "endTime": "2024-01-01T00:00:02Z",
         "url": "https://connection.keboola.com/jobs/123",
-        "operationName": "tableImport",
-        "operationParams": {"source": "file.csv"},
+        "configData": {"source": "file.csv"},
+        "configRowIds": ["1", "2", "3"],
         "runId": "456",
-        "results": {"import": "successful"},
+        "parentRunId": "789",
+        "durationSeconds": 100,
+        "result": {"import": "successful"},
         "metrics": {"rows": 1000},
-        "additional_field": "some value",  # this will be removed
     }
 
     # Setup mock to return test data
-    mock_client.storage_client.jobs.detail = MagicMock(return_value=mock_job)
+    mock_client.jobs_queue.detail = MagicMock(return_value=mock_job)
 
     result = await get_job_details("123", context)
 
     assert isinstance(result, JobDetail)
-    assert result.id == "123"
-    assert result.status == "success"
-    assert result.url == "https://connection.keboola.com/jobs/123"
-    assert result.operation_name == "tableImport"
-    assert result.operation_params == {"source": "file.csv"}
-    assert result.run_id == "456"
-    assert result.results == {"import": "successful"}
-    assert result.metrics == {"rows": 1000}
+    assert result.id == mock_job["id"]
+    assert result.status == mock_job["status"]
+    assert result.component_id == mock_job["component"]
+    assert result.config_id == mock_job["config"]
+    assert result.is_finished == mock_job["isFinished"]
+    assert result.created_time == mock_job["createdTime"]
+    assert result.start_time == mock_job["startTime"]
+    assert result.end_time == mock_job["endTime"]
+    assert result.url == mock_job["url"]
+    assert result.config_data == mock_job["configData"]
+    assert result.config_row_ids == mock_job["configRowIds"]
+    assert result.run_id == mock_job["runId"]
+    assert result.parent_run_id == mock_job["parentRunId"]
+    assert result.duration_seconds == mock_job["durationSeconds"]
+    assert result.result == mock_job["result"]
+    assert result.metrics == mock_job["metrics"]
+    # table_id is not present in the mock_job, should be None
+    assert result.table_id == None
 
-    mock_client.storage_client.jobs.detail.assert_called_once_with("123")
+    mock_client.jobs_queue.detail.assert_called_once_with("123")
 
 
 @pytest.mark.asyncio
@@ -102,48 +125,52 @@ async def test_list_component_config_jobs(mcp_context_client):
     """Test list_component_config_jobs tool."""
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
-    mock_client.storage_client.jobs = MagicMock()
 
     # Mock data
     mock_jobs = [
         {
             "id": "123",
             "status": "success",
+            "component": "keboola.ex-aws-s3",
+            "config": "config-123",
+            "isFinished": True,
             "createdTime": "2024-01-01T00:00:00Z",
             "startTime": "2024-01-01T00:00:01Z",
             "endTime": "2024-01-01T00:00:02Z",
-            'url': 'https://foo.bar',
-            "operationParams": {"configurationId": "config-123", "componentId": "keboola.ex-aws-s3"},
-            "operationName": "tableImport",
+            "url": "https://foo.bar",
         },
         {
             "id": "124",
-            "status": "processing",
-            "createdTime": "2024-01-01T00:00:00Z",
-            "startTime": "2024-01-01T00:00:01Z",
-            "endTime": "2024-01-01T00:00:02Z",
-            'url': 'https://foo.bar',
-            "operationParams": {"configurationId": "config-124", "componentId": "keboola.ex-aws-s3"},
-            "operationName": "tableImport",
-        },
-        {
-            "id": "125",
             "status": "error",
+            "component": "keboola.ex-aws-s3",
+            "config": "config-123",
+            "isFinished": True,
             "createdTime": "2024-01-01T00:00:00Z",
             "startTime": "2024-01-01T00:00:01Z",
-            "endTime": "2024-01-01T00:00:02Z",
-            'url': 'https://foo.bar',
-            "operationParams": {"configurationId": "config-456", "componentId": "keboola.ex-db-mysql"},
-            "operationName": "tableImport",
         },
     ]
-    mock_client.storage_client.jobs.list = MagicMock(return_value=mock_jobs)
+    mock_client.jobs_queue.search = MagicMock(return_value=mock_jobs)
 
-    result = await list_component_config_jobs("keboola.ex-aws-s3", "config-123", context)
+    result = await list_component_config_jobs(
+        ctx=context, component_id="keboola.ex-aws-s3", config_id="config-123"
+    )
 
-    assert len(result) == 1
+    assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(j.id == item["id"] for j, item in zip(result, mock_jobs))
+    assert all(j.status == item["status"] for j, item in zip(result, mock_jobs))
+
+    mock_client.jobs_queue.search.assert_called_once_with(
+        {
+            "componentId": "keboola.ex-aws-s3",
+            "configId": "config-123",
+            "status": list(JOB_STATUS.__args__),
+            "sortBy": "startTime",
+            "sortOrder": "desc",
+            "limit": 100,
+            "offset": 0,
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -151,124 +178,64 @@ async def test_list_component_jobs(mcp_context_client):
     """Test list_component_jobs tool."""
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
-    mock_client.storage_client.jobs = MagicMock()
 
     # Mock data
     mock_jobs = [
         {
             "id": "123",
             "status": "success",
+            "component": "keboola.ex-aws-s3",
+            "config": "config-123",
+            "isFinished": True,
             "createdTime": "2024-01-01T00:00:00Z",
             "startTime": "2024-01-01T00:00:01Z",
             "endTime": "2024-01-01T00:00:02Z",
-            'url': 'https://foo.bar',
-            "operationParams": {"configurationId": "config-123", "componentId": "keboola.ex-aws-s3"},
-            "operationName": "tableImport",
+            "url": "https://foo.bar",
         },
         {
             "id": "124",
             "status": "processing",
+            "component": "keboola.ex-aws-s3",
+            "config": "config-124",
+            "isFinished": True,
             "createdTime": "2024-01-01T00:00:00Z",
             "startTime": "2024-01-01T00:00:01Z",
             "endTime": "2024-01-01T00:00:02Z",
-            'url': 'https://foo.bar',
-            "operationParams": {"configurationId": "config-124", "componentId": "keboola.ex-aws-s3"},
-            "operationName": "tableImport",
-        },
-        {
-            "id": "125",
-            "status": "error",
-            "createdTime": "2024-01-01T00:00:00Z",
-            "startTime": "2024-01-01T00:00:01Z",
-            "endTime": "2024-01-01T00:00:02Z",
-            'url': 'https://foo.bar',
-            "operationParams": {"configurationId": "config-456", "componentId": "keboola.ex-db-mysql"},
-            "operationName": "tableImport",
+            "url": "https://foo.bar",
         },
     ]
-    mock_client.storage_client.jobs.list = MagicMock(return_value=mock_jobs)
+    mock_client.jobs_queue.search = MagicMock(return_value=mock_jobs)
 
-    result = await list_component_jobs("keboola.ex-aws-s3", context)
+    result = await list_component_jobs(ctx=context, component_id="keboola.ex-aws-s3")
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(j.id == item["id"] for j, item in zip(result, mock_jobs))
+    assert all(j.status == item["status"] for j, item in zip(result, mock_jobs))
 
-@pytest.mark.parametrize(
-    "config_id, search_config_id, expected",
-    [("config-123", "config-123", True), ("config-456", "config-123", False)],
-)
-def test_filter_by_config_id(config_id, search_config_id, expected):
-    """Test filter_by_config_id function."""
-    # Test job with matching config_id
-    job = JobDetail.model_validate(
+    mock_client.jobs_queue.search.assert_called_once_with(
         {
-            "id": "123",
-            "status": "success",
-            "url": "https://example.com",
-            "operationName": "test",
-            "operationParams": {"configurationId": config_id},
+            "componentId": "keboola.ex-aws-s3",
+            "status": list(JOB_STATUS.__args__),
+            "limit": 100,
+            "offset": 0,
+            "sortBy": "startTime",
+            "sortOrder": "desc",
         }
     )
-    assert filter_by_config_id(job, search_config_id) is expected
+
 
 @pytest.mark.parametrize(
-    "component_id, search_component_id, expected",
-    [("keboola.ex-aws-s3", "keboola.ex-aws-s3", True), ("keboola.ex-db-mysql", "keboola.ex-aws-s3", False)],
+    "status, expected",
+    [
+        (None, list(JOB_STATUS.__args__)),
+        ("success", ["success"]),
+        (["success", "error"], ["success", "error"]),
+    ],
 )
-def test_filter_by_component_id(component_id, search_component_id, expected):
-    """Test filter_by_component_id function."""
-    # Test job with matching component_id
-    job = JobDetail.model_validate(
-        {
-            "id": "123",
-            "status": "success",
-            "url": "https://example.com",
-            "operationName": "test",
-            "operationParams": {"componentId": component_id},
-        }
-    )
-    print(component_id, search_component_id, expected)
-    assert filter_by_component_id(job, search_component_id) is expected
-
-def test_filter_by_config_id_edge_cases():
-    """Test filter_by_config_id function with edge cases."""
-    job = JobDetail(
-        id="123",
-        status="success",
-        url="https://example.com",
-        operation_name="test",
-        operation_params={},
-    )
-    assert filter_by_config_id(job, "config-123") is False
-    # Test job with no operation_params
-    job = JobDetail(
-        id="123",
-        status="success",
-        url="https://example.com",
-        operation_name="test",
-        operation_params={},
-    )
-    assert filter_by_config_id(job, "config-123") is False
-
-def test_filter_by_component_id_edge_cases():
-    """Test filter_by_component_id function with edge cases."""
-    # Test job with no component_id
-    job = JobDetail(
-        id="123",
-        status="success",
-        url="https://example.com",
-        operation_name="test",
-        operation_params={},
-    )
-    assert filter_by_component_id(job, "keboola.ex-aws-s3") is False
-    # Test job with no operation_params
-    job = JobDetail(
-        id="123",
-        status="success",
-        url="https://example.com",
-        operation_name="test",
-        operation_params=None,
-    )
-    assert filter_by_component_id(job, "keboola.ex-aws-s3") is False
-
+def test_handle_status_param(status, expected):
+    """Test handle_status_param function."""
+    result = handle_status_param(status)
+    assert result == expected
+    assert isinstance(result, list)
+    assert all(s in JOB_STATUS.__args__ for s in result)
