@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any, Dict, List, Optional, Union, cast
+from typing import Annotated, Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
@@ -106,7 +106,10 @@ async def list_components(ctx: Context) -> List[ComponentListItem]:
 
 async def list_component_configs(
     component_id: Annotated[
-        str, Field(str, description="The ID of the Keboola component whose configurations you want to list")
+        str,
+        Field(
+            str, description="The ID of the Keboola component whose configurations you want to list"
+        ),
     ],
     ctx: Context,
 ) -> List[ComponentConfig]:
@@ -139,7 +142,11 @@ async def get_component_config_details(
         str, Field(str, description="Unique identifier of the Keboola component")
     ],
     config_id: Annotated[
-        str, Field(str, description="Unique identifier of the Keboola component configuration you want details about")
+        str,
+        Field(
+            str,
+            description="Unique identifier of the Keboola component configuration you want details about",
+        ),
     ],
     ctx: Context,
 ) -> ComponentConfig:
@@ -158,10 +165,18 @@ async def get_component_config_details(
 
 async def get_component_config_metadata(
     component_id: Annotated[
-        str, Field(str, description="Unique identifier of the Keboola component whose configurations you want to list")
+        str,
+        Field(
+            str,
+            description="Unique identifier of the Keboola component whose configurations you want to list",
+        ),
     ],
     config_id: Annotated[
-        str, Field(str, description="Unique identifier of the Keboola component configuration you want details about")
+        str,
+        Field(
+            str,
+            description="Unique identifier of the Keboola component configuration you want details about",
+        ),
     ],
     ctx: Context,
 ) -> List[ComponentConfigMetadata]:

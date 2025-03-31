@@ -167,7 +167,7 @@ async def test_get_component_config_metadata(mcp_context_client):
             "key": "test-key",
             "value": "test-value",
             "provider": "user",
-            "timestamp": "2024-01-01T00:00:00Z"
+            "timestamp": "2024-01-01T00:00:00Z",
         }
     ]
 
