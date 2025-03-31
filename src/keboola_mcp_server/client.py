@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class KeboolaClient:
-    """Helper class to interact with Keboola Storage API."""
+    """Helper class to interact with Keboola Storage API and Job Queue API."""
 
     def __init__(
         self, storage_api_token: str, storage_api_url: str = "https://connection.keboola.com",
@@ -24,6 +24,7 @@ class KeboolaClient:
         Args:
             storage_api_token: Keboola Storage API token
             storage_api_url: Keboola Storage API URL
+            queue_api_url: Keboola Job Queue API URL
         """
         self.token = storage_api_token
         # Ensure the base URL has a scheme
@@ -42,7 +43,9 @@ class KeboolaClient:
             "Accept-encoding": "gzip",
         }
         # Initialize the official client for operations it handles well
-        # DO not use self.storage_client.jobs, use self.queue_job_client instead
+        # The storage_client.jobs endpoint is for legacy storage jobs
+        # Use self.jobs_queue instead which provides access to the modern Job Queue API
+        # that handles component/transformation jobs
         self.storage_client = Client(self.base_url, self.token)
 
         self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
@@ -110,9 +113,9 @@ class KeboolaClient:
 
 class JobsQueue(Endpoint):
     """
-    Client for the Job Queue API using the same token as the Storage API.
-    It is a wrapper around the Endpoint class from the kbcstorage library, in order to use
-    the inner methods of the Endpoint class, however the base url is different.
+    Client for interacting with the Keboola Job Queue API. This class extends the Endpoint class
+    from the kbcstorage library to leverage its core functionality, while using a different base URL
+    and the same Storage API token for authentication.
 
     Attributes:
         base_url (str): The base URL for this endpoint.
@@ -121,12 +124,8 @@ class JobsQueue(Endpoint):
     def __init__(self, root_url: str, token: str = None):
         """
         Create an JobsQueueClient.
-
-        Args
-            root_url (str): Root url of API. eg.
-                "https://queue.keboola.com/"
-            token (str): A key for the Storage API. Can be found in the storage
-                console.
+        :param root_url: Root url of API. eg. "https://queue.keboola.com/"
+        :param token: A key for the Storage API. Can be found in the storage console.
         """
         if not token:
             raise ValueError("Token is required.")
