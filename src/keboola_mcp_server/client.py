@@ -127,28 +127,23 @@ class JobsQueue(Endpoint):
         :param root_url: Root url of API. eg. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console.
         """
-        if not token:
-            raise ValueError("Token is required.")
-        if not root_url:
-            raise ValueError("Root URL is required.")
+        super().__init__(root_url, '', token)
         
-        self.root_url = root_url
         # Rewrite the base url to remove the /v2/storage/ part
         self.base_url = self.root_url.rstrip("/")
-        self.token = token
-        self._auth_header = {'X-StorageApi-Token': self.token,
-                             'Accept-Encoding': 'gzip',
-                             'User-Agent': 'Keboola Job Queue API Python Client'}
+
 
     def list(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
         """
-        List all jobs details.
-        :param limit: Limit the number of jobs returned, default 100
+        List most recent jobs details.
+        :param limit: Limit the number of jobs returned, default 100, max 500
         :param offset: Offset the number of jobs returned, page offset, default 0
         :return: The json from the HTTP response.
         :raise: requests.HTTPError: If the API request fails.
         """
-        params = {"limit": limit, "offset": offset}
+        params = {"limit": limit, "offset": offset,
+                  "sortBy": "createdTime",
+                  "sortOrder": "desc"}
 
         return self.search(params)
 
