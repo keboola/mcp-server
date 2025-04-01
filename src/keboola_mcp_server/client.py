@@ -147,6 +147,8 @@ class JobsQueue(Endpoint):
         :param limit: Limit the number of jobs returned, default 100, max 500
         :param offset: Offset the number of jobs returned, page offset, default 0
         :param status: Filter jobs by status, default None = no filtering
+        :param sort_by: Sort the jobs by the given field, default "startTime"
+        :param sort_order: Sort the jobs by the given field, default "desc"
         :return: The json from the HTTP response.
         :raise: requests.HTTPError: If the API request fails.
         """
@@ -154,8 +156,8 @@ class JobsQueue(Endpoint):
             "limit": limit,
             "offset": offset,
             **({"status": status} if status else {}),
-            "sortBy": sort_by,  # Sort by start time
-            "sortOrder": sort_order,  # Descending order (newest first)
+            "sortBy": sort_by,
+            "sortOrder": sort_order,
         }
         return self.search(params)
 
