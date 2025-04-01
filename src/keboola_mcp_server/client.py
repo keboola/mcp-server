@@ -135,7 +135,12 @@ class JobsQueue(Endpoint):
         self.base_url = self.root_url.rstrip("/")
 
     def list(
-        self, limit: int = 100, offset: int = 0, status: Optional[List[str]] = None
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        status: Optional[List[str]] = None,
+        sort_by: Optional[str] = "startTime",
+        sort_order: Optional[str] = "desc",
     ) -> Dict[str, Any]:
         """
         List most recent jobs details.
@@ -149,8 +154,8 @@ class JobsQueue(Endpoint):
             "limit": limit,
             "offset": offset,
             **({"status": status} if status else {}),
-            "sortBy": "startTime",  # Sort by start time
-            "sortOrder": "desc",  # Descending order (newest first)
+            "sortBy": sort_by,  # Sort by start time
+            "sortOrder": sort_order,  # Descending order (newest first)
         }
         return self.search(params)
 

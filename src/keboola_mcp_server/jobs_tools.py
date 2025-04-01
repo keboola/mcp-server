@@ -8,6 +8,8 @@ from keboola_mcp_server.client import KeboolaClient
 
 logger = logging.getLogger(__name__)
 
+######################################## Job Base Models ########################################
+
 JOB_STATUS = Literal[
     "waiting",
     "processing",
@@ -113,6 +115,8 @@ class JobDetail(JobListItem):
     )
 
 
+######################################## End of Job Base Models ########################################
+
 ######################################## Util functions ########################################
 
 
@@ -133,14 +137,23 @@ def handle_status_param(status: Optional[Union[List[JOB_STATUS], JOB_STATUS]]) -
 
 ######################################## MCP tools ########################################
 
+SORT_BY_VALUES = Literal["startTime", "endTime", "createdTime", "durationSeconds", "id"]
+SORT_ORDER_VALUES = Literal["asc", "desc"]
+
 
 def add_jobs_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    mcp.add_tool(list_jobs)
-    mcp.add_tool(get_job_details)
-    mcp.add_tool(list_component_config_jobs)
-    mcp.add_tool(list_component_jobs)
-    logger.info("Jobs tools added to the MCP server.")
+    jobs_tools = [
+        list_jobs,
+        get_job_details,
+        list_component_config_jobs,
+        list_component_jobs,
+    ]
+    for tool in jobs_tools:
+        logger.info(f"Adding tool {tool.__name__} to the MCP server.")
+        mcp.add_tool(tool)
+
+    logger.info("Jobs tools initialized.")
 
 
 async def list_jobs(
@@ -153,6 +166,14 @@ async def list_jobs(
         int, Field(int, description="The number of jobs to list.", ge=1, le=500)
     ] = 100,
     offset: Annotated[int, Field(int, description="The offset of the jobs to list.", ge=0)] = 0,
+    sort_by: Annotated[
+        SORT_BY_VALUES,
+        Field(Optional[SORT_BY_VALUES], description="The field to sort the jobs by."),
+    ] = "startTime",
+    sort_order: Annotated[
+        SORT_ORDER_VALUES,
+        Field(Optional[SORT_ORDER_VALUES], description="The order to sort the jobs by."),
+    ] = "desc",
 ) -> List[JobListItem]:
     """
     List most recent jobs limited by the limit and shifted by the offset.
@@ -163,6 +184,10 @@ async def list_jobs(
     :param offset (optional): The offset of the jobs to list, default = 0.
         - E.g. if limit = 100 and offset = 0, the first 100 jobs will be listed.
         - E.g. if limit = 100 and offset = 100, the second 100 jobs will be listed.
+    :param sort_by (optional): The field to sort the jobs by, default = "startTime".
+    :param sort_order (optional): The order to sort the jobs by, default = "desc".
+        - E.g. if sort_by = "startTime" and sort_order = "asc", the jobs will be sorted by the start time in
+        ascending order.
     :return: A list of job list items, if empty then no jobs were found.
     """
     client = ctx.session.state["sapi_client"]
@@ -170,7 +195,9 @@ async def list_jobs(
 
     status = handle_status_param(status=status)
 
-    r_jobs = client.jobs_queue.list(limit=limit, offset=offset, status=status)
+    r_jobs = client.jobs_queue.list(
+        limit=limit, offset=offset, status=status, sort_by=sort_by, sort_order=sort_order
+    )
     logger.info(f"Found {len(r_jobs)} jobs for limit {limit}, offset {offset}, status {status}.")
     return [JobListItem.model_validate(r_job) for r_job in r_jobs]
 
@@ -218,6 +245,14 @@ async def list_component_config_jobs(
         int, Field(int, description="The number of jobs to list.", ge=1, le=500)
     ] = 100,
     offset: Annotated[int, Field(int, description="The offset of the jobs to list.", ge=0)] = 0,
+    sort_by: Annotated[
+        SORT_BY_VALUES,
+        Field(Optional[SORT_BY_VALUES], description="The field to sort the jobs by."),
+    ] = "startTime",
+    sort_order: Annotated[
+        SORT_ORDER_VALUES,
+        Field(Optional[SORT_ORDER_VALUES], description="The order to sort the jobs by."),
+    ] = "desc",
 ) -> List[JobListItem]:
     """
     List most recent jobs that ran for a given component id and configuration id.
@@ -230,6 +265,10 @@ async def list_component_config_jobs(
     :param offset (optional): The offset of the jobs to list, default = 0.
         - E.g. if limit = 100 and offset = 0, the first 100 jobs will be listed.
         - E.g. if limit = 100 and offset = 100, the second 100 jobs will be listed.
+    :param sort_by (optional): The field to sort the jobs by, default = "startTime".
+    :param sort_order (optional): The order to sort the jobs by, default = "desc".
+        - E.g. if sort_by = "startTime" and sort_order = "asc", the jobs will be sorted by the start time in
+        ascending order.
     :return: A list of job list items.
     """
     client = ctx.session.state["sapi_client"]
@@ -242,8 +281,8 @@ async def list_component_config_jobs(
         "status": status,
         "limit": limit,
         "offset": offset,
-        "sortBy": "startTime",
-        "sortOrder": "desc",
+        "sortBy": sort_by,
+        "sortOrder": sort_order,
     }
     r_jobs = client.jobs_queue.search(params)
     logger.info(
@@ -266,6 +305,14 @@ async def list_component_jobs(
         int, Field(int, description="The number of jobs to list.", ge=1, le=500)
     ] = 100,
     offset: Annotated[int, Field(int, description="The offset of the jobs to list.", ge=0)] = 0,
+    sort_by: Annotated[
+        SORT_BY_VALUES,
+        Field(Optional[SORT_BY_VALUES], description="The field to sort the jobs by."),
+    ] = "startTime",
+    sort_order: Annotated[
+        SORT_ORDER_VALUES,
+        Field(Optional[SORT_ORDER_VALUES], description="The order to sort the jobs by."),
+    ] = "desc",
 ) -> List[JobListItem]:
     """
     List most recent jobs that ran for a given component id.
@@ -277,6 +324,10 @@ async def list_component_jobs(
     :param offset (optional): The offset of the jobs to list, default = 0.
         - E.g. if limit = 100 and offset = 0, the first 100 jobs will be listed.
         - E.g. if limit = 100 and offset = 100, the second 100 jobs will be listed.
+    :param sort_by (optional): The field to sort the jobs by, default = "startTime".
+    :param sort_order (optional): The order to sort the jobs by, default = "desc".
+        - E.g. if sort_by = "startTime" and sort_order = "asc", the jobs will be sorted by the start time in ascending
+        order.
     :return: A list of job list items.
     """
     client = ctx.session.state["sapi_client"]
@@ -288,11 +339,14 @@ async def list_component_jobs(
         "status": status,
         "limit": limit,
         "offset": offset,
-        "sortBy": "startTime",
-        "sortOrder": "desc",
+        "sortBy": sort_by,
+        "sortOrder": sort_order,
     }
     r_jobs = client.jobs_queue.search(params)
     logger.info(
         f"Found {len(r_jobs)} jobs for component {component_id}, with limit {limit}, offset {offset}, status {status}."
     )
     return [JobListItem.model_validate(r_job) for r_job in r_jobs]
+
+
+######################################## End of MCP tools ########################################
