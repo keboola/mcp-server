@@ -1,14 +1,11 @@
 from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.server import create_server
 from keboola_mcp_server.storage_tools import (
     BucketInfo,
-    TableColumnInfo,
     TableDetail,
     get_bucket_metadata,
     get_table_metadata,
@@ -33,22 +30,31 @@ def test_config() -> Config:
 
 
 @pytest.fixture
-def mock_table_detail() -> Dict[str, Any]:
-    """Create a mock table detail."""
-    return {
+def mock_table_data() -> Dict[str, Any]:
+    """Create a combined fixture for table testing.
+
+    Contains both the raw API response data and the expected transformed data.
+    """
+    raw_table_data = {
         "id": "in.c-test.test-table",
         "name": "test-table",
         "primary_key": ["id"],
         "created": "2024-01-01T00:00:00Z",
-        "row_count": 100,
+        "rows_count": 100,
         "data_size_bytes": 1000,
         "columns": ["id", "name", "value"],
-        "column_identifiers": [
-            {"name": "id", "db_identifier": '"id"'},
-            {"name": "name", "db_identifier": '"name"'},
-            {"name": "value", "db_identifier": '"value"'},
-        ],
-        "db_identifier": '"KEBOOLA_test"."in.c-test"."test-table"',
+    }
+
+    return {
+        "raw_table_data": raw_table_data,  # What the client returns
+        "additional_data": {
+            "snowflake_fqn": '"SAPI_TEST"."in.c-test"."test-table"',  # What db_path_manager should return
+            "column_identifiers": [  # Expected transformed column identifiers
+                {"name": "id", "db_identifier": '"id"'},
+                {"name": "name", "db_identifier": '"name"'},
+                {"name": "value", "db_identifier": '"value"'},
+            ],
+        },
     }
 
 
@@ -143,19 +149,33 @@ async def test_list_bucket_info(mcp_context_client, mock_buckets: List[Dict[str,
 
 
 @pytest.mark.asyncio
-async def test_get_table_metadata(mcp_context_client, mock_table_detail) -> None:
+async def test_get_table_metadata(mcp_context_client, mock_table_data) -> None:
     """Test get_table_metadata tool."""
 
     keboola_client = mcp_context_client.session.state["sapi_client"]
     keboola_client.storage_client.tables = MagicMock()
-    keboola_client.storage_client.tables.detail = MagicMock(return_value=mock_table_detail)
+    keboola_client.storage_client.tables.detail = MagicMock(
+        return_value=mock_table_data["raw_table_data"]
+    )
 
-    result = await get_table_metadata(mock_table_detail["id"], mcp_context_client)
+    db_path_manager = mcp_context_client.session.state["db_path_manager"]
+    mock_fqn = MagicMock()
+    mock_fqn.snowflake_fqn = mock_table_data["additional_data"]["snowflake_fqn"]
+    db_path_manager.get_table_fqn = MagicMock(return_value=mock_fqn)
+    result = await get_table_metadata(mock_table_data["raw_table_data"]["id"], mcp_context_client)
 
     assert isinstance(result, TableDetail)
-    assert result.id == mock_table_detail["id"]
-    assert result.name == mock_table_detail["name"]
-    assert result.primary_key == mock_table_detail["primary_key"]
-    assert result.row_count == mock_table_detail["row_count"]
-    assert result.data_size_bytes == mock_table_detail["data_size_bytes"]
-    assert result.columns == mock_table_detail["columns"]
+    assert result.id == mock_table_data["raw_table_data"]["id"]
+    assert result.name == mock_table_data["raw_table_data"]["name"]
+    assert result.primary_key == mock_table_data["raw_table_data"]["primary_key"]
+    assert result.rows_count == mock_table_data["raw_table_data"]["rows_count"]
+    assert result.data_size_bytes == mock_table_data["raw_table_data"]["data_size_bytes"]
+    assert result.columns == mock_table_data["raw_table_data"]["columns"]
+    assert result.db_identifier == mock_table_data["additional_data"]["snowflake_fqn"]
+    print(result.column_identifiers)
+    print(mock_table_data["additional_data"]["column_identifiers"])
+    for col_id, exp_col_id in zip(
+        result.column_identifiers, mock_table_data["additional_data"]["column_identifiers"]
+    ):
+        assert col_id.name == exp_col_id["name"]
+        assert col_id.db_identifier == exp_col_id["db_identifier"]

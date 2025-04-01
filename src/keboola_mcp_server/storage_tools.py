@@ -73,11 +73,11 @@ class TableDetail(BaseModel):
         serialization_alias="primaryKey",
     )
     created: Optional[str] = Field(None, description="Creation timestamp of the table")
-    row_count: Optional[int] = Field(
+    rows_count: Optional[int] = Field(
         None,
         description="Number of rows in the table",
-        validation_alias=AliasChoices("rowCount", "row_count", "row-count"),
-        serialization_alias="rowCount",
+        validation_alias=AliasChoices("rowsCount", "rows_count", "rows-count"),
+        serialization_alias="rowsCount",
     )
     data_size_bytes: Optional[int] = Field(
         None,
@@ -136,6 +136,7 @@ async def get_table_metadata(
     db_path_manager = ctx.session.state["db_path_manager"]
     assert isinstance(db_path_manager, DatabasePathManager)
 
+    print(f"Raw table: {raw_table}")
     return TableDetail(
         **raw_table,
         column_identifiers=column_info,
