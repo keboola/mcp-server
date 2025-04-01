@@ -167,13 +167,7 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 - where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
 ```shell
 export KBC_STORAGE_TOKEN="your-keboola-storage-token"
-export KBC_SNOWFLAKE_ACCOUNT="your-snowflake-account"
-export KBC_SNOWFLAKE_USER="your-snowflake-user"
-export KBC_SNOWFLAKE_PASSWORD="your-snowflake-password"
-export KBC_SNOWFLAKE_WAREHOUSE="your-snowflake-warehouse"
-export KBC_SNOWFLAKE_DATABASE="your-snowflake-database"
-export KBC_SNOWFLAKE_SCHEMA="your-snowflake-schema"
-export KBC_SNOWFLAKE_ROLE="your-snowflake-role"
+export KBC_WORKSPACE_USER="your-workspace-user"
 ```
 
 Replace all placeholder values (`your_*`) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
