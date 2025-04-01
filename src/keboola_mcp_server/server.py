@@ -7,7 +7,6 @@ from io import StringIO
 from typing import Annotated, Any, Dict, List, Optional, cast
 
 
-
 import snowflake.connector
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
@@ -250,7 +249,6 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         )
 
     @mcp.tool()
-
     async def list_bucket_tables(bucket_id: str, ctx: Context) -> str:
         """List all tables in a specific bucket with their basic information."""
         client = ctx.session.state["sapi_client"]
