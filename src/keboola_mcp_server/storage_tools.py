@@ -144,7 +144,6 @@ async def list_bucket_info(ctx: Context) -> List[BucketInfo]:
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = client.storage_client.buckets.list()
-    print(f"Raw bucket data: {raw_bucket_data}")
 
     return [BucketInfo(**raw_bucket) for raw_bucket in raw_bucket_data]
 
@@ -163,7 +162,6 @@ async def get_table_metadata(
     db_path_manager = ctx.session.state["db_path_manager"]
     assert isinstance(db_path_manager, DatabasePathManager)
 
-    print(f"Raw table: {raw_table}")
     return TableDetail(
         **raw_table,
         column_identifiers=column_info,
