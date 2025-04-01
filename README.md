@@ -12,8 +12,6 @@ A Model Context Protocol (MCP) server for interacting with Keboola Connection. T
 - Keboola Storage API token
 - Snowflake Read Only Workspace
 
-> Note: The Snowflake package doesn't work with the latest version of Python. If you're using Python 3.12 and above, you'll need to downgrade to Python 3.11.
-
 ## Installation
 
 ### Installing via Smithery
@@ -64,9 +62,7 @@ To use this server with Claude Desktop, follow these steps:
       "command": "/path/to/keboola-mcp-server/.venv/bin/python",
       "args": [
         "-m",
-        "keboola_mcp_server.cli",
-        "--log-level",
-        "DEBUG",
+        "keboola_mcp_server",
         "--api-url",
         "https://connection.YOUR_REGION.keboola.com"
       ],
@@ -89,7 +85,7 @@ To use this server with Claude Desktop, follow these steps:
 Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `your-keboola-storage-token` with your Keboola Storage API token
-- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if you region is just `connection` explicitly
+- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
 - `your-snowflake-account` with your Snowflake account identifier
 - `your-snowflake-user` with your Snowflake username
 - `your-snowflake-password` with your Snowflake password
@@ -123,7 +119,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 1. Create or edit the Cursor AI configuration file:
    - Location: `~/.cursor/mcp.json`
 
-2. Add one of the following configurations (or both) based on your preferred transport method:
+2. Add one of the following configurations (or all) based on your preferred transport method:
 
 ### Option 1: Using Server-Sent Events (SSE)
 
@@ -137,7 +133,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 }
 ```
 
-### Option 2: Using Standard I/O (stdio)
+### Option 2a: Using Standard I/O (stdio)
 
 ```json
 {
@@ -146,9 +142,11 @@ To use this server with Cursor AI, you have two options for configuring the tran
       "command": "/path/to/keboola-mcp-server/venv/bin/python",
       "args": [
         "-m",
-        "keboola_mcp_server.cli",
+        "keboola_mcp_server",
         "--transport",
-        "stdio"
+        "stdio",
+         "--api-url",
+         "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
         "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
@@ -164,11 +162,48 @@ To use this server with Cursor AI, you have two options for configuring the tran
 }
 ```
 
-Replace all placeholder values (YOUR_*) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
+### Option 2b: Using WSL Standard I/O (wsl stdio)
+When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this.
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "wsl.exe",
+      "args": [
+        "bash",
+        "-c",
+        "'source /wsl_path/to/keboola-mcp-server/.env",
+        "&&",
+        "/wsl_path/to/keboola-mcp-server/venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
+      ]
+    }
+  }
+}
+```
+- where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
+```shell
+export KBC_STORAGE_TOKEN="your-keboola-storage-token"
+export KBC_SNOWFLAKE_ACCOUNT="your-snowflake-account"
+export KBC_SNOWFLAKE_USER="your-snowflake-user"
+export KBC_SNOWFLAKE_PASSWORD="your-snowflake-password"
+export KBC_SNOWFLAKE_WAREHOUSE="your-snowflake-warehouse"
+export KBC_SNOWFLAKE_DATABASE="your-snowflake-database"
+export KBC_SNOWFLAKE_SCHEMA="your-snowflake-schema"
+export KBC_SNOWFLAKE_ROLE="your-snowflake-role"
+```
+
+Replace all placeholder values (`your_*`) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
+Replace `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly.
 
 After updating the configuration:
 1. Restart Cursor AI
-2. The MCP server should be automatically detected and available for use
+2. If you use the `sse` transport make sure to start your MCP server. You can do so by running this in the activated
+   virtual environment where you built the server:
+   ```
+   /path/to/keboola-mcp-server/venv/bin/python -m keboola_mcp_server --transport sse --api-url https://connection.YOUR_REGION.keboola.com
+   ```
+3. Cursor AI should be automatically detect your MCP server and enable it.
 
 ## Available Tools
 
