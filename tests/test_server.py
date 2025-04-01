@@ -6,7 +6,8 @@ import pytest
 
 from keboola_mcp_server.config import Config
 
-from keboola_mcp_server.server import BucketInfo, TableColumnInfo, TableDetail, create_server
+
+from keboola_mcp_server.server import BucketInfo, create_server
 
 
 @pytest.fixture

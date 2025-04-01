@@ -4,7 +4,8 @@ import csv
 import logging
 from io import StringIO
 
-from typing import Annotated, Any, Dict, List, Optional, TypedDict, cast
+from typing import Annotated, Any, Dict, List, Optional, cast
+
 
 
 import snowflake.connector
@@ -249,9 +250,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         )
 
     @mcp.tool()
-    async def list_bucket_tables(
-        bucket_id: Annotated[str, Field(description="Unique ID of the bucket.")], ctx: Context
-    ) -> list[TableDetail]:
+
+    async def list_bucket_tables(bucket_id: str, ctx: Context) -> str:
         """List all tables in a specific bucket with their basic information."""
         client = ctx.session.state["sapi_client"]
         assert isinstance(client, KeboolaClient)
