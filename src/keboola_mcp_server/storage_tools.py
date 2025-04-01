@@ -139,7 +139,7 @@ async def get_table_metadata(
     return TableDetail(
         **raw_table,
         column_identifiers=column_info,
-        db_identifier=db_path_manager.get_table_fqn(raw_table),
+        db_identifier=db_path_manager.get_table_fqn(raw_table).snowflake_fqn,
     )
 
 
