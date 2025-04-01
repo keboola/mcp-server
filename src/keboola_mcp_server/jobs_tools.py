@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union, cast
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union, cast, get_args
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, field_validator
@@ -126,7 +126,7 @@ def handle_status_param(status: Optional[Union[List[JOB_STATUS], JOB_STATUS]]) -
     otherwise returns the statuses as is.
     """
     if status is None:
-        return list(JOB_STATUS.__args__)
+        return list(get_args(JOB_STATUS))
     elif isinstance(status, str):
         return [status]
     else:
@@ -160,7 +160,10 @@ async def list_jobs(
     ctx: Context,
     status: Annotated[
         List[JOB_STATUS],
-        Field(Optional[list[JOB_STATUS]], description="The status of the jobs to list."),
+        Field(
+            Optional[list[JOB_STATUS]],
+            description="Array of allowed job statuses of jobs to filter by.",
+        ),
     ] = None,
     limit: Annotated[
         int, Field(int, description="The number of jobs to list.", ge=1, le=500)
@@ -237,8 +240,8 @@ async def list_component_config_jobs(
     status: Annotated[
         List[JOB_STATUS],
         Field(
-            default=None,
-            description="The status of the jobs by which the jobs are filtered.",
+            Optional[list[JOB_STATUS]],
+            description="Array of allowed job statuses of jobs to filter by.",
         ),
     ] = None,
     limit: Annotated[
@@ -299,7 +302,10 @@ async def list_component_jobs(
     ],
     status: Annotated[
         List[JOB_STATUS],
-        Field(default=None, description="The status of the jobs by which the jobs are filtered."),
+        Field(
+            Optional[list[JOB_STATUS]],
+            description="Array of allowed job statuses of jobs to filter by.",
+        ),
     ] = None,
     limit: Annotated[
         int, Field(int, description="The number of jobs to list.", ge=1, le=500)

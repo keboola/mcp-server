@@ -77,6 +77,10 @@ class Component(ComponentListItem):
         default=None,
     )
 
+    def to_list_item(self) -> ComponentListItem:
+        """Convert the component to a list item."""
+        return ComponentListItem.model_validate(self.model_dump())
+
 
 class ComponentConfigurationListItem(BaseModel):
     """A list item representing a Keboola component configuration."""
@@ -176,11 +180,13 @@ async def list_component_configurations(
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
-    r_component = client.storage_client.components.detail(component_id)
+    component = await get_component_details(component_id, ctx)
     r_configs = client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
     return [
-        ComponentConfigurationListItem.model_validate({**r_config, "component": r_component})
+        ComponentConfigurationListItem.model_validate(
+            {**r_config, "component": component.to_list_item()}
+        )
         for r_config in r_configs
     ]
 
@@ -197,7 +203,6 @@ async def get_component_details(
 
     endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
     r_component = await client.get(endpoint)
-    print(r_component)
     return Component.model_validate(r_component)
 
 

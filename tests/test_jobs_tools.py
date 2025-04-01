@@ -1,3 +1,4 @@
+from typing import Any, get_args
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,14 +15,10 @@ from keboola_mcp_server.jobs_tools import (
 )
 
 
-@pytest.mark.asyncio
-async def test_list_jobs(mcp_context_client):
-    """Test list_jobs tool."""
-    context = mcp_context_client
-    mock_client = context.session.state["sapi_client"]
-
-    # Mock data
-    mock_jobs = [
+@pytest.fixture
+def mock_jobs() -> list[dict[str, Any]]:
+    """Mock mock_job tool."""
+    return [
         {
             "id": "123",
             "status": "success",
@@ -45,39 +42,12 @@ async def test_list_jobs(mcp_context_client):
             "not_a_desired_field": "Should not be in the result",
         },
     ]
-    mock_client.jobs_queue.list = MagicMock(return_value=mock_jobs)
-
-    result = await list_jobs(context)
-
-    assert len(result) == 2
-    assert all(isinstance(job, JobListItem) for job in result)
-    assert all(j.id == item["id"] for j, item in zip(result, mock_jobs))
-    assert all(j.status == item["status"] for j, item in zip(result, mock_jobs))
-    assert all(j.component_id == item["component"] for j, item in zip(result, mock_jobs))
-    assert all(j.config_id == item["config"] for j, item in zip(result, mock_jobs))
-    assert all(j.is_finished == item["isFinished"] for j, item in zip(result, mock_jobs))
-    assert all(j.created_time == item["createdTime"] for j, item in zip(result, mock_jobs))
-    assert all(j.start_time == item["startTime"] for j, item in zip(result, mock_jobs))
-    assert all(j.end_time == item["endTime"] for j, item in zip(result, mock_jobs))
-    assert all(hasattr(j, "not_a_desired_field") is False for j in result)
-
-    mock_client.jobs_queue.list.assert_called_once_with(
-        limit=100,
-        offset=0,
-        status=list(JOB_STATUS.__args__),
-        sort_by="startTime",
-        sort_order="desc",
-    )
 
 
-@pytest.mark.asyncio
-async def test_get_job_details(mcp_context_client):
-    """Test get_job_details tool."""
-    context = mcp_context_client
-    mock_client = context.session.state["sapi_client"]
-
-    # Mock data
-    mock_job = {
+@pytest.fixture
+def mock_job() -> dict[str, Any]:
+    """Mock mock_job tool."""
+    return {
         "id": "123",
         "status": "success",
         "component": "keboola.ex-aws-s3",
@@ -95,6 +65,43 @@ async def test_get_job_details(mcp_context_client):
         "result": {"import": "successful"},
         "metrics": {"rows": 1000},
     }
+
+
+@pytest.mark.asyncio
+async def test_list_jobs(mcp_context_client, mock_jobs):
+    """Test list_jobs tool."""
+    context = mcp_context_client
+    mock_client = context.session.state["sapi_client"]
+
+    mock_client.jobs_queue.list = MagicMock(return_value=mock_jobs)
+    result = await list_jobs(context)
+
+    assert len(result) == 2
+    assert all(isinstance(job, JobListItem) for job in result)
+    assert all(j.id == item["id"] for j, item in zip(result, mock_jobs))
+    assert all(j.status == item["status"] for j, item in zip(result, mock_jobs))
+    assert all(j.component_id == item["component"] for j, item in zip(result, mock_jobs))
+    assert all(j.config_id == item["config"] for j, item in zip(result, mock_jobs))
+    assert all(j.is_finished == item["isFinished"] for j, item in zip(result, mock_jobs))
+    assert all(j.created_time == item["createdTime"] for j, item in zip(result, mock_jobs))
+    assert all(j.start_time == item["startTime"] for j, item in zip(result, mock_jobs))
+    assert all(j.end_time == item["endTime"] for j, item in zip(result, mock_jobs))
+    assert all(hasattr(j, "not_a_desired_field") is False for j in result)
+
+    mock_client.jobs_queue.list.assert_called_once_with(
+        limit=100,
+        offset=0,
+        status=list(get_args(JOB_STATUS)),
+        sort_by="startTime",
+        sort_order="desc",
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_job_details(mcp_context_client, mock_job):
+    """Test get_job_details tool."""
+    context = mcp_context_client
+    mock_client = context.session.state["sapi_client"]
 
     # Setup mock to return test data
     mock_client.jobs_queue.detail = MagicMock(return_value=mock_job)
@@ -125,34 +132,11 @@ async def test_get_job_details(mcp_context_client):
 
 
 @pytest.mark.asyncio
-async def test_list_component_config_jobs(mcp_context_client):
+async def test_list_component_config_jobs(mcp_context_client, mock_jobs):
     """Test list_component_config_jobs tool."""
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
 
-    # Mock data
-    mock_jobs = [
-        {
-            "id": "123",
-            "status": "success",
-            "component": "keboola.ex-aws-s3",
-            "config": "config-123",
-            "isFinished": True,
-            "createdTime": "2024-01-01T00:00:00Z",
-            "startTime": "2024-01-01T00:00:01Z",
-            "endTime": "2024-01-01T00:00:02Z",
-            "url": "https://foo.bar",
-        },
-        {
-            "id": "124",
-            "status": "error",
-            "component": "keboola.ex-aws-s3",
-            "config": "config-123",
-            "isFinished": True,
-            "createdTime": "2024-01-01T00:00:00Z",
-            "startTime": "2024-01-01T00:00:01Z",
-        },
-    ]
     mock_client.jobs_queue.search = MagicMock(return_value=mock_jobs)
 
     result = await list_component_config_jobs(
@@ -168,7 +152,7 @@ async def test_list_component_config_jobs(mcp_context_client):
         {
             "componentId": "keboola.ex-aws-s3",
             "configId": "config-123",
-            "status": list(JOB_STATUS.__args__),
+            "status": list(get_args(JOB_STATUS)),
             "sortBy": "startTime",
             "sortOrder": "desc",
             "limit": 100,
@@ -178,36 +162,11 @@ async def test_list_component_config_jobs(mcp_context_client):
 
 
 @pytest.mark.asyncio
-async def test_list_component_jobs(mcp_context_client):
+async def test_list_component_jobs(mcp_context_client, mock_jobs):
     """Test list_component_jobs tool."""
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
 
-    # Mock data
-    mock_jobs = [
-        {
-            "id": "123",
-            "status": "success",
-            "component": "keboola.ex-aws-s3",
-            "config": "config-123",
-            "isFinished": True,
-            "createdTime": "2024-01-01T00:00:00Z",
-            "startTime": "2024-01-01T00:00:01Z",
-            "endTime": "2024-01-01T00:00:02Z",
-            "url": "https://foo.bar",
-        },
-        {
-            "id": "124",
-            "status": "processing",
-            "component": "keboola.ex-aws-s3",
-            "config": "config-124",
-            "isFinished": True,
-            "createdTime": "2024-01-01T00:00:00Z",
-            "startTime": "2024-01-01T00:00:01Z",
-            "endTime": "2024-01-01T00:00:02Z",
-            "url": "https://foo.bar",
-        },
-    ]
     mock_client.jobs_queue.search = MagicMock(return_value=mock_jobs)
 
     result = await list_component_jobs(ctx=context, component_id="keboola.ex-aws-s3")
@@ -220,7 +179,7 @@ async def test_list_component_jobs(mcp_context_client):
     mock_client.jobs_queue.search.assert_called_once_with(
         {
             "componentId": "keboola.ex-aws-s3",
-            "status": list(JOB_STATUS.__args__),
+            "status": list(get_args(JOB_STATUS)),
             "limit": 100,
             "offset": 0,
             "sortBy": "startTime",
@@ -232,7 +191,7 @@ async def test_list_component_jobs(mcp_context_client):
 @pytest.mark.parametrize(
     "status, expected",
     [
-        (None, list(JOB_STATUS.__args__)),
+        (None, list(get_args(JOB_STATUS))),
         ("success", ["success"]),
         (["success", "error"], ["success", "error"]),
     ],
@@ -242,4 +201,4 @@ def test_handle_status_param(status, expected):
     result = handle_status_param(status)
     assert result == expected
     assert isinstance(result, list)
-    assert all(s in JOB_STATUS.__args__ for s in result)
+    assert all(s in get_args(JOB_STATUS) for s in result)
