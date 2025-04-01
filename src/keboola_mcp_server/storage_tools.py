@@ -22,6 +22,19 @@ def add_storage_tools(mcp: FastMCP) -> None:
     logger.info("Component tools added to the MCP server.")
 
 
+def extract_description(values: Dict[str, Any]) -> Optional[str]:
+    """Extract the description from values or metadata."""
+    description = values.get("description")
+
+    if not description:
+        metadata = values.get("metadata", [])
+        description = next(
+            (item["value"] for item in metadata if item.get("key") == "KBC.description"), None
+        )
+
+    return description
+
+
 class BucketInfo(BaseModel):
     id: str = Field(description="Unique identifier for the bucket")
     name: str = Field(description="Name of the bucket")
@@ -53,6 +66,12 @@ class BucketInfo(BaseModel):
             values["tables_count"] = None
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def set_description(cls, values):
+        values["description"] = extract_description(values)
+        return values
+
 
 class TableColumnInfo(BaseModel):
     name: str = Field(description="Name of the column")
@@ -66,6 +85,7 @@ class TableColumnInfo(BaseModel):
 class TableDetail(BaseModel):
     id: str = Field(description="Unique identifier for the table")
     name: str = Field(description="Name of the table")
+    description: Optional[str] = Field(None, description="Description of the table")
     primary_key: Optional[List[str]] = Field(
         None,
         description="List of primary key columns",
@@ -101,6 +121,12 @@ class TableDetail(BaseModel):
         serialization_alias="dbIdentifier",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def set_description(cls, values):
+        values["description"] = extract_description(values)
+        return values
+
 
 async def get_bucket_metadata(
     bucket_id: Annotated[str, Field(description="Unique ID of the bucket.")], ctx: Context
@@ -118,6 +144,7 @@ async def list_bucket_info(ctx: Context) -> List[BucketInfo]:
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = client.storage_client.buckets.list()
+    print(f"Raw bucket data: {raw_bucket_data}")
 
     return [BucketInfo(**raw_bucket) for raw_bucket in raw_bucket_data]
 
