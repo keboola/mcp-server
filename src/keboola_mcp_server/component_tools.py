@@ -35,9 +35,7 @@ class ComponentConfiguration(BaseModel):
     )
     configuration_name: str = Field(
         description="The name of the component configuration",
-        validation_alias=AliasChoices(
-            "name", "configuration-name", "configuration_name"
-        ),
+        validation_alias=AliasChoices("name", "configuration-name", "configuration_name"),
         serialization_alias="name",
     )
     configuration_description: Optional[str] = Field(
@@ -87,9 +85,7 @@ async def list_component_configurations(
     r_configs = client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
     return [
-        ComponentConfiguration.model_validate(
-            {**r_config, "component": r_component}
-        )
+        ComponentConfiguration.model_validate({**r_config, "component": r_component})
         for r_config in r_configs
     ]
 
@@ -107,6 +103,4 @@ async def get_component_configuration_details(
 
     r_component = client.storage_client.components.detail(component_id)
     r_config = client.storage_client.configurations.detail(component_id, configuration_id)
-    return ComponentConfiguration.model_validate(
-        {**r_config, "component": r_component}
-    )
+    return ComponentConfiguration.model_validate({**r_config, "component": r_component})

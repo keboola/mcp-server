@@ -51,7 +51,7 @@ async def test_list_component_configs(mcp_context_client):
             "created": "2024-01-01T00:00:00Z",
         }
     ]
-    mock_component = {      
+    mock_component = {
         "id": "keboola.ex-aws-s3",
         "name": "AWS S3 Extractor",
     }
