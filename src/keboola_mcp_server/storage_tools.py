@@ -108,9 +108,7 @@ async def get_bucket_metadata(
     """Get detailed information about a specific bucket."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
-    print(client.storage_client.buckets.detail(bucket_id))
     raw_bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
-    print(f"Inside bucket metadata: {raw_bucket}")
 
     return BucketInfo(**raw_bucket)
 
@@ -120,7 +118,6 @@ async def list_bucket_info(ctx: Context) -> List[BucketInfo]:
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = client.storage_client.buckets.list()
-    print(f"Inside list bucket info: {raw_bucket_data}")
 
     return [BucketInfo(**raw_bucket) for raw_bucket in raw_bucket_data]
 
@@ -138,9 +135,7 @@ async def get_table_metadata(
 
     db_path_manager = ctx.session.state["db_path_manager"]
     assert isinstance(db_path_manager, DatabasePathManager)
-    table_fqn = db_path_manager.get_table_fqn(raw_table)
-    print(table_fqn)
-    print(table_fqn.snowflake_fqn)
+
     return TableDetail(
         **raw_table,
         column_identifiers=column_info,

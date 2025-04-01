@@ -159,12 +159,3 @@ async def test_get_table_metadata(mcp_context_client, mock_table_detail) -> None
     assert result.row_count == mock_table_detail["row_count"]
     assert result.data_size_bytes == mock_table_detail["data_size_bytes"]
     assert result.columns == mock_table_detail["columns"]
-
-    # # Assert that the column identifiers are correctly set
-    # expected_column_info = [
-    #     TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in mock_table_detail["columns"]
-    # ]
-    # assert result.column_identifiers == expected_column_info
-
-    # # Assert that the detail method was called once
-    # keboola_client.storage_client.tables.detail.assert_called_once_with(mock_table_detail["id"])
