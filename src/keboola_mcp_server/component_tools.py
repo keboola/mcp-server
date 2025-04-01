@@ -14,10 +14,29 @@ ID_TYPE = Union[str, int]
 class ComponentListItem(BaseModel):
     """A list item representing a Keboola component."""
 
-    id: str = Field(description="The ID of the component")
-    name: str = Field(description="The name of the component")
-    type: str = Field(description="The type of the component")
-    description: Optional[str] = Field(description="The description of the component", default=None)
+    component_id: str = Field(
+        description="The ID of the component",
+        validation_alias=AliasChoices("id", "componentId", "component-id", "component_id"),
+        serialization_alias="id",
+    )
+    component_name: str = Field(
+        description="The name of the component",
+        validation_alias=AliasChoices("name", "componentName", "component-name", "component_name"),
+        serialization_alias="name",
+    )
+    component_type: str = Field(
+        description="The type of the component",
+        validation_alias=AliasChoices("type", "componentType", "component-type", "component_type"),
+        serialization_alias="type",
+    )
+    component_description: Optional[str] = Field(
+        description="The description of the component",
+        default=None,
+        validation_alias=AliasChoices(
+            "description", "componentDescription", "component-description", "component_description"
+        ),
+        serialization_alias="description",
+    )
 
 
 class Component(ComponentListItem):
@@ -59,13 +78,32 @@ class Component(ComponentListItem):
     )
 
 
-class ComponentConfigListItem(BaseModel):
+class ComponentConfigurationListItem(BaseModel):
     """A list item representing a Keboola component configuration."""
 
-    id: ID_TYPE = Field(description="The ID of the component configuration")
-    name: str = Field(description="The name of the component configuration")
-    description: Optional[str] = Field(description="The description of the component configuration")
-    created: str = Field(description="The creation date of the component configuration")
+    component: Optional[ComponentListItem] = Field(
+        description="The ID of the component",
+        validation_alias=AliasChoices("component"),
+        serialization_alias="component",
+        default=None,
+    )
+    configuration_id: str = Field(
+        description="The ID of the component configuration",
+        validation_alias=AliasChoices("id", "configuration-id", "configuration_id"),
+        serialization_alias="id",
+    )
+    configuration_name: str = Field(
+        description="The name of the component configuration",
+        validation_alias=AliasChoices("name", "configuration-name", "configuration_name"),
+        serialization_alias="name",
+    )
+    configuration_description: Optional[str] = Field(
+        description="The description of the component configuration",
+        validation_alias=AliasChoices(
+            "description", "configuration-description", "configuration_description"
+        ),
+        serialization_alias="description",
+    )
     is_disabled: bool = Field(
         description="Whether the component configuration is disabled",
         validation_alias=AliasChoices("isDisabled", "is_disabled", "is-disabled"),
@@ -80,7 +118,7 @@ class ComponentConfigListItem(BaseModel):
     )
 
 
-class ComponentConfig(ComponentConfigListItem):
+class ComponentConfiguration(ComponentConfigurationListItem):
     """Detailed information about a Keboola component configuration."""
 
     version: ID_TYPE = Field(description="The version of the component configuration")
@@ -88,24 +126,31 @@ class ComponentConfig(ComponentConfigListItem):
     rows: Optional[List[Dict[str, Any]]] = Field(
         description="The rows of the component configuration", default=None
     )
-
-
-class ComponentConfigMetadata(BaseModel):
-    """Custom user created metadata associated with a Keboola component configuration."""
-
-    component_id: str = Field(description="The ID of the component")
-    config_id: str = Field(description="The ID of the component configuration")
-    metadata: Dict[str, Any] = Field(description="The metadata of the component configuration")
+    component: Optional[Component] = Field(
+        description="The original component object",
+        validation_alias=AliasChoices("component"),
+        serialization_alias="component",
+        default=None,
+    )
+    metadata: List[Dict[str, Any]] = Field(
+        description="The metadata of the component configuration", default=[]
+    )
 
 
 def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    mcp.add_tool(list_components)
-    mcp.add_tool(list_component_configs)
-    mcp.add_tool(get_component_details)
-    mcp.add_tool(get_component_config_details)
-    mcp.add_tool(get_component_config_metadata)
-    logger.info("Component tools added to the MCP server.")
+
+    component_tools = [
+        list_components,
+        list_component_configurations,
+        get_component_configuration_details,
+        get_component_details,
+    ]
+    for tool in component_tools:
+        logger.info(f"Adding tool {tool.__name__} to the MCP server.")
+        mcp.add_tool(tool)
+
+    logger.info("Component tools initialized.")
 
 
 async def list_components(ctx: Context) -> List[ComponentListItem]:
@@ -118,7 +163,7 @@ async def list_components(ctx: Context) -> List[ComponentListItem]:
     return [ComponentListItem.model_validate(r_comp) for r_comp in r_components]
 
 
-async def list_component_configs(
+async def list_component_configurations(
     component_id: Annotated[
         str,
         Field(
@@ -126,14 +171,18 @@ async def list_component_configs(
         ),
     ],
     ctx: Context,
-) -> List[ComponentConfigListItem]:
+) -> List[ComponentConfigurationListItem]:
     """Retrieve all configurations that exist for a specific Keboola component."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
+    r_component = client.storage_client.components.detail(component_id)
     r_configs = client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
-    return [ComponentConfigListItem.model_validate(r_config) for r_config in r_configs]
+    return [
+        ComponentConfigurationListItem.model_validate({**r_config, "component": r_component})
+        for r_config in r_configs
+    ]
 
 
 async def get_component_details(
@@ -142,16 +191,17 @@ async def get_component_details(
     ],
     ctx: Context,
 ) -> Component:
-    """Retrieve detailed information about a specific Keboola component."""
+    """Retrieve detailed information about a original Keboola component object given component ID."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
     endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
     r_component = await client.get(endpoint)
+    print(r_component)
     return Component.model_validate(r_component)
 
 
-async def get_component_config_details(
+async def get_component_configuration_details(
     component_id: Annotated[
         str, Field(str, description="Unique identifier of the Keboola component")
     ],
@@ -163,47 +213,22 @@ async def get_component_config_details(
         ),
     ],
     ctx: Context,
-) -> ComponentConfig:
+) -> ComponentConfiguration:
     """
-    Retrieve detailed information about a specific Keboola component configuration
-    given component ID and config ID.
+    Retrieve detailed information about a specific Keboola component configuration given component ID and config ID.
+    Use to get the configuration details and metadata for a specific configuration and a given component.
     """
     if isinstance(config_id, int):
         config_id = str(config_id)
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
+    component = await get_component_details(component_id, ctx)
     r_config = client.storage_client.configurations.detail(component_id, config_id)
-    return ComponentConfig.model_validate(r_config)
-
-
-async def get_component_config_metadata(
-    component_id: Annotated[
-        str,
-        Field(
-            str,
-            description="Unique identifier of the Keboola component whose configurations you want to list",
-        ),
-    ],
-    config_id: Annotated[
-        str,
-        Field(
-            str,
-            description="Unique identifier of the Keboola component configuration you want details about",
-        ),
-    ],
-    ctx: Context,
-) -> List[ComponentConfigMetadata]:
-    """Retrieve metadata about a specific Keboola component configuration."""
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
-
     endpoint = "branch/{}/components/{}/configs/{}/metadata".format(
         client.storage_client._branch_id, component_id, config_id
     )
     r_metadata = await client.get(endpoint)
-    r_metadata = [
-        {"component_id": component_id, "config_id": config_id, "metadata": r_meta}
-        for r_meta in r_metadata
-    ]
-    return [ComponentConfigMetadata.model_validate(r_meta) for r_meta in r_metadata]
+    return ComponentConfiguration.model_validate(
+        {**r_config, "component": component, "metadata": r_metadata}
+    )
