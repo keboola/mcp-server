@@ -62,7 +62,11 @@ async def test_list_jobs(mcp_context_client):
     assert all(hasattr(j, "not_a_desired_field") is False for j in result)
 
     mock_client.jobs_queue.list.assert_called_once_with(
-        limit=100, offset=0, status=list(JOB_STATUS.__args__)
+        limit=100,
+        offset=0,
+        status=list(JOB_STATUS.__args__),
+        sort_by="startTime",
+        sort_order="desc",
     )
 
 
