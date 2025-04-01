@@ -83,7 +83,7 @@ async def test_list_component_configs(mcp_context_client):
             "isDeleted": True,
             "version": 2,
             "configuration": {},
-        }
+        },
     ]
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configs)
 
@@ -93,9 +93,13 @@ async def test_list_component_configs(mcp_context_client):
     assert all(isinstance(config, ComponentConfigListItem) for config in result)
     assert all(config.id == item["id"] for config, item in zip(result, mock_configs))
     assert all(config.name == item["name"] for config, item in zip(result, mock_configs))
-    assert all(config.description == item["description"] for config, item in zip(result, mock_configs))
+    assert all(
+        config.description == item["description"] for config, item in zip(result, mock_configs)
+    )
     assert all(config.created == item["created"] for config, item in zip(result, mock_configs))
-    assert all(config.is_disabled == item["isDisabled"] for config, item in zip(result, mock_configs))
+    assert all(
+        config.is_disabled == item["isDisabled"] for config, item in zip(result, mock_configs)
+    )
     assert all(config.is_deleted == item["isDeleted"] for config, item in zip(result, mock_configs))
     assert all(not hasattr(config, "version") for config in result)
     assert all(not hasattr(config, "configuration") for config in result)
@@ -167,7 +171,7 @@ async def test_get_component_config_details(mcp_context_client):
         "isDeleted": False,
         "version": 1,
         "configuration": {},
-        "rows": [{"id": "1", "name": "Row 1"}, {"id": "2", "name": "Row 2"}]
+        "rows": [{"id": "1", "name": "Row 1"}, {"id": "2", "name": "Row 2"}],
     }
 
     # Setup mock to return test data
@@ -176,7 +180,7 @@ async def test_get_component_config_details(mcp_context_client):
     result = await get_component_config_details("keboola.ex-aws-s3", "123", context)
 
     assert isinstance(result, ComponentConfig)
-    assert result.id == mock_config["id"]   
+    assert result.id == mock_config["id"]
     assert result.name == mock_config["name"]
     assert result.description == mock_config["description"]
     assert result.created == mock_config["created"]
