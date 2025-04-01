@@ -5,6 +5,7 @@ import pytest
 from keboola_mcp_server.component_tools import (
     Component,
     ComponentConfig,
+    ComponentConfigListItem,
     ComponentConfigMetadata,
     ComponentListItem,
     get_component_config_details,
@@ -29,12 +30,14 @@ async def test_list_components(mcp_context_client):
             "name": "AWS S3 Extractor",
             "type": "extractor",
             "description": "Extract data from AWS S3",
+            "version": 1,
         },
         {
             "id": "keboola.ex-google-drive",
             "name": "Google Drive Extractor",
             "type": "extractor",
             "description": "Extract data from Google Drive",
+            "version": 1,
         },
     ]
     keboola_client.storage_client.components.list = MagicMock(return_value=mock_components)
@@ -47,6 +50,7 @@ async def test_list_components(mcp_context_client):
     assert all(c.name == item["name"] for c, item in zip(result, mock_components))
     assert all(c.type == item["type"] for c, item in zip(result, mock_components))
     assert all(c.description == item["description"] for c, item in zip(result, mock_components))
+    assert all(not hasattr(c, "version") for c in result)
 
     keboola_client.storage_client.components.list.assert_called_once()
 
@@ -69,17 +73,32 @@ async def test_list_component_configs(mcp_context_client):
             "isDeleted": False,
             "version": 1,
             "configuration": {},
+        },
+        {
+            "id": "456",
+            "name": "My Config 2",
+            "description": "Test configuration 2",
+            "created": "2024-01-01T00:00:00Z",
+            "isDisabled": True,
+            "isDeleted": True,
+            "version": 2,
+            "configuration": {},
         }
     ]
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configs)
 
     result = await list_component_configs("keboola.ex-aws-s3", mcp_context_client)
 
-    assert len(result) == 1
-    assert isinstance(result[0], ComponentConfig)
-    assert result[0].id == "123"
-    assert result[0].name == "My Config"
-    assert result[0].description == "Test configuration"
+    assert len(result) == 2
+    assert all(isinstance(config, ComponentConfigListItem) for config in result)
+    assert all(config.id == item["id"] for config, item in zip(result, mock_configs))
+    assert all(config.name == item["name"] for config, item in zip(result, mock_configs))
+    assert all(config.description == item["description"] for config, item in zip(result, mock_configs))
+    assert all(config.created == item["created"] for config, item in zip(result, mock_configs))
+    assert all(config.is_disabled == item["isDisabled"] for config, item in zip(result, mock_configs))
+    assert all(config.is_deleted == item["isDeleted"] for config, item in zip(result, mock_configs))
+    assert all(not hasattr(config, "version") for config in result)
+    assert all(not hasattr(config, "configuration") for config in result)
 
     keboola_client.storage_client.configurations.list.assert_called_once_with("keboola.ex-aws-s3")
 
@@ -94,7 +113,7 @@ async def test_get_component_details(mcp_context_client):
         "name": "AWS S3 Extractor",
         "type": "extractor",
         "description": "Extract data from AWS S3",
-        "long_description": "Extract data from AWS S3",
+        "longDescription": "Extract data from AWS S3",
         "categories": ["extractor"],
         "version": 1,
         "created": "2024-01-01T00:00:00Z",
@@ -114,8 +133,20 @@ async def test_get_component_details(mcp_context_client):
     result = await get_component_details("keboola.ex-aws-s3", mcp_context_client)
 
     assert isinstance(result, Component)
-    assert result.id == "keboola.ex-aws-s3"
-    assert result.name == "AWS S3 Extractor"
+    assert result.id == mock_component["id"]
+    assert result.name == mock_component["name"]
+    assert result.type == mock_component["type"]
+    assert result.description == mock_component["description"]
+    assert result.long_description == mock_component["longDescription"]
+    assert result.categories == mock_component["categories"]
+    assert result.version == mock_component["version"]
+    assert result.data == mock_component["data"]
+    assert result.flags == mock_component["flags"]
+    assert result.configuration_schema == mock_component["configurationSchema"]
+    assert result.configuration_description == mock_component["configurationDescription"]
+    assert result.empty_configuration == mock_component["emptyConfiguration"]
+
+    assert not hasattr(result, "created")
 
     keboola_client.get.assert_called_once_with("branch/123/components/keboola.ex-aws-s3")
 
@@ -136,6 +167,7 @@ async def test_get_component_config_details(mcp_context_client):
         "isDeleted": False,
         "version": 1,
         "configuration": {},
+        "rows": [{"id": "1", "name": "Row 1"}, {"id": "2", "name": "Row 2"}]
     }
 
     # Setup mock to return test data
@@ -144,9 +176,15 @@ async def test_get_component_config_details(mcp_context_client):
     result = await get_component_config_details("keboola.ex-aws-s3", "123", context)
 
     assert isinstance(result, ComponentConfig)
-    assert result.id == "123"
-    assert result.name == "My Config"
-    assert result.description == "Test configuration"
+    assert result.id == mock_config["id"]   
+    assert result.name == mock_config["name"]
+    assert result.description == mock_config["description"]
+    assert result.created == mock_config["created"]
+    assert result.is_disabled == mock_config["isDisabled"]
+    assert result.is_deleted == mock_config["isDeleted"]
+    assert result.version == mock_config["version"]
+    assert result.configuration == mock_config["configuration"]
+    assert result.rows == mock_config["rows"]
 
     mock_client.storage_client.configurations.detail.assert_called_once_with(
         "keboola.ex-aws-s3", "123"

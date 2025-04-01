@@ -2,7 +2,7 @@ import logging
 from typing import Annotated, Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
 
@@ -24,7 +24,10 @@ class Component(ComponentListItem):
     """Detailed information about a Keboola component."""
 
     long_description: Optional[str] = Field(
-        description="The long description of the component", default=None
+        description="The long description of the component",
+        default=None,
+        validation_alias=AliasChoices("longDescription", "long_description", "long-description"),
+        serialization_alias="longDescription",
     )
     categories: List[str] = Field(description="The categories of the component", default=[])
     version: ID_TYPE = Field(description="The version of the component")
@@ -32,17 +35,26 @@ class Component(ComponentListItem):
     flags: Optional[List[str]] = Field(description="The flags of the component", default=None)
     configuration_schema: Optional[Dict[str, Any]] = Field(
         description="The configuration schema of the component",
-        alias="configurationSchema",
+        validation_alias=AliasChoices(
+            "configurationSchema", "configuration_schema", "configuration-schema"
+        ),
+        serialization_alias="configurationSchema",
         default=None,
     )
     configuration_description: Optional[str] = Field(
         description="The configuration description of the component",
-        alias="configurationDescription",
+        validation_alias=AliasChoices(
+            "configurationDescription", "configuration_description", "configuration-description"
+        ),
+        serialization_alias="configurationDescription",
         default=None,
     )
     empty_configuration: Optional[Dict[str, Any]] = Field(
         description="The empty configuration of the component",
-        alias="emptyConfiguration",
+        validation_alias=AliasChoices(
+            "emptyConfiguration", "empty_configuration", "empty-configuration"
+        ),
+        serialization_alias="emptyConfiguration",
         default=None,
     )
 
@@ -56,12 +68,14 @@ class ComponentConfigListItem(BaseModel):
     created: str = Field(description="The creation date of the component configuration")
     is_disabled: bool = Field(
         description="Whether the component configuration is disabled",
-        alias="isDisabled",
+        validation_alias=AliasChoices("isDisabled", "is_disabled", "is-disabled"),
+        serialization_alias="isDisabled",
         default=False,
     )
     is_deleted: bool = Field(
         description="Whether the component configuration is deleted",
-        alias="isDeleted",
+        validation_alias=AliasChoices("isDeleted", "is_deleted", "is-deleted"),
+        serialization_alias="isDeleted",
         default=False,
     )
 
@@ -112,14 +126,14 @@ async def list_component_configs(
         ),
     ],
     ctx: Context,
-) -> List[ComponentConfig]:
+) -> List[ComponentConfigListItem]:
     """Retrieve all configurations that exist for a specific Keboola component."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
     r_configs = client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
-    return [ComponentConfig.model_validate(r_config) for r_config in r_configs]
+    return [ComponentConfigListItem.model_validate(r_config) for r_config in r_configs]
 
 
 async def get_component_details(
