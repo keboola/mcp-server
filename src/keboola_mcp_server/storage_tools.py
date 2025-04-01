@@ -138,11 +138,13 @@ async def get_table_metadata(
 
     db_path_manager = ctx.session.state["db_path_manager"]
     assert isinstance(db_path_manager, DatabasePathManager)
-
+    table_fqn = db_path_manager.get_table_fqn(raw_table)
+    print(table_fqn)
+    print(table_fqn.snowflake_fqn)
     return TableDetail(
         **raw_table,
         column_identifiers=column_info,
-        db_identifier=db_path_manager.get_table_db_path(raw_table),
+        db_identifier=db_path_manager.get_table_fqn(raw_table),
     )
 
 
