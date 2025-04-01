@@ -129,7 +129,7 @@ class WorkspaceManager:
                     # TODO: we should never come here, because the tools for listing tables can only see
                     #  tables that are in the project
                     schema_name = row["current_schema"]
-                table_name = table["name"]
+                    table_name = table["name"]
             else:
                 LOG.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
 
