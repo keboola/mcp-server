@@ -48,6 +48,13 @@ def main(args: Optional[List[str]] = None) -> None:
     """
     parsed_args = parse_args(args)
 
+    # Configure logging
+    logging.basicConfig(
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+        level=parsed_args.log_level,
+        stream=sys.stderr,
+    )
+
     # Create config from the CLI arguments
     config = Config.from_dict(
         {"storage_api_url": parsed_args.api_url, "log_level": parsed_args.log_level}

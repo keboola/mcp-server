@@ -6,7 +6,8 @@ import pytest
 
 from keboola_mcp_server.config import Config
 
-from keboola_mcp_server.server import BucketInfo, create_server
+from keboola_mcp_server.server import create_server
+from keboola_mcp_server.storage_tools import BucketInfo
 
 
 @pytest.fixture
@@ -14,13 +15,6 @@ def test_config() -> Config:
     return Config(
         storage_token="test-token",
         storage_api_url="https://connection.test.keboola.com",
-        log_level="INFO",
-        snowflake_account="test-account",
-        snowflake_user="test-user",
-        snowflake_password="test-password",
-        snowflake_warehouse="test-warehouse",
-        snowflake_database="test-database",
-        snowflake_role="test-role",
     )
 
 
@@ -54,7 +48,7 @@ def mock_buckets() -> List[Dict[str, Any]]:
             "description": "A test bucket",
             "stage": "production",
             "created": "2024-01-01T00:00:00Z",
-            "table_count": 5,
+            "tables_count": 5,
             "data_size_bytes": 1024,
         },
         {
@@ -62,7 +56,7 @@ def mock_buckets() -> List[Dict[str, Any]]:
             "name": "Test Bucket 2",
             "description": "Another test bucket",
             "created": "2025-01-01T00:00:00Z",
-            "table_count": 3,
+            "tables_count": 3,
             "data_size_bytes": 2048,
         },
     ]
@@ -174,7 +168,7 @@ async def test_list_all_buckets(test_config: Config, mock_buckets: List[Dict[str
         assert result[0].description == "A test bucket"
         assert result[0].stage == "production"
         assert result[0].created == "2024-01-01T00:00:00Z"
-        assert result[0].table_count == 5
+        assert result[0].tables_count == 5
         assert result[0].data_size_bytes == 1024
 
     finally:
