@@ -16,13 +16,13 @@ class ComponentListItem(BaseModel):
 
     component_id: str = Field(
         description="The ID of the component",
-        validation_alias=AliasChoices("id", "componentId", "component-id", "component_id"),
-        serialization_alias="id",
+        validation_alias=AliasChoices("id", "component_id"),
+        serialization_alias="component_id",
     )
     component_name: str = Field(
         description="The name of the component",
-        validation_alias=AliasChoices("name", "componentName", "component-name", "component_name"),
-        serialization_alias="name",
+        validation_alias=AliasChoices("name", "component_name"),
+        serialization_alias="component_name",
     )
     component_type: str = Field(
         description="The type of the component",
@@ -93,20 +93,18 @@ class ComponentConfigurationListItem(BaseModel):
     )
     configuration_id: str = Field(
         description="The ID of the component configuration",
-        validation_alias=AliasChoices("id", "configuration-id", "configuration_id"),
-        serialization_alias="id",
+        validation_alias=AliasChoices("id", "configuration_id"),
+        serialization_alias="configuration_id",
     )
     configuration_name: str = Field(
         description="The name of the component configuration",
-        validation_alias=AliasChoices("name", "configuration-name", "configuration_name"),
-        serialization_alias="name",
+        validation_alias=AliasChoices("name", "configuration_name"),
+        serialization_alias="configuration_name",
     )
     configuration_description: Optional[str] = Field(
         description="The description of the component configuration",
-        validation_alias=AliasChoices(
-            "description", "configuration-description", "configuration_description"
-        ),
-        serialization_alias="description",
+        validation_alias=AliasChoices("description", "configuration_description"),
+        serialization_alias="configuration_description",
     )
     is_disabled: bool = Field(
         description="Whether the component configuration is disabled",
@@ -200,7 +198,6 @@ async def get_component_details(
     """Retrieve detailed information about a original Keboola component object given component ID."""
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
-
     endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
     r_component = await client.get(endpoint)
     return Component.model_validate(r_component)
