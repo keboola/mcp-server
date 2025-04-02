@@ -24,15 +24,18 @@ def add_storage_tools(mcp: FastMCP) -> None:
 
 def extract_description(values: Dict[str, Any]) -> Optional[str]:
     """Extract the description from values or metadata."""
-    description = values.get("description")
-
-    if not description:
+    if description := values.get("description"):
+        return description
+    else:
         metadata = values.get("metadata", [])
-        description = next(
-            (item["value"] for item in metadata if item.get("key") == "KBC.description"), None
+        return next(
+            (
+                value
+                for item in metadata
+                if (item.get("key") == "KBC.description" and (value := item.get("value")))
+            ),
+            None,
         )
-
-    return description
 
 
 class BucketInfo(BaseModel):
@@ -132,7 +135,7 @@ async def get_bucket_metadata(
     bucket_id: Annotated[str, Field(description="Unique ID of the bucket.")], ctx: Context
 ) -> BucketInfo:
     """Get detailed information about a specific bucket."""
-    client = ctx.session.state["sapi_client"]
+    client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
     raw_bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
 
@@ -141,7 +144,7 @@ async def get_bucket_metadata(
 
 async def list_bucket_info(ctx: Context) -> List[BucketInfo]:
     """List information about all buckets in the project."""
-    client = ctx.session.state["sapi_client"]
+    client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = client.storage_client.buckets.list()
 
@@ -152,14 +155,14 @@ async def get_table_metadata(
     table_id: Annotated[str, Field(description="Unique ID of the table.")], ctx: Context
 ) -> TableDetail:
     """Get detailed information about a specific table including its DB identifier and column information."""
-    client = ctx.session.state["sapi_client"]
+    client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
     raw_table = cast(Dict[str, Any], client.storage_client.tables.detail(table_id))
 
     columns = raw_table.get("columns", [])
     column_info = [TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in columns]
 
-    workspace_manager = ctx.session.state["workspace_manager"]
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     assert isinstance(workspace_manager, WorkspaceManager)
 
     return TableDetail(
@@ -173,7 +176,7 @@ async def list_bucket_tables(
     bucket_id: Annotated[str, Field(description="Unique ID of the bucket.")], ctx: Context
 ) -> list[TableDetail]:
     """List all tables in a specific bucket with their basic information."""
-    client = ctx.session.state["sapi_client"]
+    client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
     raw_tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
 

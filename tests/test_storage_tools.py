@@ -172,8 +172,6 @@ async def test_get_table_metadata(mcp_context_client, mock_table_data) -> None:
     assert result.data_size_bytes == mock_table_data["raw_table_data"]["data_size_bytes"]
     assert result.columns == mock_table_data["raw_table_data"]["columns"]
     assert result.db_identifier == mock_table_data["additional_data"]["snowflake_fqn"]
-    print(result.column_identifiers)
-    print(mock_table_data["additional_data"]["column_identifiers"])
     for col_id, exp_col_id in zip(
         result.column_identifiers, mock_table_data["additional_data"]["column_identifiers"]
     ):
