@@ -21,6 +21,10 @@ class TestConfig:
                 {"foo": "bar", "storage_api_url": "http://nowhere"},
                 Config(storage_api_url="http://nowhere"),
             ),
+            (
+                {"queue_api_url": "http://nowhere"},
+                Config(queue_api_url="http://nowhere"),
+            ),
         ],
     )
     def test_from_dict(self, d: Mapping[str, str], expected: Config) -> None:
@@ -58,6 +62,7 @@ class TestConfig:
         config = Config()
         assert config.storage_token is None
         assert config.storage_api_url == "https://connection.keboola.com"
+        assert config.queue_api_url == "https://queue.keboola.com"
         assert config.log_level == "INFO"
         assert config.snowflake_account is None
         assert config.snowflake_user is None
@@ -119,6 +124,7 @@ class TestConfig:
             "Config("
             "storage_token='****', "
             "storage_api_url='https://connection.keboola.com', "
+            "queue_api_url='https://queue.keboola.com', "
             "log_level='INFO', "
             "snowflake_account=None, "
             "snowflake_user='baz', "
