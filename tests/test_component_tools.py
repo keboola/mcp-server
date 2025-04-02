@@ -55,8 +55,9 @@ async def test_list_component_configs(mcp_context_client):
         "id": "keboola.ex-aws-s3",
         "name": "AWS S3 Extractor",
     }
+    keboola_client.storage_client._branch_id = "123"
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configs)
-    keboola_client.storage_client.components.detail = MagicMock(return_value=mock_component)
+    keboola_client.get = AsyncMock(return_value=mock_component)
 
     result = await list_component_configurations("keboola.ex-aws-s3", mcp_context_client)
 
@@ -69,6 +70,7 @@ async def test_list_component_configs(mcp_context_client):
     assert result[0].configuration_description == "Test configuration"
 
     keboola_client.storage_client.configurations.list.assert_called_once_with("keboola.ex-aws-s3")
+    keboola_client.get.assert_called_once_with("branch/123/components/keboola.ex-aws-s3")
 
 
 @pytest.mark.asyncio
@@ -88,10 +90,10 @@ async def test_get_component_details(mcp_context_client):
     }
     keboola_client = mcp_context_client.session.state["sapi_client"]
     # Setup mock to return test data
+    keboola_client.storage_client._branch_id = "123"
     keboola_client.storage_client.configurations = MagicMock()
-    keboola_client.storage_client.components = MagicMock()
-    keboola_client.storage_client.components.detail = MagicMock(return_value=mock_component)
     keboola_client.storage_client.configurations.detail = MagicMock(return_value=mock_configuration)
+    keboola_client.get = AsyncMock(return_value=mock_component)
 
     result = await get_component_configuration_details(
         "keboola.ex-aws-s3", "123", mcp_context_client
@@ -106,3 +108,4 @@ async def test_get_component_details(mcp_context_client):
     keboola_client.storage_client.configurations.detail.assert_called_once_with(
         "keboola.ex-aws-s3", "123"
     )
+    keboola_client.get.assert_called_once_with("branch/123/components/keboola.ex-aws-s3")

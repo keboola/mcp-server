@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 class Component(BaseModel):
     component_id: str = Field(
         description="The ID of the component",
-        validation_alias=AliasChoices("id", "componentId", "component-id", "component_id"),
-        serialization_alias="id",
+        validation_alias=AliasChoices("id", "component_id"),
+        serialization_alias="component_id",
     )
     component_name: str = Field(
         description="The name of the component",
-        validation_alias=AliasChoices("name", "componentName", "component-name", "component_name"),
-        serialization_alias="name",
+        validation_alias=AliasChoices("name", "component_name"),
+        serialization_alias="component_name",
     )
 
 
@@ -30,20 +30,18 @@ class ComponentConfiguration(BaseModel):
     )
     configuration_id: str = Field(
         description="The ID of the component configuration",
-        validation_alias=AliasChoices("id", "configuration-id", "configuration_id"),
-        serialization_alias="id",
+        validation_alias=AliasChoices("id", "configuration_id"),
+        serialization_alias="configuration_id",
     )
     configuration_name: str = Field(
         description="The name of the component configuration",
-        validation_alias=AliasChoices("name", "configuration-name", "configuration_name"),
-        serialization_alias="name",
+        validation_alias=AliasChoices("name", "configuration_name"),
+        serialization_alias="configuration_name",
     )
     configuration_description: Optional[str] = Field(
         description="The description of the component configuration",
-        validation_alias=AliasChoices(
-            "description", "configuration-description", "configuration_description"
-        ),
-        serialization_alias="description",
+        validation_alias=AliasChoices("description", "configuration_description"),
+        serialization_alias="configuration_description",
     )
 
 
@@ -81,11 +79,11 @@ async def list_component_configurations(
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
-    r_component = client.storage_client.components.detail(component_id)
+    component = await get_component_details(component_id, ctx)
     r_configs = client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
     return [
-        ComponentConfiguration.model_validate({**r_config, "component": r_component})
+        ComponentConfiguration.model_validate({**r_config, "component": component})
         for r_config in r_configs
     ]
 
@@ -101,6 +99,21 @@ async def get_component_configuration_details(
     client = ctx.session.state["sapi_client"]
     assert isinstance(client, KeboolaClient)
 
-    r_component = client.storage_client.components.detail(component_id)
+    component = await get_component_details(component_id, ctx)
     r_config = client.storage_client.configurations.detail(component_id, configuration_id)
-    return ComponentConfiguration.model_validate({**r_config, "component": r_component})
+    return ComponentConfiguration.model_validate({**r_config, "component": component})
+
+
+async def get_component_details(
+    component_id: Annotated[
+        str, Field(str, description="The ID of the Keboola component you want details about")
+    ],
+    ctx: Context,
+) -> Component:
+    """Retrieve detailed information about a original Keboola component object given component ID."""
+    client = ctx.session.state["sapi_client"]
+    assert isinstance(client, KeboolaClient)
+
+    endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
+    r_component = await client.get(endpoint)
+    return Component.model_validate(r_component)
