@@ -123,7 +123,7 @@ class JobsQueue(Endpoint):
         token (str): A key for the Storage API.
     """
 
-    def __init__(self, root_url: str, token: str = None):
+    def __init__(self, root_url: str, token: str):
         """
         Create an JobsQueueClient.
         :param root_url: Root url of API. eg. "https://queue.keboola.com/"
