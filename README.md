@@ -68,14 +68,7 @@ To use this server with Claude Desktop, follow these steps:
       ],
       "env": {
         "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
-        "PYTHONPATH": "/path/to/keboola-mcp-server/src",
-        "KBC_SNOWFLAKE_ACCOUNT": "your-snowflake-account",
-        "KBC_SNOWFLAKE_USER": "your-snowflake-user",
-        "KBC_SNOWFLAKE_PASSWORD": "your-snowflake-password",
-        "KBC_SNOWFLAKE_WAREHOUSE": "your-snowflake-warehouse",
-        "KBC_SNOWFLAKE_DATABASE": "your-snowflake-database",
-        "KBC_SNOWFLAKE_SCHEMA": "your-snowflake-schema",
-        "KBC_SNOWFLAKE_ROLE": "your-snowflake-role"
+        "KBC_WORKSPACE_USER": "your-workspace-user"
       }
     }
   }
@@ -86,17 +79,13 @@ Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `your-keboola-storage-token` with your Keboola Storage API token
 - `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
-- `your-snowflake-account` with your Snowflake account identifier
-- `your-snowflake-user` with your Snowflake username
-- `your-snowflake-password` with your Snowflake password
-- `your-snowflake-warehouse` with your Snowflake warehouse name
-- `your-snowflake-database` with your Snowflake database name
-- `your-snowflake-schema` with your Snowflake schema name
-- `your-snowflake-role` with your Snowflake role name
+- `your-workspace-user` with your Snowflake workspace username
 
-> Note: If you are using a specific version of Python (e.g. 3.11 due to some package compatibility issues), you'll need to update the `command` into using that specific version, e.g. `/path/to/keboola-mcp-server/.venv/bin/python3.11`
+> Note: If you are using a specific version of Python (e.g. 3.11 due to some package compatibility issues), 
+> you'll need to update the `command` into using that specific version, e.g. `/path/to/keboola-mcp-server/.venv/bin/python3.11`
 
-Note: The Snowflake credentials can be obtained by creating a Read Only Snowflake Workspace in your Keboola project (the same project where you got your Storage Token). The workspace will provide all the necessary Snowflake connection parameters.
+> Note: The Read Only Snowflake Workspace can be created in your Keboola project. It is the same project where you got 
+> your Storage Token. The workspace will provide all the necessary Snowflake connection parameters including the username.
 
 3. After updating the configuration:
    - Completely quit Claude Desktop (don't just close the window)
@@ -110,7 +99,6 @@ If you encounter connection issues:
 2. Verify your Keboola Storage API token is correct
 3. Ensure all paths in the configuration are absolute paths
 4. Confirm the virtual environment is properly activated and all dependencies are installed
-5. Make sure the PYTHONPATH points to the `src` directory
 
 ## Cursor AI Setup
 
@@ -127,7 +115,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 {
   "mcpServers": {
     "keboola": {
-      "url": "http://localhost:8000/sse?storage_token=YOUR_STORAGE_TOKEN&snowflake_account=YOUR_ACCOUNT&snowflake_user=YOUR_USER&snowflake_password=YOUR_PASSWORD&snowflake_database=YOUR_DATABASE&snowflake_schema=YOUR_SCHEMA&snowflake_warehouse=YOUR_WAREHOUSE"
+      "url": "http://localhost:8000/sse?storage_token=YOUR-KEBOOLA-STORAGE-TOKEN&workspace_user=YOUR-WORKSPACE-USER"
     }
   }
 }
@@ -149,13 +137,8 @@ To use this server with Cursor AI, you have two options for configuring the tran
          "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
-        "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
-        "KBC_SNOWFLAKE_ACCOUNT": "your-snowflake-account",
-        "KBC_SNOWFLAKE_USER": "your-snowflake-user",
-        "KBC_SNOWFLAKE_PASSWORD": "your-snowflake-password",
-        "KBC_SNOWFLAKE_DATABASE": "your-snowflake-database",
-        "KBC_SNOWFLAKE_SCHEMA": "your-snowflake-schema",
-        "KBC_SNOWFLAKE_WAREHOUSE": "your-snowflake-warehouse"
+        "KBC_STORAGE_TOKEN": "your-keboola-storage-token", 
+        "KBC_WORKSPACE_USER": "your-workspace-user"         
       }
     }
   }
@@ -184,13 +167,7 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 - where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
 ```shell
 export KBC_STORAGE_TOKEN="your-keboola-storage-token"
-export KBC_SNOWFLAKE_ACCOUNT="your-snowflake-account"
-export KBC_SNOWFLAKE_USER="your-snowflake-user"
-export KBC_SNOWFLAKE_PASSWORD="your-snowflake-password"
-export KBC_SNOWFLAKE_WAREHOUSE="your-snowflake-warehouse"
-export KBC_SNOWFLAKE_DATABASE="your-snowflake-database"
-export KBC_SNOWFLAKE_SCHEMA="your-snowflake-schema"
-export KBC_SNOWFLAKE_ROLE="your-snowflake-role"
+export KBC_WORKSPACE_USER="your-workspace-user"
 ```
 
 Replace all placeholder values (`your_*`) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
