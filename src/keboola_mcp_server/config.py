@@ -14,6 +14,7 @@ class Config:
 
     storage_token: Optional[str] = None
     storage_api_url: str = "https://connection.keboola.com"
+    queue_api_url: str = "https://queue.keboola.com"
     log_level: str = "INFO"
     # Add Snowflake credentials
     snowflake_account: Optional[str] = None

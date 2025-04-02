@@ -111,7 +111,7 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
         state: SessionState = {}
         # Create Keboola client instance
         try:
-            client = KeboolaClient(cfg.storage_token, cfg.storage_api_url)
+            client = KeboolaClient(cfg.storage_token, cfg.storage_api_url, cfg.queue_api_url)
             state["sapi_client"] = client
             logger.info("Successfully initialized Storage API client.")
         except Exception as e:

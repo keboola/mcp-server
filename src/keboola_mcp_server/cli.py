@@ -36,6 +36,11 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--api-url", default="https://connection.keboola.com", help="Keboola Storage API URL"
     )
+    parser.add_argument(
+        "--queue-api-url",
+        default="https://queue.keboola.com",
+        help="Keboola Job Queue API URL",
+    )
 
     return parser.parse_args(args)
 
@@ -50,7 +55,11 @@ def main(args: Optional[List[str]] = None) -> None:
 
     # Create config from the CLI arguments
     config = Config.from_dict(
-        {"storage_api_url": parsed_args.api_url, "log_level": parsed_args.log_level}
+        {
+            "storage_api_url": parsed_args.api_url,
+            "queue_api_url": parsed_args.queue_api_url,
+            "log_level": parsed_args.log_level,
+        }
     )
 
     try:
