@@ -199,7 +199,11 @@ async def list_jobs(
     status = handle_status_param(status=status)
 
     r_jobs = client.jobs_queue.list(
-        limit=limit, offset=offset, status=status, sort_by=sort_by, sort_order=sort_order
+        limit=limit,
+        offset=offset,
+        status=[str(s) for s in status],
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     logger.info(f"Found {len(r_jobs)} jobs for limit {limit}, offset {offset}, status {status}.")
     return [JobListItem.model_validate(r_job) for r_job in r_jobs]
