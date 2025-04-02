@@ -26,16 +26,14 @@ class ComponentListItem(BaseModel):
     )
     component_type: str = Field(
         description="The type of the component",
-        validation_alias=AliasChoices("type", "componentType", "component-type", "component_type"),
-        serialization_alias="type",
+        validation_alias=AliasChoices("type", "component_type"),
+        serialization_alias="component_type",
     )
     component_description: Optional[str] = Field(
         description="The description of the component",
         default=None,
-        validation_alias=AliasChoices(
-            "description", "componentDescription", "component-description", "component_description"
-        ),
-        serialization_alias="description",
+        validation_alias=AliasChoices("description", "component_description"),
+        serialization_alias="component_description",
     )
 
 
