@@ -48,7 +48,7 @@ def mock_table_data() -> Dict[str, Any]:
     return {
         "raw_table_data": raw_table_data,  # What the client returns
         "additional_data": {
-            "snowflake_fqn": '"SAPI_TEST"."in.c-test"."test-table"',  # What db_path_manager should return
+            "snowflake_fqn": '"SAPI_TEST"."in.c-test"."test-table"',  # What workspace_manager should return
             "column_identifiers": [  # Expected transformed column identifiers
                 {"name": "id", "db_identifier": '"id"'},
                 {"name": "name", "db_identifier": '"name"'},
