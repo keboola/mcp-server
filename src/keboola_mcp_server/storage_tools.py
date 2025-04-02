@@ -7,7 +7,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.database import DatabasePathManager
+from keboola_mcp_server.sql_tools import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -159,13 +159,13 @@ async def get_table_metadata(
     columns = raw_table.get("columns", [])
     column_info = [TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in columns]
 
-    db_path_manager = ctx.session.state["db_path_manager"]
-    assert isinstance(db_path_manager, DatabasePathManager)
+    workspace_manager = ctx.session.state["workspace_manager"]
+    assert isinstance(workspace_manager, WorkspaceManager)
 
     return TableDetail(
         **raw_table,
         column_identifiers=column_info,
-        db_identifier=db_path_manager.get_table_fqn(raw_table).snowflake_fqn,
+        db_identifier=workspace_manager.get_table_fqn(raw_table).snowflake_fqn,
     )
 
 

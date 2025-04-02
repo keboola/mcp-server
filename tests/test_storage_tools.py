@@ -158,10 +158,10 @@ async def test_get_table_metadata(mcp_context_client, mock_table_data) -> None:
         return_value=mock_table_data["raw_table_data"]
     )
 
-    db_path_manager = mcp_context_client.session.state["db_path_manager"]
+    workspace_manager = mcp_context_client.session.state["workspace_manager"]
     mock_fqn = MagicMock()
     mock_fqn.snowflake_fqn = mock_table_data["additional_data"]["snowflake_fqn"]
-    db_path_manager.get_table_fqn = MagicMock(return_value=mock_fqn)
+    workspace_manager.get_table_fqn = MagicMock(return_value=mock_fqn)
     result = await get_table_metadata(mock_table_data["raw_table_data"]["id"], mcp_context_client)
 
     assert isinstance(result, TableDetail)
