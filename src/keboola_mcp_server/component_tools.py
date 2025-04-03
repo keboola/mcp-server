@@ -12,12 +12,17 @@ logger = logging.getLogger(__name__)
 class Component(BaseModel):
     component_id: str = Field(
         description="The ID of the component",
-        validation_alias=AliasChoices("id", "component_id"),
+        validation_alias=AliasChoices("id", "component_id", "componentId", "component-id"),
         serialization_alias="component_id",
     )
     component_name: str = Field(
         description="The name of the component",
-        validation_alias=AliasChoices("name", "component_name"),
+        validation_alias=AliasChoices(
+            "name",
+            "component_name",
+            "componentName",
+            "component-name",
+        ),
         serialization_alias="component_name",
     )
 
@@ -30,17 +35,32 @@ class ComponentConfiguration(BaseModel):
     )
     configuration_id: str = Field(
         description="The ID of the component configuration",
-        validation_alias=AliasChoices("id", "configuration_id"),
+        validation_alias=AliasChoices(
+            "id",
+            "configuration_id",
+            "configurationId",
+            "configuration-id",
+        ),
         serialization_alias="configuration_id",
     )
     configuration_name: str = Field(
         description="The name of the component configuration",
-        validation_alias=AliasChoices("name", "configuration_name"),
+        validation_alias=AliasChoices(
+            "name",
+            "configuration_name",
+            "configurationName",
+            "configuration-name",
+        ),
         serialization_alias="configuration_name",
     )
     configuration_description: Optional[str] = Field(
         description="The description of the component configuration",
-        validation_alias=AliasChoices("description", "configuration_description"),
+        validation_alias=AliasChoices(
+            "description",
+            "configuration_description",
+            "configurationDescription",
+            "configuration-description",
+        ),
         serialization_alias="configuration_description",
     )
 
