@@ -18,7 +18,7 @@ class KeboolaClient:
     """Helper class to interact with Keboola Storage API and Job Queue API."""
 
     STATE_KEY = "sapi_client"
-    _PREFIX_STORAGE_API_URL = "connection." # we do not use http:// or https:// here since we split 
+    _PREFIX_STORAGE_API_URL = "connection."  # we do not use http:// or https:// here since we split
     _PREFIX_QUEUE_API_URL = "https://queue."
 
     @classmethod
@@ -48,7 +48,9 @@ class KeboolaClient:
         # https://connection.REGION.keboola.com
         # Remove the prefix from the storage API URL https://connection.REGION.keboola.com -> REGION.keboola.com
         # and add the prefix for the queue API https://queue.REGION.keboola.com
-        queue_api_url = f"{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
+        queue_api_url = (
+            f"{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
+        )
 
         self.base_url = storage_api_url
         self.base_queue_api_url = queue_api_url
