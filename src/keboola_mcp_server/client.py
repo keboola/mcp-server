@@ -18,6 +18,8 @@ class KeboolaClient:
     """Helper class to interact with Keboola Storage API and Job Queue API."""
 
     STATE_KEY = "sapi_client"
+    _PREFIX_STORAGE_API_URL = "connection." # we do not use http:// or https:// here since we split 
+    _PREFIX_QUEUE_API_URL = "https://queue."
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> "KeboolaClient":
@@ -29,7 +31,6 @@ class KeboolaClient:
         self,
         storage_api_token: str,
         storage_api_url: str = "https://connection.keboola.com",
-        queue_api_url: str = "https://queue.keboola.com",
     ) -> None:
         """Initialize the client.
 
@@ -43,8 +44,11 @@ class KeboolaClient:
         if not storage_api_url.startswith(("http://", "https://")):
             storage_api_url = f"https://{storage_api_url}"
 
-        if not queue_api_url.startswith(("http://", "https://")):
-            queue_api_url = f"https://{queue_api_url}"
+        # Construct the queue API URL from the storage API URL expecting the following format:
+        # https://connection.REGION.keboola.com
+        # Remove the prefix from the storage API URL https://connection.REGION.keboola.com -> REGION.keboola.com
+        # and add the prefix for the queue API https://queue.REGION.keboola.com
+        queue_api_url = f"{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
 
         self.base_url = storage_api_url
         self.base_queue_api_url = queue_api_url
