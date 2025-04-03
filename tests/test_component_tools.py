@@ -16,7 +16,7 @@ from keboola_mcp_server.component_tools import (
     handle_component_types,
     list_component_configurations,
     list_all_component_configurations,
-    list_core_components,
+    list_components,
 )
 
 
@@ -141,7 +141,7 @@ async def test_list_core_components(mcp_context_components_configs, mock_compone
     keboola_client = context.session.state["sapi_client"]
     keboola_client.storage_client.components.list = MagicMock(return_value=mock_components)
 
-    result = await list_core_components(context)
+    result = await list_components(context)
 
     assert len(result) == 2
 

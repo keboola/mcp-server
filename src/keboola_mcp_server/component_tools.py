@@ -231,7 +231,7 @@ def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
 
     component_tools = [
-        list_core_components,
+        list_components,
         list_component_configurations,
         get_component_configuration_details,
         get_core_component_details,
@@ -253,16 +253,12 @@ async def list_all_component_configurations(
 ) -> List[ComponentConfigurationsList]:
     """
     Retrieve a list of all available Keboola component configuration pairs in the project filtered by their types.
-
     USAGE:
-        - Use when you want to see all component configuration pairs in the project.
-        - Use when user wants to see all component configuration pairs in the project.
+        - Use when you want to see all component configuration pairs in the project given a specific type.
     CONSIDERATIONS:
-        - It lists all component configuration pairs in the project, which can be computationally
-        expensive and can output a lot of data if there are a lot of components and configurations. Think if the task
-        can be done with a smaller tool or combination of tools that is more specific.
-        - Regarding UX, the individual components and their configurations are unified, as an core component is 
-        only relevant when it has an associated configuration. 
+        - It lists all component configuration pairs in the project, which is computationally
+        expensive and can output a lot of data if there are a lot of components and configurations Before using this
+        tool, think if the task can be done with a smaller tool or combination of tools that is more specific.
         - **components** are mostly referring to component configuration pairs that are writers or extractors but when
             user specifies types filter by those types, since from keboola perspective, all those types are components.
         - **transformations** are component configuration pairs that are type of transformations or applications
@@ -275,20 +271,17 @@ async def list_all_component_configurations(
     RETURNS:
         List of component configuration pairs as list items.
     EXAMPLES:
-    - user_input: `list me components` | `give me available components in this project`
+    - user_input: `list me all components` | `give me all component configurations in this project`
         -> set types to ["extractor", "writer"]
         -> returns all component configuration pairs that are extractors or writers.
-    - user_input: `list me all transformations` | `give me all available transformations`
+    - user_input: `list me all transformation components` | `give me available transformation configurations`
         -> set types to ["transformation", "application"]
         -> returns all component configuration pairs that are types of transformations or applications, because
         transformations are considered as transfromations and applications, unless user explicitly specifies otherwise.
-    - user_input: `list me all components` | `give me all components`
+    - user_input: `list me all components configurations` | `give me all components`
         -> set types to ["all"]
         -> returns all component configuration pairs
-    - user_input: `list me all transformation components`
-        -> set types to ["transformation"], because explicitly specified
-        -> returns all component configuration pairs that are transformations
-    - user_input: `list me special components` | `give me other components`
+    - user_input: `list me all special components` | `give me other components`
         -> set types to ["other"]
         -> returns all other component configuration pairs that are not writers, extractors, transformations or 
         applications
@@ -300,7 +293,7 @@ async def list_all_component_configurations(
     types = handle_component_types(types)
 
     # retrieve all core components
-    components = await list_core_components(ctx, types)
+    components = await list_components(ctx, types)
     logger.info(f"Found {len(components)} core components for given types {types}.")
     # iterate over all core components and retrieve their configurations
     component_configs: List[ComponentConfigurationsList] = []
@@ -318,7 +311,7 @@ async def list_all_component_configurations(
     return sorted(component_configs, key=lambda x: x.component.component_type)
 
 
-async def list_core_components(
+async def list_components(
     ctx: Context,
     types: Annotated[
         List[ComponentType],
@@ -331,21 +324,16 @@ async def list_core_components(
     """
     Retrieve a list of core Keboola components used in the project that are filtered by their types. 
     These components are the basis for all configurations of the component.
-
     USAGE:
-        - Use when you want to see IDs, names, types, descriptions of all core Keboola components used in the project.
-        - Use when user wants to see all core components in the project.
-    CONSIDERATIONS:
-        - It lists all core components in the project without configurations which can be used to subsequently select
-        configurations for specific components.
-
+        - Use when you want to find IDs, names, types, descriptions of all core Keboola components used in the project.
+        - Use when user wants to see core components in the projects given a specific type.
     From a user experience:
-        - **components** are mostly referring to component configuration pairs that are writers or extractors but when
+        - **components** are mostly referring to components that are writers or extractors but when
             user specifies types filter by those types, since from keboola perspective - everything is component.
-        - **transformations** are component configuration pairs that are transformations or applications
-        - **applications** are component configuration pairs that are transformations or applications
-        - **other** are component configuration pairs that are not writers, extractors, transformations or applications
-        - **all** are all component configuration pairs
+        - **transformations** are components that are transformations or applications
+        - **applications** are components that are transformations or applications
+        - **other** are components that are not writers, extractors, transformations or applications
+        - **all** are all components
 
     PARAMETERS:
         types: Array of component types to filter by, default is "all".
