@@ -488,4 +488,9 @@ async def test_conform_types(
 
     assert len(component_configs) == len(expected_ids)
     assert all([cf.component.component_id in expected_ids for cf in component_configs])
-    assert all([len(cf.configurations) == expected_n_configurations_per_component for cf in component_configs])
+    assert all(
+        [
+            len(cf.configurations) == expected_n_configurations_per_component
+            for cf in component_configs
+        ]
+    )

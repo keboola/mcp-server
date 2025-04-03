@@ -232,12 +232,15 @@ def conform_types(component: ComponentListItem, types: List[ComponentType]) -> b
     if "all" in types:
         return True
     if "other" in types:
-        return not (component.component_type in [
-            "application",
-            "transformation",
-            "extractor",
-            "writer",
-        ])
+        return not (
+            component.component_type
+            in [
+                "application",
+                "transformation",
+                "extractor",
+                "writer",
+            ]
+        )
     else:
         return component.component_type in types
 
@@ -303,7 +306,7 @@ async def list_all_component_configurations(
         -> returns all component configuration pairs
     - user_input: `list me all special components` | `give me other components`
         -> set types to ["other"]
-        -> returns all other component configuration pairs that are not writers, extractors, transformations or 
+        -> returns all other component configuration pairs that are not writers, extractors, transformations or
         applications
 
     """
@@ -340,7 +343,7 @@ async def list_components(
     ] = ["all"],
 ) -> List[ComponentListItem]:
     """
-    Retrieve a list of core Keboola components used in the project that are filtered by their types. 
+    Retrieve a list of core Keboola components used in the project that are filtered by their types.
     These components are the basis for all configurations of the component.
     USAGE:
         - Use when you want to find IDs, names, types, descriptions of all core Keboola components used in the project.
