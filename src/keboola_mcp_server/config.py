@@ -14,16 +14,7 @@ class Config:
 
     storage_token: Optional[str] = None
     storage_api_url: str = "https://connection.keboola.com"
-    queue_api_url: str = "https://queue.keboola.com"
-    log_level: str = "INFO"
-    # Add Snowflake credentials
-    snowflake_account: Optional[str] = None
-    snowflake_user: Optional[str] = None
-    snowflake_password: Optional[str] = None
-    snowflake_warehouse: Optional[str] = None
-    snowflake_database: Optional[str] = None
-    snowflake_schema: Optional[str] = None
-    snowflake_role: Optional[str] = None
+    workspace_user: Optional[str] = None
 
     @classmethod
     def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, str]:
@@ -51,27 +42,6 @@ class Config:
         or their uppercase variant prefixed with 'KBC_'.
         """
         return dataclasses.replace(self, **self._read_options(d))
-
-    def has_storage_config(self) -> bool:
-        """Check if Storage API configuration is complete."""
-        return all(
-            [
-                self.storage_token,
-                self.storage_api_url,
-            ]
-        )
-
-    def has_snowflake_config(self) -> bool:
-        """Check if Snowflake configuration is complete."""
-        return all(
-            [
-                self.snowflake_account,
-                self.snowflake_user,
-                self.snowflake_password,
-                self.snowflake_warehouse,
-                self.snowflake_database,
-            ]
-        )
 
     def __repr__(self):
         params: list[str] = []

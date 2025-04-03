@@ -6,6 +6,8 @@ from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import JobsQueue, KeboolaClient
 
+from keboola_mcp_server.sql_tools import WorkspaceManager
+
 
 @pytest.fixture
 def keboola_client() -> KeboolaClient:
@@ -29,5 +31,9 @@ def mcp_context_client(keboola_client: KeboolaClient, mcp_context: Context) -> C
     context = mcp_context
     context.session.state = {}
     # Mock KeboolaClient
+
+    workspace_manager = MagicMock(spec=WorkspaceManager)
+    context.session.state["workspace_manager"] = workspace_manager
+
     context.session.state["sapi_client"] = keboola_client
     return context

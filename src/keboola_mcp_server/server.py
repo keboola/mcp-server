@@ -1,17 +1,14 @@
 """MCP server implementation for Keboola Connection."""
 
-import csv
 import logging
-from io import StringIO
 
-from typing import Annotated, Any, Dict, List, Optional, cast
+from typing import Optional
 
-
-import snowflake.connector
-from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field
+from mcp.server.fastmcp import FastMCP
 
 from keboola_mcp_server.component_tools import add_component_tools
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import Config
 from keboola_mcp_server.jobs_tools import add_jobs_tools
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
@@ -19,82 +16,10 @@ from keboola_mcp_server.mcp import (
     SessionState,
     SessionStateFactory,
 )
-
-from .client import KeboolaClient
-from .config import Config
-from .database import ConnectionManager, DatabasePathManager
+from keboola_mcp_server.sql_tools import WorkspaceManager
+from keboola_mcp_server.storage_tools import add_storage_tools
 
 logger = logging.getLogger(__name__)
-
-
-class BucketInfo(BaseModel):
-    id: str = Field(description="Unique identifier for the bucket")
-    name: str = Field(description="Name of the bucket")
-    description: Optional[str] = Field(None, description="Description of the bucket")
-    stage: Optional[str] = Field(
-        None, description="Stage of the bucket ('in' for input stage, 'out' for output stage)"
-    )
-    created: str = Field(description="Creation timestamp of the bucket")
-    table_count: Optional[int] = Field(
-        None,
-        description="Number of tables in the bucket",
-        validation_alias=AliasChoices("tableCount", "table_count", "table-count"),
-        serialization_alias="tableCount",
-    )
-    data_size_bytes: Optional[int] = Field(
-        None,
-        description="Total data size of the bucket in bytes",
-        validation_alias=AliasChoices("dataSizeBytes", "data_size_bytes", "data-size-bytes"),
-        serialization_alias="dataSizeBytes",
-    )
-
-
-class TableColumnInfo(BaseModel):
-    name: str = Field(description="Name of the column")
-    db_identifier: str = Field(
-        description="Fully qualified database identifier for the column",
-        validation_alias=AliasChoices("dbIdentifier", "db_identifier", "db-identifier"),
-        serialization_alias="dbIdentifier",
-    )
-
-
-class TableDetail(BaseModel):
-    id: str = Field(description="Unique identifier for the table")
-    name: str = Field(description="Name of the table")
-    primary_key: Optional[List[str]] = Field(
-        None,
-        description="List of primary key columns",
-        validation_alias=AliasChoices("primaryKey", "primary_key", "primary-key"),
-        serialization_alias="primaryKey",
-    )
-    created: Optional[str] = Field(None, description="Creation timestamp of the table")
-    row_count: Optional[int] = Field(
-        None,
-        description="Number of rows in the table",
-        validation_alias=AliasChoices("rowCount", "row_count", "row-count"),
-        serialization_alias="rowCount",
-    )
-    data_size_bytes: Optional[int] = Field(
-        None,
-        description="Total data size of the table in bytes",
-        validation_alias=AliasChoices("dataSizeBytes", "data_size_bytes", "data-size-bytes"),
-        serialization_alias="dataSizeBytes",
-    )
-    columns: Optional[List[str]] = Field(None, description="List of column names")
-    column_identifiers: Optional[List[TableColumnInfo]] = Field(
-        None,
-        description="List of column information including database identifiers",
-        validation_alias=AliasChoices(
-            "columnIdentifiers", "column_identifiers", "column-identifiers"
-        ),
-        serialization_alias="columnIdentifiers",
-    )
-    db_identifier: Optional[str] = Field(
-        None,
-        description="Fully qualified database identifier for the table",
-        validation_alias=AliasChoices("dbIdentifier", "db_identifier", "db-identifier"),
-        serialization_alias="dbIdentifier",
-    )
 
 
 def _create_session_state_factory(config: Optional[Config] = None) -> SessionStateFactory:
@@ -111,18 +36,20 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
         state: SessionState = {}
         # Create Keboola client instance
         try:
-            client = KeboolaClient(cfg.storage_token, cfg.storage_api_url, cfg.queue_api_url)
-            state["sapi_client"] = client
+            client = KeboolaClient(cfg.storage_token, cfg.storage_api_url)
+            state[KeboolaClient.STATE_KEY] = client
             logger.info("Successfully initialized Storage API client.")
         except Exception as e:
             logger.error(f"Failed to initialize Keboola client: {e}")
             raise
 
-        connection_manager = ConnectionManager(cfg)
-        db_path_manager = DatabasePathManager(cfg, connection_manager)
-        state["connection_manager"] = connection_manager
-        state["db_path_manager"] = db_path_manager
-        logger.info("Successfully initialized DB connection and path managers.")
+        try:
+            workspace_manager = WorkspaceManager(client, cfg.workspace_user)
+            state[WorkspaceManager.STATE_KEY] = workspace_manager
+            logger.info("Successfully initialized Storage API Workspace manager.")
+        except Exception as e:
+            logger.error(f"Failed to initialize Storage API Workspace manager: {e}")
+            raise
 
         return state
 
@@ -138,12 +65,6 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     Returns:
         Configured FastMCP server instance
     """
-    # Configure logging
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(config.log_level)
-
     # Initialize FastMCP server with system instructions
     mcp = KeboolaMcpServer(
         "Keboola Explorer",
@@ -160,102 +81,6 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     # Add jobs tools to the server inplace.
     add_jobs_tools(mcp)
 
-    @mcp.tool()
-    async def query_table(sql_query: str, ctx: Context) -> str:
-        """
-        Execute a SQL query through the proxy service to get data from Storage.
-        Before forming the query always check the get_table_metadata tool to get
-        the correct database name and table name.
-        - The {{db_identifier}} is available in the tool response.
-
-        Note: SQL queries must include the full path including database name, e.g.:
-        'SELECT * FROM {{db_identifier}}."test_identify"'. Snowflake is case sensitive so always
-        wrap the column names in double quotes.
-        """
-        connection_manager = ctx.session.state["connection_manager"]
-        assert isinstance(connection_manager, ConnectionManager)
-
-        conn = None
-        cursor = None
-
-        try:
-            conn = connection_manager.create_snowflake_connection()
-            cursor = conn.cursor()
-            cursor.execute(sql_query)
-            result = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
-
-            # Convert to CSV
-            output = StringIO()
-            writer = csv.writer(output)
-            writer.writerow(columns)
-            writer.writerows(result)
-
-            return output.getvalue()
-
-        except snowflake.connector.errors.ProgrammingError as e:
-            raise ValueError(f"Snowflake query error: {str(e)}")
-
-        except Exception as e:
-            raise ValueError(f"Unexpected error during query execution: {str(e)}")
-
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-
-    # Tools
-    @mcp.tool()
-    async def list_bucket_info(ctx: Context) -> List[BucketInfo]:
-        """List information about all buckets in the project."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
-        raw_bucket_data = client.storage_client.buckets.list()
-
-        return [BucketInfo(**raw_bucket) for raw_bucket in raw_bucket_data]
-
-    @mcp.tool()
-    async def get_bucket_metadata(
-        bucket_id: Annotated[str, Field(description="Unique ID of the bucket.")], ctx: Context
-    ) -> BucketInfo:
-        """Get detailed information about a specific bucket."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
-        raw_bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
-
-        return BucketInfo(**raw_bucket)
-
-    @mcp.tool()
-    async def get_table_metadata(
-        table_id: Annotated[str, Field(description="Unique ID of the table.")], ctx: Context
-    ) -> TableDetail:
-        """Get detailed information about a specific table including its DB identifier and column information."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
-        raw_table = cast(Dict[str, Any], client.storage_client.tables.detail(table_id))
-
-        # Get column info
-        columns = raw_table.get("columns", [])
-        column_info = [TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in columns]
-
-        db_path_manager = ctx.session.state["db_path_manager"]
-        assert isinstance(db_path_manager, DatabasePathManager)
-
-        return TableDetail(
-            **raw_table,
-            column_identifiers=column_info,
-            db_identifier=db_path_manager.get_table_db_path(raw_table),
-        )
-
-    @mcp.tool()
-    async def list_bucket_tables(bucket_id: str, ctx: Context) -> str:
-        """List all tables in a specific bucket with their basic information."""
-        client = ctx.session.state["sapi_client"]
-        assert isinstance(client, KeboolaClient)
-        raw_tables = cast(
-            List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id)
-        )
-        return [TableDetail(**raw_table) for raw_table in raw_tables]
+    add_storage_tools(mcp)
 
     return mcp
