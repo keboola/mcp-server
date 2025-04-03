@@ -3,7 +3,9 @@
 import logging
 import os
 import tempfile
-from typing import Any, Dict, List, Optional, cast
+
+from typing import Any, Dict, Mapping, Optional, cast, List
+
 
 import httpx
 from kbcstorage.client import Client
@@ -14,6 +16,14 @@ logger = logging.getLogger(__name__)
 
 class KeboolaClient:
     """Helper class to interact with Keboola Storage API and Job Queue API."""
+
+    STATE_KEY = "sapi_client"
+
+    @classmethod
+    def from_state(cls, state: Mapping[str, Any]) -> "KeboolaClient":
+        instance = state[cls.STATE_KEY]
+        assert isinstance(instance, KeboolaClient)
+        return instance
 
     def __init__(
         self,
