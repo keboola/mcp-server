@@ -1,5 +1,5 @@
 from typing import Any, Dict, List
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -19,13 +19,6 @@ def test_config() -> Config:
     return Config(
         storage_token="test-token",
         storage_api_url="https://connection.test.keboola.com",
-        log_level="INFO",
-        snowflake_account="test-account",
-        snowflake_user="test-user",
-        snowflake_password="test-password",
-        snowflake_warehouse="test-warehouse",
-        snowflake_database="test-database",
-        snowflake_role="test-role",
     )
 
 
@@ -161,7 +154,7 @@ async def test_get_table_metadata(mcp_context_client, mock_table_data) -> None:
     workspace_manager = mcp_context_client.session.state["workspace_manager"]
     mock_fqn = MagicMock()
     mock_fqn.snowflake_fqn = mock_table_data["additional_data"]["snowflake_fqn"]
-    workspace_manager.get_table_fqn = MagicMock(return_value=mock_fqn)
+    workspace_manager.get_table_fqn = AsyncMock(return_value=mock_fqn)
     result = await get_table_metadata(mock_table_data["raw_table_data"]["id"], mcp_context_client)
 
     assert isinstance(result, TableDetail)
