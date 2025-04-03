@@ -193,8 +193,7 @@ async def list_jobs(
         ascending order.
     :return: A list of job list items, if empty then no jobs were found.
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     status = handle_status_param(status=status)
 
@@ -218,8 +217,7 @@ async def get_job_details(
     :param job_id: The unique identifier of the job whose details should be retrieved.
     :return: A job detail object
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     r_job = client.jobs_queue.detail(job_id)
     logger.info(f"Found job details for {job_id}." if r_job else f"Job {job_id} not found.")
@@ -274,8 +272,7 @@ async def list_component_config_jobs(
         ascending order.
     :return: A list of job list items.
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     status = handle_status_param(status=status)
     params = {
@@ -336,8 +333,7 @@ async def list_component_jobs(
         order.
     :return: A list of job list items.
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     status = handle_status_param(status=status)
     params = {

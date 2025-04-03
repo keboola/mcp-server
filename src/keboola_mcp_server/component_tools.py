@@ -193,7 +193,6 @@ async def list_component_configurations(
 ) -> List[ComponentConfigurationListItem]:
     client = KeboolaClient.from_state(ctx.session.state)
 
-
     component = await get_component_details(component_id, ctx)
     r_configs = client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
@@ -238,8 +237,7 @@ async def get_component_configuration_details(
     """
     if isinstance(config_id, int):
         config_id = str(config_id)
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     component = await get_component_details(component_id, ctx)
     r_config = client.storage_client.configurations.detail(component_id, config_id)
