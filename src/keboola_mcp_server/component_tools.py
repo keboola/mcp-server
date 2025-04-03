@@ -24,12 +24,17 @@ class ComponentListItem(BaseModel):
 
     component_id: str = Field(
         description="The ID of the component",
-        validation_alias=AliasChoices("id", "component_id"),
+        validation_alias=AliasChoices("id", "component_id", "componentId", "component-id"),
         serialization_alias="component_id",
     )
     component_name: str = Field(
         description="The name of the component",
-        validation_alias=AliasChoices("name", "component_name"),
+        validation_alias=AliasChoices(
+            "name",
+            "component_name",
+            "componentName",
+            "component-name",
+        ),
         serialization_alias="component_name",
     )
     component_type: str = Field(
@@ -109,17 +114,32 @@ class ComponentConfigurationListItem(BaseModel):
     )
     configuration_id: str = Field(
         description="The ID of the component configuration",
-        validation_alias=AliasChoices("id", "configuration_id"),
+        validation_alias=AliasChoices(
+            "id",
+            "configuration_id",
+            "configurationId",
+            "configuration-id",
+        ),
         serialization_alias="configuration_id",
     )
     configuration_name: str = Field(
         description="The name of the component configuration",
-        validation_alias=AliasChoices("name", "configuration_name"),
+        validation_alias=AliasChoices(
+            "name",
+            "configuration_name",
+            "configurationName",
+            "configuration-name",
+        ),
         serialization_alias="configuration_name",
     )
     configuration_description: Optional[str] = Field(
         description="The description of the component configuration",
-        validation_alias=AliasChoices("description", "configuration_description"),
+        validation_alias=AliasChoices(
+            "description",
+            "configuration_description",
+            "configurationDescription",
+            "configuration-description",
+        ),
         serialization_alias="configuration_description",
     )
     is_disabled: bool = Field(
@@ -287,8 +307,6 @@ async def list_all_component_configurations(
         applications
 
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
 
     types = handle_component_types(types)
 
@@ -371,8 +389,7 @@ async def list_component_configurations(
     Retrieve all configurations that exist for a specific core Keboola component to make component configuration pairs.
     :param component_id: The ID of the Keboola component whose configurations you want to list
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     component = await get_core_component_details(component_id, ctx)
     r_configs = client.storage_client.configurations.list(component_id)
@@ -399,8 +416,7 @@ async def get_core_component_details(
     The component details are provided along with the configuration details.
     When user really wants to see the details of a core component for a specific configuration.
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
     r_component = await client.get(endpoint)
@@ -429,8 +445,7 @@ async def get_component_configuration_details(
     """
     if isinstance(configuration_id, int):
         configuration_id = str(configuration_id)
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     component = await get_core_component_details(component_id, ctx)
     r_config = client.storage_client.configurations.detail(component_id, configuration_id)
