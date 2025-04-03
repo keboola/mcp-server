@@ -283,7 +283,7 @@ async def list_all_component_configurations(
     USAGE:
         - Use when you want to see all component configuration pairs in the project given a specific type.
     CONSIDERATIONS:
-        - Regarding user experience, the individual components and their configurations are unified, as a core 
+        - Regarding user experience, the individual components and their configurations are unified, as a core
         component is only relevant when it has an associated configuration unless user explicitly specifies otherwise.
         - **Specific component** When user specifies a specific component, the tool will return all configurations
         - **components** are mostly referring to component configuration pairs that are writers or extractors but when
