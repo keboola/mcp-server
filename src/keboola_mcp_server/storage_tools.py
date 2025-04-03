@@ -1,7 +1,7 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
 import logging
-from typing import Annotated, Any, Dict, List, Optional, cast
+from typing import Annotated, Any, Dict, List, Optional, Union, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, model_validator
@@ -18,6 +18,8 @@ def add_storage_tools(mcp: FastMCP) -> None:
     mcp.add_tool(get_bucket_metadata)
     mcp.add_tool(list_bucket_tables)
     mcp.add_tool(get_table_metadata)
+    mcp.add_tool(update_bucket_description)
+    mcp.add_tool(update_table_description)
 
     logger.info("Component tools added to the MCP server.")
 
@@ -131,6 +133,26 @@ class TableDetail(BaseModel):
         return values
 
 
+class UpdateBucketDescriptionSuccessResponse(BaseModel):
+    success: bool = True
+    data: List[dict]
+
+
+class UpdateBucketDescriptionErrorResponse(BaseModel):
+    success: bool = False
+    error: str
+
+
+class UpdateTableDescriptionSuccessResponse(BaseModel):
+    success: bool = True
+    data: List[dict]
+
+
+class UpdateTableDescriptionErrorResponse(BaseModel):
+    success: bool = False
+    error: str
+
+
 async def get_bucket_metadata(
     bucket_id: Annotated[str, Field(description="Unique ID of the bucket.")], ctx: Context
 ) -> BucketInfo:
@@ -183,3 +205,85 @@ async def list_bucket_tables(
     raw_tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
 
     return [TableDetail(**raw_table) for raw_table in raw_tables]
+
+
+async def update_bucket_description(
+    bucket_id: Annotated[str, Field(description="The ID of the bucket to update.")],
+    description: Annotated[str, Field(description="The new description for the bucket.")],
+    ctx: Context,
+):
+    """
+    Update the description for a given Keboola bucket.
+
+    Args:
+        bucket_id: The ID of the bucket to update.
+        description: The new description for the bucket.
+
+    Returns:
+        The response from the API.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    metadata_endpoint = f"buckets/{bucket_id}/metadata"
+
+    data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+
+    response = await client.post(metadata_endpoint, data)
+    return response
+
+
+async def update_bucket_description(
+    bucket_id: Annotated[str, Field(description="The ID of the bucket to update.")],
+    description: Annotated[str, Field(description="The new description for the bucket.")],
+    ctx: Context,
+) -> Union[UpdateBucketDescriptionSuccessResponse, UpdateBucketDescriptionErrorResponse]:
+    """
+    Update the description for a given Keboola bucket.
+
+    Args:
+        bucket_id: The ID of the bucket to update.
+        description: The new description for the bucket.
+
+    Returns:
+        UpdateBucketDescriptionSuccessResponse on success,
+        UpdateBucketDescriptionErrorResponse on failure.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    metadata_endpoint = f"buckets/{bucket_id}/metadata"
+
+    data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+
+    try:
+        response = await client.post(metadata_endpoint, data)
+        print(response)
+        return UpdateBucketDescriptionSuccessResponse(data=response)
+    except Exception as e:
+        return UpdateBucketDescriptionErrorResponse(error=str(e))
+
+
+async def update_table_description(
+    table_id: Annotated[str, Field(description="The ID of the table to update.")],
+    description: Annotated[str, Field(description="The new description for the table.")],
+    ctx: Context,
+) -> Union[UpdateTableDescriptionSuccessResponse, UpdateTableDescriptionErrorResponse]:
+    """
+    Update the description for a given Keboola table.
+
+    Args:
+        table_id: The ID of the table to update.
+        description: The new description for the table.
+
+    Returns:
+        UpdateTableDescriptionSuccessResponse on success,
+        UpdateTableDescriptionErrorResponse on failure.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    metadata_endpoint = f"tables/{table_id}/metadata"
+
+    data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+
+    try:
+        response = await client.post(metadata_endpoint, data)
+        print(response)
+        return UpdateTableDescriptionSuccessResponse(data=response["metadata"])
+    except Exception as e:
+        return UpdateTableDescriptionErrorResponse(error=str(e))

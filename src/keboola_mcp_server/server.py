@@ -99,28 +99,4 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
             for config in configs
         )
 
-    @mcp.tool()
-    async def update_component_description(
-        component_id: Annotated[str, Field(description="The ID of the component to update.")],
-        description: Annotated[str, Field(description="The new description for the component.")],
-        ctx: Context,
-    ):
-        """
-        Update the description for a given Keboola component. This tool is used to update the description of a component.
-
-        Args:
-            component_id: The ID of the component to update.
-            description: The new description for the component.
-
-        Returns:
-            The response from the API.
-        """
-        client = KeboolaClient.from_state(ctx.session.state)
-        metadata_endpoint = f"components/{component_id}/metadata"
-
-        data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
-
-        response = await client.post(metadata_endpoint, data)
-        return response
-
     return mcp
