@@ -175,8 +175,7 @@ def add_component_tools(mcp: FastMCP) -> None:
 
 async def list_components(ctx: Context) -> List[ComponentListItem]:
     """Retrieve a list of all available Keboola components in the project."""
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     r_components = client.storage_client.components.list()
     logger.info(f"Found {len(r_components)} components.")
@@ -192,9 +191,8 @@ async def list_component_configurations(
     ],
     ctx: Context,
 ) -> List[ComponentConfigurationListItem]:
-    """Retrieve all configurations that exist for a specific Keboola component."""
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
+
 
     component = await get_component_details(component_id, ctx)
     r_configs = client.storage_client.configurations.list(component_id)
@@ -214,8 +212,8 @@ async def get_component_details(
     ctx: Context,
 ) -> Component:
     """Retrieve detailed information about a original Keboola component object given component ID."""
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
+
     endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
     r_component = await client.get(endpoint)
     return Component.model_validate(r_component)
