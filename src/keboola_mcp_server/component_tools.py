@@ -468,4 +468,37 @@ async def get_component_configuration_details(
     )
 
 
+async def create_snowflake_transformation(
+    ctx: Context,
+    name: Annotated[
+        str,
+        Field(
+            str,
+            description="The name of the snowflake transformation",
+        ),
+    ],
+    sql_query: Annotated[
+        Optional[str],
+        Field(
+            Optional[str],
+            description="The SQL query of the snowflake transformation",
+        ),
+    ] = None,
+    description: Annotated[
+        Optional[str],
+        Field(
+            Optional[str],
+            description="The description of the snowflake transformation",
+        ),
+    ] = None,
+
+) -> None:
+    """
+    Create a snowflake transformation from the given name, sql query and optionally description.
+    """
+    client = ctx.session.state["sapi_client"]
+    assert isinstance(client, KeboolaClient)
+
+    raise NotImplementedError("Not implemented yet.")
+       
 ############################## End of component tools #########################################
