@@ -165,10 +165,12 @@ async def get_table_metadata(
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     assert isinstance(workspace_manager, WorkspaceManager)
 
+    table_fqn = await workspace_manager.get_table_fqn(raw_table)
+
     return TableDetail(
         **raw_table,
         column_identifiers=column_info,
-        db_identifier=workspace_manager.get_table_fqn(raw_table).snowflake_fqn,
+        db_identifier=table_fqn.snowflake_fqn,
     )
 
 
