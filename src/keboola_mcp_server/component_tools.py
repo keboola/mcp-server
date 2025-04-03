@@ -443,8 +443,7 @@ async def get_component_configuration_details(
     Use to get the configuration details, metadata and the core Keboola component.
     Usually when user wants to see the details of a specific component (with configuration).
     """
-    if isinstance(configuration_id, int):
-        configuration_id = str(configuration_id)
+
     client = KeboolaClient.from_state(ctx.session.state)
 
     component = await get_core_component_details(component_id, ctx)
