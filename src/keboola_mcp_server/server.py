@@ -13,7 +13,7 @@ from keboola_mcp_server.mcp import (
     SessionState,
     SessionStateFactory,
 )
-from keboola_mcp_server.sql_tools import WorkspaceManager
+from keboola_mcp_server.sql_tools import WorkspaceManager, add_sql_tools
 from keboola_mcp_server.storage_tools import add_storage_tools
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     )
 
     add_storage_tools(mcp)
+    add_sql_tools(mcp)
 
     @mcp.tool()
     async def list_components(ctx: Context) -> str:

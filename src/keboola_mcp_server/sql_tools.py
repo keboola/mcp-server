@@ -3,13 +3,20 @@ import logging
 from io import StringIO
 from typing import Annotated, Any, Literal, Mapping, Optional, Sequence
 
-from mcp.server.fastmcp import Context
+from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
 from keboola_mcp_server.client import KeboolaClient
 
 LOG = logging.getLogger(__name__)
+
+
+def add_sql_tools(mcp: FastMCP) -> None:
+    """Add tools to the MCP server."""
+    mcp.add_tool(query_table)
+
+    logger.info("SQL tools added to the MCP server.")
 
 
 @dataclass(frozen=True)
