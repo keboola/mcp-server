@@ -10,8 +10,8 @@ from keboola_mcp_server.component_tools import (
     ComponentConfigurationListItem,
     get_component_configuration_details,
     get_component_details,
-    list_component_configurations,
-    list_components,
+    retrieve_component_configurations,
+    retrieve_components,
 )
 
 
@@ -114,8 +114,8 @@ def mock_metadata() -> list[dict[str, Any]]:
 
 
 @pytest.mark.asyncio
-async def test_list_components(mcp_context_client, mock_components):
-    """Test list_components tool."""
+async def test_retrieve_components(mcp_context_client, mock_components):
+    """Test retrieve_components tool."""
 
     keboola_client = mcp_context_client.session.state["sapi_client"]
     keboola_client.storage_client.components = MagicMock()
@@ -123,27 +123,37 @@ async def test_list_components(mcp_context_client, mock_components):
     # Mock data
     keboola_client.storage_client.components.list = MagicMock(return_value=mock_components)
 
-    result = await list_components(mcp_context_client)
+    result = await retrieve_components(mcp_context_client)
 
     assert len(result) == 2
 
     assert all(isinstance(component, ComponentListItem) for component in result)
-    assert all(c.component_id == item["id"] for c, item in zip(result, mock_components))
-    assert all(c.component_name == item["name"] for c, item in zip(result, mock_components))
-    assert all(c.component_type == item["type"] for c, item in zip(result, mock_components))
     assert all(
-        c.component_description == item["description"] for c, item in zip(result, mock_components)
+        component.component_id == expected["id"]
+        for component, expected in zip(result, mock_components)
     )
-    assert all(not hasattr(c, "version") for c in result)
+    assert all(
+        component.component_name == expected["name"]
+        for component, expected in zip(result, mock_components)
+    )
+    assert all(
+        component.component_type == expected["type"]
+        for component, expected in zip(result, mock_components)
+    )
+    assert all(
+        component.component_description == expected["description"]
+        for component, expected in zip(result, mock_components)
+    )
+    assert all(not hasattr(component, "version") for component in result)
 
     keboola_client.storage_client.components.list.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_list_component_configurations(
+async def test_retrieve_component_configurations(
     mcp_context_client, mock_configurations, mock_component
 ):
-    """Test list_component_configurations tool."""
+    """Test retrieve_component_configurations tool."""
 
     keboola_client = mcp_context_client.session.state["sapi_client"]
     keboola_client.storage_client.configurations = MagicMock()
@@ -156,7 +166,7 @@ async def test_list_component_configurations(
 
     keboola_client.get = AsyncMock(return_value=mock_component)
 
-    result = await list_component_configurations("keboola.ex-aws-s3", mcp_context_client)
+    result = await retrieve_component_configurations("keboola.ex-aws-s3", mcp_context_client)
 
     assert len(result) == 2
     assert all(isinstance(config, ComponentConfigurationListItem) for config in result)

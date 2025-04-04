@@ -161,8 +161,8 @@ def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
 
     component_tools = [
-        list_components,
-        list_component_configurations,
+        retrieve_components,
+        retrieve_component_configurations,
         get_component_configuration_details,
         get_component_details,
     ]
@@ -173,16 +173,16 @@ def add_component_tools(mcp: FastMCP) -> None:
     logger.info("Component tools initialized.")
 
 
-async def list_components(ctx: Context) -> List[ComponentListItem]:
-    """Retrieve a list of all available Keboola components in the project."""
+async def retrieve_components(ctx: Context) -> List[ComponentListItem]:
+    """Retrieve all available components."""
     client = KeboolaClient.from_state(ctx.session.state)
 
-    r_components = client.storage_client.components.list()
-    logger.info(f"Found {len(r_components)} components.")
-    return [ComponentListItem.model_validate(r_comp) for r_comp in r_components]
+    raw_components = client.storage_client.components.list()
+    logger.info(f"Found {len(raw_components)} components.")
+    return [ComponentListItem.model_validate(raw_comp) for raw_comp in raw_components]
 
 
-async def list_component_configurations(
+async def retrieve_component_configurations(
     component_id: Annotated[
         str,
         Field(
@@ -191,16 +191,17 @@ async def list_component_configurations(
     ],
     ctx: Context,
 ) -> List[ComponentConfigurationListItem]:
+    """Retrieve all configurations for a given component."""
     client = KeboolaClient.from_state(ctx.session.state)
 
     component = await get_component_details(component_id, ctx)
-    r_configs = client.storage_client.configurations.list(component_id)
-    logger.info(f"Found {len(r_configs)} configurations for component {component_id}.")
+    raw_configurations = client.storage_client.configurations.list(component_id)
+    logger.info(f"Found {len(raw_configurations)} configurations for component {component_id}.")
     return [
         ComponentConfigurationListItem.model_validate(
-            {**r_config, "component": component.to_list_item()}
+            {**raw_config, "component": component.to_list_item()}
         )
-        for r_config in r_configs
+        for raw_config in raw_configurations
     ]
 
 
@@ -210,12 +211,12 @@ async def get_component_details(
     ],
     ctx: Context,
 ) -> Component:
-    """Retrieve detailed information about a original Keboola component object given component ID."""
+    """Get detailed information about a Keboola component given component ID."""
     client = KeboolaClient.from_state(ctx.session.state)
 
-    endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
-    r_component = await client.get(endpoint)
-    return Component.model_validate(r_component)
+    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
+    raw_component = await client.get(endpoint)
+    return Component.model_validate(raw_component)
 
 
 async def get_component_configuration_details(
@@ -232,7 +233,7 @@ async def get_component_configuration_details(
     ctx: Context,
 ) -> ComponentConfiguration:
     """
-    Retrieve detailed information about a specific Keboola component configuration given component ID and config ID.
+    Get detailed information about a specific Keboola component configuration given component ID and config ID.
     Use to get the configuration details and metadata for a specific configuration and a given component.
     """
     if isinstance(config_id, int):
