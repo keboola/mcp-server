@@ -64,14 +64,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     """
     # Initialize FastMCP server with system instructions
     mcp = KeboolaMcpServer(
-        "Keboola Explorer",
-        session_state_factory=_create_session_state_factory(config),
-        dependencies=[
-            "keboola.storage-api-client",
-            "httpx",
-            "pandas",
-            "snowflake-connector-python",
-        ],
+        "Keboola Explorer", session_state_factory=_create_session_state_factory(config)
     )
 
     add_storage_tools(mcp)

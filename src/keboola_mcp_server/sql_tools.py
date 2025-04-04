@@ -9,7 +9,7 @@ from pydantic.dataclasses import dataclass
 
 from keboola_mcp_server.client import KeboolaClient
 
-LOG = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def add_sql_tools(mcp: FastMCP) -> None:
@@ -120,7 +120,7 @@ class WorkspaceManager:
             if result.is_ok and result.data and result.data.rows:
                 db_name = result.data.rows[0]["DATABASE_NAME"]
             else:
-                LOG.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
+                logger.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
 
         else:
             sql = f'select CURRENT_DATABASE() as "current_database", CURRENT_SCHEMA() as "current_schema";'
@@ -138,7 +138,7 @@ class WorkspaceManager:
                     schema_name = row["current_schema"]
                     table_name = table["name"]
             else:
-                LOG.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
+                logger.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
 
         if db_name and schema_name and table_name:
             fqn = TableFqn(db_name, schema_name, table_name)
