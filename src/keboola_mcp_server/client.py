@@ -68,7 +68,7 @@ class KeboolaClient:
 
         self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
 
-    async def get(self, endpoint: str) -> Dict[str, Any]:
+    async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Make a GET request to Keboola Storage API.
 
         Args:
@@ -79,7 +79,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_url}/v2/storage/{endpoint}", headers=self.headers
+                f"{self.base_url}/v2/storage/{endpoint}", headers=self.headers, params=params
             )
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
