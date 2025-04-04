@@ -6,8 +6,8 @@ from keboola_mcp_server.component_tools import (
     Component,
     ComponentConfiguration,
     get_component_configuration_details,
-    list_component_configurations,
-    list_components,
+    retrieve_component_configurations,
+    retrieve_components,
 )
 
 
@@ -25,12 +25,18 @@ async def test_list_components(mcp_context_client):
     ]
     keboola_client.storage_client.components.list = MagicMock(return_value=mock_components)
 
-    result = await list_components(mcp_context_client)
+    result = await retrieve_components(mcp_context_client)
 
     assert len(result) == 2
     assert all(isinstance(component, Component) for component in result)
-    assert all(c.component_id == item["id"] for c, item in zip(result, mock_components))
-    assert all(c.component_name == item["name"] for c, item in zip(result, mock_components))
+    assert all(
+        component.component_id == expected["id"]
+        for component, expected in zip(result, mock_components)
+    )
+    assert all(
+        component.component_name == expected["name"]
+        for component, expected in zip(result, mock_components)
+    )
 
     keboola_client.storage_client.components.list.assert_called_once()
 
@@ -59,7 +65,7 @@ async def test_list_component_configs(mcp_context_client):
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configs)
     keboola_client.get = AsyncMock(return_value=mock_component)
 
-    result = await list_component_configurations("keboola.ex-aws-s3", mcp_context_client)
+    result = await retrieve_component_configurations("keboola.ex-aws-s3", mcp_context_client)
 
     assert len(result) == 1
     assert isinstance(result[0], ComponentConfiguration)
