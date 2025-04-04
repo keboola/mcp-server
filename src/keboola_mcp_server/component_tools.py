@@ -254,8 +254,8 @@ def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
 
     component_tools = [
-        list_components,
-        list_component_configurations,
+        retrieve_core_components,
+        retrieve_component_configurations,
         get_component_configuration_details,
         get_core_component_details,
         list_all_component_configurations,
@@ -319,7 +319,7 @@ async def list_all_component_configurations(
     types = handle_component_types(types)
 
     # retrieve all core components
-    components = await list_components(ctx, types)
+    components = await retrieve_core_components(ctx, types)
     logger.info(f"Found {len(components)} core components for given types {types}.")
     # iterate over all core components and retrieve their configurations
     component_configs: List[ComponentConfigurationsList] = []
@@ -327,7 +327,9 @@ async def list_all_component_configurations(
         # check if the component matches the types filter
         if conform_types(component, types):
             # retrieve all configurations for the component
-            cur_component_configs = await list_component_configurations(component.component_id, ctx)
+            cur_component_configs = await retrieve_component_configurations(
+                component.component_id, ctx
+            )
             component_configs.append(
                 ComponentConfigurationsList(
                     component=component,
@@ -337,7 +339,7 @@ async def list_all_component_configurations(
     return sorted(component_configs, key=lambda x: x.component.component_type)
 
 
-async def list_components(
+async def retrieve_core_components(
     ctx: Context,
     types: Annotated[
         List[ComponentType],
@@ -380,18 +382,17 @@ async def list_components(
             -> set types to ["all"] because we need to find all components from which we can derive postgresql configurations
             -> returns all core components
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
 
     types = handle_component_types(types)
 
-    r_components = client.storage_client.components.list()
-    logger.info(f"Found {len(r_components)} components for given types {types}.")
-    components = [ComponentListItem.model_validate(r_comp) for r_comp in r_components]
+    raw_components = client.storage_client.components.list()
+    logger.info(f"Found {len(raw_components)} components for given types {types}.")
+    components = [ComponentListItem.model_validate(r_comp) for r_comp in raw_components]
     return list(filter(lambda x: conform_types(x, types), components))
 
 
-async def list_component_configurations(
+async def retrieve_component_configurations(
     component_id: Annotated[
         str,
         Field(
@@ -416,15 +417,17 @@ async def list_component_configurations(
     client = KeboolaClient.from_state(ctx.session.state)
 
     component = await get_core_component_details(component_id, ctx)
-    r_configs = client.storage_client.configurations.list(component_id)
-    logger.info(f"Found {len(r_configs)} component configurations for component {component_id}.")
+    raw_configurations = client.storage_client.configurations.list(component_id)
+    logger.info(
+        f"Found {len(raw_configurations)} component configurations for component {component_id}."
+    )
     return ComponentConfigurationsList(
         component=component.to_list_item(),
         configurations=[
             ComponentConfigurationListItem.model_validate(
-                {**r_config, "component_id": component_id}
+                {**raw_config, "component_id": component_id}
             )
-            for r_config in r_configs
+            for raw_config in raw_configurations
         ],
     )
 
@@ -450,10 +453,10 @@ async def get_core_component_details(
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
-    endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
-    r_component = await client.get(endpoint)
+    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
+    raw_component = await client.get(endpoint)
     logger.info(f"Retrieved component details for component {component_id}.")
-    return ComponentDetail.model_validate(r_component)
+    return ComponentDetail.model_validate(raw_component)
 
 
 async def get_component_configuration_details(
@@ -470,7 +473,7 @@ async def get_component_configuration_details(
     ctx: Context,
 ) -> ComponentConfigurationDetail:
     """
-    Retrieve detailed information about a specific Keboola component configuration given component ID and configuration
+    Get detailed information about a specific Keboola component configuration given component ID and configuration
     ID. Those IDs can be retrieved from fully_qualified_id of the component configuration which are seperated by `::`.
     Use to get the configuration details, metadata and the core Keboola component.
     PARAMETERS:
@@ -489,7 +492,7 @@ async def get_component_configuration_details(
     client = KeboolaClient.from_state(ctx.session.state)
 
     component = await get_core_component_details(component_id, ctx)
-    r_config = client.storage_client.configurations.detail(component_id, configuration_id)
+    raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
     logger.info(
         f"Retrieved configuration details for component configuration {component_id}::{configuration_id}."
     )
@@ -508,7 +511,7 @@ async def get_component_configuration_details(
         )
 
     return ComponentConfigurationDetail.model_validate(
-        {**r_config, "component": component, "component_id": component_id, "metadata": r_metadata}
+        {**raw_configuration, "component": component, "component_id": component_id, "metadata": r_metadata}
     )
 
 
