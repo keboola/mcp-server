@@ -130,6 +130,6 @@ async def get_component_details(
     """Get detailed information about a Keboola component given component ID."""
     client = KeboolaClient.from_state(ctx.session.state)
 
-    endpoint = "branch/{}/components/{}".format(client.storage_client._branch_id, component_id)
+    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
     raw_component = await client.get(endpoint)
     return Component.model_validate(raw_component)
