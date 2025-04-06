@@ -41,7 +41,7 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
             raise
 
         try:
-            workspace_manager = WorkspaceManager(client, cfg.workspace_user)
+            workspace_manager = WorkspaceManager(client, cfg.workspace_schema)
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             logger.info("Successfully initialized Storage API Workspace manager.")
         except Exception as e:

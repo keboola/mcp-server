@@ -10,6 +10,7 @@ class TestServer:
         tools = await server.list_tools()
         assert sorted(t.name for t in tools) == [
             "get_bucket_metadata",
+            "get_sql_dialect",
             "get_table_metadata",
             "list_bucket_info",
             "list_bucket_tables",
