@@ -316,6 +316,9 @@ class TestWorkspaceManagerBigQuery:
         ],
     )
     async def test_execute_query(self, query: str, expected: QueryResult, context: Context, mocker):
+        # disable BigQuery's Client's constructor to avoid Google authentication
+        bq_client = mocker.patch("keboola_mcp_server.sql_tools.Client.__init__")
+        bq_client.return_value = None
         bq_query = mocker.patch("keboola_mcp_server.sql_tools.Client.query")
         bq_query.return_value = (bq_job := mocker.MagicMock(QueryJob))
         bq_job.result.return_value = (bq_rows := mocker.MagicMock(RowIterator))
