@@ -128,7 +128,7 @@ class TestWorkspaceManagerSnowflake:
             (
                 # table in.c-foo.bar in its own project
                 {"id": "in.c-foo.bar", "name": "bar"},
-                {"current_database": "db_xyz", "current_schema": "workspace_123"},
+                {"current_database": "db_xyz"},
                 TableFqn(
                     db_name="db_xyz", schema_name="in.c-foo", table_name="bar", quote_char='"'
                 ),
@@ -136,9 +136,9 @@ class TestWorkspaceManagerSnowflake:
             (
                 # temporary table not in a project, but in the writable schema of the workspace
                 {"id": "bar", "name": "bar"},
-                {"current_database": "db_xyz", "current_schema": "workspace_123"},
+                {"current_database": "db_xyz"},
                 TableFqn(
-                    db_name="db_xyz", schema_name="workspace_123", table_name="bar", quote_char='"'
+                    db_name="db_xyz", schema_name="workspace_1234", table_name="bar", quote_char='"'
                 ),
             ),
             (
@@ -258,12 +258,17 @@ class TestWorkspaceManagerBigQuery:
                     db_name="project_1234", schema_name="in_c_foo", table_name="bar", quote_char="`"
                 ),
             ),
-            # TODO: add support for writable tables and tables shared from other projects
-            # (
-            #         # temporary table not in a project, but in the writable schema of the workspace
-            #         {"id": "bar", "name": "bar"},
-            #         TableFqn(db_name="db_xyz", schema_name="workspace_123", table_name="bar", quote_char='"'),
-            # ),
+            (
+                # temporary table not in a project, but in the writable schema of the workspace
+                {"id": "bar", "name": "bar"},
+                TableFqn(
+                    db_name="project_1234",
+                    schema_name="workspace_1234",
+                    table_name="bar",
+                    quote_char="`",
+                ),
+            ),
+            # TODO: add support for tables shared from other projects
             # (
             #         # table out.c-baz.bam exported from project 1234
             #         # and imported as table in.c-foo.bar in some other project

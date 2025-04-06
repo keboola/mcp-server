@@ -106,8 +106,9 @@ class _Workspace(abc.ABC):
 
 
 class _SnowflakeWorkspace(_Workspace):
-    def __init__(self, workspace_id: str, client: KeboolaClient):
+    def __init__(self, workspace_id: str, schema: str, client: KeboolaClient):
         super().__init__(workspace_id)
+        self._schema = schema  # default schema created for the workspace
         self._client = client
 
     def get_sql_dialect(self) -> str:
@@ -139,7 +140,7 @@ class _SnowflakeWorkspace(_Workspace):
                 logger.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
 
         else:
-            sql = f'select CURRENT_DATABASE() as "current_database", CURRENT_SCHEMA() as "current_schema";'
+            sql = f'select CURRENT_DATABASE() as "current_database";'
             result = await self.execute_query(sql)
             if result.is_ok and result.data and result.data.rows:
                 row = result.data.rows[0]
@@ -151,7 +152,7 @@ class _SnowflakeWorkspace(_Workspace):
                     # a table not in the project, but in the writable schema created for the workspace
                     # TODO: we should never come here, because the tools for listing tables can only see
                     #  tables that are in the project
-                    schema_name = row["current_schema"]
+                    schema_name = self._schema
                     table_name = table["name"]
             else:
                 logger.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
@@ -172,8 +173,9 @@ class _SnowflakeWorkspace(_Workspace):
 class _BigQueryWorkspace(_Workspace):
     _BQ_FIELDS = {"_timestamp"}
 
-    def __init__(self, workspace_id: str, project_id: str):
+    def __init__(self, workspace_id: str, dataset_id: str, project_id: str):
         super().__init__(workspace_id)
+        self._dataset_id = dataset_id  # default dataset created for the workspace
         self._project_id = project_id
 
     def get_sql_dialect(self) -> str:
@@ -201,7 +203,8 @@ class _BigQueryWorkspace(_Workspace):
                 # a table not in the project, but in the writable schema created for the workspace
                 # TODO: we should never come here, because the tools for listing tables can only see
                 #  tables that are in the project
-                raise NotImplementedError()
+                schema_name = self._dataset_id
+                table_name = table["name"]
 
         if db_name and schema_name and table_name:
             fqn = TableFqn(db_name, schema_name, table_name, quote_char="`")
@@ -268,14 +271,18 @@ class WorkspaceManager:
             schema = wsp_info.get("connection", {}).get("schema")
             if _id and backend and schema and schema == self._workspace_schema:
                 if backend == "snowflake":
-                    self._workspace = _SnowflakeWorkspace(workspace_id=_id, client=self._client)
+                    self._workspace = _SnowflakeWorkspace(
+                        workspace_id=_id, schema=schema, client=self._client
+                    )
                     return self._workspace
 
                 elif backend == "bigquery":
                     credentials = json.loads(wsp_info.get("connection", {}).get("user") or "{}")
                     if project_id := credentials.get("project_id"):
                         self._workspace = _BigQueryWorkspace(
-                            workspace_id=_id, project_id=project_id
+                            workspace_id=_id,
+                            dataset_id=schema,
+                            project_id=project_id,
                         )
                         return self._workspace
                     else:
