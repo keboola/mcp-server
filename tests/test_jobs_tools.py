@@ -73,15 +73,33 @@ async def test_retrieve_jobs_in_project(mcp_context_client, mock_jobs):
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
-    assert all(j.id == item["id"] for j, item in zip(result, mock_jobs))
-    assert all(j.status == item["status"] for j, item in zip(result, mock_jobs))
-    assert all(j.component_id == item["component"] for j, item in zip(result, mock_jobs))
-    assert all(j.config_id == item["config"] for j, item in zip(result, mock_jobs))
-    assert all(j.is_finished == item["isFinished"] for j, item in zip(result, mock_jobs))
-    assert all(j.created_time == item["createdTime"] for j, item in zip(result, mock_jobs))
-    assert all(j.start_time == item["startTime"] for j, item in zip(result, mock_jobs))
-    assert all(j.end_time == item["endTime"] for j, item in zip(result, mock_jobs))
-    assert all(hasattr(j, "not_a_desired_field") is False for j in result)
+    assert all(returned.id == expected["id"] for returned, expected in zip(result, mock_jobs))
+    assert all(
+        returned.status == expected["status"] for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.component_id == expected["component"]
+        for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.config_id == expected["config"] for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.is_finished == expected["isFinished"]
+        for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.created_time == expected["createdTime"]
+        for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.start_time == expected["startTime"]
+        for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.end_time == expected["endTime"] for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(hasattr(returned, "not_a_desired_field") is False for returned in result)
 
     mock_client.jobs_queue.list.assert_called_once_with(
         limit=100,
@@ -143,8 +161,10 @@ async def test_retrieve_component_config_jobs_with_config_id(mcp_context_client,
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
-    assert all(j.id == item["id"] for j, item in zip(result, mock_jobs))
-    assert all(j.status == item["status"] for j, item in zip(result, mock_jobs))
+    assert all(returned.id == expected["id"] for returned, expected in zip(result, mock_jobs))
+    assert all(
+        returned.status == expected["status"] for returned, expected in zip(result, mock_jobs)
+    )
 
     mock_client.jobs_queue.search.assert_called_once_with(
         {
@@ -171,8 +191,10 @@ async def test_retrieve_component_config_jobs_without_config_id(mcp_context_clie
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
-    assert all(j.id == item["id"] for j, item in zip(result, mock_jobs))
-    assert all(j.status == item["status"] for j, item in zip(result, mock_jobs))
+    assert all(returned.id == expected["id"] for returned, expected in zip(result, mock_jobs))
+    assert all(
+        returned.status == expected["status"] for returned, expected in zip(result, mock_jobs)
+    )
 
     mock_client.jobs_queue.search.assert_called_once_with(
         {
