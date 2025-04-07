@@ -12,7 +12,6 @@ class TestServer:
             [
                 "get_bucket_metadata",
                 "get_component_configuration_details",
-                "get_component_details",
                 "get_job_details",
                 "get_table_metadata",
                 "list_bucket_info",
