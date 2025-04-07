@@ -174,7 +174,7 @@ class JobsQueue(Endpoint):
         params = {
             "limit": limit,
             "offset": offset,
-            **({"status": status} if status else {}),
+            "status": status,
             "sortBy": sort_by,
             "sortOrder": sort_order,
         }
@@ -187,7 +187,7 @@ class JobsQueue(Endpoint):
         :return: The json from the HTTP response.
         :raise: requests.HTTPError: If the API request fails.
         """
-        url = "{}/jobs/{}".format(self.base_url, job_id)
+        url = f"{self.base_url}/jobs/{job_id}"
 
         return self._get(url)
 
@@ -199,15 +199,15 @@ class JobsQueue(Endpoint):
         :raise: requests.HTTPError: If the API request fails.
 
         params:
-            - id str/lsit[str]: Search jobs by id
+            - id str/list[str]: Search jobs by id
             - runId str/list[str]: Search jobs by runId
             - branchId str/list[str]: Search jobs by branchId
             - tokenId str/list[str]: Search jobs by tokenId
             - tokenDescription str/list[str]: Search jobs by tokenDescription
             - componentId str/list[str]: Search jobs by componentId
-            - component str/list[str]: Search jobs by componentId alias..
+            - component str/list[str]: Search jobs by componentId, alias for componentId
             - configId str/list[str]: Search jobs by configId
-            - config str/list[str]: Search jobs by configId alias..
+            - config str/list[str]: Search jobs by configId, alias for configId
             - configRowIds str/list[str]: Search jobs by configRowIds
             - status str/list[str]: Search jobs by status
             - createdTimeFrom str: Jobs that were created after the given date
@@ -232,6 +232,6 @@ class JobsQueue(Endpoint):
             - sortOrder str: Sort the jobs by the given field, default "asc"
                 values: asc, desc
         """
-        url = "{}/search/jobs".format(self.base_url)
+        url = f"{self.base_url}/search/jobs"
 
         return self._get(url, params=params)
