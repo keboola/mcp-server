@@ -16,12 +16,11 @@ class TestServer:
                 "get_table_metadata",
                 "list_bucket_info",
                 "list_bucket_tables",
-                "list_component_config_jobs",
-                "list_component_jobs",
-                "list_jobs",
                 "query_table",
                 "retrieve_component_configurations",
                 "retrieve_components",
+                "retrieve_component_config_jobs",
+                "retrieve_jobs_in_project",
             ]
         )
 
