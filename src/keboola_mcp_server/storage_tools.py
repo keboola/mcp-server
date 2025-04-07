@@ -240,7 +240,7 @@ async def update_bucket_description(
 
     data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
     response = await client.post(endpoint=metadata_endpoint, data=data)
-    print(response)
+
     return UpdateBucketDescriptionResponse.model_validate(response)
 
 
