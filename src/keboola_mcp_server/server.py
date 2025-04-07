@@ -15,7 +15,7 @@ from keboola_mcp_server.mcp import (
     SessionState,
     SessionStateFactory,
 )
-from keboola_mcp_server.sql_tools import WorkspaceManager
+from keboola_mcp_server.sql_tools import WorkspaceManager, add_sql_tools
 from keboola_mcp_server.storage_tools import add_storage_tools
 
 logger = logging.getLogger(__name__)
@@ -66,18 +66,12 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     """
     # Initialize FastMCP server with system instructions
     mcp = KeboolaMcpServer(
-        "Keboola Explorer",
-        session_state_factory=_create_session_state_factory(config),
-        dependencies=[
-            "keboola.storage-api-client",
-            "httpx",
-            "pandas",
-            "snowflake-connector-python",
-        ],
+        "Keboola Explorer", session_state_factory=_create_session_state_factory(config)
     )
     # Add component tools to the server inplace.
     add_component_tools(mcp)
 
     add_storage_tools(mcp)
+    add_sql_tools(mcp)
 
     return mcp
