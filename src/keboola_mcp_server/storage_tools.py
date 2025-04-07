@@ -211,30 +211,6 @@ async def update_bucket_description(
     bucket_id: Annotated[str, Field(description="The ID of the bucket to update.")],
     description: Annotated[str, Field(description="The new description for the bucket.")],
     ctx: Context,
-):
-    """
-    Update the description for a given Keboola bucket.
-
-    Args:
-        bucket_id: The ID of the bucket to update.
-        description: The new description for the bucket.
-
-    Returns:
-        The response from the API.
-    """
-    client = KeboolaClient.from_state(ctx.session.state)
-    metadata_endpoint = f"buckets/{bucket_id}/metadata"
-
-    data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
-
-    response = await client.post(metadata_endpoint, data)
-    return response
-
-
-async def update_bucket_description(
-    bucket_id: Annotated[str, Field(description="The ID of the bucket to update.")],
-    description: Annotated[str, Field(description="The new description for the bucket.")],
-    ctx: Context,
 ) -> Union[UpdateBucketDescriptionSuccessResponse, UpdateBucketDescriptionErrorResponse]:
     """
     Update the description for a given Keboola bucket.
