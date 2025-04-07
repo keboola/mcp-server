@@ -239,18 +239,24 @@ async def retrieve_components_by_types(
     Utility function to retrieve components by types - used in tools:
     - retrieve_components_in_project
     - retrieve_transformation_components
+    :param client: The Keboola client
+    :param component_types: The component types to retrieve
+    :return: The components with their configurations
     """
     endpoint = "branch/{}/components".format(client.storage_client._branch_id)
+    # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
     params = {
-        "componentType": component_types,
         "include": "configuration",
     }
     raw_components_with_configs = []
     for type in component_types:
+        # retrieve components by type with configurations
         params = {"componentType": type}
         raw_components_with_configs.extend(
             cast(List[Dict[str, Any]], await client.get(endpoint, params=params))
         )
+
+    # build component configurations list grouped by components for each component found for given types
     components_with_configs = [
         ComponentConfigurationsList(
             component=ComponentListItem.model_validate(raw_component),
@@ -264,6 +270,7 @@ async def retrieve_components_by_types(
         for raw_component in raw_components_with_configs
     ]
 
+    # perform logging
     total_configurations = sum(
         len(component.configurations) for component in components_with_configs
     )
@@ -281,12 +288,18 @@ async def retrieve_components_by_ids(
     Utility function to retrieve components by ids - used in tools:
     - retrieve_components_in_project
     - retrieve_transformation_in_project
+    :param client: The Keboola client
+    :param component_ids: The component ids to retrieve
+    :return: The components with their configurations
     """
     components_with_configs = []
     for component_id in component_ids:
+        # retrieve configurations for component ids
         raw_configurations = client.storage_client.configurations.list(component_id)
+        # retrieve component details
         endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
         raw_component = await client.get(endpoint)
+        # build component configurations list grouped by components for each component id
         components_with_configs.append(
             ComponentConfigurationsList(
                 component=ComponentListItem.model_validate(raw_component),
@@ -299,6 +312,7 @@ async def retrieve_components_by_ids(
             )
         )
 
+    # perform logging
     total_configurations = sum(
         len(component.configurations) for component in components_with_configs
     )
@@ -308,6 +322,27 @@ async def retrieve_components_by_ids(
     )
     return components_with_configs
 
+
+async def get_core_component_details(
+    component_id: Annotated[
+        str,
+        Field(
+            str, description="The ID of the Keboola component/transformation you want details about"
+        ),
+    ],
+    client: KeboolaClient,
+) -> ComponentDetail:
+    """
+    Utility function to retrieve the core component details by component ID.
+    :param component_id: The ID of the Keboola component/transformation you want details about
+    :param client: The Keboola client
+    :return: The core component details
+    """
+
+    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
+    raw_component = await client.get(endpoint)
+    logger.info(f"Retrieved component details for component {component_id}.")
+    return ComponentDetail.model_validate(raw_component)
 
 ############################## End of utility functions #########################################
 
@@ -414,36 +449,6 @@ async def retrieve_transformations_in_project(
         return await retrieve_components_by_ids(client, transformation_ids)
 
 
-async def get_core_component_details(
-    component_id: Annotated[
-        str,
-        Field(
-            str, description="The ID of the Keboola component/transformation you want details about"
-        ),
-    ],
-    ctx: Context,
-) -> ComponentDetail:
-    """
-    Retrieve detailed information about a core Keboola component object given component ID.
-    PARAMETERS:
-        component_id: The ID of the Keboola component/transformation you want details about
-    RETURNS:
-        A component detail object containing the component ID, name, type, description.
-    USAGE:
-        - Use when you want to see the details of a specific core component, or component ID.
-    EXAMPLES:
-        - user_input: `give me schema details this component`
-            -> set component_id to the specific component ID if you know it
-            -> returns the details of the component
-    """
-    client = KeboolaClient.from_state(ctx.session.state)
-
-    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
-    raw_component = await client.get(endpoint)
-    logger.info(f"Retrieved component details for component {component_id}.")
-    return ComponentDetail.model_validate(raw_component)
-
-
 async def get_component_configuration_details(
     component_id: Annotated[
         str, Field(str, description="Unique identifier of the Keboola component/transformation")
@@ -479,7 +484,7 @@ async def get_component_configuration_details(
     client = KeboolaClient.from_state(ctx.session.state)
 
     # Get Component Details
-    component = await get_core_component_details(component_id, ctx)
+    component = await get_core_component_details(component_id, client=client)
     # Get Configuration Details
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
     logger.info(
