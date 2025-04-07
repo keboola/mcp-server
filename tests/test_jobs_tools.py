@@ -14,7 +14,6 @@ from keboola_mcp_server.jobs_tools import (
 
 @pytest.fixture
 def mock_jobs() -> list[dict[str, Any]]:
-    """Mock mock_job tool."""
     return [
         {
             "id": "123",
@@ -43,7 +42,6 @@ def mock_jobs() -> list[dict[str, Any]]:
 
 @pytest.fixture
 def mock_job() -> dict[str, Any]:
-    """Mock mock_job tool."""
     return {
         "id": "123",
         "status": "success",

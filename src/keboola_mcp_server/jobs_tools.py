@@ -179,11 +179,11 @@ async def retrieve_jobs_in_project(
     client = KeboolaClient.from_state(ctx.session.state)
     _status = [status] if status else None
 
-    r_jobs = client.jobs_queue.list(
+    raw_jobs = client.jobs_queue.list(
         limit=limit, offset=offset, status=_status, sort_by=sort_by, sort_order=sort_order
     )
-    logger.info(f"Found {len(r_jobs)} jobs for limit {limit}, offset {offset}, status {status}.")
-    return [JobListItem.model_validate(r_job) for r_job in r_jobs]
+    logger.info(f"Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.")
+    return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
 
 
 async def get_job_details(
@@ -203,9 +203,9 @@ async def get_job_details(
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
-    r_job = client.jobs_queue.detail(job_id)
-    logger.info(f"Found job details for {job_id}." if r_job else f"Job {job_id} not found.")
-    return JobDetail.model_validate(r_job)
+    raw_job = client.jobs_queue.detail(job_id)
+    logger.info(f"Found job details for {job_id}." if raw_job else f"Job {job_id} not found.")
+    return JobDetail.model_validate(raw_job)
 
 
 async def retrieve_component_config_jobs(
@@ -272,12 +272,12 @@ async def retrieve_component_config_jobs(
         "sortBy": sort_by,
         "sortOrder": sort_order,
     }
-    r_jobs = client.jobs_queue.search(params)
+    raw_jobs = client.jobs_queue.search(params)
     logger.info(
-        f"Found {len(r_jobs)} jobs for component {component_id}, configuration {config_id}, with limit {limit}, "
+        f"Found {len(raw_jobs)} jobs for component {component_id}, configuration {config_id}, with limit {limit}, "
         f"offset {offset}, status {status}."
     )
-    return [JobListItem.model_validate(r_job) for r_job in r_jobs]
+    return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
 
 
 ######################################## End of MCP tools ########################################
