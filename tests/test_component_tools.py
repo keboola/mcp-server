@@ -28,21 +28,21 @@ def mock_components() -> list[dict[str, Any]]:
             "name": "AWS S3 Extractor",
             "type": "extractor",
             "description": "Extract data from AWS S3",
-            "version": 1,
+            "version": "1",
         },
         {
             "id": "keboola.wr-google-drive",
             "name": "Google Drive Writer",
             "type": "writer",
             "description": "Write data to Google Drive",
-            "version": 1,
+            "version": "1",
         },
         {
             "id": "keboola.app-google-drive",
             "name": "Google Drive Application",
             "type": "application",
             "description": "Application for Google Drive",
-            "version": 1,
+            "version": "1",
         },
     ]
 

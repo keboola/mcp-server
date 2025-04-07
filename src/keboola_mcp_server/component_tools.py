@@ -8,8 +8,6 @@ from keboola_mcp_server.client import KeboolaClient
 
 logger = logging.getLogger(__name__)
 
-ID_TYPE = Union[str, int]
-
 ############################## Base Models to #########################################
 
 FULLY_QUALIFIED_ID_SEPARATOR: str = "::"
@@ -64,7 +62,7 @@ class ComponentDetail(ComponentListItem):
         serialization_alias="longDescription",
     )
     categories: List[str] = Field(description="The categories of the component", default=[])
-    version: ID_TYPE = Field(description="The version of the component")
+    version: int = Field(description="The version of the component")
     data: Optional[Dict[str, Any]] = Field(description="The data of the component", default=None)
     flags: Optional[List[str]] = Field(description="The flags of the component", default=None)
     configuration_schema: Optional[Dict[str, Any]] = Field(
@@ -193,7 +191,7 @@ class ComponentConfigurationDetail(ComponentConfigurationListItem):
     rows, metadata, and the core component object from which this configuration was derived.
     """
 
-    version: ID_TYPE = Field(description="The version of the component configuration")
+    version: int = Field(description="The version of the component configuration")
     configuration: Dict[str, Any] = Field(description="The configuration of the component")
     rows: Optional[List[Dict[str, Any]]] = Field(
         description="The rows of the component configuration", default=None
@@ -431,13 +429,17 @@ async def retrieve_transformations_in_project(
         List of transformation components.
     USAGE:
         - Use when you want to see transformation components in the project for given transformation_ids.
+        - If you want to retrieve all transformations, set transformation_ids to an empty list.
     EXAMPLES:
         - user_input: `give me all transformations`
             -> set component_ids to []
             -> returns all transformation components in the project
         - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-            -> set component_ids to list of identifiers accordingly if you know them
-            -> returns all configurations for the given transformations
+            -> set transformation_ids to list of identifiers accordingly if you know the IDs
+            -> returns all configurations for the given transformations IDs
+        - user_input: `give me details about this transformation component 'simulating-id'`
+            -> set transformation_ids to ['simulating-id']
+            -> returns the details of the transformation component with ID 'simulating-id'
     """
     if not transformation_ids:
         print("HERE")
