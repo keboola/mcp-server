@@ -18,7 +18,9 @@ class KeboolaClient:
     """Helper class to interact with Keboola Storage API and Job Queue API."""
 
     STATE_KEY = "sapi_client"
-    _PREFIX_STORAGE_API_URL = "connection."  # we do not use http:// or https:// here since we split
+    # Prefixes for the storage and queue API URLs, we do not use http:// or https:// here since we split the storage
+    # api url by `connection` word
+    _PREFIX_STORAGE_API_URL = "connection."
     _PREFIX_QUEUE_API_URL = "https://queue."
 
     @classmethod
@@ -52,7 +54,7 @@ class KeboolaClient:
             f"{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
         )
 
-        self.base_url = storage_api_url
+        self.base_storage_api_url = storage_api_url
         self.base_queue_api_url = queue_api_url
 
         self.headers = {
@@ -64,7 +66,7 @@ class KeboolaClient:
         # The storage_client.jobs endpoint is for legacy storage jobs
         # Use self.jobs_queue instead which provides access to the modern Job Queue API
         # that handles component/transformation jobs
-        self.storage_client = Client(self.base_url, self.token)
+        self.storage_client = Client(self.base_storage_api_url, self.token)
 
         self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
 
@@ -79,7 +81,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_url}/v2/storage/{endpoint}", headers=self.headers
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}", headers=self.headers
             )
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
@@ -96,7 +98,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.base_url}/v2/storage/{endpoint}",
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
                 headers=self.headers,
                 json=data if data is not None else {},
             )
@@ -130,7 +132,7 @@ class KeboolaClient:
 
 class JobsQueue(Endpoint):
     """
-    Client for interacting with the Keboola Job Queue API. This class extends the Endpoint class
+    Class handling endpoints for interacting with the Keboola Job Queue API. This class extends the Endpoint class
     from the kbcstorage library to leverage its core functionality, while using a different base URL
     and the same Storage API token for authentication.
 
@@ -141,13 +143,14 @@ class JobsQueue(Endpoint):
 
     def __init__(self, root_url: str, token: str):
         """
-        Create an JobsQueueClient.
+        Create an JobsQueue endpoint.
         :param root_url: Root url of API. eg. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console.
         """
         super().__init__(root_url, "", token)
 
         # Rewrite the base url to remove the /v2/storage/ part
+        # and use the root_url as is
         self.base_url = self.root_url.rstrip("/")
 
     def list(
