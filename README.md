@@ -9,6 +9,7 @@ A Model Context Protocol (MCP) server for interacting with Keboola Connection. T
 
 ## Requirements
 
+- Python 3.10 or newer
 - Keboola Storage API token
 - Snowflake Read Only Workspace
 
@@ -31,6 +32,7 @@ git clone https://github.com/keboola/keboola-mcp-server.git
 cd keboola-mcp-server
 python3 -m venv .venv
 source .venv/bin/activate
+pip3 install -U pip 
 ```
 
 Install the package in development mode:
