@@ -5,6 +5,7 @@ from kbcstorage.client import Client
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import KeboolaClient
+
 from keboola_mcp_server.sql_tools import WorkspaceManager
 
 
@@ -29,6 +30,7 @@ def mcp_context_client(keboola_client: KeboolaClient, mcp_context: Context) -> C
     context = mcp_context
     context.session.state = {}
     # Mock KeboolaClient
+
     workspace_manager = MagicMock(spec=WorkspaceManager)
     context.session.state["workspace_manager"] = workspace_manager
 

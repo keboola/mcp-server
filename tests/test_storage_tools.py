@@ -19,13 +19,6 @@ def test_config() -> Config:
     return Config(
         storage_token="test-token",
         storage_api_url="https://connection.test.keboola.com",
-        log_level="INFO",
-        snowflake_account="test-account",
-        snowflake_user="test-user",
-        snowflake_password="test-password",
-        snowflake_warehouse="test-warehouse",
-        snowflake_database="test-database",
-        snowflake_role="test-role",
     )
 
 

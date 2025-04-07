@@ -7,10 +7,8 @@ wheels/
 *.egg-info
 .idea/
 .vscode/
-
 # Virtual environments
 .venv
-
 .env
 # Coverage files
 .coverage
