@@ -133,24 +133,37 @@ class TableDetail(BaseModel):
         return values
 
 
-class UpdateBucketDescriptionSuccessResponse(BaseModel):
+class UpdateBucketDescriptionResponse(BaseModel):
     success: bool = True
-    data: List[dict]
+    description: str = Field(description="The updated description value")
+    timestamp: str = Field(description="When the description was updated")
+
+    @model_validator(mode="before")
+    def extract_from_response(cls, values):
+        if isinstance(values, list) and values:
+            data = values[0]  # the response returns a list - elements for each update
+            return {
+                "success": True,
+                "description": data.get("value"),
+                "timestamp": data.get("timestamp"),
+            }
 
 
-class UpdateBucketDescriptionErrorResponse(BaseModel):
-    success: bool = False
-    error: str
-
-
-class UpdateTableDescriptionSuccessResponse(BaseModel):
+class UpdateTableDescriptionResponse(BaseModel):
     success: bool = True
-    data: List[dict]
+    description: str = Field(description="The updated table description value")
+    timestamp: str = Field(description="When the description was updated")
 
-
-class UpdateTableDescriptionErrorResponse(BaseModel):
-    success: bool = False
-    error: str
+    @model_validator(mode="before")
+    def extract_metadata(cls, values):
+        metadata = values.get("metadata", [])
+        if isinstance(metadata, list) and metadata:
+            entry = metadata[0]
+            return {
+                "success": True,
+                "description": entry.get("value"),
+                "timestamp": entry.get("timestamp"),
+            }
 
 
 async def get_bucket_metadata(
@@ -211,53 +224,45 @@ async def update_bucket_description(
     bucket_id: Annotated[str, Field(description="The ID of the bucket to update.")],
     description: Annotated[str, Field(description="The new description for the bucket.")],
     ctx: Context,
-) -> Union[UpdateBucketDescriptionSuccessResponse, UpdateBucketDescriptionErrorResponse]:
+) -> UpdateBucketDescriptionResponse:
     """
     Update the description for a given Keboola bucket.
 
     Args:
         bucket_id: The ID of the bucket to update.
         description: The new description for the bucket.
-
+        ctx: The request context with session state.
     Returns:
-        UpdateBucketDescriptionSuccessResponse on success,
-        UpdateBucketDescriptionErrorResponse on failure.
+        A validated UpdateBucketDescriptionResponse instance.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     metadata_endpoint = f"buckets/{bucket_id}/metadata"
 
     data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
-
-    try:
-        response = await client.post(metadata_endpoint, data)
-        return UpdateBucketDescriptionSuccessResponse(data=response)
-    except Exception as e:
-        return UpdateBucketDescriptionErrorResponse(error=str(e))
+    response = await client.post(endpoint=metadata_endpoint, data=data)
+    print(response)
+    return UpdateBucketDescriptionResponse.model_validate(response)
 
 
 async def update_table_description(
     table_id: Annotated[str, Field(description="The ID of the table to update.")],
     description: Annotated[str, Field(description="The new description for the table.")],
     ctx: Context,
-) -> Union[UpdateTableDescriptionSuccessResponse, UpdateTableDescriptionErrorResponse]:
+) -> UpdateTableDescriptionResponse:
     """
     Update the description for a given Keboola table.
 
     Args:
         table_id: The ID of the table to update.
         description: The new description for the table.
-
+        ctx: The request context with session state.
     Returns:
-        UpdateTableDescriptionSuccessResponse on success,
-        UpdateTableDescriptionErrorResponse on failure.
+        A validated UpdateTableDescriptionResponse instance.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     metadata_endpoint = f"tables/{table_id}/metadata"
 
     data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+    response = await client.post(endpoint=metadata_endpoint, data=data)
 
-    try:
-        response = await client.post(metadata_endpoint, data)
-        return UpdateTableDescriptionSuccessResponse(data=response["metadata"])
-    except Exception as e:
-        return UpdateTableDescriptionErrorResponse(error=str(e))
+    return UpdateTableDescriptionResponse.model_validate(response)
