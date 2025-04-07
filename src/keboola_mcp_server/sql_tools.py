@@ -187,27 +187,22 @@ class _BigQueryWorkspace(_Workspace):
     async def get_table_fqn(self, table: Mapping[str, Any]) -> TableFqn | None:
         table_id = table["id"]
 
-        db_name: str | None = None
         schema_name: str | None = None
         table_name: str | None = None
 
-        if source_table := table.get("sourceTable"):
-            raise NotImplementedError()
+        if "." in table_id:
+            # a table local in a project for which the workspace is open
+            schema_name, table_name = table_id.rsplit(sep=".", maxsplit=1)
+            schema_name = schema_name.replace(".", "_").replace("-", "_")
         else:
-            db_name = self._project_id
-            if "." in table_id:
-                # a table local in a project for which the workspace is open
-                schema_name, table_name = table_id.rsplit(sep=".", maxsplit=1)
-                schema_name = schema_name.replace(".", "_").replace("-", "_")
-            else:
-                # a table not in the project, but in the writable schema created for the workspace
-                # TODO: we should never come here, because the tools for listing tables can only see
-                #  tables that are in the project
-                schema_name = self._dataset_id
-                table_name = table["name"]
+            # a table not in the project, but in the writable schema created for the workspace
+            # TODO: we should never come here, because the tools for listing tables can only see
+            #  tables that are in the project
+            schema_name = self._dataset_id
+            table_name = table["name"]
 
-        if db_name and schema_name and table_name:
-            fqn = TableFqn(db_name, schema_name, table_name, quote_char="`")
+        if schema_name and table_name:
+            fqn = TableFqn(self._project_id, schema_name, table_name, quote_char="`")
             return fqn
         else:
             return None

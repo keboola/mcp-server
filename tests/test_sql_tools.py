@@ -252,7 +252,7 @@ class TestWorkspaceManagerBigQuery:
         "table, expected",
         [
             (
-                # table in.c-foo.bar in its own project
+                # table in.c-foo.bar in its own project or a tables shared from other project
                 {"id": "in.c-foo.bar", "name": "bar"},
                 TableFqn(
                     db_name="project_1234", schema_name="in_c_foo", table_name="bar", quote_char="`"
@@ -268,17 +268,6 @@ class TestWorkspaceManagerBigQuery:
                     quote_char="`",
                 ),
             ),
-            # TODO: add support for tables shared from other projects
-            # (
-            #         # table out.c-baz.bam exported from project 1234
-            #         # and imported as table in.c-foo.bar in some other project
-            #         {
-            #             "id": "in.c-foo.bar",
-            #             "name": "bar",
-            #             "sourceTable": {"project": {"id": "1234"}, "id": "out.c-baz.bam"},
-            #         },
-            #         TableFqn(db_name="sapi_1234", schema_name="out.c-baz", table_name="bam", quote_char='"'),
-            # ),
         ],
     )
     async def test_get_table_fqn(
