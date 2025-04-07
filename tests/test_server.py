@@ -10,13 +10,14 @@ class TestServer:
         tools = await server.list_tools()
         assert sorted(t.name for t in tools) == [
             "get_bucket_metadata",
+            "get_component_configuration_details",
             "get_sql_dialect",
             "get_table_metadata",
             "list_bucket_info",
             "list_bucket_tables",
-            "list_component_configs",
-            "list_components",
             "query_table",
+            "retrieve_component_configurations",
+            "retrieve_components",
         ]
 
     @pytest.mark.asyncio
