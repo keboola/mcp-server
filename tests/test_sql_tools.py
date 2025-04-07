@@ -2,6 +2,7 @@ import json
 from typing import Any
 
 import pytest
+from google.api_core.exceptions import BadRequest
 from google.cloud.bigquery import QueryJob
 from google.cloud.bigquery.table import Row, RowIterator
 from mcp.server.fastmcp import Context
@@ -294,14 +295,14 @@ class TestWorkspaceManagerBigQuery:
                     ),
                 ),
             ),
-            # (
-            #         "create table foo (id integer, name varchar);",
-            #         QueryResult(status="ok", message="1 table created"),
-            # ),
-            # (
-            #         "bla bla bla",
-            #         QueryResult(status="error", message="Invalid SQL..."),
-            # ),
+            (
+                "CREATE TABLE `foo` (id INT64, name STRING);",
+                QueryResult(status="ok", data=SqlSelectData(columns=[], rows=[])),
+            ),
+            (
+                "bla bla bla",
+                QueryResult(status="error", message="400 Invalid SQL..."),
+            ),
         ],
     )
     async def test_execute_query(self, query: str, expected: QueryResult, context: Context, mocker):
@@ -311,13 +312,16 @@ class TestWorkspaceManagerBigQuery:
         bq_query = mocker.patch("keboola_mcp_server.sql_tools.Client.query")
         bq_query.return_value = (bq_job := mocker.MagicMock(QueryJob))
         bq_job.result.return_value = (bq_rows := mocker.MagicMock(RowIterator))
-        bq_rows.__iter__.return_value = [
-            Row(
-                values=[value for column, value in row.items()],
-                field_to_index={column: idx for idx, (column, value) in enumerate(row.items())},
-            )
-            for row in expected.data.rows
-        ]
+        if expected.is_ok:
+            bq_rows.__iter__.return_value = [
+                Row(
+                    values=[value for column, value in row.items()],
+                    field_to_index={column: idx for idx, (column, value) in enumerate(row.items())},
+                )
+                for row in expected.data.rows
+            ]
+        else:
+            bq_rows.__iter__.side_effect = BadRequest(message=expected.message.replace("400 ", ""))
 
         m = WorkspaceManager.from_state(context.session.state)
         result = await m.execute_query(query)
