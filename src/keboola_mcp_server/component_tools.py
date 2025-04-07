@@ -333,7 +333,8 @@ async def get_core_component_details(
     client: KeboolaClient,
 ) -> ComponentDetail:
     """
-    Utility function to retrieve the core component details by component ID.
+    Utility function to retrieve the core component details by component ID, used in tools:
+    - get_component_configuration_details
     :param component_id: The ID of the Keboola component/transformation you want details about
     :param client: The Keboola client
     :return: The core component details
@@ -343,6 +344,7 @@ async def get_core_component_details(
     raw_component = await client.get(endpoint)
     logger.info(f"Retrieved component details for component {component_id}.")
     return ComponentDetail.model_validate(raw_component)
+
 
 ############################## End of utility functions #########################################
 
