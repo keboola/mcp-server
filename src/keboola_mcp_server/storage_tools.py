@@ -230,7 +230,6 @@ async def update_bucket_description(
 
     try:
         response = await client.post(metadata_endpoint, data)
-        print(response)
         return UpdateBucketDescriptionSuccessResponse(data=response)
     except Exception as e:
         return UpdateBucketDescriptionErrorResponse(error=str(e))
@@ -259,7 +258,6 @@ async def update_table_description(
 
     try:
         response = await client.post(metadata_endpoint, data)
-        print(response)
         return UpdateTableDescriptionSuccessResponse(data=response["metadata"])
     except Exception as e:
         return UpdateTableDescriptionErrorResponse(error=str(e))
