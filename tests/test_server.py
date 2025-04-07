@@ -8,15 +8,16 @@ class TestServer:
     async def test_list_tools(self):
         server = create_server()
         tools = await server.list_tools()
-        assert sorted(t.name for t in tools) == [
+        assert sorted(t.name for t in tools) == sorted([
             "get_bucket_metadata",
+            "get_component_configuration_details",
             "get_table_metadata",
             "list_bucket_info",
             "list_bucket_tables",
-            "list_component_configs",
-            "list_components",
             "query_table",
-        ]
+            "retrieve_component_configurations",
+            "retrieve_components",
+        ])
 
     @pytest.mark.asyncio
     async def test_tools_have_descriptions(self):
