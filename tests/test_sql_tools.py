@@ -9,7 +9,6 @@ from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.mcp import StatefullServerSession
 from keboola_mcp_server.sql_tools import (
     get_sql_dialect,
     query_table,
@@ -50,46 +49,32 @@ from keboola_mcp_server.sql_tools import (
         ),
     ],
 )
-async def test_query_table(query: str, result: QueryResult, expected: str, mocker):
+async def test_query_table(
+    query: str, result: QueryResult, expected: str, empty_context: Context, mocker
+):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.execute_query.return_value = result
+    empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    ctx = mocker.MagicMock(Context)
-    ctx.session = (session := mocker.MagicMock(StatefullServerSession))
-    type(session).state = (state := mocker.PropertyMock())
-    state.return_value = {
-        WorkspaceManager.STATE_KEY: workspace_manager,
-    }
-
-    result = await query_table(query, ctx)
+    result = await query_table(query, empty_context)
     assert result == expected
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dialect", ["snowflake", "biq-query", "foo"])
-async def test_get_sql_dialect(dialect: str, mocker):
+async def test_get_sql_dialect(dialect: str, empty_context: Context, mocker):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.get_sql_dialect.return_value = dialect
+    empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    ctx = mocker.MagicMock(Context)
-    ctx.session = (session := mocker.MagicMock(StatefullServerSession))
-    type(session).state = (state := mocker.PropertyMock())
-    state.return_value = {
-        WorkspaceManager.STATE_KEY: workspace_manager,
-    }
-
-    result = await get_sql_dialect(ctx)
+    result = await get_sql_dialect(empty_context)
     assert result == dialect
 
 
 class TestWorkspaceManagerSnowflake:
     @pytest.fixture()
-    def client(self, mocker) -> KeboolaClient:
-        return mocker.AsyncMock(KeboolaClient)
-
-    @pytest.fixture()
-    def context(self, client: KeboolaClient, mocker) -> Context:
-        client.get.return_value = [
+    def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
+        keboola_client.get.return_value = [
             {
                 "id": "workspace_1234",
                 "connection": {
@@ -100,17 +85,12 @@ class TestWorkspaceManagerSnowflake:
             }
         ]
 
-        ctx = mocker.MagicMock(Context)
-        ctx.session = (session := mocker.MagicMock(StatefullServerSession))
-        type(session).state = (state := mocker.PropertyMock())
-        state.return_value = {
-            KeboolaClient.STATE_KEY: client,
-            WorkspaceManager.STATE_KEY: WorkspaceManager(
-                client=client, workspace_schema="workspace_1234"
-            ),
-        }
+        empty_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+        empty_context.session.state[WorkspaceManager.STATE_KEY] = WorkspaceManager(
+            client=keboola_client, workspace_schema="workspace_1234"
+        )
 
-        return ctx
+        return empty_context
 
     @pytest.mark.asyncio
     async def test_get_sql_dialect(self, context: Context):
@@ -162,10 +142,10 @@ class TestWorkspaceManagerSnowflake:
         table: dict[str, Any],
         sapi_result,
         expected: TableFqn,
-        client: KeboolaClient,
+        keboola_client: KeboolaClient,
         context: Context,
     ):
-        client.post.return_value = QueryResult(
+        keboola_client.post.return_value = QueryResult(
             status="ok", data=SqlSelectData(columns=list(sapi_result.keys()), rows=[sapi_result])
         )
         m = WorkspaceManager.from_state(context.session.state)
@@ -200,9 +180,9 @@ class TestWorkspaceManagerSnowflake:
         ],
     )
     async def test_execute_query(
-        self, query: str, expected: QueryResult, client: KeboolaClient, context: Context
+        self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context
     ):
-        client.post.return_value = TypeAdapter(QueryResult).dump_python(expected)
+        keboola_client.post.return_value = TypeAdapter(QueryResult).dump_python(expected)
         m = WorkspaceManager.from_state(context.session.state)
         result = await m.execute_query(query)
         assert result == expected
@@ -210,12 +190,8 @@ class TestWorkspaceManagerSnowflake:
 
 class TestWorkspaceManagerBigQuery:
     @pytest.fixture()
-    def client(self, mocker) -> KeboolaClient:
-        return mocker.AsyncMock(KeboolaClient)
-
-    @pytest.fixture()
-    def context(self, client: KeboolaClient, mocker) -> Context:
-        client.get.return_value = [
+    def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
+        keboola_client.get.return_value = [
             {
                 "id": "workspace_1234",
                 "connection": {
@@ -226,17 +202,12 @@ class TestWorkspaceManagerBigQuery:
             }
         ]
 
-        ctx = mocker.MagicMock(Context)
-        ctx.session = (session := mocker.MagicMock(StatefullServerSession))
-        type(session).state = (state := mocker.PropertyMock())
-        state.return_value = {
-            KeboolaClient.STATE_KEY: client,
-            WorkspaceManager.STATE_KEY: WorkspaceManager(
-                client=client, workspace_schema="workspace_1234"
-            ),
-        }
+        empty_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+        empty_context.session.state[WorkspaceManager.STATE_KEY] = WorkspaceManager(
+            client=keboola_client, workspace_schema="workspace_1234"
+        )
 
-        return ctx
+        return empty_context
 
     @pytest.mark.asyncio
     async def test_get_sql_dialect(self, context: Context):
@@ -271,9 +242,7 @@ class TestWorkspaceManagerBigQuery:
             ),
         ],
     )
-    async def test_get_table_fqn(
-        self, table: dict[str, Any], expected: TableFqn, client: KeboolaClient, context: Context
-    ):
+    async def test_get_table_fqn(self, table: dict[str, Any], expected: TableFqn, context: Context):
         m = WorkspaceManager.from_state(context.session.state)
         fqn = await m.get_table_fqn(table)
         assert fqn == expected

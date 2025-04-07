@@ -246,7 +246,7 @@ class WorkspaceManager:
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> "WorkspaceManager":
         instance = state[cls.STATE_KEY]
-        assert isinstance(instance, WorkspaceManager)
+        assert isinstance(instance, WorkspaceManager), f"Expected WorkspaceManager, got: {instance}"
         return instance
 
     def __init__(self, client: KeboolaClient, workspace_schema: str):

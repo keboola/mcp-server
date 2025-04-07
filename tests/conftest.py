@@ -5,32 +5,31 @@ from kbcstorage.client import Client
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.mcp import StatefullServerSession
 from keboola_mcp_server.sql_tools import WorkspaceManager
 
 
 @pytest.fixture
-def keboola_client() -> KeboolaClient:
-    """Create a mock jobs client."""
-    mock_client = MagicMock(spec=KeboolaClient)
-    mock_client.storage_client = MagicMock(spec=Client)
-    return mock_client
+def keboola_client(mocker) -> KeboolaClient:
+    """Creates mocked `KeboolaClient` instance."""
+    client = mocker.AsyncMock(KeboolaClient)
+    client.storage_client = mocker.AsyncMock(Client)
+    return client
+
+
+@pytest.fixture()
+def empty_context(mocker) -> Context:
+    """Creates the mocked `mcp.server.fastmcp.Context` instance with the `StatefullServerSession` and empty state."""
+    ctx = mocker.MagicMock(Context)
+    ctx.session = (session := mocker.MagicMock(StatefullServerSession))
+    type(session).state = (state := mocker.PropertyMock())
+    state.return_value = {}
+    return ctx
 
 
 @pytest.fixture
-def mcp_context() -> Context:
-    """Create a mock context."""
-    context = MagicMock(spec=Context)
-    return context
-
-
-@pytest.fixture
-def mcp_context_client(keboola_client: KeboolaClient, mcp_context: Context) -> Context:
-    """Create a mock context with mocked SAPI client."""
-    context = mcp_context
-    context.session.state = {}
-    # Mock KeboolaClient
-    workspace_manager = MagicMock(spec=WorkspaceManager)
-    context.session.state["workspace_manager"] = workspace_manager
-
-    context.session.state["sapi_client"] = keboola_client
-    return context
+def mcp_context_client(keboola_client: KeboolaClient, empty_context: Context) -> Context:
+    """Fills the empty_context's state with the `KeboolaClient` and `WorkspaceManager` mocks."""
+    empty_context.session.state[WorkspaceManager.STATE_KEY] = MagicMock(spec=WorkspaceManager)
+    empty_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+    return empty_context
