@@ -4,14 +4,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from keboola_mcp_server.jobs_tools import (
-    JOB_STATUS,
     JobDetail,
     JobListItem,
     get_job_details,
-    handle_status_param,
-    list_component_config_jobs,
-    list_component_jobs,
-    list_jobs,
+    retrieve_component_config_jobs,
+    retrieve_jobs_in_project,
 )
 
 
@@ -68,13 +65,13 @@ def mock_job() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_list_jobs(mcp_context_client, mock_jobs):
-    """Test list_jobs tool."""
+async def test_retrieve_jobs_in_project(mcp_context_client, mock_jobs):
+    """Test retrieve_jobs_in_project tool."""
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
 
     mock_client.jobs_queue.list = MagicMock(return_value=mock_jobs)
-    result = await list_jobs(context)
+    result = await retrieve_jobs_in_project(context)
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
@@ -91,7 +88,7 @@ async def test_list_jobs(mcp_context_client, mock_jobs):
     mock_client.jobs_queue.list.assert_called_once_with(
         limit=100,
         offset=0,
-        status=list(get_args(JOB_STATUS)),
+        status=None,
         sort_by="startTime",
         sort_order="desc",
     )
@@ -132,14 +129,17 @@ async def test_get_job_details(mcp_context_client, mock_job):
 
 
 @pytest.mark.asyncio
-async def test_list_component_config_jobs(mcp_context_client, mock_jobs):
-    """Test list_component_config_jobs tool."""
+async def test_retrieve_component_config_jobs_with_config_id(mcp_context_client, mock_jobs):
+    """
+    Test retrieve_component_config_jobs tool with config_id and component_id. With config_id, the tool will return
+    only jobs for the given config_id and component_id.
+    """
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
 
     mock_client.jobs_queue.search = MagicMock(return_value=mock_jobs)
 
-    result = await list_component_config_jobs(
+    result = await retrieve_component_config_jobs(
         ctx=context, component_id="keboola.ex-aws-s3", config_id="config-123"
     )
 
@@ -152,7 +152,7 @@ async def test_list_component_config_jobs(mcp_context_client, mock_jobs):
         {
             "componentId": "keboola.ex-aws-s3",
             "configId": "config-123",
-            "status": list(get_args(JOB_STATUS)),
+            "status": None,
             "sortBy": "startTime",
             "sortOrder": "desc",
             "limit": 100,
@@ -162,14 +162,14 @@ async def test_list_component_config_jobs(mcp_context_client, mock_jobs):
 
 
 @pytest.mark.asyncio
-async def test_list_component_jobs(mcp_context_client, mock_jobs):
-    """Test list_component_jobs tool."""
+async def test_retrieve_component_config_jobs_without_config_id(mcp_context_client, mock_jobs):
+    """Test retrieve_component_config_jobs tool without config_id. It will return all jobs for the given component_id."""
     context = mcp_context_client
     mock_client = context.session.state["sapi_client"]
 
     mock_client.jobs_queue.search = MagicMock(return_value=mock_jobs)
 
-    result = await list_component_jobs(ctx=context, component_id="keboola.ex-aws-s3")
+    result = await retrieve_component_config_jobs(ctx=context, component_id="keboola.ex-aws-s3")
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
@@ -179,26 +179,11 @@ async def test_list_component_jobs(mcp_context_client, mock_jobs):
     mock_client.jobs_queue.search.assert_called_once_with(
         {
             "componentId": "keboola.ex-aws-s3",
-            "status": list(get_args(JOB_STATUS)),
+            "configId": None,
+            "status": None,
             "limit": 100,
             "offset": 0,
             "sortBy": "startTime",
             "sortOrder": "desc",
         }
     )
-
-
-@pytest.mark.parametrize(
-    "status, expected",
-    [
-        (None, list(get_args(JOB_STATUS))),
-        ("success", ["success"]),
-        (["success", "error"], ["success", "error"]),
-    ],
-)
-def test_handle_status_param(status, expected):
-    """Test handle_status_param function."""
-    result = handle_status_param(status)
-    assert result == expected
-    assert isinstance(result, list)
-    assert all(s in get_args(JOB_STATUS) for s in result)
