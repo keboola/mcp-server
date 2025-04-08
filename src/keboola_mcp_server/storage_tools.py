@@ -149,7 +149,7 @@ class UpdateBucketDescriptionResponse(BaseModel):
             }
         else:
             raise ValueError(
-                "Expected response in UpdateBucketDescriptionResponse input data to be non-empty list."
+                "Expected input data in UpdateBucketDescriptionResponse to be non-empty list."
             )
 
 
