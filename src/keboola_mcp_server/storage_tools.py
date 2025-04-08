@@ -149,7 +149,7 @@ class UpdateBucketDescriptionResponse(BaseModel):
             }
         else:
             raise ValueError(
-                "Expected 'metadata' field to be in UpdateBucketDescriptionResponse input data"
+                "Expected response in UpdateBucketDescriptionResponse input data to be non-empty list"
             )
 
 
@@ -248,6 +248,7 @@ async def update_bucket_description(
 
     data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
     response = await client.post(endpoint=metadata_endpoint, data=data)
+    print(response)
 
     return UpdateBucketDescriptionResponse.model_validate(response)
 
@@ -272,5 +273,6 @@ async def update_table_description(
 
     data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
     response = await client.post(endpoint=metadata_endpoint, data=data)
+    print(response)
 
     return UpdateTableDescriptionResponse.model_validate(response)
