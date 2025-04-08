@@ -149,8 +149,8 @@ class JobsQueue(Endpoint):
         """
         super().__init__(root_url, "", token)
 
-        # Rewrite the base url to remove the /v2/storage/ part
-        # and use the root_url as is
+        # Rewrite the base url to the job queue api (this will remove the /v2/storage/ suffix)
+        # and strip the trailing slash
         self.base_url = self.root_url.rstrip("/")
 
     def list(
@@ -168,8 +168,6 @@ class JobsQueue(Endpoint):
         :param status: Filter jobs by status, default None = no filtering
         :param sort_by: Sort the jobs by the given field, default "startTime"
         :param sort_order: Sort the jobs by the given field, default "desc"
-        :return: The json from the HTTP response.
-        :raise: requests.HTTPError: If the API request fails.
         """
         params = {
             "limit": limit,
@@ -178,27 +176,55 @@ class JobsQueue(Endpoint):
             "sortBy": sort_by,
             "sortOrder": sort_order,
         }
-        return self.search(params)
+        return self._search(params=params)
 
     def detail(self, job_id: str) -> Dict[str, Any]:
         """
         Retrieves information about a given job.
         :param job_id: The id of the job.
-        :return: The json from the HTTP response.
-        :raise: requests.HTTPError: If the API request fails.
         """
         url = f"{self.base_url}/jobs/{job_id}"
 
         return self._get(url)
 
-    def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def search_jobs_by(
+        self,
+        component_id: Optional[str] = None,
+        config_id: Optional[str] = None,
+        status: Optional[List[str]] = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_by: Optional[str] = "startTime",
+        sort_order: Optional[str] = "desc",
+    ) -> Dict[str, Any]:
+        """
+        Search for jobs based on the provided parameters.
+        :param component_id: The id of the component.
+        :param config_id: The id of the configuration.
+        :param status: The status of the jobs to filter by.
+        :param limit: The number of jobs to return.
+        :param offset: The offset of the jobs to return.
+        :param sort_by: The field to sort the jobs by.
+        :param sort_order: The order to sort the jobs by.
+        """
+        params = {
+            "componentId": component_id,
+            "configId": config_id,
+            "status": status,
+            "limit": limit,
+            "offset": offset,
+            "sortBy": sort_by,
+            "sortOrder": sort_order,
+        }
+        return self._search(params=params)
+
+    def _search(self, params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
         Search for jobs based on the provided parameters.
         :param params: The parameters to search for.
-        :return: The json from the HTTP response.
-        :raise: requests.HTTPError: If the API request fails.
+        :param kwargs: Additional parameters to .requests.get method
 
-        params:
+        params (copied from the API docs):
             - id str/list[str]: Search jobs by id
             - runId str/list[str]: Search jobs by runId
             - branchId str/list[str]: Search jobs by branchId
@@ -210,28 +236,26 @@ class JobsQueue(Endpoint):
             - config str/list[str]: Search jobs by configId, alias for configId
             - configRowIds str/list[str]: Search jobs by configRowIds
             - status str/list[str]: Search jobs by status
-            - createdTimeFrom str: Jobs that were created after the given date
+            - createdTimeFrom str: The jobs that were created after the given date
                 e.g. "2021-01-01, -8 hours, -1 week,..."
-            - createdTimeTo str: Jobs that were created before the given date
+            - createdTimeTo str: The jobs that were created before the given date
                 e.g. "2021-01-01, today, last monday,..."
-            - startTimeFrom str: Jobs that were started after the given date
+            - startTimeFrom str: The jobs that were started after the given date
                 e.g. "2021-01-01, -8 hours, -1 week,..."
-            - startTimeTo str: Jobs that were started before the given date
+            - startTimeTo str: The jobs that were started before the given date
                 e.g. "2021-01-01, today, last monday,..."
-            - endTimeTo str: Jobs that were finished before the given date
+            - endTimeTo str: The jobs that were finished before the given date
                 e.g. "2021-01-01, today, last monday,..."
-            - endTimeFrom str: Jobs that were finished after the given date
+            - endTimeFrom str: The jobs that were finished after the given date
                 e.g. "2021-01-01, -8 hours, -1 week,..."
-            - limit int: Limit the number of jobs returned, default 100
-                e.g. 100
-            - offset int: Offset the number of jobs returned, page offset, default 0
-                e.g. 100
-            - sortBy str: Sort the jobs by the given field, default "id"
+            - limit int: The number of jobs returned, default 100
+            - offset int: The jobs page offset, default 0
+            - sortBy str: The jobs sorting field, default "id"
                 values: id, runId, projectId, branchId, componentId, configId, tokenDescription, status, createdTime,
                 updatedTime, startTime, endTime, durationSeconds
-            - sortOrder str: Sort the jobs by the given field, default "asc"
+            - sortOrder str: The jobs sorting order, default "desc"
                 values: asc, desc
         """
         url = f"{self.base_url}/search/jobs"
 
-        return self._get(url, params=params)
+        return self._get(url, params=params, **kwargs)
