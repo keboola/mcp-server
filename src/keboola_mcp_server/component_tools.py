@@ -346,7 +346,7 @@ def add_component_tools(mcp: FastMCP) -> None:
         retrieve_components_in_project,
         retrieve_transformations_in_project,
         get_component_configuration_details,
-        update_component_configuration
+        update_component_configuration,
     ]
     for tool in component_tools:
         logger.info(f"Adding tool {tool.__name__} to the MCP server.")
@@ -515,11 +515,17 @@ async def get_component_configuration_details(
         }
     )
 
+
 class UpdateComponentConfigurationPayload(BaseModel):
     name: Optional[str] = Field(None, description="The name of the component configuration.")
-    description: Optional[str] = Field(None, description="Description of the component configuration.")
-    configuration: Dict[str, Any] = Field(..., description="Key-value configuration json. Schema differs based on component id.")
+    description: Optional[str] = Field(
+        None, description="Description of the component configuration."
+    )
+    configuration: Dict[str, Any] = Field(
+        ..., description="Key-value configuration json. Schema differs based on component id."
+    )
     changeDescription: str = Field(..., description="Description of the change made.")
+
 
 class UpdateComponentConfigurationResponse(BaseModel):
     success: bool = True
@@ -539,21 +545,22 @@ class UpdateComponentConfigurationResponse(BaseModel):
                 "Expected input data in UpdateComponentConfigurationResponse to be a dictionary."
             )
 
+
 async def update_component_configuration(
     ctx: Context,
     component_id: Annotated[str, Field(description="The id of the component")],
     configuration_id: Annotated[str, Field(description="The id of the component configuration")],
-    payload: UpdateComponentConfigurationPayload
+    payload: UpdateComponentConfigurationPayload,
 ) -> UpdateComponentConfigurationResponse:
     """
     Update the component configuration for a given Keboola component configuration.
-    
+
     Args:
         ctx: The request context with session state.
         component_id: The ID of the component to update.
         configuration_id: The ID of the component configuration to update.
         payload: The data to update in the configuration.
-    
+
     Returns:
         A validated UpdateComponentConfigurationResponse instance.
     """
@@ -563,5 +570,6 @@ async def update_component_configuration(
     response = await client.put(endpoint=metadata_endpoint, data=payload.model_dump_json())
 
     return UpdateComponentConfigurationResponse.model_validate(response)
+
 
 ############################## End of component tools #########################################

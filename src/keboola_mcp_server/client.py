@@ -3,13 +3,11 @@
 import logging
 import os
 import tempfile
-
-from typing import Any, Dict, Mapping, Optional, cast, List
-
+from typing import Any, Dict, List, Mapping, Optional, cast
 
 import httpx
-from kbcstorage.client import Client
 from kbcstorage.base import Endpoint
+from kbcstorage.client import Client
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +102,7 @@ class KeboolaClient:
             )
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
-        
+
     async def put(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Make a PUT request to Keboola Storage API.
         Args:
