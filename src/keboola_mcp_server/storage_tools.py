@@ -147,6 +147,10 @@ class UpdateBucketDescriptionResponse(BaseModel):
                 "description": data.get("value"),
                 "timestamp": data.get("timestamp"),
             }
+        else:
+            raise ValueError(
+                "Expected 'metadata' field to be in UpdateBucketDescriptionResponse input data"
+            )
 
 
 class UpdateTableDescriptionResponse(BaseModel):
@@ -164,6 +168,10 @@ class UpdateTableDescriptionResponse(BaseModel):
                 "description": entry.get("value"),
                 "timestamp": entry.get("timestamp"),
             }
+        else:
+            raise ValueError(
+                "Expected 'metadata' field to be in UpdateTableDescriptionResponse input data"
+            )
 
 
 async def get_bucket_metadata(
