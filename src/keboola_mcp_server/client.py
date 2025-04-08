@@ -26,7 +26,7 @@ class KeboolaClient:
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> "KeboolaClient":
         instance = state[cls.STATE_KEY]
-        assert isinstance(instance, KeboolaClient)
+        assert isinstance(instance, KeboolaClient), f"Expected KeboolaClient, got: {instance}"
         return instance
 
     def __init__(

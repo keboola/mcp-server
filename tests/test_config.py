@@ -10,12 +10,12 @@ class TestConfig:
         "d, expected",
         [
             (
-                {"storage_token": "foo", "workspace_user": "bar"},
-                Config(storage_token="foo", workspace_user="bar"),
+                {"storage_token": "foo", "workspace_schema": "bar"},
+                Config(storage_token="foo", workspace_schema="bar"),
             ),
             (
-                {"KBC_STORAGE_TOKEN": "foo", "KBC_WORKSPACE_USER": "bar"},
-                Config(storage_token="foo", workspace_user="bar"),
+                {"KBC_STORAGE_TOKEN": "foo", "KBC_WORKSPACE_SCHEMA": "bar"},
+                Config(storage_token="foo", workspace_schema="bar"),
             ),
             (
                 {"foo": "bar", "storage_api_url": "http://nowhere"},
@@ -31,23 +31,23 @@ class TestConfig:
         [
             (
                 Config(),
-                {"storage_token": "foo", "workspace_user": "bar"},
-                Config(storage_token="foo", workspace_user="bar"),
+                {"storage_token": "foo", "workspace_schema": "bar"},
+                Config(storage_token="foo", workspace_schema="bar"),
             ),
             (
                 Config(),
-                {"KBC_STORAGE_TOKEN": "foo", "KBC_WORKSPACE_USER": "bar"},
-                Config(storage_token="foo", workspace_user="bar"),
+                {"KBC_STORAGE_TOKEN": "foo", "KBC_WORKSPACE_SCHEMA": "bar"},
+                Config(storage_token="foo", workspace_schema="bar"),
             ),
             (
                 Config(storage_token="bar"),
-                {"storage_token": "foo", "workspace_user": "bar"},
-                Config(storage_token="foo", workspace_user="bar"),
+                {"storage_token": "foo", "workspace_schema": "bar"},
+                Config(storage_token="foo", workspace_schema="bar"),
             ),
             (
                 Config(storage_token="bar"),
-                {"storage_token": None, "workspace_user": "bar"},
-                Config(workspace_user="bar"),
+                {"storage_token": None, "workspace_schema": "bar"},
+                Config(workspace_schema="bar"),
             ),
         ],
     )
@@ -58,7 +58,7 @@ class TestConfig:
         config = Config()
         assert config.storage_token is None
         assert config.storage_api_url == "https://connection.keboola.com"
-        assert config.workspace_user is None
+        assert config.workspace_schema is None
 
     def test_no_token_password_in_repr(self) -> None:
         config = Config(storage_token="foo")
@@ -66,5 +66,5 @@ class TestConfig:
             "Config("
             "storage_token='****', "
             "storage_api_url='https://connection.keboola.com', "
-            "workspace_user=None)"
+            "workspace_schema=None)"
         )
