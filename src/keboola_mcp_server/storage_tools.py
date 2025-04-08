@@ -149,7 +149,7 @@ class UpdateBucketDescriptionResponse(BaseModel):
             }
         else:
             raise ValueError(
-                "Expected response in UpdateBucketDescriptionResponse input data to be non-empty list"
+                "Expected response in UpdateBucketDescriptionResponse input data to be non-empty list."
             )
 
 
@@ -170,7 +170,7 @@ class UpdateTableDescriptionResponse(BaseModel):
             }
         else:
             raise ValueError(
-                "Expected 'metadata' field to be in UpdateTableDescriptionResponse input data"
+                "Expected input data in UpdateTableDescriptionResponse to have non-empty list in 'metadata' field."
             )
 
 
