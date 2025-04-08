@@ -10,6 +10,7 @@ from typing import Any, Dict, Mapping, Optional, cast, List
 import httpx
 from kbcstorage.client import Client
 from kbcstorage.base import Endpoint
+from kbcstorage.retry_requests import MAX_RETRIES_DEFAULT, RetryRequests
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,8 @@ class KeboolaClient:
             "Accept-encoding": "gzip",
         }
         # Initialize the official client for operations it handles well
-        # The storage_client.jobs endpoint is for legacy storage jobs
-        # Use self.jobs_queue instead which provides access to the modern Job Queue API
+        # The storage_client.jobs endpoint is for storage jobs
+        # Use self.jobs_queue instead which provides access to the Job Queue API
         # that handles component/transformation jobs
         self.storage_client = Client(self.base_storage_api_url, self.token)
 
@@ -143,14 +144,13 @@ class JobsQueue(Endpoint):
 
     def __init__(self, root_url: str, token: str):
         """
-        Create an JobsQueue endpoint.
+        Create a JobsQueue endpoint.
         :param root_url: Root url of API. eg. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console.
         """
         super().__init__(root_url, "", token)
 
-        # Rewrite the base url to the job queue api (this will remove the /v2/storage/ suffix)
-        # and strip the trailing slash
+        # set the base url to the root url
         self.base_url = self.root_url.rstrip("/")
 
     def list(
