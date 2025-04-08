@@ -11,7 +11,7 @@ A Model Context Protocol (MCP) server for interacting with Keboola Connection. T
 
 - Python 3.10 or newer
 - Keboola Storage API token
-- Snowflake Read Only Workspace
+- Snowflake or BigQuery Read Only Workspace
 
 ## Installation
 
@@ -70,7 +70,7 @@ To use this server with Claude Desktop, follow these steps:
       ],
       "env": {
         "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
-        "KBC_WORKSPACE_USER": "your-workspace-user"
+        "KBC_WORKSPACE_SCHEMA": "your-workspace-schema"
       }
     }
   }
@@ -79,15 +79,15 @@ To use this server with Claude Desktop, follow these steps:
 
 Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
-- `your-keboola-storage-token` with your Keboola Storage API token
 - `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
-- `your-workspace-user` with your Snowflake workspace username
+- `your-keboola-storage-token` with your Keboola Storage API token
+- `your-workspace-schema` with your Snowflake schema or BigQuery dataset of your workspace
 
 > Note: If you are using a specific version of Python (e.g. 3.11 due to some package compatibility issues), 
 > you'll need to update the `command` into using that specific version, e.g. `/path/to/keboola-mcp-server/.venv/bin/python3.11`
 
-> Note: The Read Only Snowflake Workspace can be created in your Keboola project. It is the same project where you got 
-> your Storage Token. The workspace will provide all the necessary Snowflake connection parameters including the username.
+> Note: The Workspace can be created in your Keboola project. It is the same project where you got 
+> your Storage Token. The workspace will provide all the necessary connection parameters including the schema or dataset name.
 
 3. After updating the configuration:
    - Completely quit Claude Desktop (don't just close the window)
@@ -117,7 +117,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 {
   "mcpServers": {
     "keboola": {
-      "url": "http://localhost:8000/sse?storage_token=YOUR-KEBOOLA-STORAGE-TOKEN&workspace_user=YOUR-WORKSPACE-USER"
+      "url": "http://localhost:8000/sse?storage_token=YOUR-KEBOOLA-STORAGE-TOKEN&workspace_schema=YOUR-WORKSPACE-SCHEMA"
     }
   }
 }
@@ -129,7 +129,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 {
   "mcpServers": {
     "keboola": {
-      "command": "/path/to/keboola-mcp-server/venv/bin/python",
+      "command": "/path/to/keboola-mcp-server/.venv/bin/python",
       "args": [
         "-m",
         "keboola_mcp_server",
@@ -140,7 +140,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
       ],
       "env": {
         "KBC_STORAGE_TOKEN": "your-keboola-storage-token", 
-        "KBC_WORKSPACE_USER": "your-workspace-user"         
+        "KBC_WORKSPACE_SCHEMA": "your-workspace-schema"         
       }
     }
   }
@@ -160,7 +160,7 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
         "-c",
         "'source /wsl_path/to/keboola-mcp-server/.env",
         "&&",
-        "/wsl_path/to/keboola-mcp-server/venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
+        "/wsl_path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
       ]
     }
   }
@@ -169,20 +169,34 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 - where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
 ```shell
 export KBC_STORAGE_TOKEN="your-keboola-storage-token"
-export KBC_WORKSPACE_USER="your-workspace-user"
+export KBC_WORKSPACE_SCHEMA="your-workspace-schema"
 ```
 
-Replace all placeholder values (`your_*`) with your actual Keboola and Snowflake credentials. These can be obtained from your Keboola project's Read Only Snowflake Workspace.
-Replace `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly.
+Replace:
+- `/path/to/keboola-mcp-server` with your actual path to the cloned repository
+- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
+- `your-keboola-storage-token` with your Keboola Storage API token
+- `your-workspace-schema` with your Snowflake schema or BigQuery dataset of your workspace
 
 After updating the configuration:
 1. Restart Cursor AI
 2. If you use the `sse` transport make sure to start your MCP server. You can do so by running this in the activated
    virtual environment where you built the server:
    ```
-   /path/to/keboola-mcp-server/venv/bin/python -m keboola_mcp_server --transport sse --api-url https://connection.YOUR_REGION.keboola.com
+   /path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server --transport sse --api-url https://connection.YOUR_REGION.keboola.com
    ```
 3. Cursor AI should be automatically detect your MCP server and enable it.
+
+## BigQuery support
+
+If your Keboola project uses BigQuery backend you will need to set `GOOGLE_APPLICATION_CREDENTIALS` environment variable
+in addition to `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA`.
+
+1. Go to your Keboola BigQuery workspace and display its credentials (click `Connect` button).
+2. Download the credentials file to your local disk. It is a plain JSON file.
+3. Set the full path of the downloaded JSON credentials file to `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
+
+This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud.
 
 ## Available Tools
 
