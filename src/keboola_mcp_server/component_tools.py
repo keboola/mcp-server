@@ -514,5 +514,40 @@ async def get_component_configuration_details(
         }
     )
 
+class UpdateComponentConfigurationPayload(BaseModel):
+    name: str = Field(description="The name of the component configuration")
+    description: Optional[str] = Field(description="Description of the component configuration.")
+    configuration: Dict[str, Any] = Field(description="Key-value configuration json. Schema differs based on component id.")
+    changeDescription: str = Field(description="Description of the change made.")
+    # isDisabled: Optional[bool] = Field(description="Flag indicating if the configuration is disabled")
+    # rowsSortOrder: Optional[List[str]] = Field(description="Row ids in the desired order")
+
+class UpdateComponentConfigurationResponse(BaseModel):
+    success: bool = True
+    timestamp: str = Field(description="When the component configuration was updated.")
+
+async def udpate_component_configuration(
+    ctx: Context,
+    component_id: Annotated[str, Field(description="The id of the component")],
+    configuration_id: Annotated[str, Field(description="The id of the component configuration")],
+    payload: UpdateComponentConfigurationPayload
+) -> UpdateComponentConfigurationResponse:
+    """
+    Update the description for a given Keboola table.
+    Args:
+        table_id: The ID of the table to update.
+        description: The new description for the table.
+        ctx: The request context with session state.
+    Returns:
+        A validated UpdateTableDescriptionResponse instance.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    metadata_endpoint = f"tables/{table_id}/metadata"
+
+    data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+    response = await client.post(endpoint=metadata_endpoint, data=data)
+    print(response)
+
+    return UpdateComponentConfigurationResponse.model_validate(response)
 
 ############################## End of component tools #########################################
