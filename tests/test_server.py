@@ -19,7 +19,6 @@ class TestServer:
                 "query_table",
                 "retrieve_components_in_project",
                 "retrieve_transformations_in_project",
-                "retrieve_component_config_jobs",
                 "retrieve_jobs_in_project",
             ]
         )
