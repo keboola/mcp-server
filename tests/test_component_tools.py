@@ -4,11 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 from mcp.server.fastmcp import Context
 
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.component_tools import (
     FULLY_QUALIFIED_ID_SEPARATOR,
     ComponentConfigurationDetail,
     ComponentConfigurationListItem,
-    ComponentConfigurationsList,
+    ComponentWithConfigurations,
     ComponentDetail,
     ComponentListItem,
     ComponentType,
@@ -140,19 +141,19 @@ def mcp_context_components_configs(mcp_context_client, test_branch_id) -> Contex
 
 @pytest.fixture
 def assert_retrieve_components() -> (
-    Callable[[list[ComponentConfigurationsList], list[dict[str, Any]], list[dict[str, Any]]], None]
+    Callable[[list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None]
 ):
     """Assert that the retrieve_components_in_project tool returns the correct components and configurations."""
 
     def _assert_retrieve_components(
-        result: list[ComponentConfigurationsList],
+        result: list[ComponentWithConfigurations],
         components: list[dict[str, Any]],
         configurations: list[dict[str, Any]],
     ):
 
         assert len(result) == len(components)
         # assert basics
-        assert all(isinstance(component, ComponentConfigurationsList) for component in result)
+        assert all(isinstance(component, ComponentWithConfigurations) for component in result)
         assert all(isinstance(component.component, ComponentListItem) for component in result)
         assert all(isinstance(component.configurations, list) for component in result)
         assert all(
@@ -209,18 +210,17 @@ def assert_retrieve_components() -> (
 
 @pytest.mark.asyncio
 async def test_retrieve_components_in_project(
-    mcp_context_components_configs,
-    mock_components,
-    mock_configurations,
-    test_branch_id,
-    assert_retrieve_components,
+    mcp_context_components_configs: Context,
+    mock_components: list[dict[str, Any]],
+    mock_configurations: list[dict[str, Any]],
+    test_branch_id: str,
+    assert_retrieve_components: Callable[
+        [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
+    ],
 ):
     """Test retrieve_components_in_project tool."""
     context = mcp_context_components_configs
-
-    # Mock data
-    keboola_client = context.session.state["sapi_client"]
-
+    keboola_client = KeboolaClient.from_state(context.session.state)
     # mock the get method to return the mock_component with the mock_configurations
     # simulate the response from the API
     keboola_client.get = AsyncMock(
@@ -244,18 +244,17 @@ async def test_retrieve_components_in_project(
 
 @pytest.mark.asyncio
 async def test_retrieve_transformations_in_project(
-    mcp_context_components_configs,
-    mock_component,
-    mock_configurations,
-    test_branch_id,
-    assert_retrieve_components,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configurations: list[dict[str, Any]],
+    test_branch_id: str,
+    assert_retrieve_components: Callable[
+        [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
+    ],
 ):
     """Test retrieve_transformations_in_project tool."""
     context = mcp_context_components_configs
-
-    # Mock data
-    keboola_client = context.session.state["sapi_client"]
-
+    keboola_client = KeboolaClient.from_state(context.session.state)
     # mock the get method to return the mock_component with the mock_configurations
     # simulate the response from the API
     keboola_client.get = AsyncMock(return_value=[mock_component])
@@ -273,17 +272,18 @@ async def test_retrieve_transformations_in_project(
 
 @pytest.mark.asyncio
 async def test_retrieve_components_in_project_from_ids(
-    mcp_context_components_configs,
-    mock_configurations,
-    mock_component,
-    test_branch_id,
-    assert_retrieve_components,
+    mcp_context_components_configs: Context,
+    mock_configurations: list[dict[str, Any]],
+    mock_component: dict[str, Any],
+    test_branch_id: str,
+    assert_retrieve_components: Callable[
+        [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
+    ],
 ):
     """Test list_component_configurations tool."""
     context = mcp_context_components_configs
-    keboola_client = context.session.state["sapi_client"]
+    keboola_client = KeboolaClient.from_state(context.session.state)
 
-    # Mock data
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configurations)
     keboola_client.get = AsyncMock(return_value=mock_component)
 
@@ -299,17 +299,18 @@ async def test_retrieve_components_in_project_from_ids(
 
 @pytest.mark.asyncio
 async def test_retrieve_transformations_in_project_from_ids(
-    mcp_context_components_configs,
-    mock_configurations,
-    mock_component,
-    test_branch_id,
-    assert_retrieve_components,
+    mcp_context_components_configs: Context,
+    mock_configurations: list[dict[str, Any]],
+    mock_component: dict[str, Any],
+    test_branch_id: str,
+    assert_retrieve_components: Callable[
+        [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
+    ],
 ):
     """Test list_component_configurations tool."""
     context = mcp_context_components_configs
-    keboola_client = context.session.state["sapi_client"]
+    keboola_client = KeboolaClient.from_state(context.session.state)
 
-    # Mock data
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configurations)
     keboola_client.get = AsyncMock(return_value=mock_component)
 
@@ -327,19 +328,22 @@ async def test_retrieve_transformations_in_project_from_ids(
 
 @pytest.mark.asyncio
 async def test_get_component_configuration_details(
-    mcp_context_client, mock_configuration, mock_component, mock_metadata
+    mcp_context_components_configs: Context,
+    mock_configuration: dict[str, Any],
+    mock_component: dict[str, Any],
+    mock_metadata: list[dict[str, Any]],
 ):
     """Test get_component_configuration_details tool."""
-    context = mcp_context_client
-    mock_client = context.session.state["sapi_client"]
-    mock_client.storage_client.configurations = MagicMock()
-    mock_client.storage_client.components = MagicMock()
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    keboola_client.storage_client.configurations = MagicMock()
+    keboola_client.storage_client.components = MagicMock()
 
     # Setup mock to return test data
-    mock_client.storage_client.configurations.detail = MagicMock(return_value=mock_configuration)
-    mock_client.storage_client.components.detail = MagicMock(return_value=mock_component)
-    mock_client.storage_client._branch_id = "123"
-    mock_client.get = AsyncMock(
+    keboola_client.storage_client.configurations.detail = MagicMock(return_value=mock_configuration)
+    keboola_client.storage_client.components.detail = MagicMock(return_value=mock_component)
+    keboola_client.storage_client._branch_id = "123"
+    keboola_client.get = AsyncMock(
         side_effect=[mock_component, mock_metadata]
     )  # Mock two results of the .get method first for component and then for metadata
 
@@ -364,11 +368,11 @@ async def test_get_component_configuration_details(
     assert result.rows == mock_configuration["rows"]
     assert result.configuration_metadata == mock_metadata
 
-    mock_client.storage_client.configurations.detail.assert_called_once_with(
+    keboola_client.storage_client.configurations.detail.assert_called_once_with(
         "keboola.ex-aws-s3", "123"
     )
 
-    mock_client.get.assert_has_calls(
+    keboola_client.get.assert_has_calls(
         [
             call("branch/123/components/keboola.ex-aws-s3"),
             call("branch/123/components/keboola.ex-aws-s3/configs/123/metadata"),

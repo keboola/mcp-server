@@ -15,9 +15,7 @@ FULLY_QUALIFIED_ID_SEPARATOR: str = "::"
 
 class ComponentListItem(BaseModel):
     """
-    A list item representing a reduced core Keboola component serving as a basis for all configurations of the
-    component. This object bears the reduced information about the core component, including the component ID, name,
-    type, description.
+    A list item representing a Keboola component. This object bears the reduced information about the component.
     """
 
     component_id: str = Field(
@@ -50,9 +48,7 @@ class ComponentListItem(BaseModel):
 
 class ComponentDetail(ComponentListItem):
     """
-    Core Keboola component serves as a basis for all configurations of the component.
-    This object bears the full information about the core component, including the configuration schema,
-    description, long description, categories, version, data, flags.
+    Detailed information about a Keboola component. This object bears the full information about the component.
     """
 
     long_description: Optional[str] = Field(
@@ -93,20 +89,15 @@ class ComponentDetail(ComponentListItem):
         default=None,
     )
 
-    def to_list_item(self) -> ComponentListItem:
-        """Convert the ComponentDetail to its parent ComponentListItem by removing detailed fields."""
-        return ComponentListItem.model_validate(self.model_dump())
-
 
 class ComponentConfigurationListItem(BaseModel):
     """
-    A list item representing a Keboola component configuration which is a modification of the given core component.
-    This object bears the reduced information about the component configuration, including the configuration ID,
-    name, description, and the reduced core component object.
+    A list item representing a Keboola component configuration. This object bears the reduced information about the
+    component configuration.
     """
 
     component_id: str = Field(
-        description="The ID of the core component",
+        description="The ID of the component",
         validation_alias=AliasChoices("component_id", "componentId"),
         serialization_alias="component_id",
     )
@@ -171,24 +162,21 @@ class ComponentConfigurationListItem(BaseModel):
                 self.fully_qualified_id = f"{self.component_id}::{self.configuration_id}"
 
 
-class ComponentConfigurationsList(BaseModel):
+class ComponentWithConfigurations(BaseModel):
     """
-    Container for a reduced core Keboola component and its configurations.
+    Grouping of a Keboola component and its configurations.
     """
 
-    component: ComponentListItem = Field(
-        description="The reduced core Keboola component object that serves as the basis for the configurations"
-    )
+    component: ComponentListItem = Field(description="The Keboola component.")
     configurations: List[ComponentConfigurationListItem] = Field(
-        description="The list of component configurations for the given component"
+        description="The list of component configurations for the given component."
     )
 
 
 class ComponentConfigurationDetail(ComponentConfigurationListItem):
     """
-    Detailed information about a Keboola component configuration.
-    This object bears the full information about the component configuration, including the configuration,
-    rows, metadata, and the core component object from which this configuration was derived.
+    Detailed information about a Keboola component configuration. This object bears the full information about the
+    component configuration.
     """
 
     version: int = Field(description="The version of the component configuration")
@@ -203,7 +191,7 @@ class ComponentConfigurationDetail(ComponentConfigurationListItem):
         serialization_alias="configuration_metadata",
     )
     component: Optional[ComponentDetail] = Field(
-        description="The core component object that serves as the basis for this configuration",
+        description="The Keboola component.",
         validation_alias=AliasChoices("component"),
         serialization_alias="component",
         default=None,
@@ -232,7 +220,7 @@ def handle_component_types(types: Union[ComponentType, List[ComponentType]]) -> 
 
 async def retrieve_components_by_types(
     client: KeboolaClient, component_types: List[AllComponentTypes]
-) -> List[ComponentConfigurationsList]:
+) -> List[ComponentWithConfigurations]:
     """
     Utility function to retrieve components by types - used in tools:
     - retrieve_components_in_project
@@ -256,7 +244,7 @@ async def retrieve_components_by_types(
 
     # build component configurations list grouped by components for each component found for given types
     components_with_configs = [
-        ComponentConfigurationsList(
+        ComponentWithConfigurations(
             component=ComponentListItem.model_validate(raw_component),
             configurations=[
                 ComponentConfigurationListItem.model_validate(
@@ -281,7 +269,7 @@ async def retrieve_components_by_types(
 
 async def retrieve_components_by_ids(
     client: KeboolaClient, component_ids: List[str]
-) -> List[ComponentConfigurationsList]:
+) -> List[ComponentWithConfigurations]:
     """
     Utility function to retrieve components by ids - used in tools:
     - retrieve_components_in_project
@@ -299,7 +287,7 @@ async def retrieve_components_by_ids(
         raw_component = await client.get(endpoint)
         # build component configurations list grouped by components for each component id
         components_with_configs.append(
-            ComponentConfigurationsList(
+            ComponentWithConfigurations(
                 component=ComponentListItem.model_validate(raw_component),
                 configurations=[
                     ComponentConfigurationListItem.model_validate(
@@ -321,7 +309,7 @@ async def retrieve_components_by_ids(
     return components_with_configs
 
 
-async def get_core_component_details(
+async def get_component_details(
     component_id: Annotated[
         str,
         Field(
@@ -331,11 +319,11 @@ async def get_core_component_details(
     client: KeboolaClient,
 ) -> ComponentDetail:
     """
-    Utility function to retrieve the core component details by component ID, used in tools:
+    Utility function to retrieve the component details by component ID, used in tools:
     - get_component_configuration_details
     :param component_id: The ID of the Keboola component/transformation you want details about
     :param client: The Keboola client
-    :return: The core component details
+    :return: The component details
     """
 
     endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
@@ -368,26 +356,31 @@ async def retrieve_components_in_project(
     ctx: Context,
     component_types: Annotated[
         List[ComponentType],
-        Field(description="Array of component types to filter by", default=["all"]),
+        Field(
+            description="Array of component types to filter by, default is ['all']",
+            default=["all"],
+        ),
     ] = ["all"],
     component_ids: Annotated[
         List[str],
         Field(
-            description="List of component IDs to retrieve configurations only for these components",
+            description="List of component IDs to retrieve configurations for, default is []",
             default=[],
         ),
     ] = [],
-) -> List[ComponentConfigurationsList]:
+) -> Annotated[
+    List[ComponentWithConfigurations],
+    Field(
+        List[ComponentWithConfigurations],
+        description="List of objects grouping components and their configurations.",
+    ),
+]:
     """
-    Retrieve component configurations in the project for given component_types or component_ids.
-    If component_ids are provided, only their configurations are retrieved, ignoring component_types
-    PARAMETERS:
-        component_types: Array of component types to filter by, default is ["all"].
-        component_ids: List of component IDs to retrieve configurations only for these components
-    RETURNS:
-        List of configurations grouped by components.
+    Retrieve component configurations in the project based on specified component_types or component_ids.
+    If component_ids are supplied, only the configurations for those components are retrieved, disregarding component_types.
     USAGE:
         - Use when you want to see component configurations in the project for given component_types.
+        - Use when you want to see component configurations in the project for given component_ids.
     EXAMPLES:
         - user_input: `give me all components`
             -> set types to ["all"]
@@ -415,18 +408,19 @@ async def retrieve_transformations_in_project(
     transformation_ids: Annotated[
         List[str],
         Field(
-            description="List of component IDs to retrieve configurations only for these transformations",
+            description="List of transformation component IDs to retrieve configurations for, default is []",
             default=[],
         ),
     ] = [],
-) -> List[ComponentConfigurationsList]:
+) -> Annotated[
+    List[ComponentWithConfigurations],
+    Field(
+        List[ComponentWithConfigurations],
+        description="List of objects grouping components and their configurations.",
+    ),
+]:
     """
     Retrieve transformation components in the project for specific transformations or for all transformations.
-    PARAMETERS:
-        transformation_ids: List of transformation IDs to retrieve configurations only for these transformations, if
-        empty list is provided, all transformations are retrieved
-    RETURNS:
-        List of transformation components.
     USAGE:
         - Use when you want to see transformation components in the project for given transformation_ids.
         - If you want to retrieve all transformations, set transformation_ids to an empty list.
@@ -442,7 +436,6 @@ async def retrieve_transformations_in_project(
             -> returns the details of the transformation component with ID 'simulating-id'
     """
     if not transformation_ids:
-        print("HERE")
         client = KeboolaClient.from_state(ctx.session.state)
         return await retrieve_components_by_types(
             client, cast(List[AllComponentTypes], ["transformation"])
@@ -465,17 +458,17 @@ async def get_component_configuration_details(
         ),
     ],
     ctx: Context,
-) -> ComponentConfigurationDetail:
+) -> Annotated[
+    ComponentConfigurationDetail,
+    Field(
+        ComponentConfigurationDetail,
+        description="Detailed information about a Keboola component/transformation configuration.",
+    ),
+]:
     """
     Get detailed information about a specific Keboola component configuration given component/transformation ID and
-    configuration ID. Those IDs can be retrieved from fully_qualified_id of the
-    component configuration which are seperated by `::`.
-    PARAMETERS:
-        component_id: The ID of the Keboola component/transformation you want details about
-        configuration_id: The ID of the Keboola component/transformation configuration you want details about
-    RETURNS:
-        A component/transformation configuration detail object containing the ID, name, type, description, configuration
-        , metadata and the core component/transformation object.
+    configuration ID. Those IDs can be retrieved from fully_qualified_id of the component configuration which are
+    seperated by `::`.
     USAGE:
         - Use when you want to see the details of a specific component/transformation configuration pair.
     EXAMPLES:
@@ -488,7 +481,7 @@ async def get_component_configuration_details(
     client = KeboolaClient.from_state(ctx.session.state)
 
     # Get Component Details
-    component = await get_core_component_details(component_id, client=client)
+    component = await get_component_details(component_id, client=client)
     # Get Configuration Details
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
     logger.info(
