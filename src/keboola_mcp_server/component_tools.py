@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 FULLY_QUALIFIED_ID_SEPARATOR: str = "::"
 
 
-class ComponentListItem(BaseModel):
+class ReducedComponent(BaseModel):
     """
     A list item representing a Keboola component. This object bears the reduced information about the component.
     """
@@ -21,7 +21,7 @@ class ComponentListItem(BaseModel):
     component_id: str = Field(
         description="The ID of the component",
         validation_alias=AliasChoices("id", "component_id", "componentId", "component-id"),
-        serialization_alias="component_id",
+        serialization_alias="componentId",
     )
     component_name: str = Field(
         description="The name of the component",
@@ -31,22 +31,105 @@ class ComponentListItem(BaseModel):
             "componentName",
             "component-name",
         ),
-        serialization_alias="component_name",
+        serialization_alias="componentName",
     )
     component_type: str = Field(
         description="The type of the component",
         validation_alias=AliasChoices("type", "component_type"),
-        serialization_alias="component_type",
+        serialization_alias="componentType",
     )
     component_description: Optional[str] = Field(
         description="The description of the component",
         default=None,
         validation_alias=AliasChoices("description", "component_description"),
-        serialization_alias="component_description",
+        serialization_alias="componentDescription",
     )
 
 
-class ComponentDetail(ComponentListItem):
+class ReducedComponentConfigurationPair(BaseModel):
+    """
+    A list item representing a Keboola component configuration. This object bears the reduced information about the
+    component configuration.
+    """
+
+    component_id: str = Field(
+        description="The ID of the component",
+        validation_alias=AliasChoices("component_id", "componentId"),
+        serialization_alias="componentId",
+    )
+    configuration_id: str = Field(
+        description="The ID of the component configuration",
+        validation_alias=AliasChoices(
+            "id",
+            "configuration_id",
+            "configurationId",
+            "configuration-id",
+        ),
+        serialization_alias="configurationId",
+    )
+    configuration_name: str = Field(
+        description="The name of the component configuration",
+        validation_alias=AliasChoices(
+            "name",
+            "configuration_name",
+            "configurationName",
+            "configuration-name",
+        ),
+        serialization_alias="configurationName",
+    )
+    configuration_description: Optional[str] = Field(
+        description="The description of the component configuration",
+        validation_alias=AliasChoices(
+            "description",
+            "configuration_description",
+            "configurationDescription",
+            "configuration-description",
+        ),
+        serialization_alias="configurationDescription",
+    )
+    is_disabled: bool = Field(
+        description="Whether the component configuration is disabled",
+        validation_alias=AliasChoices("isDisabled", "is_disabled", "is-disabled"),
+        serialization_alias="isDisabled",
+        default=False,
+    )
+    is_deleted: bool = Field(
+        description="Whether the component configuration is deleted",
+        validation_alias=AliasChoices("isDeleted", "is_deleted", "is-deleted"),
+        serialization_alias="isDeleted",
+        default=False,
+    )
+    fully_qualified_id: Optional[str] = Field(
+        description=(
+            "The fully qualified ID of the component configuration by which it can be uniquely identified. "
+            "It is a concatenation of the component ID and the configuration ID, separated by a `::`."
+        ),
+        validation_alias=AliasChoices(
+            "fullyQualifiedId", "fully_qualified_id", "fully-qualified-id"
+        ),
+        serialization_alias="fullyQualifiedId",
+        default=None,
+    )
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if self.fully_qualified_id is None:
+            if self.configuration_id and self.component_id:
+                self.fully_qualified_id = f"{self.component_id}::{self.configuration_id}"
+
+
+class ComponentWithConfigurations(BaseModel):
+    """
+    Grouping of a Keboola component and its configurations.
+    """
+
+    component: ReducedComponent = Field(description="The Keboola component.")
+    configurations: List[ReducedComponentConfigurationPair] = Field(
+        description="The list of component configurations for the given component."
+    )
+
+
+class Component(ReducedComponent):
     """
     Detailed information about a Keboola component. This object bears the full information about the component.
     """
@@ -90,90 +173,7 @@ class ComponentDetail(ComponentListItem):
     )
 
 
-class ComponentConfigurationListItem(BaseModel):
-    """
-    A list item representing a Keboola component configuration. This object bears the reduced information about the
-    component configuration.
-    """
-
-    component_id: str = Field(
-        description="The ID of the component",
-        validation_alias=AliasChoices("component_id", "componentId"),
-        serialization_alias="component_id",
-    )
-    configuration_id: str = Field(
-        description="The ID of the component configuration",
-        validation_alias=AliasChoices(
-            "id",
-            "configuration_id",
-            "configurationId",
-            "configuration-id",
-        ),
-        serialization_alias="configuration_id",
-    )
-    configuration_name: str = Field(
-        description="The name of the component configuration",
-        validation_alias=AliasChoices(
-            "name",
-            "configuration_name",
-            "configurationName",
-            "configuration-name",
-        ),
-        serialization_alias="configuration_name",
-    )
-    configuration_description: Optional[str] = Field(
-        description="The description of the component configuration",
-        validation_alias=AliasChoices(
-            "description",
-            "configuration_description",
-            "configurationDescription",
-            "configuration-description",
-        ),
-        serialization_alias="configuration_description",
-    )
-    is_disabled: bool = Field(
-        description="Whether the component configuration is disabled",
-        validation_alias=AliasChoices("isDisabled", "is_disabled", "is-disabled"),
-        serialization_alias="isDisabled",
-        default=False,
-    )
-    is_deleted: bool = Field(
-        description="Whether the component configuration is deleted",
-        validation_alias=AliasChoices("isDeleted", "is_deleted", "is-deleted"),
-        serialization_alias="isDeleted",
-        default=False,
-    )
-    fully_qualified_id: Optional[str] = Field(
-        description=(
-            "The fully qualified ID of the component configuration by which it can be uniquely identified. "
-            "It is a concatenation of the component ID and the configuration ID, separated by a `::`."
-        ),
-        validation_alias=AliasChoices(
-            "fullyQualifiedId", "fully_qualified_id", "fully-qualified-id"
-        ),
-        serialization_alias="fullyQualifiedId",
-        default=None,
-    )
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        if self.fully_qualified_id is None:
-            if self.configuration_id and self.component_id:
-                self.fully_qualified_id = f"{self.component_id}::{self.configuration_id}"
-
-
-class ComponentWithConfigurations(BaseModel):
-    """
-    Grouping of a Keboola component and its configurations.
-    """
-
-    component: ComponentListItem = Field(description="The Keboola component.")
-    configurations: List[ComponentConfigurationListItem] = Field(
-        description="The list of component configurations for the given component."
-    )
-
-
-class ComponentConfigurationDetail(ComponentConfigurationListItem):
+class ComponentConfigurationPair(ReducedComponentConfigurationPair):
     """
     Detailed information about a Keboola component configuration. This object bears the full information about the
     component configuration.
@@ -187,10 +187,10 @@ class ComponentConfigurationDetail(ComponentConfigurationListItem):
     configuration_metadata: List[Dict[str, Any]] = Field(
         description="The metadata of the component configuration",
         default=[],
-        validation_alias=AliasChoices("metadata", "configuration_metadata"),
-        serialization_alias="configuration_metadata",
+        validation_alias=AliasChoices("metadata", "configuration_metadata", "configurationMetadata"),
+        serialization_alias="configurationMetadata",
     )
-    component: Optional[ComponentDetail] = Field(
+    component: Optional[Component] = Field(
         description="The Keboola component.",
         validation_alias=AliasChoices("component"),
         serialization_alias="component",
@@ -245,9 +245,9 @@ async def retrieve_components_by_types(
     # build component configurations list grouped by components for each component found for given types
     components_with_configs = [
         ComponentWithConfigurations(
-            component=ComponentListItem.model_validate(raw_component),
+            component=ReducedComponent.model_validate(raw_component),
             configurations=[
-                ComponentConfigurationListItem.model_validate(
+                ReducedComponentConfigurationPair.model_validate(
                     {**raw_config, "component_id": raw_component["id"]}
                 )
                 for raw_config in raw_component.get("configurations", [])
@@ -288,9 +288,9 @@ async def retrieve_components_by_ids(
         # build component configurations list grouped by components for each component id
         components_with_configs.append(
             ComponentWithConfigurations(
-                component=ComponentListItem.model_validate(raw_component),
+                component=ReducedComponent.model_validate(raw_component),
                 configurations=[
-                    ComponentConfigurationListItem.model_validate(
+                    ReducedComponentConfigurationPair.model_validate(
                         {**raw_config, "component_id": raw_component["id"]}
                     )
                     for raw_config in raw_configurations
@@ -317,7 +317,7 @@ async def get_component_details(
         ),
     ],
     client: KeboolaClient,
-) -> ComponentDetail:
+) -> Component:
     """
     Utility function to retrieve the component details by component ID, used in tools:
     - get_component_configuration_details
@@ -329,7 +329,7 @@ async def get_component_details(
     endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
     raw_component = await client.get(endpoint)
     logger.info(f"Retrieved component details for component {component_id}.")
-    return ComponentDetail.model_validate(raw_component)
+    return Component.model_validate(raw_component)
 
 
 ############################## End of utility functions #########################################
@@ -459,9 +459,9 @@ async def get_component_configuration_details(
     ],
     ctx: Context,
 ) -> Annotated[
-    ComponentConfigurationDetail,
+    ComponentConfigurationPair,
     Field(
-        ComponentConfigurationDetail,
+        ComponentConfigurationPair,
         description="Detailed information about a Keboola component/transformation configuration.",
     ),
 ]:
@@ -503,7 +503,7 @@ async def get_component_configuration_details(
         )
 
     # Create Component Configuration Detail Object
-    return ComponentConfigurationDetail.model_validate(
+    return ComponentConfigurationPair.model_validate(
         {
             **raw_configuration,
             "component": component,

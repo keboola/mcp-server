@@ -7,11 +7,11 @@ from mcp.server.fastmcp import Context
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.component_tools import (
     FULLY_QUALIFIED_ID_SEPARATOR,
-    ComponentConfigurationDetail,
-    ComponentConfigurationListItem,
+    ComponentConfigurationPair,
+    ReducedComponentConfigurationPair,
     ComponentWithConfigurations,
-    ComponentDetail,
-    ComponentListItem,
+    Component,
+    ReducedComponent,
     ComponentType,
     get_component_configuration_details,
     handle_component_types,
@@ -154,11 +154,11 @@ def assert_retrieve_components() -> (
         assert len(result) == len(components)
         # assert basics
         assert all(isinstance(component, ComponentWithConfigurations) for component in result)
-        assert all(isinstance(component.component, ComponentListItem) for component in result)
+        assert all(isinstance(component.component, ReducedComponent) for component in result)
         assert all(isinstance(component.configurations, list) for component in result)
         assert all(
             all(
-                isinstance(config, ComponentConfigurationListItem)
+                isinstance(config, ReducedComponentConfigurationPair)
                 for config in component.configurations
             )
             for component in result
@@ -184,7 +184,7 @@ def assert_retrieve_components() -> (
         # assert configurations list details
         assert all(
             all(
-                isinstance(config, ComponentConfigurationListItem)
+                isinstance(config, ReducedComponentConfigurationPair)
                 for config in component.configurations
             )
             for component in result
@@ -349,7 +349,7 @@ async def test_get_component_configuration_details(
 
     result = await get_component_configuration_details("keboola.ex-aws-s3", "123", context)
 
-    assert isinstance(result, ComponentConfigurationDetail)
+    assert isinstance(result, ComponentConfigurationPair)
     assert result.component is not None
     assert result.component.component_id == mock_component["id"]
     assert result.component.component_name == mock_component["name"]
@@ -418,7 +418,7 @@ def test_set_fully_qualified_id(
     configuration = mock_configuration
     component["id"] = component_id
     configuration["id"] = configuration_id
-    component_configuration = ComponentConfigurationListItem.model_validate(
+    component_configuration = ReducedComponentConfigurationPair.model_validate(
         {**configuration, "component_id": component_id}
     )
     assert component_configuration.fully_qualified_id == expected
