@@ -187,7 +187,9 @@ class ComponentConfigurationPair(ReducedComponentConfigurationPair):
     configuration_metadata: List[Dict[str, Any]] = Field(
         description="The metadata of the component configuration",
         default=[],
-        validation_alias=AliasChoices("metadata", "configuration_metadata", "configurationMetadata"),
+        validation_alias=AliasChoices(
+            "metadata", "configuration_metadata", "configurationMetadata"
+        ),
         serialization_alias="configurationMetadata",
     )
     component: Optional[Component] = Field(
