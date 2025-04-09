@@ -191,8 +191,8 @@ async def retrieve_jobs_in_project(
     ),
 ]:
     """
-    Retrieve all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status filtering.
-    Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
+    Retrieve all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
+    filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
     USAGE:
         Use when you want to list jobs for given component_id and optionally for given config_id.
         Use when you want to list all jobs in the project or filter them by status.

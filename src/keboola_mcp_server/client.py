@@ -145,38 +145,13 @@ class JobsQueue(Endpoint):
     def __init__(self, root_url: str, token: str):
         """
         Create a JobsQueue endpoint.
-        :param root_url: Root url of API. eg. "https://queue.keboola.com/"
+        :param root_url: Root url of API. e.g. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console.
         """
         super().__init__(root_url, "", token)
 
         # set the base url to the root url
         self.base_url = self.root_url.rstrip("/")
-
-    def list(
-        self,
-        limit: int = 100,
-        offset: int = 0,
-        status: Optional[List[str]] = None,
-        sort_by: Optional[str] = "startTime",
-        sort_order: Optional[str] = "desc",
-    ) -> Dict[str, Any]:
-        """
-        List most recent jobs details.
-        :param limit: Limit the number of jobs returned, default 100, max 500
-        :param offset: Offset the number of jobs returned, page offset, default 0
-        :param status: Filter jobs by status, default None = no filtering
-        :param sort_by: Sort the jobs by the given field, default "startTime"
-        :param sort_order: Sort the jobs by the given field, default "desc"
-        """
-        params = {
-            "limit": limit,
-            "offset": offset,
-            "status": status,
-            "sortBy": sort_by,
-            "sortOrder": sort_order,
-        }
-        return self._search(params=params)
 
     def detail(self, job_id: str) -> Dict[str, Any]:
         """
