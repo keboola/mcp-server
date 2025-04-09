@@ -14,9 +14,9 @@ from keboola_mcp_server.component_tools import (
     ReducedComponent,
     ComponentType,
     get_component_configuration_details,
-    handle_component_types,
-    retrieve_components_in_project,
-    retrieve_transformations_in_project,
+    _handle_component_types,
+    retrieve_components_configurations,
+    retrieve_transformations_configurations,
 )
 
 
@@ -209,7 +209,7 @@ def assert_retrieve_components() -> (
 
 
 @pytest.mark.asyncio
-async def test_retrieve_components_in_project(
+async def test_retrieve_components_configurations_by_types(
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
@@ -218,7 +218,7 @@ async def test_retrieve_components_in_project(
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
-    """Test retrieve_components_in_project tool."""
+    """Test retrieve_components_configurations when component types are provided."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     # mock the get method to return the mock_component with the mock_configurations
@@ -229,21 +229,21 @@ async def test_retrieve_components_in_project(
         ]
     )
 
-    result = await retrieve_components_in_project(context, component_types=["all"])
+    result = await retrieve_components_configurations(context, component_types=["all"])
 
     assert_retrieve_components(result, mock_components, mock_configurations)
 
     keboola_client.get.assert_has_calls(
         [
-            call(f"branch/{test_branch_id}/components", params={"componentType": "application"}),
-            call(f"branch/{test_branch_id}/components", params={"componentType": "extractor"}),
-            call(f"branch/{test_branch_id}/components", params={"componentType": "writer"}),
+            call(f"branch/{test_branch_id}/components", params={"componentType": "application",  'include': 'configuration'}),
+            call(f"branch/{test_branch_id}/components", params={"componentType": "extractor", "include": "configuration"}),
+            call(f"branch/{test_branch_id}/components", params={"componentType": "writer", "include": "configuration"}),
         ]
     )
 
 
 @pytest.mark.asyncio
-async def test_retrieve_transformations_in_project(
+async def test_retrieve_components_configurations_by_ids(
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
@@ -252,26 +252,26 @@ async def test_retrieve_transformations_in_project(
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
-    """Test retrieve_transformations_in_project tool."""
+    """Test retrieve_components_configurations when component IDs are provided."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     # mock the get method to return the mock_component with the mock_configurations
     # simulate the response from the API
     keboola_client.get = AsyncMock(return_value=[mock_component])
 
-    result = await retrieve_transformations_in_project(context)
+    result = await retrieve_transformations_configurations(context)
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
     keboola_client.get.assert_has_calls(
         [
-            call(f"branch/{test_branch_id}/components", params={"componentType": "transformation"}),
+            call(f"branch/{test_branch_id}/components", params={"componentType": "transformation", "include": "configuration"}),
         ]
     )
 
 
 @pytest.mark.asyncio
-async def test_retrieve_components_in_project_from_ids(
+async def test_retrieve_components_configurations_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
@@ -280,14 +280,14 @@ async def test_retrieve_components_in_project_from_ids(
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
-    """Test list_component_configurations tool."""
+    """Test retrieve_components_configurations when component IDs are provided."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configurations)
     keboola_client.get = AsyncMock(return_value=mock_component)
 
-    result = await retrieve_components_in_project(context, component_ids=[mock_component["id"]])
+    result = await retrieve_components_configurations(context, component_ids=[mock_component["id"]])
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
@@ -298,7 +298,7 @@ async def test_retrieve_components_in_project_from_ids(
 
 
 @pytest.mark.asyncio
-async def test_retrieve_transformations_in_project_from_ids(
+async def test_retrieve_transformations_configurations_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
@@ -307,14 +307,14 @@ async def test_retrieve_transformations_in_project_from_ids(
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
-    """Test list_component_configurations tool."""
+    """Test retrieve_transformations_configurations when transformation IDs are provided."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configurations)
     keboola_client.get = AsyncMock(return_value=mock_component)
 
-    result = await retrieve_transformations_in_project(
+    result = await retrieve_transformations_configurations(
         context, transformation_ids=[mock_component["id"]]
     )
 
@@ -392,7 +392,7 @@ def test_handle_component_types(
     component_type: Union[ComponentType, list[ComponentType]], expected: list[ComponentType]
 ):
     """Test list_component_configurations tool with core component."""
-    assert handle_component_types(component_type) == expected
+    assert _handle_component_types(component_type) == expected
 
 
 @pytest.mark.parametrize(
