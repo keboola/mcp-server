@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from keboola_mcp_server.component_tools import (
-    Component,
-    ComponentConfiguration,
-    get_component_configuration_details,
+    ComponentConfigurationDetail,
+    ComponentDetail,
+    get_component_configuration_detail,
     retrieve_component_configurations,
     retrieve_components,
 )
@@ -28,7 +28,7 @@ async def test_list_components(mcp_context_client):
     result = await retrieve_components(mcp_context_client)
 
     assert len(result) == 2
-    assert all(isinstance(component, Component) for component in result)
+    assert all(isinstance(component, ComponentDetail) for component in result)
     assert all(
         component.component_id == expected["id"]
         for component, expected in zip(result, mock_components)
@@ -68,7 +68,7 @@ async def test_list_component_configs(mcp_context_client):
     result = await retrieve_component_configurations("keboola.ex-aws-s3", mcp_context_client)
 
     assert len(result) == 1
-    assert isinstance(result[0], ComponentConfiguration)
+    assert isinstance(result[0], ComponentConfigurationDetail)
     assert result[0].component.component_id == "keboola.ex-aws-s3"
     assert result[0].component.component_name == "AWS S3 Extractor"
     assert result[0].configuration_id == "123"
@@ -101,11 +101,11 @@ async def test_get_component_details(mcp_context_client):
     keboola_client.storage_client.configurations.detail = MagicMock(return_value=mock_configuration)
     keboola_client.get = AsyncMock(return_value=mock_component)
 
-    result = await get_component_configuration_details(
+    result = await get_component_configuration_detail(
         "keboola.ex-aws-s3", "123", mcp_context_client
     )
 
-    assert isinstance(result, ComponentConfiguration)
+    assert isinstance(result, ComponentConfigurationDetail)
     assert result.component.component_id == "keboola.ex-aws-s3"
     assert result.configuration_id == "123"
     assert result.configuration_name == "My Config"

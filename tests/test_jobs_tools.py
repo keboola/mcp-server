@@ -9,7 +9,7 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.jobs_tools import (
     JobDetail,
     JobListItem,
-    get_job_details,
+    get_job_detail,
     retrieve_jobs_in_project,
 )
 
@@ -137,7 +137,7 @@ async def test_get_job_details(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue.detail = MagicMock(return_value=mock_job)
 
-    result = await get_job_details("123", context)
+    result = await get_job_detail("123", context)
 
     assert isinstance(result, JobDetail)
     assert result.id == mock_job["id"]
