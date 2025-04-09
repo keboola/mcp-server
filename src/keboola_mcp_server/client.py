@@ -81,8 +81,9 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_storage_api_url}/v2/storage/{endpoint}", headers=self.headers,
-                params=params
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
+                headers=self.headers,
+                params=params,
             )
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())

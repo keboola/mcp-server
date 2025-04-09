@@ -7,6 +7,7 @@ from keboola_mcp_server.component_tools import (
     GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
 )
 
+
 class TestServer:
     @pytest.mark.asyncio
     async def test_list_tools(self):

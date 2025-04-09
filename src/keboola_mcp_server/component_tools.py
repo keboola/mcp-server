@@ -15,16 +15,24 @@ RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components_in_proje
 RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations_in_project"
 GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = "get_component_details"
 
+
 def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
 
-    mcp.add_tool(get_component_configuration_details, name = GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME)
+    mcp.add_tool(
+        get_component_configuration_details, name=GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME
+    )
     logger.info(f"Added tool {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME} to the MCP server.")
 
-    mcp.add_tool(retrieve_components_configurations, name = RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME)
+    mcp.add_tool(
+        retrieve_components_configurations, name=RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME
+    )
     logger.info(f"Added tool {RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
-    mcp.add_tool(retrieve_transformations_configurations, name = RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME)
+    mcp.add_tool(
+        retrieve_transformations_configurations,
+        name=RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME,
+    )
     logger.info(f"Added tool {RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
     logger.info("Component tools initialized.")
@@ -220,6 +228,7 @@ class ComponentConfigurationPair(ReducedComponentConfigurationPair):
         default=None,
     )
 
+
 ############################## End of Base Models #########################################
 
 ############################## Utility functions #########################################
@@ -229,7 +238,9 @@ TransformationType = Literal["transformation"]
 AllComponentTypes = Union[ComponentType, TransformationType]
 
 
-def _handle_component_types(types: Union[ComponentType, List[ComponentType]]) -> List[ComponentType]:
+def _handle_component_types(
+    types: Union[ComponentType, List[ComponentType]],
+) -> List[ComponentType]:
     """
     Utility function to handle the component types [extractors, writers, applications, all]
     If the types include "all", it will be removed and the remaining types will be returned.
@@ -257,7 +268,7 @@ async def _retrieve_components_configurations_by_types(
     endpoint = "branch/{}/components".format(client.storage_client._branch_id)
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
     # TODO: Ask how we can use list of types as parameter, API seems to support that but it returns only components of
-    # the last type included in the list 
+    # the last type included in the list
 
     raw_components_with_configs = []
     components_with_configs = []
@@ -269,9 +280,7 @@ async def _retrieve_components_configurations_by_types(
         }
         raw_component_with_configs = await client.get(endpoint, params=params)
         # extend the list with the raw components with configurations
-        raw_components_with_configs.extend(
-            cast(List[Dict[str, Any]], raw_component_with_configs)
-        )
+        raw_components_with_configs.extend(cast(List[Dict[str, Any]], raw_component_with_configs))
 
     # build components with configurations list, each item contains a component and its associated configurations
     components_with_configs = [
@@ -455,9 +464,7 @@ async def retrieve_transformations_configurations(
     # If no transformation IDs are provided, retrieve transformations configurations by transformation type
     if not transformation_ids:
         client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_types(
-            client, ["transformation"]
-        )
+        return await _retrieve_components_configurations_by_types(client, ["transformation"])
     # If transformation IDs are provided, retrieve transformations configurations by IDs
     else:
         client = KeboolaClient.from_state(ctx.session.state)

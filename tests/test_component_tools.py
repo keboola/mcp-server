@@ -235,9 +235,18 @@ async def test_retrieve_components_configurations_by_types(
 
     keboola_client.get.assert_has_calls(
         [
-            call(f"branch/{test_branch_id}/components", params={"componentType": "application",  'include': 'configuration'}),
-            call(f"branch/{test_branch_id}/components", params={"componentType": "extractor", "include": "configuration"}),
-            call(f"branch/{test_branch_id}/components", params={"componentType": "writer", "include": "configuration"}),
+            call(
+                f"branch/{test_branch_id}/components",
+                params={"componentType": "application", "include": "configuration"},
+            ),
+            call(
+                f"branch/{test_branch_id}/components",
+                params={"componentType": "extractor", "include": "configuration"},
+            ),
+            call(
+                f"branch/{test_branch_id}/components",
+                params={"componentType": "writer", "include": "configuration"},
+            ),
         ]
     )
 
@@ -265,7 +274,10 @@ async def test_retrieve_components_configurations_by_ids(
 
     keboola_client.get.assert_has_calls(
         [
-            call(f"branch/{test_branch_id}/components", params={"componentType": "transformation", "include": "configuration"}),
+            call(
+                f"branch/{test_branch_id}/components",
+                params={"componentType": "transformation", "include": "configuration"},
+            ),
         ]
     )
 
