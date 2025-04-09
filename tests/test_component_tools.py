@@ -10,7 +10,6 @@ from keboola_mcp_server.component_tools import (
     ComponentConfigurationPair,
     ReducedComponentConfigurationPair,
     ComponentWithConfigurations,
-    Component,
     ReducedComponent,
     ComponentType,
     get_component_configuration_details,
@@ -143,7 +142,7 @@ def mcp_context_components_configs(mcp_context_client, test_branch_id) -> Contex
 def assert_retrieve_components() -> (
     Callable[[list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None]
 ):
-    """Assert that the retrieve_components_in_project tool returns the correct components and configurations."""
+    """Assert that the _retrieve_components_in_project tool returns the correct components and configurations."""
 
     def _assert_retrieve_components(
         result: list[ComponentWithConfigurations],
@@ -181,7 +180,9 @@ def assert_retrieve_components() -> (
             for returned, expected in zip(result, components)
         )
         assert all(not hasattr(returned.component, "version") for returned in result)
+
         # assert configurations list details
+        assert all(len(component.configurations) == len(configurations) for component in result)
         assert all(
             all(
                 isinstance(config, ReducedComponentConfigurationPair)
@@ -252,7 +253,7 @@ async def test_retrieve_components_configurations_by_types(
 
 
 @pytest.mark.asyncio
-async def test_retrieve_components_configurations_by_ids(
+async def test_retrieve_transformations_configurations(
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
@@ -261,12 +262,14 @@ async def test_retrieve_components_configurations_by_ids(
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
-    """Test retrieve_components_configurations when component IDs are provided."""
+    """Test retrieve_transformations_configurations."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     # mock the get method to return the mock_component with the mock_configurations
     # simulate the response from the API
-    keboola_client.get = AsyncMock(return_value=[mock_component])
+    keboola_client.get = AsyncMock(
+        return_value=[{**mock_component, "configurations": mock_configurations}]
+    )
 
     result = await retrieve_transformations_configurations(context)
 
