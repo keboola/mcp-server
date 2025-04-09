@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Keboola", email = "support@keboola.com" }
+    { name = "Keboola", email = "devel@keboola.com" }
 ]
 dependencies = [
     "mcp[cli] ~= 1.6",
