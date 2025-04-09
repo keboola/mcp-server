@@ -10,6 +10,7 @@ from typing import Any, Dict, Mapping, Optional, cast, List
 import httpx
 from kbcstorage.client import Client
 from kbcstorage.base import Endpoint
+from kbcstorage.retry_requests import MAX_RETRIES_DEFAULT, RetryRequests
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class KeboolaClient:
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> "KeboolaClient":
         instance = state[cls.STATE_KEY]
-        assert isinstance(instance, KeboolaClient)
+        assert isinstance(instance, KeboolaClient), f"Expected KeboolaClient, got: {instance}"
         return instance
 
     def __init__(
@@ -63,8 +64,8 @@ class KeboolaClient:
             "Accept-encoding": "gzip",
         }
         # Initialize the official client for operations it handles well
-        # The storage_client.jobs endpoint is for legacy storage jobs
-        # Use self.jobs_queue instead which provides access to the modern Job Queue API
+        # The storage_client.jobs endpoint is for storage jobs
+        # Use self.jobs_queue instead which provides access to the Job Queue API
         # that handles component/transformation jobs
         self.storage_client = Client(self.base_storage_api_url, self.token)
 
@@ -143,40 +144,14 @@ class JobsQueue(Endpoint):
 
     def __init__(self, root_url: str, token: str):
         """
-        Create an JobsQueue endpoint.
-        :param root_url: Root url of API. eg. "https://queue.keboola.com/"
+        Create a JobsQueue endpoint.
+        :param root_url: Root url of API. e.g. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console.
         """
         super().__init__(root_url, "", token)
 
-        # Rewrite the base url to the job queue api (this will remove the /v2/storage/ suffix)
-        # and strip the trailing slash
+        # set the base url to the root url
         self.base_url = self.root_url.rstrip("/")
-
-    def list(
-        self,
-        limit: int = 100,
-        offset: int = 0,
-        status: Optional[List[str]] = None,
-        sort_by: Optional[str] = "startTime",
-        sort_order: Optional[str] = "desc",
-    ) -> Dict[str, Any]:
-        """
-        List most recent jobs details.
-        :param limit: Limit the number of jobs returned, default 100, max 500
-        :param offset: Offset the number of jobs returned, page offset, default 0
-        :param status: Filter jobs by status, default None = no filtering
-        :param sort_by: Sort the jobs by the given field, default "startTime"
-        :param sort_order: Sort the jobs by the given field, default "desc"
-        """
-        params = {
-            "limit": limit,
-            "offset": offset,
-            "status": status,
-            "sortBy": sort_by,
-            "sortOrder": sort_order,
-        }
-        return self._search(params=params)
 
     def detail(self, job_id: str) -> Dict[str, Any]:
         """

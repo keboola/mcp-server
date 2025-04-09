@@ -1,8 +1,7 @@
-import datetime
-from typing import Any, get_args
+from datetime import datetime
+from typing import Any
 from unittest.mock import MagicMock
 
-import dateutil.parser
 import pytest
 from mcp.server.fastmcp import Context
 
@@ -65,9 +64,14 @@ def mock_job() -> dict[str, Any]:
     }
 
 
+@pytest.fixture
+def iso_format() -> str:
+    return "%Y-%m-%dT%H:%M:%SZ"
+
+
 @pytest.mark.asyncio
 async def test_retrieve_jobs_in_project(
-    mcp_context_client: Context, mock_jobs: list[dict[str, Any]]
+    mcp_context_client: Context, mock_jobs: list[dict[str, Any]], iso_format: str
 ):
     """Test retrieve_jobs_in_project tool."""
     context = mcp_context_client
@@ -94,15 +98,21 @@ async def test_retrieve_jobs_in_project(
         for returned, expected in zip(result, mock_jobs)
     )
     assert all(
-        returned.created_time == dateutil.parser.isoparse(expected["createdTime"])
+        returned.created_time is not None
+        and returned.created_time.replace(tzinfo=None)
+        == datetime.strptime(expected["createdTime"], iso_format)
         for returned, expected in zip(result, mock_jobs)
     )
     assert all(
-        returned.start_time == dateutil.parser.isoparse(expected["startTime"])
+        returned.start_time is not None
+        and returned.start_time.replace(tzinfo=None)
+        == datetime.strptime(expected["startTime"], iso_format)
         for returned, expected in zip(result, mock_jobs)
     )
     assert all(
-        returned.end_time == dateutil.parser.isoparse(expected["endTime"])
+        returned.end_time is not None
+        and returned.end_time.replace(tzinfo=None)
+        == datetime.strptime(expected["endTime"], iso_format)
         for returned, expected in zip(result, mock_jobs)
     )
     assert all(hasattr(returned, "not_a_desired_field") is False for returned in result)
@@ -119,7 +129,9 @@ async def test_retrieve_jobs_in_project(
 
 
 @pytest.mark.asyncio
-async def test_get_job_details(mcp_context_client: Context, mock_job: dict[str, Any]):
+async def test_get_job_details(
+    mcp_context_client: Context, mock_job: dict[str, Any], iso_format: str
+):
     """Test get_job_details tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
@@ -133,9 +145,15 @@ async def test_get_job_details(mcp_context_client: Context, mock_job: dict[str, 
     assert result.component_id == mock_job["component"]
     assert result.config_id == mock_job["config"]
     assert result.is_finished == mock_job["isFinished"]
-    assert result.created_time == dateutil.parser.isoparse(mock_job["createdTime"])
-    assert result.start_time == dateutil.parser.isoparse(mock_job["startTime"])
-    assert result.end_time == dateutil.parser.isoparse(mock_job["endTime"])
+    assert result.created_time is not None and result.created_time.replace(
+        tzinfo=None
+    ) == datetime.strptime(mock_job["createdTime"], iso_format)
+    assert result.start_time is not None and result.start_time.replace(
+        tzinfo=None
+    ) == datetime.strptime(mock_job["startTime"], iso_format)
+    assert result.end_time is not None and result.end_time.replace(
+        tzinfo=None
+    ) == datetime.strptime(mock_job["endTime"], iso_format)
     assert result.url == mock_job["url"]
     assert result.config_data == mock_job["configData"]
     assert result.config_row_ids == mock_job["configRowIds"]
