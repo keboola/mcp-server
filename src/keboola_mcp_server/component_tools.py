@@ -265,10 +265,9 @@ async def _retrieve_components_configurations_by_types(
     :param component_types: The component types/type to retrieve
     :return: a list of items, each containing a component and its associated configurations
     """
-    endpoint = "branch/{}/components".format(client.storage_client._branch_id)
+
+    endpoint = f"branch/{client.storage_client._branch_id}/components"
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
-    # TODO: Ask how we can use list of types as parameter, API seems to support that but it returns only components of
-    # the last type included in the list
 
     raw_components_with_configs = []
     components_with_configs = []
@@ -514,9 +513,7 @@ async def get_component_configuration_details(
     )
 
     # Get Configuration Metadata if exists
-    endpoint = "branch/{}/components/{}/configs/{}/metadata".format(
-        client.storage_client._branch_id, component_id, configuration_id
-    )
+    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata"
     r_metadata = await client.get(endpoint)
     if r_metadata:
         logger.info(
