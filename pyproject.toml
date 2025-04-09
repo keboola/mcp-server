@@ -4,18 +4,19 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Your Name", email = "your.email@example.com" }
+    { name = "Keboola", email = "devel@keboola.com" }
 ]
 dependencies = [
     "mcp[cli] ~= 1.6",
     "kbcstorage ~= 0.9",
     "httpx ~= 0.28",
+    "google-cloud-bigquery ~= 3.31"
 ]
 
 [project.optional-dependencies]

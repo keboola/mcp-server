@@ -9,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from keboola_mcp_server.component_tools import add_component_tools
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
+from keboola_mcp_server.jobs_tools import add_jobs_tools
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
@@ -43,7 +44,7 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
             raise
 
         try:
-            workspace_manager = WorkspaceManager(client, cfg.workspace_user)
+            workspace_manager = WorkspaceManager(client, cfg.workspace_schema)
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             logger.info("Successfully initialized Storage API Workspace manager.")
         except Exception as e:
@@ -70,6 +71,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     )
     # Add component tools to the server inplace.
     add_component_tools(mcp)
+    # Add jobs tools to the server inplace.
+    add_jobs_tools(mcp)
 
     add_storage_tools(mcp)
     add_sql_tools(mcp)
