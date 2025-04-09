@@ -10,12 +10,12 @@ from pydantic import TypeAdapter
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.sql_tools import (
-    get_sql_dialect,
-    query_table,
     QueryResult,
     SqlSelectData,
     TableFqn,
     WorkspaceManager,
+    get_sql_dialect,
+    query_table,
 )
 
 

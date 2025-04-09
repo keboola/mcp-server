@@ -9,7 +9,7 @@ from keboola_mcp_server.client import KeboolaClient
 logger = logging.getLogger(__name__)
 
 
-class Component(BaseModel):
+class ComponentDetail(BaseModel):
     component_id: str = Field(
         description="The ID of the component",
         validation_alias=AliasChoices("id", "component_id", "componentId", "component-id"),
@@ -27,8 +27,8 @@ class Component(BaseModel):
     )
 
 
-class ComponentConfiguration(BaseModel):
-    component: Component = Field(
+class ComponentConfigurationDetail(BaseModel):
+    component: ComponentDetail = Field(
         description="The original component object",
         validation_alias=AliasChoices("component"),
         serialization_alias="component",
@@ -70,7 +70,7 @@ def add_component_tools(mcp: FastMCP) -> None:
     component_tools = [
         retrieve_components,
         retrieve_component_configurations,
-        get_component_configuration_details,
+        get_component_configuration_detail,
     ]
     for tool in component_tools:
         logger.info(f"Adding tool {tool.__name__} to the MCP server.")
@@ -79,13 +79,13 @@ def add_component_tools(mcp: FastMCP) -> None:
     logger.info("Component tools initialized.")
 
 
-async def retrieve_components(ctx: Context) -> List[Component]:
+async def retrieve_components(ctx: Context) -> List[ComponentDetail]:
     """Retrieve all available components."""
     client = KeboolaClient.from_state(ctx.session.state)
 
     raw_components = client.storage_client.components.list()
     logger.info(f"Found {len(raw_components)} components.")
-    return [Component.model_validate(raw_comp) for raw_comp in raw_components]
+    return [ComponentDetail.model_validate(raw_comp) for raw_comp in raw_components]
 
 
 async def retrieve_component_configurations(
@@ -93,7 +93,7 @@ async def retrieve_component_configurations(
         str, "The ID of the component for which configurations should be listed."
     ],
     ctx: Context,
-) -> List[ComponentConfiguration]:
+) -> List[ComponentConfigurationDetail]:
     """Retrieve all configurations for a given component."""
     client = KeboolaClient.from_state(ctx.session.state)
 
@@ -101,24 +101,26 @@ async def retrieve_component_configurations(
     raw_configurations = client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(raw_configurations)} configurations for component {component_id}.")
     return [
-        ComponentConfiguration.model_validate({**r_config, "component": component})
+        ComponentConfigurationDetail.model_validate({**r_config, "component": component})
         for r_config in raw_configurations
     ]
 
 
-async def get_component_configuration_details(
+async def get_component_configuration_detail(
     component_id: Annotated[str, "The ID of the component for which details should be retrieved."],
     configuration_id: Annotated[
         str, "The ID of the configuration for which details should be retrieved."
     ],
     ctx: Context,
-) -> ComponentConfiguration:
+) -> ComponentConfigurationDetail:
     """Get details of a given component configuration."""
     client = KeboolaClient.from_state(ctx.session.state)
 
     component = await get_component_details(component_id, ctx)
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
-    return ComponentConfiguration.model_validate({**raw_configuration, "component": component})
+    return ComponentConfigurationDetail.model_validate(
+        {**raw_configuration, "component": component}
+    )
 
 
 async def get_component_details(
@@ -126,10 +128,10 @@ async def get_component_details(
         str, Field(str, description="The ID of the Keboola component you want details about")
     ],
     ctx: Context,
-) -> Component:
+) -> ComponentDetail:
     """Get detailed information about a Keboola component given component ID."""
     client = KeboolaClient.from_state(ctx.session.state)
 
     endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
     raw_component = await client.get(endpoint)
-    return Component.model_validate(raw_component)
+    return ComponentDetail.model_validate(raw_component)
