@@ -4,7 +4,8 @@ import pytest
 from kbcstorage.client import Client
 from mcp.server.fastmcp import Context
 
-from keboola_mcp_server.client import KeboolaClient
+
+from keboola_mcp_server.client import JobsQueue, KeboolaClient
 from keboola_mcp_server.mcp import StatefullServerSession
 from keboola_mcp_server.sql_tools import WorkspaceManager
 
@@ -14,6 +15,7 @@ def keboola_client(mocker) -> KeboolaClient:
     """Creates mocked `KeboolaClient` instance."""
     client = mocker.AsyncMock(KeboolaClient)
     client.storage_client = mocker.AsyncMock(Client)
+    client.jobs_queue = mocker.MagicMock(JobsQueue)
     return client
 
 

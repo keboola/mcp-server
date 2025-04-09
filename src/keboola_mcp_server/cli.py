@@ -57,7 +57,10 @@ def main(args: Optional[List[str]] = None) -> None:
 
     # Create config from the CLI arguments
     config = Config.from_dict(
-        {"storage_api_url": parsed_args.api_url, "log_level": parsed_args.log_level}
+        {
+            "storage_api_url": parsed_args.api_url,
+            "log_level": parsed_args.log_level,
+        }
     )
 
     try:

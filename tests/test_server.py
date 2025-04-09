@@ -11,6 +11,7 @@ class TestServer:
         assert sorted(t.name for t in tools) == [
             "get_bucket_metadata",
             "get_component_configuration_details",
+            "get_job_details",
             "get_sql_dialect",
             "get_table_metadata",
             "list_bucket_info",
@@ -18,6 +19,7 @@ class TestServer:
             "query_table",
             "retrieve_component_configurations",
             "retrieve_components",
+            "retrieve_jobs_in_project",
         ]
 
     @pytest.mark.asyncio
