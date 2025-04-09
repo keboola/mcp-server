@@ -270,16 +270,15 @@ async def _retrieve_components_configurations_by_types(
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
     raw_components_with_configs = []
-    components_with_configs = []
     for type in component_types:
         # retrieve components by type with configurations
         params = {
             "include": "configuration",
             "componentType": type,
         }
-        raw_component_with_configs = await client.get(endpoint, params=params)
+        raw_components_configs_by_type = await client.get(endpoint, params=params)
         # extend the list with the raw components with configurations
-        raw_components_with_configs.extend(cast(List[Dict[str, Any]], raw_component_with_configs))
+        raw_components_with_configs.extend(cast(List[Dict[str, Any]], raw_components_configs_by_type))
 
     # build components with configurations list, each item contains a component and its associated configurations
     components_with_configs = [
