@@ -456,7 +456,7 @@ async def retrieve_transformations_configurations(
     if not transformation_ids:
         client = KeboolaClient.from_state(ctx.session.state)
         return await _retrieve_components_configurations_by_types(
-            client, cast(List[AllComponentTypes], ["transformation"])
+            client, ["transformation"]
         )
     # If transformation IDs are provided, retrieve transformations configurations by IDs
     else:

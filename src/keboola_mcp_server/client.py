@@ -10,7 +10,6 @@ from typing import Any, Dict, Mapping, Optional, cast, List
 import httpx
 from kbcstorage.client import Client
 from kbcstorage.base import Endpoint
-from kbcstorage.retry_requests import MAX_RETRIES_DEFAULT, RetryRequests
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +81,8 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_storage_api_url}/v2/storage/{endpoint}", headers=self.headers
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}", headers=self.headers,
+                params=params
             )
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
