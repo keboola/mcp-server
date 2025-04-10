@@ -233,16 +233,7 @@ async def update_bucket_description(
     description: Annotated[str, Field(description="The new description for the bucket.")],
     ctx: Context,
 ) -> UpdateBucketDescriptionResponse:
-    """
-    Update the description for a given Keboola bucket.
-
-    Args:
-        bucket_id: The ID of the bucket to update.
-        description: The new description for the bucket.
-        ctx: The request context with session state.
-    Returns:
-        A validated UpdateBucketDescriptionResponse instance.
-    """
+    """Update the description for a given Keboola bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     metadata_endpoint = f"buckets/{bucket_id}/metadata"
 
@@ -257,16 +248,7 @@ async def update_table_description(
     description: Annotated[str, Field(description="The new description for the table.")],
     ctx: Context,
 ) -> UpdateTableDescriptionResponse:
-    """
-    Update the description for a given Keboola table.
-
-    Args:
-        table_id: The ID of the table to update.
-        description: The new description for the table.
-        ctx: The request context with session state.
-    Returns:
-        A validated UpdateTableDescriptionResponse instance.
-    """
+    """Update the description for a given Keboola table."""
     client = KeboolaClient.from_state(ctx.session.state)
     metadata_endpoint = f"tables/{table_id}/metadata"
 
