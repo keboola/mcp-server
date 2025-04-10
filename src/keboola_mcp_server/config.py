@@ -3,6 +3,7 @@
 import dataclasses
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from typing import Mapping, Optional
 
 logger = logging.getLogger(__name__)
@@ -55,3 +56,12 @@ class Config:
             else:
                 params.append(f"{f.name}=None")
         return f'Config({", ".join(params)})'
+
+
+class MetadataField(str, Enum):
+    """
+    Enum to hold predefined names of Keboola metadata fields
+    Add others as needed
+    """
+
+    DESCRIPTION = "KBC.description"

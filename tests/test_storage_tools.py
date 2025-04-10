@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.storage_tools import (
     BucketInfo,
     TableDetail,
@@ -23,13 +23,6 @@ def test_config() -> Config:
     return Config(
         storage_token="test-token",
         storage_api_url="https://connection.test.keboola.com",
-        log_level="INFO",
-        snowflake_account="test-account",
-        snowflake_user="test-user",
-        snowflake_password="test-password",
-        snowflake_warehouse="test-warehouse",
-        snowflake_database="test-database",
-        snowflake_role="test-role",
     )
 
 
@@ -93,7 +86,7 @@ def mock_update_table_description_response() -> Dict[str, Any]:
         "metadata": [
             {
                 "id": "1724427984",
-                "key": "KBC.description",
+                "key": MetadataField.DESCRIPTION.value,
                 "value": "Updated test description",
                 "provider": "user",
                 "timestamp": "2025-04-07T16:47:18+0200",
@@ -108,7 +101,7 @@ def mock_update_bucket_description_response() -> List[Dict[str, Any]]:
     return [
         {
             "id": "999",
-            "key": "KBC.description",
+            "key": MetadataField.DESCRIPTION.value,
             "value": "Updated bucket description",
             "provider": "user",
             "timestamp": "2025-04-07T17:47:18+0200",
@@ -147,6 +140,8 @@ async def test_get_bucket_metadata(
     if "data_size_bytes" in expected_bucket:
         assert result.data_size_bytes == expected_bucket["data_size_bytes"]
 
+    keboola_client.storage_client.buckets.detail.assert_called_once_with(bucket_id)
+
 
 @pytest.mark.asyncio
 async def test_list_bucket_info(mcp_context_client, mock_buckets: List[Dict[str, Any]]) -> None:
@@ -154,8 +149,6 @@ async def test_list_bucket_info(mcp_context_client, mock_buckets: List[Dict[str,
 
     keboola_client = mcp_context_client.session.state["sapi_client"]
     keboola_client.storage_client.buckets = MagicMock()
-
-    # Mock the list method to return the mock_buckets data
     keboola_client.storage_client.buckets.list = MagicMock(return_value=mock_buckets)
 
     result = await list_bucket_info(mcp_context_client)
@@ -164,7 +157,6 @@ async def test_list_bucket_info(mcp_context_client, mock_buckets: List[Dict[str,
     assert len(result) == len(mock_buckets)
     assert all(isinstance(bucket, BucketInfo) for bucket in result)
 
-    # Assert that the returned BucketInfo objects match the mock data
     for expected_bucket, result_bucket in zip(mock_buckets, result):
         assert result_bucket.id == expected_bucket["id"]
         assert result_bucket.name == expected_bucket["name"]
@@ -211,6 +203,10 @@ async def test_get_table_metadata(mcp_context_client, mock_table_data) -> None:
     ):
         assert col_id.name == exp_col_id["name"]
         assert col_id.db_identifier == exp_col_id["db_identifier"]
+    keboola_client.storage_client.tables.detail.assert_called_once_with(
+        mock_table_data["raw_table_data"]["id"]
+    )
+    workspace_manager.get_table_fqn.assert_awaited_once_with(mock_table_data["raw_table_data"])
 
 
 @pytest.mark.asyncio
@@ -232,6 +228,15 @@ async def test_update_bucket_description_success(
     assert result.success is True
     assert result.description == "Updated bucket description"
     assert result.timestamp == "2025-04-07T17:47:18+0200"
+    keboola_client.post.assert_called_once_with(
+        endpoint="buckets/in.c-test.bucket-id/metadata",
+        data={
+            "provider": "user",
+            "metadata": [
+                {"key": MetadataField.DESCRIPTION.value, "value": "Updated bucket description"}
+            ],
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -254,3 +259,12 @@ async def test_update_table_description_success(
     assert result.success is True
     assert result.description == "Updated test description"
     assert result.timestamp == "2025-04-07T16:47:18+0200"
+    keboola_client.post.assert_called_once_with(
+        endpoint="tables/in.c-test.test-table/metadata",
+        data={
+            "provider": "user",
+            "metadata": [
+                {"key": MetadataField.DESCRIPTION.value, "value": "Updated test description"}
+            ],
+        },
+    )

@@ -7,6 +7,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.sql_tools import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,10 @@ def extract_description(values: Dict[str, Any]) -> Optional[str]:
             (
                 value
                 for item in metadata
-                if (item.get("key") == "KBC.description" and (value := item.get("value")))
+                if (
+                    item.get("key") == MetadataField.DESCRIPTION.value
+                    and (value := item.get("value"))
+                )
             ),
             None,
         )
@@ -240,7 +244,10 @@ async def update_bucket_description(
     client = KeboolaClient.from_state(ctx.session.state)
     metadata_endpoint = f"buckets/{bucket_id}/metadata"
 
-    data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+    data = {
+        "provider": "user",
+        "metadata": [{"key": MetadataField.DESCRIPTION.value, "value": description}],
+    }
     response = await client.post(endpoint=metadata_endpoint, data=data)
 
     return UpdateBucketDescriptionResponse.model_validate(response)
@@ -258,7 +265,10 @@ async def update_table_description(
     client = KeboolaClient.from_state(ctx.session.state)
     metadata_endpoint = f"tables/{table_id}/metadata"
 
-    data = {"provider": "user", "metadata": [{"key": "KBC.description", "value": description}]}
+    data = {
+        "provider": "user",
+        "metadata": [{"key": MetadataField.DESCRIPTION.value, "value": description}],
+    }
     response = await client.post(endpoint=metadata_endpoint, data=data)
 
     return UpdateTableDescriptionResponse.model_validate(response)
