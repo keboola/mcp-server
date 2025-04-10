@@ -232,7 +232,10 @@ async def update_bucket_description(
     bucket_id: Annotated[str, Field(description="The ID of the bucket to update.")],
     description: Annotated[str, Field(description="The new description for the bucket.")],
     ctx: Context,
-) -> UpdateBucketDescriptionResponse:
+) -> Annotated[
+    UpdateBucketDescriptionResponse,
+    Field(description="The response object of the Bucket description update."),
+]:
     """Update the description for a given Keboola bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     metadata_endpoint = f"buckets/{bucket_id}/metadata"
@@ -247,7 +250,10 @@ async def update_table_description(
     table_id: Annotated[str, Field(description="The ID of the table to update.")],
     description: Annotated[str, Field(description="The new description for the table.")],
     ctx: Context,
-) -> UpdateTableDescriptionResponse:
+) -> Annotated[
+    UpdateTableDescriptionResponse,
+    Field(description="The response object of the Table description update."),
+]:
     """Update the description for a given Keboola table."""
     client = KeboolaClient.from_state(ctx.session.state)
     metadata_endpoint = f"tables/{table_id}/metadata"
