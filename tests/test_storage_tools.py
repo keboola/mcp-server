@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.storage_tools import (
     BucketInfo,
