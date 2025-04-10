@@ -215,7 +215,7 @@ async def test_update_bucket_description_success(
 ) -> None:
     """Test successful update of bucket description."""
 
-    keboola_client = mcp_context_client.session.state["sapi_client"]
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.post = AsyncMock(return_value=mock_update_bucket_description_response)
 
     result = await update_bucket_description(
