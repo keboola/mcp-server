@@ -7,11 +7,11 @@ from mcp.server.fastmcp import Context
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.component_tools import (
     FULLY_QUALIFIED_ID_SEPARATOR,
-    ComponentConfigurationPair,
+    ComponentConfiguration,
     ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
-    ReducedComponentConfigurationPair,
+    ReducedComponentConfiguration,
     TransformationConfiguration,
     _get_transformation_configuration,
     _handle_component_types,
@@ -161,7 +161,7 @@ def assert_retrieve_components() -> (
         assert all(isinstance(component.configurations, list) for component in result)
         assert all(
             all(
-                isinstance(config, ReducedComponentConfigurationPair)
+                isinstance(config, ReducedComponentConfiguration)
                 for config in component.configurations
             )
             for component in result
@@ -189,7 +189,7 @@ def assert_retrieve_components() -> (
         assert all(len(component.configurations) == len(configurations) for component in result)
         assert all(
             all(
-                isinstance(config, ReducedComponentConfigurationPair)
+                isinstance(config, ReducedComponentConfiguration)
                 for config in component.configurations
             )
             for component in result
@@ -368,7 +368,7 @@ async def test_get_component_configuration_details(
 
     result = await get_component_configuration_details("keboola.ex-aws-s3", "123", context)
 
-    assert isinstance(result, ComponentConfigurationPair)
+    assert isinstance(result, ComponentConfiguration)
     assert result.component is not None
     assert result.component.component_id == mock_component["id"]
     assert result.component.component_name == mock_component["name"]
@@ -437,7 +437,7 @@ def test_set_fully_qualified_id(
     configuration = mock_configuration
     component["id"] = component_id
     configuration["id"] = configuration_id
-    component_configuration = ReducedComponentConfigurationPair.model_validate(
+    component_configuration = ReducedComponentConfiguration.model_validate(
         {**configuration, "component_id": component_id}
     )
     assert component_configuration.fully_qualified_id == expected
@@ -494,7 +494,7 @@ async def test_create_transformation_configuration(
         test_input_table_names,
     )
 
-    assert isinstance(new_transformation_configuration, ComponentConfigurationPair)
+    assert isinstance(new_transformation_configuration, ComponentConfiguration)
     assert new_transformation_configuration.component is not None
     assert new_transformation_configuration.component.component_id == expected_component_id
     assert new_transformation_configuration.component_id == expected_component_id

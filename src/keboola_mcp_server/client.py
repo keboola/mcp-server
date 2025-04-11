@@ -75,6 +75,7 @@ class KeboolaClient:
 
         Args:
             endpoint: API endpoint to call
+            params: Query parameters for the request
 
         Returns:
             API response as dictionary
