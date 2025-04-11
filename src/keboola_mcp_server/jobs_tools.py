@@ -127,8 +127,8 @@ SORT_ORDER_VALUES = Literal["asc", "desc"]
 def add_jobs_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     jobs_tools = [
-        retrieve_jobs_in_project,
-        get_job_details,
+        retrieve_jobs,
+        get_job_detail,
     ]
     for tool in jobs_tools:
         logger.info(f"Adding tool {tool.__name__} to the MCP server.")
@@ -137,7 +137,7 @@ def add_jobs_tools(mcp: FastMCP) -> None:
     logger.info("Jobs tools initialized.")
 
 
-async def retrieve_jobs_in_project(
+async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
         JOB_STATUS,
@@ -221,7 +221,7 @@ async def retrieve_jobs_in_project(
     return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
 
 
-async def get_job_details(
+async def get_job_detail(
     job_id: Annotated[
         str,
         Field(description="The unique identifier of the job whose details should be retrieved."),
