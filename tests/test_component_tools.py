@@ -8,15 +8,19 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.component_tools import (
     FULLY_QUALIFIED_ID_SEPARATOR,
     ComponentConfigurationPair,
-    ReducedComponentConfigurationPair,
+    ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
-    ComponentType,
-    get_component_configuration_details,
+    ReducedComponentConfigurationPair,
+    TransformationConfiguration,
+    _get_transformation_configuration,
     _handle_component_types,
+    create_sql_transformation,
+    get_component_configuration_details,
     retrieve_components_configurations,
     retrieve_transformations_configurations,
 )
+from keboola_mcp_server.sql_tools import WorkspaceManager
 
 
 @pytest.fixture
@@ -437,3 +441,178 @@ def test_set_fully_qualified_id(
         {**configuration, "component_id": component_id}
     )
     assert component_configuration.fully_qualified_id == expected
+
+
+@pytest.mark.parametrize(
+    "sql_dialect, expected_component_id, expected_configuration_id",
+    [
+        ("Snowflake", "keboola.snowflake-transformation", "1234"),
+        ("BigQuery", "keboola.bigquery-transformation", "5678"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_create_transformation_configuration(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    sql_dialect: str,
+    expected_component_id: str,
+    expected_configuration_id: str,
+    test_branch_id: str,
+):
+    """Test create_transformation_configuration tool."""
+    context = mcp_context_components_configs
+
+    # Mock the WorkspaceManager
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = AsyncMock(return_value=sql_dialect)
+    # Mock the KeboolaClient
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component = mock_component
+    component["id"] = expected_component_id
+    configuration = mock_configuration
+    configuration["id"] = expected_configuration_id
+
+    keboola_client.get = AsyncMock(return_value=component)
+    keboola_client.post = AsyncMock(return_value=configuration)
+
+    test_name = mock_configuration["name"]
+    test_description = mock_configuration["description"]
+    test_sql_statements = ["SELECT * FROM test", "SELECT * FROM test2"]
+    test_output_table_names = []  # empty do not test here
+    test_bucket_name = "test_bucket"
+    test_input_table_names = []  # empty do not test here
+
+    # Test the create_sql_transformation tool
+    new_transformation_configuration = await create_sql_transformation(
+        context,
+        test_name,
+        test_description,
+        test_sql_statements,
+        test_output_table_names,
+        test_bucket_name,
+        test_input_table_names,
+    )
+
+    assert isinstance(new_transformation_configuration, ComponentConfigurationPair)
+    assert new_transformation_configuration.component is not None
+    assert new_transformation_configuration.component.component_id == expected_component_id
+    assert new_transformation_configuration.component_id == expected_component_id
+    assert new_transformation_configuration.configuration_id == expected_configuration_id
+    assert new_transformation_configuration.configuration_name == test_name
+    assert new_transformation_configuration.configuration_description == test_description
+
+    keboola_client.get.assert_called_once_with(
+        f"branch/{test_branch_id}/components/{expected_component_id}"
+    )
+    keboola_client.post.assert_called_once_with(
+        f"branch/{test_branch_id}/components/{expected_component_id}/configs",
+        data={
+            "name": test_name,
+            "description": test_description,
+            "configuration": {
+                "parameters": {
+                    "blocks": [
+                        {
+                            "name": "Block 0",
+                            "codes": [{"name": "Code 0", "script": test_sql_statements}],
+                        }
+                    ]
+                },
+                "storage": {
+                    "input": {},
+                    "output": {},
+                },
+            },
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "sql_statements, input_table_names, output_table_names, output_bucket_name",
+    [
+        (["SELECT * FROM test", "SELECT * FROM test2"], [], [], "test_bucket"),
+        (
+            # input bucket name without in.c- prefix
+            # output bucket name without out.c- prefix
+            ["SELECT * FROM test", "SELECT * FROM test2"],
+            [("test_bucket.test_input_table", "test_input_table")],
+            ["test_output_table"],
+            "test_bucket",
+        ),
+        (
+            # input full table name with table name and with in.c- prefix
+            # output bucket name with out.c- prefix
+            ["SELECT * FROM test", "SELECT * FROM test2"],
+            [("in.c-test_bucket.test_input_table", "test_input_table")],
+            ["test_output_table"],
+            "out.c-test_bucket",
+        ),
+        (
+            # input full table name without table name
+            # no output table names
+            ["SELECT * FROM test", "SELECT * FROM test2"],
+            [("in.c-test_bucket", "test_input_table"), ("test_bucket2", "test_input_table2")],
+            [],
+            "test_bucket",
+        ),
+    ],
+)
+def test_get_transformation_configuration(
+    sql_statements: list[str],
+    input_table_names: list[tuple[str, str]],
+    output_table_names: list[str],
+    output_bucket_name: str,
+):
+    get_full_name_from_bucket_and_table = lambda bucket, table: (
+        (f"{bucket}" if table == bucket.split(".")[-1] else f"{bucket}.{table}")
+        if bucket.startswith("in.c-")
+        else (f"in.c-{bucket}" if table == bucket.split(".")[-1] else f"in.c-{bucket}.{table}")
+    )
+
+    expected_out_bucket_name = (
+        f"out.c-{output_bucket_name}" if "out.c-" not in output_bucket_name else output_bucket_name
+    )
+    expected_input_tables = [
+        (get_full_name_from_bucket_and_table(bucket, table), table)
+        for bucket, table in input_table_names
+    ]
+
+    configuration = _get_transformation_configuration(
+        sql_statements=sql_statements,
+        input_table_names=input_table_names,
+        output_table_names=output_table_names,
+        output_bucket_name=output_bucket_name,
+    )
+
+    assert configuration is not None
+    assert isinstance(configuration, TransformationConfiguration)
+    assert configuration.parameters is not None
+    # we expect only one block and one code for the given sql statements
+    assert configuration.parameters.blocks[0].codes[0].name == "Code 0"
+    assert configuration.parameters.blocks[0].codes[0].script == sql_statements
+    assert configuration.storage is not None
+
+    if input_table_names:
+        assert configuration.storage.input is not None
+        assert configuration.storage.input.tables is not None
+        assert len(configuration.storage.input.tables) == len(input_table_names)
+        for table, (expected_full_bucket_name, expected_table_name) in zip(
+            configuration.storage.input.tables, expected_input_tables
+        ):
+            assert table.destination is not None
+            assert table.source is not None
+            assert table.source == expected_full_bucket_name
+            assert table.destination == expected_table_name
+
+    if output_table_names:
+        assert configuration.storage.output is not None
+        assert configuration.storage.output.tables is not None
+        assert len(configuration.storage.output.tables) == len(output_table_names)
+        for table, expected_table_name in zip(
+            configuration.storage.output.tables, output_table_names
+        ):
+            assert table.destination is not None
+            assert table.source is not None
+            assert table.source == expected_table_name
+            assert table.destination == f"{expected_out_bucket_name}.{expected_table_name}"
