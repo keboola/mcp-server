@@ -2,9 +2,10 @@ import logging
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union, cast, get_args
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field, field_validator, validator
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.sql_tools import get_sql_dialect
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,8 @@ def add_component_tools(mcp: FastMCP) -> None:
     )
     logger.info(f"Added tool {RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
-    mcp.add_tool(
-        create_snowflake_transformation
-    )
-    logger.info(f"Added tool {create_snowflake_transformation.__name__} to the MCP server.")
+    mcp.add_tool(create_sql_transformation)
+    logger.info(f"Added tool {create_sql_transformation.__name__} to the MCP server.")
 
     logger.info("Component tools initialized.")
 
@@ -283,7 +282,9 @@ async def _retrieve_components_configurations_by_types(
         }
         raw_components_configs_by_type = await client.get(endpoint, params=params)
         # extend the list with the raw components with configurations
-        raw_components_with_configs.extend(cast(List[Dict[str, Any]], raw_components_configs_by_type))
+        raw_components_with_configs.extend(
+            cast(List[Dict[str, Any]], raw_components_configs_by_type)
+        )
 
     # build components with configurations list, each item contains a component and its associated configurations
     components_with_configs = [
@@ -370,6 +371,143 @@ async def _get_component_details(
     return Component.model_validate(raw_component)
 
 
+def _get_sql_transformation_id_from_sql_dialect(
+    sql_dialect: str,
+) -> str:
+    """
+    Utility function to retrieve the SQL transformation ID from the given SQL dialect.
+    :param sql_dialect: The SQL dialect
+    :return: The SQL transformation ID
+    :raises ValueError: If the SQL dialect is not supported
+    """
+    if sql_dialect.lower() == "snowflake":
+        return "keboola.snowflake-transformation"
+    elif sql_dialect.lower() == "bigquery":
+        return "keboola.bigquery-transformation"
+    else:
+        raise ValueError(f"Unsupported SQL dialect: {sql_dialect}")
+
+
+class TransformationConfiguration(BaseModel):
+    """The configuration for the transformation."""
+
+    class Parameters(BaseModel):
+        """The parameters for the transformation."""
+
+        class Block(BaseModel):
+            """The block for the transformation."""
+
+            class Code(BaseModel):
+                """The code for the transformation block."""
+
+                name: str = Field(description="The name of the current code script")
+                script: list[str] = Field(description="List of current code statements")
+
+            name: str = Field(description="The name of the current block")
+            codes: list[Code] = Field(description="The code scripts")
+
+        blocks: list[Block] = Field(description="The blocks for the transformation")
+
+    class Storage(BaseModel):
+        """The storage configuration for the transformation. For now it stores only input and output tables."""
+
+        class Destination(BaseModel):
+            """Tables' destinations for the transformation. Either input or output tables."""
+
+            class Table(BaseModel):
+                """The table used in the transformation"""
+
+                destination: Optional[str] = Field(
+                    description="The destination table name", default=None
+                )
+                source: Optional[str] = Field(description="The source table name", default=None)
+
+            tables: list[Table] = Field(
+                description="The tables used in the transformation", default=[]
+            )
+
+        input: Optional[Destination] = Field(
+            description="The input tables for the transformation", default=None
+        )
+        output: Optional[Destination] = Field(
+            description="The output tables for the transformation", default=None
+        )
+
+    parameters: Parameters = Field(description="The parameters for the transformation")
+    storage: Storage = Field(description="The storage configuration for the transformation")
+
+
+def _get_transformation_configuration(
+    sql_statements: list[str],
+    input_table_names: list[tuple[str, str]],
+    output_table_names: list[str],
+    output_bucket_name: str,
+) -> TransformationConfiguration:
+    """
+    Utility function to set the transformation configuration from SQL statements, input and output table names, and
+    bucket name. It creates the expected configuration for the transformation, parameters and storage.
+    :param sql_statements: The SQL statements
+    :param input_table_names: The input table names
+    :param output_table_names: The output table names
+    :param bucket_name: The bucket name
+    :return: The storage configuration - supports input and output tables only
+    """
+    # handle output bucket name generated/copied by LLM (stochastic), it should follow: out.c-bucket_name
+    output_bucket_name = (
+        output_bucket_name
+        if output_bucket_name.startswith("out.c-")
+        else f"out.c-{output_bucket_name}"
+    )
+    # init Storage Configuration with empty input and output tables
+    storage = TransformationConfiguration.Storage()
+    # build input table configuration if input table names are provided
+    if input_table_names:
+        storage.input = TransformationConfiguration.Storage.Destination(
+            tables=[
+                TransformationConfiguration.Storage.Destination.Table(
+                    source=(
+                        full_bucket_table_name
+                        if "in.c-" in full_bucket_table_name
+                        else f"in.c-{full_bucket_table_name}"
+                    ),
+                    destination=table_name,
+                )
+                for full_bucket_table_name, table_name in input_table_names
+            ]
+        )
+    # build output table configuration if output table names are provided
+    if output_table_names:
+        storage.output = TransformationConfiguration.Storage.Destination(
+            tables=[
+                TransformationConfiguration.Storage.Destination.Table(
+                    source=table_name,
+                    # handle full bucket table name generated/copied by LLM (stochastic)
+                    # it should follow: out.c-bucket_name.table_name
+                    destination=(
+                        output_bucket_name
+                        if table_name == output_bucket_name.split(".")[-1]
+                        else f"{output_bucket_name}.{table_name}"
+                    ),
+                )
+                for table_name in output_table_names
+            ]
+        )
+    # build parameters configuration out of SQL statements
+    parameters = TransformationConfiguration.Parameters(
+        blocks=[
+            TransformationConfiguration.Parameters.Block(
+                name=f"Block 0",
+                codes=[
+                    TransformationConfiguration.Parameters.Block.Code(
+                        name=f"Code 0", script=[statement for statement in sql_statements]
+                    )
+                ],
+            )
+        ]
+    )
+    return TransformationConfiguration(parameters=parameters, storage=storage)
+
+
 ############################## End of utility functions #########################################
 
 ############################## Component tools #########################################
@@ -400,7 +538,8 @@ async def retrieve_components_configurations(
 ]:
     """
     Retrieve components configurations in the project based on specified component_types or component_ids.
-    If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding component_types.
+    If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
+    component_types.
     USAGE:
         - Use when you want to see components configurations in the project for given component_types.
         - Use when you want to see components configurations in the project for given component_ids.
@@ -482,7 +621,9 @@ async def get_component_configuration_details(
         str,
         Field(
             str,
-            description="Unique identifier of the Keboola component/transformation configuration you want details about",
+            description=(
+                "Unique identifier of the Keboola component/transformation configuration you want details about"
+            ),
         ),
     ],
     ctx: Context,
@@ -538,161 +679,138 @@ async def get_component_configuration_details(
         }
     )
 
-class SnowFlakeConfigurationParameters(BaseModel):
-    """The parameters for the snowflake sql transformation."""
-    class Block(BaseModel):
-        """The block for the snowflake sql transformation."""
-        class Code(BaseModel):
-            """
-            The code for the snowflake sql transformation block.
-            - each sql statement should end with a semicolon
-            - each table name should be quoted using double quotes
-            """
-            name: str = Field(description="The name of the current code script")
-            script: list[str] = Field(description="List of SQL statements")
-        name: str = Field(description="The name of the current block")
-        codes: list[Code] = Field(description="The code scripts")
-    blocks: list[Block] = Field(description="The blocks for the transformation")
 
-
-class SnowFlakeConfigurationStorage(BaseModel):
-    """The storage configuration for the transformation.
-    Stores the input and output tables for the transformation.
-    """
-    class Destination(BaseModel):
-        class Table(BaseModel):
-            """The table to be used for the transformation"""
-            destination: str = Field(description="The destination of the table for the transformation")
-            source: str = Field(description="The source table name for the transformation (mapping used in the sql query)")
-        tables: list[Table] = Field(description="The tables to be used for the transformation")
-
-    input: Optional[Destination] = Field(description="The input tables for the transformation", default = None)
-    output: Optional[Destination] = Field(description="The output tables for the transformation", default = None)
-
-
-async def create_snowflake_transformation(
+async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
         str,
         Field(
             str,
-            description="The name of the snowflake transformation",
-        ),
-    ],
-    sql_statements: Annotated[
-        list[str],
-        Field(
-            list[str],
-            description="The snowflake exacutable sql query statemenets each ending with a semicolon and using double quotes for table names.",
+            description="The name of the SQL transformation expressing the sql functionality.",
         ),
     ],
     description: Annotated[
         str,
         Field(
             str,
-            description="The description of the snowflake transformation",
+            description=(
+                "The detailed description of the SQL transformation capturing the user intent, explaining the "
+                "SQL query, and the expected output."
+            ),
         ),
-    ] = '',
-    input_table_names: Annotated[
-        list[tuple[str, str]],
+    ],
+    sql_statements: Annotated[
+        list[str],
         Field(
-            list[tuple[str, str]],
-            description="List of tuples, each containing the full input table name (bucket.table) and its table name (mapping) used in the sql transformation query",
+            list[str],
+            description=(
+                "The SQL exacutable query statemenets following the current SQL dialect. Each statement is a "
+                "separate item in the list."
+            ),
         ),
-    ] = [],
+    ],
     output_table_names: Annotated[
         list[str],
         Field(
             list[str],
-            description="The names of the output tables which are used in and created by the sql transformation",
+            description=(
+                "Optional list of the names of the output tables which are used in and created by the SQL query."
+            ),
         ),
     ] = [],
     bucket_name: Annotated[
         str,
         Field(
             str,
-            description="Only the name of the bucket to use for the output tables",
+            description="The name of the bucket to use for the output tables.",
         ),
     ] = "experimental-bucket",
+    input_table_names: Annotated[
+        list[tuple[str, str]],
+        Field(
+            list[tuple[str, str]],
+            description=(
+                "Optional list of tuples, each containing the full input table name (bucket.table) and its table name "
+                "(mapping) used in the SQL query."
+            ),
+        ),
+    ] = [],
 ) -> Optional[ComponentConfigurationPair]:
     """
-    Create a snowflake sql transformation from the given name, sql query, description, and output table names
+    Create an SQL transformation from the given name, sql query following current SQL dialect, description, output table
+    names, and optionally with input tables.
     CONSIDERATIONS:
-        - Each statement in the query is executable and must end with a semicolon.
-        - Each table name in the query should be quoted using double quotes.
+        - Each statement in the query is executable and must follow the current SQL dialect (BigQuery, Snowflake).
         - Each created table within the query should be added to the output table names list.
-        - Each input table used in the query along with its full bucket name should be added to the input table names list.
-        - If the user does not specify, transformation name and description are generated based on the sql query and user intent.
+        - When using input tables having full bucket name specified within the query, then each table should be added to
+        the input table names list along with its full bucket name.
+        - Unless otherwise specified by user, transformation name and description are generated based on the sql query
+        and user intent.
     USAGE:
-        - Use when you want to create a new snowflake transformation from a sql query.
-    EXAMPLE:
-        - user_input: `Can you save me the query as transformation you generated?`
-            -> set the sql_query to the query if you know it, and set other parameters accordingly.
-            -> returns the created snowflake transformation configuration if successful.
+        - Use when you want to create a new SQL transformation from a sql query.
+    EXAMPLES:
+        - user_input: `Can you save me the SQL you generated?`
+            -> set the sql_statements to the query, and set other parameters accordingly.
+            -> returns the created SQL transformation configuration if successful.
+        - user_input: `Generate me an SQL transformation which [USER INTENT]`
+            -> generate the query based on the [USER INTENT], and set other parameters accordingly.
+            -> returns the created SQL transformation configuration if successful.
     """
-    client = KeboolaClient.from_state(ctx.session.state)
-    SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
-    endpoint = f"branch/{client.storage_client._branch_id}/components/{SNOWFLAKE_TRANSFORMATION_ID}/configs"
-    output = None # empty
-    input = None # empty
-    if output_table_names:
-        output = SnowFlakeConfigurationStorage.Destination(
-                tables=[
-                    SnowFlakeConfigurationStorage.Destination.Table(
-                        destination = #"out.c-" + "-".join(name.split()) + "." + table_name,
-                        (
-                            f"{bucket_name}"
-                            if table_name == bucket_name.split('.')[-1] else 
-                            f"{bucket_name}.{table_name}"
-                        )
-                        if "out.c-" in f"{bucket_name}" else
-                        (
-                            f"out.c-{bucket_name}"
-                            if table_name == bucket_name.split('.')[-1] else
-                            f"out.c-{bucket_name}.{table_name}"
-                        ),
-                        source=table_name
-                    ) for table_name in output_table_names
-                ]
-            )
-    if input_table_names:
-        input = SnowFlakeConfigurationStorage.Destination(
-            tables = [
-            SnowFlakeConfigurationStorage.Destination.Table(
-                source= full_bucket_table_name if "in.c-" in full_bucket_table_name else f"in.c-{full_bucket_table_name}",
-                destination=table_name
-            )
-            for full_bucket_table_name, table_name in input_table_names
-        ])
 
-    storage = SnowFlakeConfigurationStorage(
-        input=input,
-        output=output
+    # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
+    # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
+    sql_dialect = await get_sql_dialect(ctx)
+    transformation_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    logger.info(f"SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}")
+
+    # Process the data to be stored in the storage configuration
+    configuration = _get_transformation_configuration(
+        sql_statements, input_table_names, output_table_names, bucket_name
     )
-    sql_parameters = SnowFlakeConfigurationParameters(
-        blocks=[
-            SnowFlakeConfigurationParameters.Block(
-                name=f"block-0",
-                codes=[
-                    SnowFlakeConfigurationParameters.Block.Code(
-                    name=f"code-0",
-                    script=[sql_statements[j] for j in range(len(sql_statements))] 
-                )]
-            )
-        ]
-    )
+
+    # Get the transformation configuration dictionary as required by the API
     configuration = {
-        "parameters": sql_parameters.model_dump(),
+        "parameters": configuration.parameters.model_dump(),
         "storage": {
-            "input": storage.input.model_dump() if storage.input else {},
-            "output": storage.output.model_dump() if storage.output else {}
-        }
+            # specify explicitly the input and output tables because they are required by the API
+            # if input or output tables are not provided then we pass empty dicts as required by the API
+            "input": (
+                configuration.storage.input.model_dump() if configuration.storage.input else {}
+            ),
+            "output": (
+                configuration.storage.output.model_dump() if configuration.storage.output else {}
+            ),
+        },
     }
-    ret = await client.post(endpoint, data={
-        "name": name,
-        "description": description,
-        "configuration": configuration
-    })
-    return ComponentConfigurationPair(**ret, component_id=SNOWFLAKE_TRANSFORMATION_ID, component=None)
+
+    client = KeboolaClient.from_state(ctx.session.state)
+    endpoint = f"branch/{client.storage_client._branch_id}/components/{transformation_id}/configs"
+    # Try to create the new transformation configuration and return the full object if successful
+    # or log an error and raise an exception if not
+    try:
+        # Create the new transformation configuration
+        logger.info(
+            f"Creating new transformation configuration: {name} for component: {transformation_id}."
+        )
+        new_raw_transformation_configuration = await client.post(
+            endpoint,
+            data={"name": name, "description": description, "configuration": configuration},
+        )
+
+        component = await _get_component_details(client=client, component_id=transformation_id)
+        new_transformation_configuration = ComponentConfigurationPair(
+            **new_raw_transformation_configuration,
+            component_id=transformation_id,
+            component=component,
+        )
+        logger.info(
+            f"Created new transformation configuration: {new_transformation_configuration.configuration_id} for "
+            f"component: {transformation_id}."
+        )
+        return new_transformation_configuration
+    except Exception as e:
+        logger.error(f"Error creating new transformation configuration: {e}")
+        raise e
+
 
 ############################## End of component tools #########################################
