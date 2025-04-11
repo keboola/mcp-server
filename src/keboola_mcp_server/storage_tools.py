@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def add_storage_tools(mcp: FastMCP) -> None:
-    """Add tools to the MCP server."""
+    """Adds tools to the MCP server."""
     mcp.add_tool(get_bucket_detail)
     mcp.add_tool(retrieve_buckets_in_project)
     mcp.add_tool(get_table_detail)
@@ -23,7 +23,7 @@ def add_storage_tools(mcp: FastMCP) -> None:
 
 
 def extract_description(values: Dict[str, Any]) -> Optional[str]:
-    """Extract the description from values or metadata."""
+    """Extracts the description from values or metadata."""
     if description := values.get("description"):
         return description
     else:
@@ -131,7 +131,7 @@ class TableDetail(BaseModel):
 async def get_bucket_detail(
     bucket_id: Annotated[str, Field(description="Unique ID of the bucket.")], ctx: Context
 ) -> BucketDetail:
-    """Get detailed information about a specific bucket."""
+    """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
     raw_bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
@@ -139,8 +139,8 @@ async def get_bucket_detail(
     return BucketDetail(**raw_bucket)
 
 
-async def retrieve_buckets_in_project(ctx: Context) -> List[BucketDetail]:
-    """Retrieve information about all buckets in the project."""
+async def retrieve_buckets(ctx: Context) -> List[BucketDetail]:
+    """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = client.storage_client.buckets.list()
@@ -151,7 +151,7 @@ async def retrieve_buckets_in_project(ctx: Context) -> List[BucketDetail]:
 async def get_table_detail(
     table_id: Annotated[str, Field(description="Unique ID of the table.")], ctx: Context
 ) -> TableDetail:
-    """Get detailed information about a specific table including its DB identifier and column information."""
+    """Gets detailed information about a specific table including its DB identifier and column information."""
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
 
@@ -168,10 +168,10 @@ async def get_table_detail(
     )
 
 
-async def retrieve_bucket_tables_in_project(
+async def retrieve_bucket_tables(
     bucket_id: Annotated[str, Field(description="Unique ID of the bucket.")], ctx: Context
 ) -> list[TableDetail]:
-    """Retrieve all tables in a specific bucket with their basic information."""
+    """Retrieves all tables in a specific bucket with their basic information."""
     client = KeboolaClient.from_state(ctx.session.state)
     # TODO: requesting "metadata" to get the table description;
     #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.

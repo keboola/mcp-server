@@ -123,7 +123,7 @@ async def get_component_configuration_detail(
     )
 
 
-async def get_component_details(
+async def get_component_detail(
     component_id: Annotated[
         str, Field(str, description="The ID of the Keboola component you want details about")
     ],
