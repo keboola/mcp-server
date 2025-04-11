@@ -466,9 +466,17 @@ def _get_transformation_configuration(
             tables=[
                 TransformationConfiguration.Storage.Destination.Table(
                     source=(
-                        full_bucket_table_name
+                        (
+                            full_bucket_table_name
+                            if table_name == full_bucket_table_name.split(".")[-1]
+                            else f"{full_bucket_table_name}.{table_name}"
+                        )
                         if "in.c-" in full_bucket_table_name
-                        else f"in.c-{full_bucket_table_name}"
+                        else (
+                            f"in.c-{full_bucket_table_name}"
+                            if table_name == full_bucket_table_name.split(".")[-1]
+                            else f"in.c-{full_bucket_table_name}.{table_name}"
+                        )
                     ),
                     destination=table_name,
                 )
@@ -735,7 +743,13 @@ async def create_sql_transformation(
             ),
         ),
     ] = [],
-) -> Optional[ComponentConfigurationPair]:
+) -> Annotated[
+    ComponentConfigurationPair,
+    Field(
+        ComponentConfigurationPair,
+        description="Newly created SQL Transformation Configuration.",
+    ),
+]:
     """
     Create an SQL transformation from the given name, sql query following current SQL dialect, description, output table
     names, and optionally with input tables.
@@ -769,7 +783,7 @@ async def create_sql_transformation(
     )
 
     # Get the transformation configuration dictionary as required by the API
-    configuration = {
+    config_dict = {
         "parameters": configuration.parameters.model_dump(),
         "storage": {
             # specify explicitly the input and output tables because they are required by the API
@@ -794,9 +808,8 @@ async def create_sql_transformation(
         )
         new_raw_transformation_configuration = await client.post(
             endpoint,
-            data={"name": name, "description": description, "configuration": configuration},
+            data={"name": name, "description": description, "configuration": config_dict},
         )
-
         component = await _get_component_details(client=client, component_id=transformation_id)
         new_transformation_configuration = ComponentConfigurationPair(
             **new_raw_transformation_configuration,
