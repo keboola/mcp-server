@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 ############################## Add tools to the MCP server #########################################
 
+# Regarding the conventional naming of entity models for components and their associated configurations,
+# we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
+# These tool names now reflect their conventional usage, removing redundant parts for users while still
+# providing the same functionality as described in the original tool names.
 RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components_in_project"
 RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations_in_project"
 GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = "get_component_details"
@@ -45,7 +49,7 @@ FULLY_QUALIFIED_ID_SEPARATOR: str = "::"
 
 class ReducedComponent(BaseModel):
     """
-    A Reduced Component containing reduced information about the Keboola Component used in a list.
+    A Reduced Component containing reduced information about the Keboola Component used in a list or comprehensive view.
     """
 
     component_id: str = Field(
@@ -65,20 +69,22 @@ class ReducedComponent(BaseModel):
     )
     component_type: str = Field(
         description="The type of the component",
-        validation_alias=AliasChoices("type", "component_type"),
+        validation_alias=AliasChoices("type", "component_type", "componentType", "component-type"),
         serialization_alias="componentType",
     )
     component_description: Optional[str] = Field(
         description="The description of the component",
         default=None,
-        validation_alias=AliasChoices("description", "component_description"),
+        validation_alias=AliasChoices(
+            "description", "component_description", "componentDescription", "component-description"
+        ),
         serialization_alias="componentDescription",
     )
 
 
-class ReducedComponentConfigurationPair(BaseModel):
+class ReducedComponentConfiguration(BaseModel):
     """
-    A Reduced Component Configuration containing Keboola Component ID and the reduced information about configuration
+    A Reduced Component Configuration containing the Keboola Component ID and the reduced information about configuration
     used in a list.
     """
 
@@ -145,7 +151,9 @@ class ReducedComponentConfigurationPair(BaseModel):
         super().__init__(**data)
         if self.fully_qualified_id is None:
             if self.configuration_id and self.component_id:
-                self.fully_qualified_id = f"{self.component_id}::{self.configuration_id}"
+                self.fully_qualified_id = (
+                    f"{self.component_id}{FULLY_QUALIFIED_ID_SEPARATOR}{self.configuration_id}"
+                )
 
 
 class ComponentWithConfigurations(BaseModel):
@@ -154,7 +162,7 @@ class ComponentWithConfigurations(BaseModel):
     """
 
     component: ReducedComponent = Field(description="The Keboola component.")
-    configurations: List[ReducedComponentConfigurationPair] = Field(
+    configurations: List[ReducedComponentConfiguration] = Field(
         description="The list of component configurations for the given component."
     )
 
@@ -203,7 +211,7 @@ class Component(ReducedComponent):
     )
 
 
-class ComponentConfigurationPair(ReducedComponentConfigurationPair):
+class ComponentConfiguration(ReducedComponentConfiguration):
     """
     Detailed information about a Keboola Component Configuration, containing all the relevant details.
     """
@@ -276,16 +284,18 @@ async def _retrieve_components_configurations_by_types(
             "include": "configuration",
             "componentType": type,
         }
-        raw_components_configs_by_type = await client.get(endpoint, params=params)
+        raw_components_configs_by_type = cast(
+            List[Dict[str, Any]], await client.get(endpoint, params=params)
+        )
         # extend the list with the raw components with configurations
-        raw_components_with_configs.extend(cast(List[Dict[str, Any]], raw_components_configs_by_type))
+        raw_components_with_configs.extend(raw_components_configs_by_type)
 
     # build components with configurations list, each item contains a component and its associated configurations
     components_with_configs = [
         ComponentWithConfigurations(
             component=ReducedComponent.model_validate(raw_component),
             configurations=[
-                ReducedComponentConfigurationPair.model_validate(
+                ReducedComponentConfiguration.model_validate(
                     {**raw_config, "component_id": raw_component["id"]}
                 )
                 for raw_config in raw_component.get("configurations", [])
@@ -328,7 +338,7 @@ async def _retrieve_components_configurations_by_ids(
             ComponentWithConfigurations(
                 component=ReducedComponent.model_validate(raw_component),
                 configurations=[
-                    ReducedComponentConfigurationPair.model_validate(
+                    ReducedComponentConfiguration.model_validate(
                         {**raw_config, "component_id": raw_component["id"]}
                     )
                     for raw_config in raw_configurations
@@ -482,9 +492,9 @@ async def get_component_configuration_details(
     ],
     ctx: Context,
 ) -> Annotated[
-    ComponentConfigurationPair,
+    ComponentConfiguration,
     Field(
-        ComponentConfigurationPair,
+        ComponentConfiguration,
         description="Detailed information about a Keboola component/transformation and its configuration.",
     ),
 ]:
@@ -524,7 +534,7 @@ async def get_component_configuration_details(
         )
 
     # Create Component Configuration Detail Object
-    return ComponentConfigurationPair.model_validate(
+    return ComponentConfiguration.model_validate(
         {
             **raw_configuration,
             "component": component,
