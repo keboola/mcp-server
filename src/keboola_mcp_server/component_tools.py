@@ -35,6 +35,11 @@ def add_component_tools(mcp: FastMCP) -> None:
     )
     logger.info(f"Added tool {RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
+    mcp.add_tool(
+        create_snowflake_transformation
+    )
+    logger.info(f"Added tool {create_snowflake_transformation.__name__} to the MCP server.")
+
     logger.info("Component tools initialized.")
 
 
@@ -533,6 +538,37 @@ async def get_component_configuration_details(
         }
     )
 
+class SnowFlakeConfigurationParameters(BaseModel):
+    """The parameters for the snowflake sql transformation."""
+    class Block(BaseModel):
+        """The block for the snowflake sql transformation."""
+        class Code(BaseModel):
+            """
+            The code for the snowflake sql transformation block.
+            - each sql statement should end with a semicolon
+            - each table name should be quoted using double quotes
+            """
+            name: str = Field(description="The name of the current code script")
+            script: list[str] = Field(description="List of SQL statements")
+        name: str = Field(description="The name of the current block")
+        codes: list[Code] = Field(description="The code scripts")
+    blocks: list[Block] = Field(description="The blocks for the transformation")
+
+
+class SnowFlakeConfigurationStorage(BaseModel):
+    """The storage configuration for the transformation.
+    Stores the input and output tables for the transformation.
+    """
+    class Destination(BaseModel):
+        class Table(BaseModel):
+            """The table to be used for the transformation"""
+            destination: str = Field(description="The destination of the table for the transformation")
+            source: str = Field(description="The source table name for the transformation (mapping used in the sql query)")
+        tables: list[Table] = Field(description="The tables to be used for the transformation")
+
+    input: Optional[Destination] = Field(description="The input tables for the transformation", default = None)
+    output: Optional[Destination] = Field(description="The output tables for the transformation", default = None)
+
 
 async def create_snowflake_transformation(
     ctx: Context,
@@ -543,28 +579,120 @@ async def create_snowflake_transformation(
             description="The name of the snowflake transformation",
         ),
     ],
-    sql_query: Annotated[
-        Optional[str],
+    sql_statements: Annotated[
+        list[str],
         Field(
-            Optional[str],
-            description="The SQL query of the snowflake transformation",
+            list[str],
+            description="The snowflake exacutable sql query statemenets each ending with a semicolon and using double quotes for table names.",
         ),
-    ] = None,
+    ],
     description: Annotated[
-        Optional[str],
+        str,
         Field(
-            Optional[str],
+            str,
             description="The description of the snowflake transformation",
         ),
-    ] = None,
-
-) -> None:
+    ] = '',
+    input_table_names: Annotated[
+        list[tuple[str, str]],
+        Field(
+            list[tuple[str, str]],
+            description="List of tuples, each containing the full input table name (bucket.table) and its table name (mapping) used in the sql transformation query",
+        ),
+    ] = [],
+    output_table_names: Annotated[
+        list[str],
+        Field(
+            list[str],
+            description="The names of the output tables which are used in and created by the sql transformation",
+        ),
+    ] = [],
+    bucket_name: Annotated[
+        str,
+        Field(
+            str,
+            description="Only the name of the bucket to use for the output tables",
+        ),
+    ] = "experimental-bucket",
+) -> Optional[ComponentConfigurationPair]:
     """
-    Create a snowflake transformation from the given name, sql query and optionally description.
+    Create a snowflake sql transformation from the given name, sql query, description, and output table names
+    CONSIDERATIONS:
+        - Each statement in the query is executable and must end with a semicolon.
+        - Each table name in the query should be quoted using double quotes.
+        - Each created table within the query should be added to the output table names list.
+        - Each input table used in the query along with its full bucket name should be added to the input table names list.
+        - If the user does not specify, transformation name and description are generated based on the sql query and user intent.
+    USAGE:
+        - Use when you want to create a new snowflake transformation from a sql query.
+    EXAMPLE:
+        - user_input: `Can you save me the query as transformation you generated?`
+            -> set the sql_query to the query if you know it, and set other parameters accordingly.
+            -> returns the created snowflake transformation configuration if successful.
     """
-    client = ctx.session.state["sapi_client"]
-    assert isinstance(client, KeboolaClient)
+    client = KeboolaClient.from_state(ctx.session.state)
+    SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
+    endpoint = f"branch/{client.storage_client._branch_id}/components/{SNOWFLAKE_TRANSFORMATION_ID}/configs"
+    output = None # empty
+    input = None # empty
+    if output_table_names:
+        output = SnowFlakeConfigurationStorage.Destination(
+                tables=[
+                    SnowFlakeConfigurationStorage.Destination.Table(
+                        destination = #"out.c-" + "-".join(name.split()) + "." + table_name,
+                        (
+                            f"{bucket_name}"
+                            if table_name == bucket_name.split('.')[-1] else 
+                            f"{bucket_name}.{table_name}"
+                        )
+                        if "out.c-" in f"{bucket_name}" else
+                        (
+                            f"out.c-{bucket_name}"
+                            if table_name == bucket_name.split('.')[-1] else
+                            f"out.c-{bucket_name}.{table_name}"
+                        ),
+                        source=table_name
+                    ) for table_name in output_table_names
+                ]
+            )
+    if input_table_names:
+        input = SnowFlakeConfigurationStorage.Destination(
+            tables = [
+            SnowFlakeConfigurationStorage.Destination.Table(
+                source= full_bucket_table_name if "in.c-" in full_bucket_table_name else f"in.c-{full_bucket_table_name}",
+                destination=table_name
+            )
+            for full_bucket_table_name, table_name in input_table_names
+        ])
 
-    raise NotImplementedError("Not implemented yet.")
-       
+    storage = SnowFlakeConfigurationStorage(
+        input=input,
+        output=output
+    )
+    sql_parameters = SnowFlakeConfigurationParameters(
+        blocks=[
+            SnowFlakeConfigurationParameters.Block(
+                name=f"block-0",
+                codes=[
+                    SnowFlakeConfigurationParameters.Block.Code(
+                    name=f"code-0",
+                    script=[sql_statements[j] for j in range(len(sql_statements))] 
+                )]
+            )
+        ]
+    )
+    configuration = {
+        "parameters": sql_parameters.model_dump(),
+        "storage": {
+            "input": storage.input.model_dump() if storage.input else {},
+            "output": storage.output.model_dump() if storage.output else {}
+        }
+    }
+    ret = await client.post(endpoint, data={
+        "name": name,
+        "description": description,
+        "configuration": configuration
+    })
+    return ComponentConfigurationPair(**ret, component_id=SNOWFLAKE_TRANSFORMATION_ID, component=None)
+
 ############################## End of component tools #########################################
