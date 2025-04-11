@@ -10,7 +10,7 @@ from keboola_mcp_server.jobs_tools import (
     JobDetail,
     JobListItem,
     get_job_detail,
-    retrieve_jobs_in_project,
+    retrieve_jobs,
 )
 
 
@@ -70,15 +70,15 @@ def iso_format() -> str:
 
 
 @pytest.mark.asyncio
-async def test_retrieve_jobs_in_project(
+async def test_retrieve_jobs(
     mcp_context_client: Context, mock_jobs: list[dict[str, Any]], iso_format: str
 ):
-    """Test retrieve_jobs_in_project tool."""
+    """Tests retrieve_jobs tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue.search_jobs_by = MagicMock(return_value=mock_jobs)
 
-    result = await retrieve_jobs_in_project(context)
+    result = await retrieve_jobs(context)
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
@@ -129,10 +129,10 @@ async def test_retrieve_jobs_in_project(
 
 
 @pytest.mark.asyncio
-async def test_get_job_details(
+async def test_get_job_detail(
     mcp_context_client: Context, mock_job: dict[str, Any], iso_format: str
 ):
-    """Test get_job_details tool."""
+    """Tests get_job_detail tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue.detail = MagicMock(return_value=mock_job)
@@ -169,18 +169,18 @@ async def test_get_job_details(
 
 
 @pytest.mark.asyncio
-async def retrieve_jobs_in_project_with_component_and_config_id(
+async def retrieve_jobs_with_component_and_config_id(
     mcp_context_client: Context, mock_jobs: list[dict[str, Any]]
 ):
     """
-    Test retrieve_jobs_in_project tool with config_id and component_id. With config_id, the tool will return
+    Tests retrieve_jobs tool with config_id and component_id. With config_id, the tool will return
     only jobs for the given config_id and component_id.
     """
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue.search_jobs_by = MagicMock(return_value=mock_jobs)
 
-    result = await retrieve_jobs_in_project(
+    result = await retrieve_jobs(
         ctx=context, component_id="keboola.ex-aws-s3", config_id="config-123"
     )
 
@@ -203,16 +203,16 @@ async def retrieve_jobs_in_project_with_component_and_config_id(
 
 
 @pytest.mark.asyncio
-async def retrieve_jobs_in_project_with_component_id_without_config_id(
+async def retrieve_jobs_with_component_id_without_config_id(
     mcp_context_client: Context, mock_jobs: list[dict[str, Any]]
 ):
-    """Test retrieve_jobs_in_project tool with component_id and without config_id.
+    """Tests retrieve_jobs tool with component_id and without config_id.
     It will return all jobs for the given component_id."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue.search_jobs_by = MagicMock(return_value=mock_jobs)
 
-    result = await retrieve_jobs_in_project(ctx=context, component_id="keboola.ex-aws-s3")
+    result = await retrieve_jobs(ctx=context, component_id="keboola.ex-aws-s3")
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)

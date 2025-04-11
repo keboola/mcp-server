@@ -12,7 +12,7 @@ from keboola_mcp_server.component_tools import (
 
 
 @pytest.mark.asyncio
-async def test_list_components(mcp_context_client):
+async def test_retrieve_components(mcp_context_client):
     """Test list_components tool."""
 
     keboola_client = mcp_context_client.session.state["sapi_client"]
@@ -42,8 +42,8 @@ async def test_list_components(mcp_context_client):
 
 
 @pytest.mark.asyncio
-async def test_list_component_configs(mcp_context_client):
-    """Test list_component_configs tool."""
+async def test_retrieve_component_configurations(mcp_context_client):
+    """Test retrieve_component_configurations tool."""
 
     keboola_client = mcp_context_client.session.state["sapi_client"]
     keboola_client.storage_client.configurations = MagicMock()
@@ -80,8 +80,8 @@ async def test_list_component_configs(mcp_context_client):
 
 
 @pytest.mark.asyncio
-async def test_get_component_details(mcp_context_client):
-    """Test get_component_details tool."""
+async def test_get_component_configuration_detail(mcp_context_client):
+    """Test test_get_component_configuration_detail tool."""
 
     # Mock data
     mock_configuration = {

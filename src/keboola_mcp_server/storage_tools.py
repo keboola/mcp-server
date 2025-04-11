@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 def add_storage_tools(mcp: FastMCP) -> None:
     """Adds tools to the MCP server."""
     mcp.add_tool(get_bucket_detail)
-    mcp.add_tool(retrieve_buckets_in_project)
+    mcp.add_tool(retrieve_buckets)
     mcp.add_tool(get_table_detail)
-    mcp.add_tool(retrieve_bucket_tables_in_project)
+    mcp.add_tool(retrieve_bucket_tables)
 
     logger.info("Storage tools added to the MCP server.")
 

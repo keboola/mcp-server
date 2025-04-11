@@ -15,11 +15,11 @@ class TestServer:
             "get_sql_dialect",
             "get_table_detail",
             "query_table",
-            "retrieve_bucket_tables_in_project",
-            "retrieve_buckets_in_project",
+            "retrieve_bucket_tables",
+            "retrieve_buckets",
             "retrieve_component_configurations",
             "retrieve_components",
-            "retrieve_jobs_in_project",
+            "retrieve_jobs",
         ]
 
     @pytest.mark.asyncio

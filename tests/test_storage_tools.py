@@ -13,8 +13,8 @@ from keboola_mcp_server.storage_tools import (
     TableDetail,
     get_bucket_detail,
     get_table_detail,
-    retrieve_bucket_tables_in_project,
-    retrieve_buckets_in_project,
+    retrieve_bucket_tables,
+    retrieve_buckets,
 )
 
 
@@ -126,7 +126,7 @@ async def test_retrieve_buckets_in_project(
     # Mock the list method to return the mock_buckets data
     keboola_client.storage_client.buckets.list = MagicMock(return_value=mock_buckets)
 
-    result = await retrieve_buckets_in_project(mcp_context_client)
+    result = await retrieve_buckets(mcp_context_client)
 
     assert isinstance(result, list)
     assert len(result) == len(mock_buckets)
@@ -206,7 +206,7 @@ async def test_lretrieve_bucket_tables_in_project(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.buckets = MagicMock()
     keboola_client.storage_client.buckets.list_tables.return_value = sapi_response
-    result = await retrieve_bucket_tables_in_project("bucket-id", mcp_context_client)
+    result = await retrieve_bucket_tables("bucket-id", mcp_context_client)
     assert result == expected
     keboola_client.storage_client.buckets.list_tables.assert_called_once_with(
         "bucket-id", include=["metadata"]

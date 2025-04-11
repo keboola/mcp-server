@@ -127,7 +127,7 @@ SORT_ORDER_VALUES = Literal["asc", "desc"]
 def add_jobs_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     jobs_tools = [
-        retrieve_jobs_in_project,
+        retrieve_jobs,
         get_job_detail,
     ]
     for tool in jobs_tools:
@@ -137,7 +137,7 @@ def add_jobs_tools(mcp: FastMCP) -> None:
     logger.info("Jobs tools initialized.")
 
 
-async def retrieve_jobs_in_project(
+async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
         JOB_STATUS,

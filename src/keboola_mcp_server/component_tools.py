@@ -80,7 +80,7 @@ def add_component_tools(mcp: FastMCP) -> None:
 
 
 async def retrieve_components(ctx: Context) -> List[ComponentDetail]:
-    """Retrieve all available components."""
+    """Retrieves all available components."""
     client = KeboolaClient.from_state(ctx.session.state)
 
     raw_components = client.storage_client.components.list()
@@ -94,10 +94,10 @@ async def retrieve_component_configurations(
     ],
     ctx: Context,
 ) -> List[ComponentConfigurationDetail]:
-    """Retrieve all configurations for a given component."""
+    """Retrieves all configurations for a given component."""
     client = KeboolaClient.from_state(ctx.session.state)
 
-    component = await get_component_details(component_id, ctx)
+    component = await get_component_detail(component_id, ctx)
     raw_configurations = client.storage_client.configurations.list(component_id)
     logger.info(f"Found {len(raw_configurations)} configurations for component {component_id}.")
     return [
@@ -113,10 +113,10 @@ async def get_component_configuration_detail(
     ],
     ctx: Context,
 ) -> ComponentConfigurationDetail:
-    """Get details of a given component configuration."""
+    """Gets detail of a given component configuration."""
     client = KeboolaClient.from_state(ctx.session.state)
 
-    component = await get_component_details(component_id, ctx)
+    component = await get_component_detail(component_id, ctx)
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
     return ComponentConfigurationDetail.model_validate(
         {**raw_configuration, "component": component}
@@ -129,7 +129,7 @@ async def get_component_detail(
     ],
     ctx: Context,
 ) -> ComponentDetail:
-    """Get detailed information about a Keboola component given component ID."""
+    """Gets detailed information about a Keboola component given component ID."""
     client = KeboolaClient.from_state(ctx.session.state)
 
     endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
