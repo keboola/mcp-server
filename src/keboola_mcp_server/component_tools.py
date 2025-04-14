@@ -447,7 +447,7 @@ class TransformationConfiguration(BaseModel):
 
 def _get_transformation_configuration(
     sql_statements: list[str],
-    input_table_names: list[tuple[str, str]],
+    input_table_mappings: list[tuple[str, str]],
     output_table_names: list[str],
     output_bucket_name: str,
 ) -> TransformationConfiguration:
@@ -455,7 +455,7 @@ def _get_transformation_configuration(
     Utility function to set the transformation configuration from SQL statements, input and output table names, and
     bucket name. It creates the expected configuration for the transformation, parameters and storage.
     :param sql_statements: The SQL statements
-    :param input_table_names: The input table names
+    :param input_table_mappings: The input table names
     :param output_table_names: The output table names
     :param bucket_name: The bucket name
     :return: The storage configuration - supports input and output tables only
@@ -469,7 +469,7 @@ def _get_transformation_configuration(
     # init Storage Configuration with empty input and output tables
     storage = TransformationConfiguration.Storage()
     # build input table configuration if input table names are provided
-    if input_table_names:
+    if input_table_mappings:
         storage.input = TransformationConfiguration.Storage.Destination(
             tables=[
                 TransformationConfiguration.Storage.Destination.Table(
@@ -488,7 +488,7 @@ def _get_transformation_configuration(
                     ),
                     destination=table_name,
                 )
-                for full_bucket_table_name, table_name in input_table_names
+                for full_bucket_table_name, table_name in input_table_mappings
             ]
         )
     # build output table configuration if output table names are provided
@@ -730,7 +730,7 @@ async def create_sql_transformation(
         Field(
             list[str],
             description=(
-                "Optional list of the names of the output tables which are used in and created by the SQL query."
+                "Optional list of the table names of the output tables which are used in and created by the SQL query."
             ),
         ),
     ] = [],
@@ -741,13 +741,13 @@ async def create_sql_transformation(
             description="The name of the bucket to use for the output tables.",
         ),
     ] = "experimental-bucket",
-    input_table_names: Annotated[
+    input_table_mappings: Annotated[
         list[tuple[str, str]],
         Field(
             list[tuple[str, str]],
             description=(
-                "Optional list of tuples, each containing the full input table name (bucket.table) and its table name "
-                "(mapping) used in the SQL query."
+                "Optional list of tuples, each containing the source input bucket table name (bucket.table) and its "
+                "table name (mapping) used within the SQL query."
             ),
         ),
     ] = [],
@@ -763,9 +763,11 @@ async def create_sql_transformation(
     names, and optionally with input tables.
     CONSIDERATIONS:
         - Each statement in the query is executable and must follow the current SQL dialect (BigQuery, Snowflake).
-        - Each created table within the query should be added to the output table names list.
-        - When using input tables having full bucket name specified within the query, then each table should be added to
-        the input table names list along with its full bucket name.
+        - Each created table within the query should be added to the output table names list, use only the table name
+        without the bucket table name.
+        - Input table mappings are optional, if bucket table name is known then it has to be added to the input table
+        mappings list along with the table name used within the query, otherwise do not add it, as the table name will 
+        be automatically mapped from the query.
         - Unless otherwise specified by user, transformation name and description are generated based on the sql query
         and user intent.
     USAGE:
@@ -787,7 +789,7 @@ async def create_sql_transformation(
 
     # Process the data to be stored in the storage configuration
     configuration = _get_transformation_configuration(
-        sql_statements, input_table_names, output_table_names, bucket_name
+        sql_statements, input_table_mappings, output_table_names, bucket_name
     )
 
     # Get the transformation configuration dictionary as required by the API

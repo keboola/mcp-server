@@ -529,8 +529,11 @@ async def test_create_transformation_configuration(
 
 
 @pytest.mark.parametrize(
-    "sql_statements, input_table_names, output_table_names, output_bucket_name",
+    "sql_statements, input_table_mappings, output_table_names, output_bucket_name",
     [
+        # no input table names
+        # no output table names
+        # output bucket name without out.c- prefix
         (["SELECT * FROM test", "SELECT * FROM test2"], [], [], "test_bucket"),
         (
             # input bucket name without in.c- prefix
@@ -560,10 +563,12 @@ async def test_create_transformation_configuration(
 )
 def test_get_transformation_configuration(
     sql_statements: list[str],
-    input_table_names: list[tuple[str, str]],
+    input_table_mappings: list[tuple[str, str]],
     output_table_names: list[str],
     output_bucket_name: str,
 ):
+    """Test get_transformation_configuration tool which should return the correct transformation configuration
+    given the input and output table names and bucket names."""
     get_full_name_from_bucket_and_table = lambda bucket, table: (
         (f"{bucket}" if table == bucket.split(".")[-1] else f"{bucket}.{table}")
         if bucket.startswith("in.c-")
@@ -575,12 +580,12 @@ def test_get_transformation_configuration(
     )
     expected_input_tables = [
         (get_full_name_from_bucket_and_table(bucket, table), table)
-        for bucket, table in input_table_names
+        for bucket, table in input_table_mappings
     ]
 
     configuration = _get_transformation_configuration(
         sql_statements=sql_statements,
-        input_table_names=input_table_names,
+        input_table_mappings=input_table_mappings,
         output_table_names=output_table_names,
         output_bucket_name=output_bucket_name,
     )
@@ -593,10 +598,10 @@ def test_get_transformation_configuration(
     assert configuration.parameters.blocks[0].codes[0].script == sql_statements
     assert configuration.storage is not None
 
-    if input_table_names:
+    if input_table_mappings:
         assert configuration.storage.input is not None
         assert configuration.storage.input.tables is not None
-        assert len(configuration.storage.input.tables) == len(input_table_names)
+        assert len(configuration.storage.input.tables) == len(input_table_mappings)
         for table, (expected_full_bucket_name, expected_table_name) in zip(
             configuration.storage.input.tables, expected_input_tables
         ):
