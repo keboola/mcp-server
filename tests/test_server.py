@@ -25,6 +25,8 @@ class TestServer:
             RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME,
             "retrieve_jobs_in_project",
             RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME,
+            "update_bucket_description",
+            "update_table_description",
         ]
 
     @pytest.mark.asyncio

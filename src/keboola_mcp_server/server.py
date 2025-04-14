@@ -8,6 +8,7 @@ from mcp.server.fastmcp import FastMCP
 
 from keboola_mcp_server.component_tools import add_component_tools
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.component_tools import add_component_tools
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.jobs_tools import add_jobs_tools
 from keboola_mcp_server.mcp import (
@@ -16,7 +17,7 @@ from keboola_mcp_server.mcp import (
     SessionState,
     SessionStateFactory,
 )
-from keboola_mcp_server.sql_tools import WorkspaceManager, add_sql_tools
+from keboola_mcp_server.sql_tools import WorkspaceManager, add_sql_tools, query_table
 from keboola_mcp_server.storage_tools import add_storage_tools
 
 logger = logging.getLogger(__name__)
