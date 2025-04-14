@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
 # These tool names now reflect their conventional usage, removing redundant parts for users while still
 # providing the same functionality as described in the original tool names.
-RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components_in_project"
-RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations_in_project"
+RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components"
+RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations"
 GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = "get_component_details"
 
 
@@ -90,7 +90,7 @@ class ReducedComponentConfiguration(BaseModel):
 
     component_id: str = Field(
         description="The ID of the component",
-        validation_alias=AliasChoices("component_id", "componentId"),
+        validation_alias=AliasChoices("component_id", "componentId", "component-id"),
         serialization_alias="componentId",
     )
     configuration_id: str = Field(
@@ -225,7 +225,7 @@ class ComponentConfiguration(ReducedComponentConfiguration):
         description="The metadata of the component configuration",
         default=[],
         validation_alias=AliasChoices(
-            "metadata", "configuration_metadata", "configurationMetadata"
+            "metadata", "configuration_metadata", "configurationMetadata", "configuration-metadata"
         ),
         serialization_alias="configurationMetadata",
     )
@@ -277,56 +277,56 @@ async def _retrieve_components_configurations_by_types(
     endpoint = f"branch/{client.storage_client._branch_id}/components"
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
-    raw_components_with_configs = []
+    raw_components_with_configurations = []
     for type in component_types:
         # retrieve components by type with configurations
         params = {
             "include": "configuration",
             "componentType": type,
         }
-        raw_components_configs_by_type = cast(
+        raw_components_with_configurations_by_type = cast(
             List[Dict[str, Any]], await client.get(endpoint, params=params)
         )
         # extend the list with the raw components with configurations
-        raw_components_with_configs.extend(raw_components_configs_by_type)
+        raw_components_with_configurations.extend(raw_components_with_configurations_by_type)
 
     # build components with configurations list, each item contains a component and its associated configurations
-    components_with_configs = [
+    components_with_configurations = [
         ComponentWithConfigurations(
             component=ReducedComponent.model_validate(raw_component),
             configurations=[
                 ReducedComponentConfiguration.model_validate(
-                    {**raw_config, "component_id": raw_component["id"]}
+                    {**raw_configuration, "component_id": raw_component["id"]}
                 )
-                for raw_config in raw_component.get("configurations", [])
+                for raw_configuration in raw_component.get("configurations", [])
             ],
         )
-        for raw_component in raw_components_with_configs
+        for raw_component in raw_components_with_configurations
     ]
 
     # perform logging
     total_configurations = sum(
-        len(component.configurations) for component in components_with_configs
+        len(component.configurations) for component in components_with_configurations
     )
     logger.info(
-        f"Found {len(components_with_configs)} components with total of {total_configurations} configurations "
+        f"Found {len(components_with_configurations)} components with total of {total_configurations} configurations "
         f"for types {component_types}."
     )
-    return components_with_configs
+    return components_with_configurations
 
 
 async def _retrieve_components_configurations_by_ids(
     client: KeboolaClient, component_ids: List[str]
 ) -> List[ComponentWithConfigurations]:
     """
-    Utility function to retrieve components configurations by ids - used in tools:
+    Utility function to retrieve components with configurations by component IDs - used in tools:
     - retrieve_components_configurations
     - retrieve_transformation_configurations
     :param client: The Keboola client
     :param component_ids: The component IDs to retrieve
     :return: a list of items, each containing a component and its associated configurations
     """
-    components_with_configs = []
+    components_with_configurations = []
     for component_id in component_ids:
         # retrieve configurations for component ids
         raw_configurations = client.storage_client.configurations.list(component_id)
@@ -334,27 +334,27 @@ async def _retrieve_components_configurations_by_ids(
         endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
         raw_component = await client.get(endpoint)
         # build component configurations list grouped by components
-        components_with_configs.append(
+        components_with_configurations.append(
             ComponentWithConfigurations(
                 component=ReducedComponent.model_validate(raw_component),
                 configurations=[
                     ReducedComponentConfiguration.model_validate(
-                        {**raw_config, "component_id": raw_component["id"]}
+                        {**raw_configuration, "component_id": raw_component["id"]}
                     )
-                    for raw_config in raw_configurations
+                    for raw_configuration in raw_configurations
                 ],
             )
         )
 
     # perform logging
     total_configurations = sum(
-        len(component.configurations) for component in components_with_configs
+        len(component.configurations) for component in components_with_configurations
     )
     logger.info(
-        f"Found {len(components_with_configs)} components with total of {total_configurations} configurations "
+        f"Found {len(components_with_configurations)} components with total of {total_configurations} configurations "
         f"for ids {component_ids}."
     )
-    return components_with_configs
+    return components_with_configurations
 
 
 async def _get_component_details(
