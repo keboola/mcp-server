@@ -120,7 +120,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.put(
-                f"{self.base_url}/v2/storage/{endpoint}",
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
                 headers=self.headers,
                 data=data if data is not None else {},
             )
@@ -139,7 +139,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.delete(
-                f"{self.base_url}/v2/storage/{endpoint}",
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
                 headers=self.headers,
             )
             response.raise_for_status()
