@@ -20,6 +20,8 @@ class TestServer:
             "retrieve_component_configurations",
             "retrieve_components",
             "retrieve_jobs_in_project",
+            "update_bucket_description",
+            "update_table_description",
         ]
 
     @pytest.mark.asyncio
