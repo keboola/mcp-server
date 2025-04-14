@@ -4,7 +4,7 @@ import logging
 import os
 import tempfile
 
-from typing import Any, Dict, Mapping, Optional, cast, List
+from typing import Annotated, Any, Dict, Mapping, Optional, cast, List
 
 
 import httpx
@@ -70,7 +70,11 @@ class KeboolaClient:
 
         self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
 
-    async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def get(
+        self,
+        endpoint: str,
+        params: Annotated[Optional[Dict[str, Any]], "Query parameters for the request"],
+    ) -> Dict[str, Any]:
         """Make a GET request to Keboola Storage API.
 
         Args:
@@ -89,7 +93,14 @@ class KeboolaClient:
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
 
-    async def post(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def post(
+        self,
+        endpoint: str,
+        data: Annotated[
+            Optional[Dict[str, Any]],
+            "Request payload parameters as a dictionary.",
+        ],
+    ) -> Dict[str, Any]:
         """Make a POST request to Keboola Storage API.
 
         Args:
@@ -108,7 +119,11 @@ class KeboolaClient:
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
 
-    async def put(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def put(
+        self,
+        endpoint: str,
+        data: Annotated[Optional[Dict[str, Any]], "Request payload parameters as a dictionary."],
+    ) -> Dict[str, Any]:
         """Make a PUT request to Keboola Storage API.
 
         Args:
@@ -127,7 +142,11 @@ class KeboolaClient:
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
 
-    async def delete(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def delete(
+        self,
+        endpoint: str,
+        data: Annotated[Optional[Dict[str, Any]], "Request payload parameters as a dictionary."],
+    ) -> Dict[str, Any]:
         """Make a DELETE request to Keboola Storage API.
 
         Args:
