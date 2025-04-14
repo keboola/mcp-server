@@ -1,20 +1,23 @@
 """MCP server implementation for Keboola Connection."""
 
 import logging
-from typing import Annotated, Any, Dict, List, Optional, cast
 
-from mcp.server.fastmcp import Context, FastMCP
-from pydantic import Field
+from typing import Optional
 
+from mcp.server.fastmcp import FastMCP
+
+from keboola_mcp_server.component_tools import add_component_tools
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.component_tools import add_component_tools
 from keboola_mcp_server.config import Config
+from keboola_mcp_server.jobs_tools import add_jobs_tools
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
     SessionState,
     SessionStateFactory,
 )
-from keboola_mcp_server.sql_tools import WorkspaceManager, query_table
+from keboola_mcp_server.sql_tools import WorkspaceManager, add_sql_tools, query_table
 from keboola_mcp_server.storage_tools import add_storage_tools
 
 logger = logging.getLogger(__name__)
@@ -42,7 +45,7 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
             raise
 
         try:
-            workspace_manager = WorkspaceManager(client, cfg.workspace_user)
+            workspace_manager = WorkspaceManager(client, cfg.workspace_schema)
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             logger.info("Successfully initialized Storage API Workspace manager.")
         except Exception as e:
@@ -65,38 +68,14 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     """
     # Initialize FastMCP server with system instructions
     mcp = KeboolaMcpServer(
-        "Keboola Explorer",
-        session_state_factory=_create_session_state_factory(config),
-        dependencies=[
-            "keboola.storage-api-client",
-            "httpx",
-            "pandas",
-            "snowflake-connector-python",
-        ],
+        "Keboola Explorer", session_state_factory=_create_session_state_factory(config)
     )
+    # Add component tools to the server inplace.
+    add_component_tools(mcp)
+    # Add jobs tools to the server inplace.
+    add_jobs_tools(mcp)
 
-    mcp.add_tool(query_table)
     add_storage_tools(mcp)
-
-    @mcp.tool()
-    async def list_components(ctx: Context) -> str:
-        """List all available components and their configurations."""
-        client = KeboolaClient.from_state(ctx.session.state)
-        components = cast(List[Dict[str, Any]], await client.get("components"))
-        return "\n".join(f"- {comp['id']}: {comp['name']}" for comp in components)
-
-    @mcp.tool()
-    async def list_component_configs(component_id: str, ctx: Context) -> str:
-        """List all configurations for a specific component."""
-        client = KeboolaClient.from_state(ctx.session.state)
-        configs = cast(List[Dict[str, Any]], await client.get(f"components/{component_id}/configs"))
-        return "\n".join(
-            f"Configuration: {config['id']}\n"
-            f"Name: {config['name']}\n"
-            f"Description: {config.get('description', 'No description')}\n"
-            f"Created: {config['created']}\n"
-            f"---"
-            for config in configs
-        )
+    add_sql_tools(mcp)
 
     return mcp

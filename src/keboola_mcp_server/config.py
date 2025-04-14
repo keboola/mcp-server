@@ -15,7 +15,7 @@ class Config:
 
     storage_token: Optional[str] = None
     storage_api_url: str = "https://connection.keboola.com"
-    workspace_user: Optional[str] = None
+    workspace_schema: Optional[str] = None
 
     @classmethod
     def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, str]:

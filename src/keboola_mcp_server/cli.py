@@ -57,7 +57,10 @@ def main(args: Optional[List[str]] = None) -> None:
 
     # Create config from the CLI arguments
     config = Config.from_dict(
-        {"storage_api_url": parsed_args.api_url, "log_level": parsed_args.log_level}
+        {
+            "storage_api_url": parsed_args.api_url,
+            "log_level": parsed_args.log_level,
+        }
     )
 
     try:
@@ -65,7 +68,7 @@ def main(args: Optional[List[str]] = None) -> None:
         mcp = create_server(config)
         mcp.run(transport=parsed_args.transport)
     except Exception as e:
-        logger.error(f"Server failed: {e}")
+        logger.exception(f"Server failed: {e}")
         sys.exit(1)
 
 

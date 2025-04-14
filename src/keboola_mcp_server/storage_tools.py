@@ -1,7 +1,7 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
 import logging
-from typing import Annotated, Any, Dict, List, Optional, Union, cast
+from typing import Annotated, Any, Dict, List, Mapping, Optional, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, model_validator
@@ -83,11 +83,11 @@ class BucketInfo(BaseModel):
 
 
 class TableColumnInfo(BaseModel):
-    name: str = Field(description="Name of the column")
-    db_identifier: str = Field(
-        description="Fully qualified database identifier for the column",
-        validation_alias=AliasChoices("dbIdentifier", "db_identifier", "db-identifier"),
-        serialization_alias="dbIdentifier",
+    name: str = Field(description="Plain name of the column.")
+    quoted_name: str = Field(
+        description="The properly quoted name of the column.",
+        validation_alias=AliasChoices("quotedName", "quoted_name", "quoted-name"),
+        serialization_alias="quotedName",
     )
 
 
@@ -114,20 +114,17 @@ class TableDetail(BaseModel):
         validation_alias=AliasChoices("dataSizeBytes", "data_size_bytes", "data-size-bytes"),
         serialization_alias="dataSizeBytes",
     )
-    columns: Optional[List[str]] = Field(None, description="List of column names")
-    column_identifiers: Optional[List[TableColumnInfo]] = Field(
+    columns: Optional[List[TableColumnInfo]] = Field(
         None,
         description="List of column information including database identifiers",
-        validation_alias=AliasChoices(
-            "columnIdentifiers", "column_identifiers", "column-identifiers"
-        ),
-        serialization_alias="columnIdentifiers",
     )
-    db_identifier: Optional[str] = Field(
+    fully_qualified_name: Optional[str] = Field(
         None,
-        description="Fully qualified database identifier for the table",
-        validation_alias=AliasChoices("dbIdentifier", "db_identifier", "db-identifier"),
-        serialization_alias="dbIdentifier",
+        description="Fully qualified name of the table.",
+        validation_alias=AliasChoices(
+            "fullyQualifiedName", "fully_qualified_name", "fully-qualified-name"
+        ),
+        serialization_alias="fullyQualifiedName",
     )
 
     @model_validator(mode="before")
@@ -203,21 +200,19 @@ async def get_table_metadata(
 ) -> TableDetail:
     """Get detailed information about a specific table including its DB identifier and column information."""
     client = KeboolaClient.from_state(ctx.session.state)
-    assert isinstance(client, KeboolaClient)
-    raw_table = cast(Dict[str, Any], client.storage_client.tables.detail(table_id))
-
-    columns = raw_table.get("columns", [])
-    column_info = [TableColumnInfo(name=col, db_identifier=f'"{col}"') for col in columns]
-
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    assert isinstance(workspace_manager, WorkspaceManager)
+
+    raw_table = cast(Mapping[str, Any], client.storage_client.tables.detail(table_id))
+    column_info = [
+        TableColumnInfo(name=col, quoted_name=await workspace_manager.get_quoted_name(col))
+        for col in raw_table.get("columns", [])
+    ]
 
     table_fqn = await workspace_manager.get_table_fqn(raw_table)
 
+    # replace the 'columns' field's value with 'column_info'
     return TableDetail(
-        **raw_table,
-        column_identifiers=column_info,
-        db_identifier=table_fqn.snowflake_fqn,
+        **{**raw_table, "columns": column_info, "fully_qualified_name": table_fqn.identifier}
     )
 
 
@@ -226,9 +221,13 @@ async def list_bucket_tables(
 ) -> list[TableDetail]:
     """List all tables in a specific bucket with their basic information."""
     client = KeboolaClient.from_state(ctx.session.state)
-    assert isinstance(client, KeboolaClient)
-    raw_tables = cast(List[Dict[str, Any]], client.storage_client.buckets.list_tables(bucket_id))
-
+    # TODO: requesting "metadata" to get the table description;
+    #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
+    #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
+    raw_tables = cast(
+        List[Mapping[str, Any]],
+        client.storage_client.buckets.list_tables(bucket_id, include=["metadata"]),
+    )
     return [TableDetail(**raw_table) for raw_table in raw_tables]
 
 
