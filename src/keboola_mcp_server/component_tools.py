@@ -766,7 +766,7 @@ async def create_sql_transformation(
         - Each created table within the query should be added to the output table names list, use only the table name
         without the bucket table name.
         - Input table mappings are optional, if bucket table name is known then it has to be added to the input table
-        mappings list along with the table name used within the query, otherwise do not add it, as the table name will 
+        mappings list along with the table name used within the query, otherwise do not add it, as the table name will
         be automatically mapped from the query.
         - Unless otherwise specified by user, transformation name and description are generated based on the sql query
         and user intent.
