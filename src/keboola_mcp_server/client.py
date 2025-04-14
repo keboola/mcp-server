@@ -3,13 +3,11 @@
 import logging
 import os
 import tempfile
-
-from typing import Any, Dict, Mapping, Optional, cast, List
-
+from typing import Any, Dict, List, Mapping, Optional, cast
 
 import httpx
-from kbcstorage.client import Client
 from kbcstorage.base import Endpoint
+from kbcstorage.client import Client
 from kbcstorage.retry_requests import MAX_RETRIES_DEFAULT, RetryRequests
 
 logger = logging.getLogger(__name__)
@@ -102,6 +100,25 @@ class KeboolaClient:
                 f"{self.base_storage_api_url}/v2/storage/{endpoint}",
                 headers=self.headers,
                 json=data if data is not None else {},
+            )
+            response.raise_for_status()
+            return cast(Dict[str, Any], response.json())
+
+    async def put(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make a PUT request to Keboola Storage API.
+
+        Args:
+            endpoint: API endpoint to call
+            data: Request payload
+
+        Returns:
+            API response as dictionary
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"{self.base_url}/v2/storage/{endpoint}",
+                headers=self.headers,
+                data=data if data is not None else {},
             )
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())

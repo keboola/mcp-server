@@ -2,7 +2,7 @@ import logging
 from typing import Annotated, Any, Dict, List, Optional, cast
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
 
@@ -135,3 +135,59 @@ async def get_component_detail(
     endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
     raw_component = await client.get(endpoint)
     return ComponentDetail.model_validate(raw_component)
+
+
+class UpdateComponentConfigurationPayload(BaseModel):
+    name: Optional[str] = Field(None, description="The name of the component configuration.")
+    description: Optional[str] = Field(
+        None, description="Description of the component configuration."
+    )
+    configuration: Dict[str, Any] = Field(
+        ..., description="Key-value configuration json. Schema differs based on component id."
+    )
+    changeDescription: str = Field(..., description="Description of the change made.")
+
+
+class UpdateComponentConfigurationResponse(BaseModel):
+    success: bool = True
+    changeDescription: str = Field(..., description="The change description for the configuration.")
+    timestamp: str = Field(..., description="When the component configuration was updated.")
+
+    @model_validator(mode="before")
+    def extract_from_response(cls, values):
+        if isinstance(values, dict):
+            return {
+                "success": True,
+                "changeDescription": values.get("changeDescription", ""),
+                "timestamp": values.get("created", ""),
+            }
+        else:
+            raise ValueError(
+                "Expected input data in UpdateComponentConfigurationResponse to be a dictionary."
+            )
+
+
+async def update_component_configuration(
+    ctx: Context,
+    component_id: Annotated[str, Field(description="The id of the component")],
+    configuration_id: Annotated[str, Field(description="The id of the component configuration")],
+    payload: UpdateComponentConfigurationPayload,
+) -> UpdateComponentConfigurationResponse:
+    """
+    Update the component configuration for a given Keboola component configuration.
+
+    Args:
+        ctx: The request context with session state.
+        component_id: The ID of the component to update.
+        configuration_id: The ID of the component configuration to update.
+        payload: The data to update in the configuration.
+
+    Returns:
+        A validated UpdateComponentConfigurationResponse instance.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    metadata_endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}"
+
+    response = await client.put(endpoint=metadata_endpoint, data=payload.model_dump_json())
+
+    return UpdateComponentConfigurationResponse.model_validate(response)
