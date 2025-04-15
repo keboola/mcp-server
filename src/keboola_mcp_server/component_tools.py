@@ -46,8 +46,6 @@ def add_component_tools(mcp: FastMCP) -> None:
 
 ############################## Base Models to #########################################
 
-FULLY_QUALIFIED_ID_SEPARATOR: str = "::"
-
 
 class ReducedComponent(BaseModel):
     """
@@ -137,25 +135,6 @@ class ReducedComponentConfiguration(BaseModel):
         serialization_alias="isDeleted",
         default=False,
     )
-    fully_qualified_id: Optional[str] = Field(
-        description=(
-            "The fully qualified ID of the component configuration by which it can be uniquely identified. "
-            "It is a concatenation of the component ID and the configuration ID, separated by a `::`."
-        ),
-        validation_alias=AliasChoices(
-            "fullyQualifiedId", "fully_qualified_id", "fully-qualified-id"
-        ),
-        serialization_alias="fullyQualifiedId",
-        default=None,
-    )
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        if self.fully_qualified_id is None:
-            if self.configuration_id and self.component_id:
-                self.fully_qualified_id = (
-                    f"{self.component_id}{FULLY_QUALIFIED_ID_SEPARATOR}{self.configuration_id}"
-                )
 
 
 class ComponentWithConfigurations(BaseModel):
@@ -397,7 +376,6 @@ async def retrieve_components_configurations(
 ) -> Annotated[
     List[ComponentWithConfigurations],
     Field(
-        List[ComponentWithConfigurations],
         description="List of objects, each containing a component and its associated configurations.",
     ),
 ]:
@@ -443,7 +421,6 @@ async def retrieve_transformations_configurations(
 ) -> Annotated[
     List[ComponentWithConfigurations],
     Field(
-        List[ComponentWithConfigurations],
         description="List of objects, each containing a transformation component and its associated configurations.",
     ),
 ]:
@@ -475,12 +452,11 @@ async def retrieve_transformations_configurations(
 
 async def get_component_configuration_details(
     component_id: Annotated[
-        str, Field(str, description="Unique identifier of the Keboola component/transformation")
+        str, Field(description="Unique identifier of the Keboola component/transformation")
     ],
     configuration_id: Annotated[
         str,
         Field(
-            str,
             description="Unique identifier of the Keboola component/transformation configuration you want details about",
         ),
     ],
@@ -488,14 +464,12 @@ async def get_component_configuration_details(
 ) -> Annotated[
     ComponentConfiguration,
     Field(
-        ComponentConfiguration,
         description="Detailed information about a Keboola component/transformation and its configuration.",
     ),
 ]:
     """
     Gets detailed information about a specific Keboola component configuration given component/transformation ID and
-    configuration ID. Those IDs can be retrieved from fully_qualified_id of the component configuration which are
-    seperated by `::`.
+    configuration ID.
     USAGE:
         - Use when you want to see the details of a specific component/transformation configuration.
     EXAMPLES:

@@ -6,7 +6,6 @@ from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.component_tools import (
-    FULLY_QUALIFIED_ID_SEPARATOR,
     ComponentConfiguration,
     ReducedComponentConfiguration,
     ComponentWithConfigurations,
@@ -230,7 +229,7 @@ async def test_retrieve_components_configurations_by_types(
         ]
     )
 
-    result = await retrieve_components_configurations(context, component_types=None)
+    result = await retrieve_components_configurations(context, component_types=[])
 
     assert_retrieve_components(result, mock_components, mock_configurations)
 
@@ -410,32 +409,3 @@ def test_handle_component_types(
 ):
     """Test list_component_configurations tool with core component."""
     assert _handle_component_types(component_type) == expected
-
-
-@pytest.mark.parametrize(
-    "component_id, configuration_id, expected",
-    [
-        ("keboola.ex-aws-s3", "123", f"keboola.ex-aws-s3{FULLY_QUALIFIED_ID_SEPARATOR}123"),
-        (
-            "keboola.wr-google-drive",
-            "234",
-            f"keboola.wr-google-drive{FULLY_QUALIFIED_ID_SEPARATOR}234",
-        ),
-    ],
-)
-def test_set_fully_qualified_id(
-    component_id: str,
-    configuration_id: str,
-    expected: str,
-    mock_component: dict[str, Any],
-    mock_configuration: dict[str, Any],
-):
-    """Test set_fully_qualified_id tool."""
-    component = mock_component
-    configuration = mock_configuration
-    component["id"] = component_id
-    configuration["id"] = configuration_id
-    component_configuration = ReducedComponentConfiguration.model_validate(
-        {**configuration, "component_id": component_id}
-    )
-    assert component_configuration.fully_qualified_id == expected
