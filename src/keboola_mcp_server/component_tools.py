@@ -486,7 +486,7 @@ async def get_component_configuration_details(
     # Get Configuration Details
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
     logger.info(
-        f"Retrieved configuration details for component configuration {component_id}::{configuration_id}."
+        f"Retrieved configuration details for {component_id} component with configuration {configuration_id}."
     )
 
     # Get Configuration Metadata if exists
@@ -494,11 +494,11 @@ async def get_component_configuration_details(
     r_metadata = await client.get(endpoint)
     if r_metadata:
         logger.info(
-            f"Retrieved configuration metadata for component configuration {component_id}::{configuration_id}."
+            f"Retrieved configuration metadata for {component_id} component with configuration {configuration_id}."
         )
     else:
         logger.info(
-            f"No metadata found for component configuration {component_id}::{configuration_id}."
+            f"No metadata found for {component_id} component with configuration {configuration_id}."
         )
 
     # Create Component Configuration Detail Object
