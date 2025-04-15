@@ -1,6 +1,11 @@
 import pytest
 
 from keboola_mcp_server.server import create_server
+from keboola_mcp_server.component_tools import (
+    RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
+    RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
+    GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
+)
 
 
 class TestServer:
@@ -10,16 +15,18 @@ class TestServer:
         tools = await server.list_tools()
         assert sorted(t.name for t in tools) == [
             "get_bucket_detail",
-            "get_component_configuration_detail",
+            GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
             "get_job_detail",
             "get_sql_dialect",
             "get_table_detail",
             "query_table",
             "retrieve_bucket_tables",
             "retrieve_buckets",
-            "retrieve_component_configurations",
-            "retrieve_components",
+            RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
             "retrieve_jobs",
+            RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
+            "update_bucket_description",
+            "update_table_description",
         ]
 
     @pytest.mark.asyncio
