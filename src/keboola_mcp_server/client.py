@@ -4,13 +4,12 @@ import logging
 import os
 import tempfile
 
-from typing import Any, Dict, Mapping, Optional, cast, List
+from typing import Annotated, Any, Dict, Mapping, Optional, cast, List
 
 
 import httpx
 from kbcstorage.client import Client
 from kbcstorage.base import Endpoint
-from kbcstorage.retry_requests import MAX_RETRIES_DEFAULT, RetryRequests
 
 logger = logging.getLogger(__name__)
 
@@ -71,23 +70,37 @@ class KeboolaClient:
 
         self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
 
-    async def get(self, endpoint: str) -> Dict[str, Any]:
+    async def get(
+        self,
+        endpoint: str,
+        params: Annotated[Optional[Dict[str, Any]], "Query parameters for the request"] = None,
+    ) -> Dict[str, Any]:
         """Make a GET request to Keboola Storage API.
 
         Args:
             endpoint: API endpoint to call
+            params: Query parameters for the request
 
         Returns:
             API response as dictionary
         """
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_storage_api_url}/v2/storage/{endpoint}", headers=self.headers
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
+                headers=self.headers,
+                params=params,
             )
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
 
-    async def post(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def post(
+        self,
+        endpoint: str,
+        data: Annotated[
+            Optional[Dict[str, Any]],
+            "Request payload parameters as a dictionary.",
+        ],
+    ) -> Dict[str, Any]:
         """Make a POST request to Keboola Storage API.
 
         Args:
@@ -106,7 +119,13 @@ class KeboolaClient:
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
 
-    async def put(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def put(
+        self,
+        endpoint: str,
+        data: Annotated[
+            Optional[Dict[str, Any]], "Request payload parameters as a dictionary."
+        ] = None,
+    ) -> Dict[str, Any]:
         """Make a PUT request to Keboola Storage API.
 
         Args:
@@ -118,14 +137,20 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.put(
-                f"{self.base_url}/v2/storage/{endpoint}",
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
                 headers=self.headers,
                 data=data if data is not None else {},
             )
             response.raise_for_status()
             return cast(Dict[str, Any], response.json())
 
-    async def delete(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def delete(
+        self,
+        endpoint: str,
+        data: Annotated[
+            Optional[Dict[str, Any]], "Request payload parameters as a dictionary."
+        ] = None,
+    ) -> Dict[str, Any]:
         """Make a DELETE request to Keboola Storage API.
 
         Args:
@@ -137,7 +162,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.delete(
-                f"{self.base_url}/v2/storage/{endpoint}",
+                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
                 headers=self.headers,
             )
             response.raise_for_status()
