@@ -466,7 +466,7 @@ async def retrieve_transformations_configurations(
     # If no transformation IDs are provided, retrieve transformations configurations by transformation type
     if not transformation_ids:
         client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_types(client, ("transformation",))
+        return await _retrieve_components_configurations_by_types(client, ["transformation"])
     # If transformation IDs are provided, retrieve transformations configurations by IDs
     else:
         client = KeboolaClient.from_state(ctx.session.state)
