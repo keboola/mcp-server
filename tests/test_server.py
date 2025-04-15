@@ -2,8 +2,8 @@ import pytest
 
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.component_tools import (
-    RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME,
-    RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME,
+    RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
+    RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
 )
 
@@ -23,9 +23,11 @@ class TestServer:
             "list_bucket_info",
             "list_bucket_tables",
             "query_table",
-            RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME,
+            RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
             "retrieve_jobs_in_project",
-            RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME,
+            RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
+            "update_bucket_description",
+            "update_table_description",
         ]
 
     @pytest.mark.asyncio

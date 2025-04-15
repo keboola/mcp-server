@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union, cast, get_args
+from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence, Union, cast, get_args
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
 # These tool names now reflect their conventional usage, removing redundant parts for users while still
 # providing the same functionality as described in the original tool names.
-RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components_in_project"
-RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations_in_project"
+RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components"
+RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations"
 GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = "get_component_details"
 
 
@@ -30,15 +30,17 @@ def add_component_tools(mcp: FastMCP) -> None:
     logger.info(f"Added tool {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME} to the MCP server.")
 
     mcp.add_tool(
-        retrieve_components_configurations, name=RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME
+        retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME
     )
-    logger.info(f"Added tool {RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
+    logger.info(f"Added tool {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
     mcp.add_tool(
         retrieve_transformations_configurations,
-        name=RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME,
+        name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     )
-    logger.info(f"Added tool {RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
+    logger.info(
+        f"Added tool {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME} to the MCP server."
+    )
 
     mcp.add_tool(create_sql_transformation)
     logger.info(f"Added tool {create_sql_transformation.__name__} to the MCP server.")
@@ -47,8 +49,6 @@ def add_component_tools(mcp: FastMCP) -> None:
 
 
 ############################## Base Models to #########################################
-
-FULLY_QUALIFIED_ID_SEPARATOR: str = "::"
 
 
 class ReducedComponent(BaseModel):
@@ -94,7 +94,7 @@ class ReducedComponentConfiguration(BaseModel):
 
     component_id: str = Field(
         description="The ID of the component",
-        validation_alias=AliasChoices("component_id", "componentId"),
+        validation_alias=AliasChoices("component_id", "componentId", "component-id"),
         serialization_alias="componentId",
     )
     configuration_id: str = Field(
@@ -139,25 +139,6 @@ class ReducedComponentConfiguration(BaseModel):
         serialization_alias="isDeleted",
         default=False,
     )
-    fully_qualified_id: Optional[str] = Field(
-        description=(
-            "The fully qualified ID of the component configuration by which it can be uniquely identified. "
-            "It is a concatenation of the component ID and the configuration ID, separated by a `::`."
-        ),
-        validation_alias=AliasChoices(
-            "fullyQualifiedId", "fully_qualified_id", "fully-qualified-id"
-        ),
-        serialization_alias="fullyQualifiedId",
-        default=None,
-    )
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        if self.fully_qualified_id is None:
-            if self.configuration_id and self.component_id:
-                self.fully_qualified_id = (
-                    f"{self.component_id}{FULLY_QUALIFIED_ID_SEPARATOR}{self.configuration_id}"
-                )
 
 
 class ComponentWithConfigurations(BaseModel):
@@ -184,8 +165,6 @@ class Component(ReducedComponent):
     )
     categories: List[str] = Field(description="The categories of the component", default=[])
     version: int = Field(description="The version of the component")
-    data: Optional[Dict[str, Any]] = Field(description="The data of the component", default=None)
-    flags: Optional[List[str]] = Field(description="The flags of the component", default=None)
     configuration_schema: Optional[Dict[str, Any]] = Field(
         description=(
             "The configuration schema of the component, detailing the structure and requirements of the "
@@ -229,7 +208,7 @@ class ComponentConfiguration(ReducedComponentConfiguration):
         description="The metadata of the component configuration",
         default=[],
         validation_alias=AliasChoices(
-            "metadata", "configuration_metadata", "configurationMetadata"
+            "metadata", "configuration_metadata", "configurationMetadata", "configuration-metadata"
         ),
         serialization_alias="configurationMetadata",
     )
@@ -245,29 +224,29 @@ class ComponentConfiguration(ReducedComponentConfiguration):
 
 ############################## Utility functions #########################################
 
-ComponentType = Literal["application", "extractor", "writer", "all"]
+ComponentType = Literal["application", "extractor", "writer"]
 TransformationType = Literal["transformation"]
 AllComponentTypes = Union[ComponentType, TransformationType]
 
 
 def _handle_component_types(
-    types: Union[ComponentType, List[ComponentType]],
-) -> List[ComponentType]:
+    types: Optional[Union[ComponentType, Sequence[ComponentType]]],
+) -> Sequence[ComponentType]:
     """
     Utility function to handle the component types [extractors, writers, applications, all]
     If the types include "all", it will be removed and the remaining types will be returned.
     :param types: The component types/type to process.
     :return: The processed component types.
     """
+    if not types:
+        return [component_type for component_type in get_args(ComponentType)]
     if isinstance(types, str):
         types = [types]
-    if "all" in types:
-        return [c_type for c_type in get_args(ComponentType) if c_type != "all"]
     return types
 
 
 async def _retrieve_components_configurations_by_types(
-    client: KeboolaClient, component_types: List[AllComponentTypes]
+    client: KeboolaClient, component_types: Sequence[AllComponentTypes]
 ) -> List[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by types - used in tools:
@@ -281,56 +260,56 @@ async def _retrieve_components_configurations_by_types(
     endpoint = f"branch/{client.storage_client._branch_id}/components"
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
-    raw_components_with_configs = []
+    raw_components_with_configurations = []
     for type in component_types:
         # retrieve components by type with configurations
         params = {
             "include": "configuration",
             "componentType": type,
         }
-        raw_components_configs_by_type = cast(
+        raw_components_with_configurations_by_type = cast(
             List[Dict[str, Any]], await client.get(endpoint, params=params)
         )
         # extend the list with the raw components with configurations
-        raw_components_with_configs.extend(raw_components_configs_by_type)
+        raw_components_with_configurations.extend(raw_components_with_configurations_by_type)
 
     # build components with configurations list, each item contains a component and its associated configurations
-    components_with_configs = [
+    components_with_configurations = [
         ComponentWithConfigurations(
             component=ReducedComponent.model_validate(raw_component),
             configurations=[
                 ReducedComponentConfiguration.model_validate(
-                    {**raw_config, "component_id": raw_component["id"]}
+                    {**raw_configuration, "component_id": raw_component["id"]}
                 )
-                for raw_config in raw_component.get("configurations", [])
+                for raw_configuration in raw_component.get("configurations", [])
             ],
         )
-        for raw_component in raw_components_with_configs
+        for raw_component in raw_components_with_configurations
     ]
 
     # perform logging
     total_configurations = sum(
-        len(component.configurations) for component in components_with_configs
+        len(component.configurations) for component in components_with_configurations
     )
     logger.info(
-        f"Found {len(components_with_configs)} components with total of {total_configurations} configurations "
+        f"Found {len(components_with_configurations)} components with total of {total_configurations} configurations "
         f"for types {component_types}."
     )
-    return components_with_configs
+    return components_with_configurations
 
 
 async def _retrieve_components_configurations_by_ids(
-    client: KeboolaClient, component_ids: List[str]
+    client: KeboolaClient, component_ids: Sequence[str]
 ) -> List[ComponentWithConfigurations]:
     """
-    Utility function to retrieve components configurations by ids - used in tools:
+    Utility function to retrieve components with configurations by component IDs - used in tools:
     - retrieve_components_configurations
     - retrieve_transformation_configurations
     :param client: The Keboola client
     :param component_ids: The component IDs to retrieve
     :return: a list of items, each containing a component and its associated configurations
     """
-    components_with_configs = []
+    components_with_configurations = []
     for component_id in component_ids:
         # retrieve configurations for component ids
         raw_configurations = client.storage_client.configurations.list(component_id)
@@ -338,27 +317,27 @@ async def _retrieve_components_configurations_by_ids(
         endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
         raw_component = await client.get(endpoint)
         # build component configurations list grouped by components
-        components_with_configs.append(
+        components_with_configurations.append(
             ComponentWithConfigurations(
                 component=ReducedComponent.model_validate(raw_component),
                 configurations=[
                     ReducedComponentConfiguration.model_validate(
-                        {**raw_config, "component_id": raw_component["id"]}
+                        {**raw_configuration, "component_id": raw_component["id"]}
                     )
-                    for raw_config in raw_configurations
+                    for raw_configuration in raw_configurations
                 ],
             )
         )
 
     # perform logging
     total_configurations = sum(
-        len(component.configurations) for component in components_with_configs
+        len(component.configurations) for component in components_with_configurations
     )
     logger.info(
-        f"Found {len(components_with_configs)} components with total of {total_configurations} configurations "
+        f"Found {len(components_with_configurations)} components with total of {total_configurations} configurations "
         f"for ids {component_ids}."
     )
-    return components_with_configs
+    return components_with_configurations
 
 
 async def _get_component_details(
@@ -532,28 +511,25 @@ def _get_transformation_configuration(
 async def retrieve_components_configurations(
     ctx: Context,
     component_types: Annotated[
-        List[ComponentType],
+        Sequence[ComponentType],
         Field(
-            description="Array of component types to filter by, default is ['all']",
-            default=["all"],
+            description="List of component types to filter by. ",
         ),
-    ] = ["all"],
+    ] = tuple(),
     component_ids: Annotated[
-        List[str],
+        Sequence[str],
         Field(
-            description="List of component IDs to retrieve configurations for, default is []",
-            default=[],
+            description="List of component IDs to retrieve configurations for.",
         ),
-    ] = [],
+    ] = tuple(),
 ) -> Annotated[
     List[ComponentWithConfigurations],
     Field(
-        List[ComponentWithConfigurations],
         description="List of objects, each containing a component and its associated configurations.",
     ),
 ]:
     """
-    Retrieve components configurations in the project based on specified component_types or component_ids.
+    Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
     If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
     component_types.
     USAGE:
@@ -561,13 +537,12 @@ async def retrieve_components_configurations(
         - Use when you want to see components configurations in the project for given component_ids.
     EXAMPLES:
         - user_input: `give me all components`
-            -> set types to ["all"]
             -> returns all components configurations in the project
         - user_input: `list me all extractor components`
             -> set types to ["extractor"]
             -> returns all extractor components configurations in the project
         - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-            -> set types to ["all"], component_ids to list of identifiers accordingly if you know them
+            -> set component_ids to list of identifiers accordingly if you know them
             -> returns all configurations for the given components
         - user_input: `give me configurations for 'specified-id'`
             -> set component_ids to ['specified-id']
@@ -576,10 +551,8 @@ async def retrieve_components_configurations(
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
     if not component_ids:
         client = KeboolaClient.from_state(ctx.session.state)
-        component_types = _handle_component_types(component_types)
-        return await _retrieve_components_configurations_by_types(
-            client, cast(List[AllComponentTypes], component_types)
-        )
+        component_types = _handle_component_types(component_types)  # if none, return all types
+        return await _retrieve_components_configurations_by_types(client, component_types)
     # If component IDs are provided, retrieve component configurations by IDs
     else:
         client = KeboolaClient.from_state(ctx.session.state)
@@ -589,27 +562,24 @@ async def retrieve_components_configurations(
 async def retrieve_transformations_configurations(
     ctx: Context,
     transformation_ids: Annotated[
-        List[str],
+        Sequence[str],
         Field(
-            description="List of transformation component IDs to retrieve configurations for, default is []",
-            default=[],
+            description="List of transformation component IDs to retrieve configurations for.",
         ),
-    ] = [],
+    ] = tuple(),
 ) -> Annotated[
     List[ComponentWithConfigurations],
     Field(
-        List[ComponentWithConfigurations],
         description="List of objects, each containing a transformation component and its associated configurations.",
     ),
 ]:
     """
-    Retrieve transformations in the project for specific transformation IDs or all.
+    Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
     USAGE:
         - Use when you want to see transformation configurations in the project for given transformation_ids.
         - Use when you want to retrieve all transformation configurations, then set transformation_ids to an empty list.
     EXAMPLES:
         - user_input: `give me all transformations`
-            -> set transformation_ids to []
             -> returns all transformation configurations in the project
         - user_input: `give me configurations for following transformation/s` | `give me configurations for
         this transformation`
@@ -631,29 +601,24 @@ async def retrieve_transformations_configurations(
 
 async def get_component_configuration_details(
     component_id: Annotated[
-        str, Field(str, description="Unique identifier of the Keboola component/transformation")
+        str, Field(description="Unique identifier of the Keboola component/transformation")
     ],
     configuration_id: Annotated[
         str,
         Field(
-            str,
-            description=(
-                "Unique identifier of the Keboola component/transformation configuration you want details about"
-            ),
+            description="Unique identifier of the Keboola component/transformation configuration you want details about",
         ),
     ],
     ctx: Context,
 ) -> Annotated[
     ComponentConfiguration,
     Field(
-        ComponentConfiguration,
         description="Detailed information about a Keboola component/transformation and its configuration.",
     ),
 ]:
     """
-    Get detailed information about a specific Keboola component configuration given component/transformation ID and
-    configuration ID. Those IDs can be retrieved from fully_qualified_id of the component configuration which are
-    seperated by `::`.
+    Gets detailed information about a specific Keboola component configuration given component/transformation ID and
+    configuration ID.
     USAGE:
         - Use when you want to see the details of a specific component/transformation configuration.
     EXAMPLES:
@@ -670,7 +635,7 @@ async def get_component_configuration_details(
     # Get Configuration Details
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
     logger.info(
-        f"Retrieved configuration details for component configuration {component_id}::{configuration_id}."
+        f"Retrieved configuration details for {component_id} component with configuration {configuration_id}."
     )
 
     # Get Configuration Metadata if exists
@@ -678,11 +643,11 @@ async def get_component_configuration_details(
     r_metadata = await client.get(endpoint)
     if r_metadata:
         logger.info(
-            f"Retrieved configuration metadata for component configuration {component_id}::{configuration_id}."
+            f"Retrieved configuration metadata for {component_id} component with configuration {configuration_id}."
         )
     else:
         logger.info(
-            f"No metadata found for component configuration {component_id}::{configuration_id}."
+            f"No metadata found for {component_id} component with configuration {configuration_id}."
         )
 
     # Create Component Configuration Detail Object
