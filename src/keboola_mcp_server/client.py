@@ -256,6 +256,33 @@ class JobsQueue(Endpoint):
         }
         return self._search(params=params)
 
+    def create(
+        self,
+        component_id: str,
+        configuration_id: str,
+        mode: str = "run",
+        configuration_row_ids: Optional[List[str]] = None,
+    ) -> Annotated[
+        Dict[str, Any],
+        "The response from the API call - created job or raise an error.",
+    ]:
+        """
+        Create a new Basic job.
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :param mode: The mode of the job.
+        :param configuration_row_ids: The row ids of the configuration.
+        :return: The response from the API call - created job or raise an error.
+        """
+        url = f"{self.base_url}/jobs"
+        body = {
+            "component": component_id,
+            "config": configuration_id,
+            "mode": mode,
+            "configRowIds": configuration_row_ids,
+        }
+        return self._post(url, data=body)
+
     def _search(self, params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
         Search for jobs based on the provided parameters.
