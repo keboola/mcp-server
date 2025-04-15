@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union, cast, get_args
+from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence, Union, cast, get_args
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, field_validator, validator
@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
 # These tool names now reflect their conventional usage, removing redundant parts for users while still
 # providing the same functionality as described in the original tool names.
-RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components"
-RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations"
+RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components"
+RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations"
 GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = "get_component_details"
 
 
@@ -29,15 +29,17 @@ def add_component_tools(mcp: FastMCP) -> None:
     logger.info(f"Added tool {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME} to the MCP server.")
 
     mcp.add_tool(
-        retrieve_components_configurations, name=RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME
+        retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME
     )
-    logger.info(f"Added tool {RETRIEVE_COMPONENT_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
+    logger.info(f"Added tool {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
     mcp.add_tool(
         retrieve_transformations_configurations,
-        name=RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME,
+        name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     )
-    logger.info(f"Added tool {RETRIEVE_TRANSFORMATION_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
+    logger.info(
+        f"Added tool {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME} to the MCP server."
+    )
 
     logger.info("Component tools initialized.")
 
@@ -180,8 +182,6 @@ class Component(ReducedComponent):
     )
     categories: List[str] = Field(description="The categories of the component", default=[])
     version: int = Field(description="The version of the component")
-    data: Optional[Dict[str, Any]] = Field(description="The data of the component", default=None)
-    flags: Optional[List[str]] = Field(description="The flags of the component", default=None)
     configuration_schema: Optional[Dict[str, Any]] = Field(
         description=(
             "The configuration schema of the component, detailing the structure and requirements of the "
@@ -241,29 +241,29 @@ class ComponentConfiguration(ReducedComponentConfiguration):
 
 ############################## Utility functions #########################################
 
-ComponentType = Literal["application", "extractor", "writer", "all"]
+ComponentType = Literal["application", "extractor", "writer"]
 TransformationType = Literal["transformation"]
 AllComponentTypes = Union[ComponentType, TransformationType]
 
 
 def _handle_component_types(
-    types: Union[ComponentType, List[ComponentType]],
-) -> List[ComponentType]:
+    types: Optional[Union[ComponentType, Sequence[ComponentType]]],
+) -> Sequence[ComponentType]:
     """
     Utility function to handle the component types [extractors, writers, applications, all]
     If the types include "all", it will be removed and the remaining types will be returned.
     :param types: The component types/type to process.
     :return: The processed component types.
     """
+    if not types:
+        return [component_type for component_type in get_args(ComponentType)]
     if isinstance(types, str):
         types = [types]
-    if "all" in types:
-        return [c_type for c_type in get_args(ComponentType) if c_type != "all"]
     return types
 
 
 async def _retrieve_components_configurations_by_types(
-    client: KeboolaClient, component_types: List[AllComponentTypes]
+    client: KeboolaClient, component_types: Sequence[AllComponentTypes]
 ) -> List[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by types - used in tools:
@@ -316,7 +316,7 @@ async def _retrieve_components_configurations_by_types(
 
 
 async def _retrieve_components_configurations_by_ids(
-    client: KeboolaClient, component_ids: List[str]
+    client: KeboolaClient, component_ids: Sequence[str]
 ) -> List[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by component IDs - used in tools:
@@ -383,19 +383,17 @@ async def _get_component_details(
 async def retrieve_components_configurations(
     ctx: Context,
     component_types: Annotated[
-        List[ComponentType],
+        Sequence[ComponentType],
         Field(
-            description="Array of component types to filter by, default is ['all']",
-            default=["all"],
+            description="List of component types to filter by. ",
         ),
-    ] = ["all"],
+    ] = tuple(),
     component_ids: Annotated[
-        List[str],
+        Sequence[str],
         Field(
-            description="List of component IDs to retrieve configurations for, default is []",
-            default=[],
+            description="List of component IDs to retrieve configurations for.",
         ),
-    ] = [],
+    ] = tuple(),
 ) -> Annotated[
     List[ComponentWithConfigurations],
     Field(
@@ -404,20 +402,20 @@ async def retrieve_components_configurations(
     ),
 ]:
     """
-    Retrieve components configurations in the project based on specified component_types or component_ids.
-    If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding component_types.
+    Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
+    If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
+    component_types.
     USAGE:
         - Use when you want to see components configurations in the project for given component_types.
         - Use when you want to see components configurations in the project for given component_ids.
     EXAMPLES:
         - user_input: `give me all components`
-            -> set types to ["all"]
             -> returns all components configurations in the project
         - user_input: `list me all extractor components`
             -> set types to ["extractor"]
             -> returns all extractor components configurations in the project
         - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-            -> set types to ["all"], component_ids to list of identifiers accordingly if you know them
+            -> set component_ids to list of identifiers accordingly if you know them
             -> returns all configurations for the given components
         - user_input: `give me configurations for 'specified-id'`
             -> set component_ids to ['specified-id']
@@ -426,10 +424,8 @@ async def retrieve_components_configurations(
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
     if not component_ids:
         client = KeboolaClient.from_state(ctx.session.state)
-        component_types = _handle_component_types(component_types)
-        return await _retrieve_components_configurations_by_types(
-            client, cast(List[AllComponentTypes], component_types)
-        )
+        component_types = _handle_component_types(component_types)  # if none, return all types
+        return await _retrieve_components_configurations_by_types(client, component_types)
     # If component IDs are provided, retrieve component configurations by IDs
     else:
         client = KeboolaClient.from_state(ctx.session.state)
@@ -439,12 +435,11 @@ async def retrieve_components_configurations(
 async def retrieve_transformations_configurations(
     ctx: Context,
     transformation_ids: Annotated[
-        List[str],
+        Sequence[str],
         Field(
-            description="List of transformation component IDs to retrieve configurations for, default is []",
-            default=[],
+            description="List of transformation component IDs to retrieve configurations for.",
         ),
-    ] = [],
+    ] = tuple(),
 ) -> Annotated[
     List[ComponentWithConfigurations],
     Field(
@@ -453,13 +448,12 @@ async def retrieve_transformations_configurations(
     ),
 ]:
     """
-    Retrieve transformations in the project for specific transformation IDs or all.
+    Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
     USAGE:
         - Use when you want to see transformation configurations in the project for given transformation_ids.
         - Use when you want to retrieve all transformation configurations, then set transformation_ids to an empty list.
     EXAMPLES:
         - user_input: `give me all transformations`
-            -> set transformation_ids to []
             -> returns all transformation configurations in the project
         - user_input: `give me configurations for following transformation/s` | `give me configurations for
         this transformation`
@@ -472,7 +466,7 @@ async def retrieve_transformations_configurations(
     # If no transformation IDs are provided, retrieve transformations configurations by transformation type
     if not transformation_ids:
         client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_types(client, ["transformation"])
+        return await _retrieve_components_configurations_by_types(client, ("transformation",))
     # If transformation IDs are provided, retrieve transformations configurations by IDs
     else:
         client = KeboolaClient.from_state(ctx.session.state)
@@ -499,7 +493,7 @@ async def get_component_configuration_details(
     ),
 ]:
     """
-    Get detailed information about a specific Keboola component configuration given component/transformation ID and
+    Gets detailed information about a specific Keboola component configuration given component/transformation ID and
     configuration ID. Those IDs can be retrieved from fully_qualified_id of the component configuration which are
     seperated by `::`.
     USAGE:

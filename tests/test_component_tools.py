@@ -1,4 +1,4 @@
-from typing import Any, Callable, Union, get_args
+from typing import Any, Callable, Sequence, Union, get_args
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -86,8 +86,8 @@ def mock_component() -> dict[str, Any]:
         "categories": ["extractor"],
         "version": 1,
         "created": "2024-01-01T00:00:00Z",
-        "data": {},
-        "flags": [],
+        "data": {"data1": "data1", "data2": "data2"},
+        "flags": ["flag1", "flag2"],
         "configurationSchema": {},
         "configurationDescription": "Extract data from AWS S3",
         "emptyConfiguration": {},
@@ -230,7 +230,7 @@ async def test_retrieve_components_configurations_by_types(
         ]
     )
 
-    result = await retrieve_components_configurations(context, component_types=["all"])
+    result = await retrieve_components_configurations(context, component_types=None)
 
     assert_retrieve_components(result, mock_components, mock_configurations)
 
@@ -400,11 +400,13 @@ async def test_get_component_configuration_details(
     [
         ("application", ["application"]),
         (["extractor", "writer"], ["extractor", "writer"]),
-        (["writer", "all", "extractor"], ["application", "extractor", "writer"]),
+        (None, ["application", "extractor", "writer"]),
+        ([], ["application", "extractor", "writer"]),
     ],
 )
 def test_handle_component_types(
-    component_type: Union[ComponentType, list[ComponentType]], expected: list[ComponentType]
+    component_type: Union[ComponentType, Sequence[ComponentType], None],
+    expected: list[ComponentType],
 ):
     """Test list_component_configurations tool with core component."""
     assert _handle_component_types(component_type) == expected
