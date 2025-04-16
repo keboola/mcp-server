@@ -266,7 +266,9 @@ async def start_new_job(
     client = KeboolaClient.from_state(ctx.session.state)
 
     try:
-        raw_job = client.jobs_queue.create(component_id, configuration_id)
+        raw_job = client.jobs_queue.create(
+            component_id=component_id, configuration_id=configuration_id
+        )
         job = JobDetail.model_validate(raw_job)
         logger.info(
             f"Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}."
