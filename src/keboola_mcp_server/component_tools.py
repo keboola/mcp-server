@@ -2,9 +2,10 @@ import logging
 from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence, Union, cast, get_args
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field, field_validator, validator
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.sql_tools import get_sql_dialect
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,9 @@ def add_component_tools(mcp: FastMCP) -> None:
     logger.info(
         f"Added tool {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME} to the MCP server."
     )
+
+    mcp.add_tool(create_sql_transformation)
+    logger.info(f"Added tool {create_sql_transformation.__name__} to the MCP server.")
 
     logger.info("Component tools initialized.")
 
@@ -354,6 +358,97 @@ async def _get_component_details(
     return Component.model_validate(raw_component)
 
 
+def _get_sql_transformation_id_from_sql_dialect(
+    sql_dialect: str,
+) -> str:
+    """
+    Utility function to retrieve the SQL transformation ID from the given SQL dialect.
+    :param sql_dialect: The SQL dialect
+    :return: The SQL transformation ID
+    :raises ValueError: If the SQL dialect is not supported
+    """
+    if sql_dialect.lower() == "snowflake":
+        return "keboola.snowflake-transformation"
+    elif sql_dialect.lower() == "bigquery":
+        return "keboola.bigquery-transformation"
+    else:
+        raise ValueError(f"Unsupported SQL dialect: {sql_dialect}")
+
+
+class TransformationConfiguration(BaseModel):
+    """The configuration for the transformation serves as a schema for the transformation configuration in the API."""
+
+    class Parameters(BaseModel):
+        """The parameters for the transformation."""
+
+        class Block(BaseModel):
+            """The block for the transformation."""
+
+            class Code(BaseModel):
+                """The code for the transformation block."""
+
+                name: str = Field(description="The name of the current code script")
+                script: list[str] = Field(description="List of current code statements")
+
+            name: str = Field(description="The name of the current block")
+            codes: list[Code] = Field(description="The code scripts")
+
+        blocks: list[Block] = Field(description="The blocks for the transformation")
+
+    class Storage(BaseModel):
+        """The storage configuration for the transformation. For now it stores only input and output tables."""
+
+        class Destination(BaseModel):
+            """Tables' destinations for the transformation. Either input or output tables."""
+
+            class Table(BaseModel):
+                """The table used in the transformation"""
+
+                destination: Optional[str] = Field(
+                    description="The destination table name", default=None
+                )
+                source: Optional[str] = Field(description="The source table name", default=None)
+
+            tables: list[Table] = Field(
+                description="The tables used in the transformation", default=[]
+            )
+
+        input: Destination = Field(
+            description="The input tables for the transformation", default=Destination()
+        )
+        output: Destination = Field(
+            description="The output tables for the transformation", default=Destination()
+        )
+
+    parameters: Parameters = Field(description="The parameters for the transformation")
+    storage: Storage = Field(description="The storage configuration for the transformation")
+
+
+def _get_transformation_configuration(sql_statement: str) -> TransformationConfiguration:
+    """
+    Utility function to set the transformation configuration from SQL statement.
+    It creates the expected configuration for the transformation, parameters and storage.
+    :param sql_statement: The SQL statements
+    :return: dictionary with parameters and storage following the TransformationConfiguration schema
+    """
+    # init Storage Configuration with empty input and output tables
+    storage = TransformationConfiguration.Storage()
+    # build parameters configuration out of SQL statement
+    parameters = TransformationConfiguration.Parameters(
+        blocks=[
+            TransformationConfiguration.Parameters.Block(
+                name=f"Block 0",
+                codes=[
+                    TransformationConfiguration.Parameters.Block.Code(
+                        name=f"Code 0", script=[sql_statement]
+                    )
+                ],
+            )
+        ]
+    )
+    return TransformationConfiguration(parameters=parameters, storage=storage)
+
+
 ############################## End of utility functions #########################################
 
 ############################## Component tools #########################################
@@ -457,7 +552,8 @@ async def get_component_configuration_details(
     configuration_id: Annotated[
         str,
         Field(
-            description="Unique identifier of the Keboola component/transformation configuration you want details about",
+            description="Unique identifier of the Keboola component/transformation configuration you want details "
+            "about",
         ),
     ],
     ctx: Context,
@@ -510,6 +606,100 @@ async def get_component_configuration_details(
             "metadata": r_metadata,
         }
     )
+
+
+async def create_sql_transformation(
+    ctx: Context,
+    name: Annotated[
+        str,
+        Field(
+            description="The name of the SQL transformation expressing the sql functionality.",
+        ),
+    ],
+    description: Annotated[
+        str,
+        Field(
+            description=(
+                "The detailed description of the SQL transformation capturing the user intent, explaining the "
+                "SQL query, and the expected output."
+            ),
+        ),
+    ],
+    sql_statement: Annotated[
+        str,
+        Field(
+            description=("The SQL exacutable query statemenet following the current SQL dialect."),
+        ),
+    ],
+) -> Annotated[
+    ComponentConfiguration,
+    Field(
+        description="Newly created SQL Transformation Configuration.",
+    ),
+]:
+    """
+    Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, and a detailed
+    description.
+    CONSIDERATIONS:
+        - The SQL query statement is executable and must follow the current SQL dialect, which
+          can be retrieved using appropriate tool.
+        - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
+          fully qualified table name.
+        - When referring to the input tables within the SQL query, use fully qualified table names, which can be
+          retrieved using appropriate tools.
+        - Unless otherwise specified by user, transformation name and description are generated based on the sql query
+          and user intent.
+    USAGE:
+        - Use when you want to create a new SQL transformation.
+    EXAMPLES:
+        - user_input: `Can you save me the SQL query you generated as a new transformation?`
+            -> set the sql_statement to the query, and set other parameters accordingly.
+            -> returns the created SQL transformation configuration if successful.
+        - user_input: `Generate me an SQL transformation which [USER INTENT]`
+            -> set the sql_statement to the query based on the [USER INTENT], and set other parameters accordingly.
+            -> returns the created SQL transformation configuration if successful.
+    """
+
+    # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
+    # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
+    sql_dialect = await get_sql_dialect(ctx)
+    transformation_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    logger.info(f"SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}")
+
+    # Process the data to be stored in the storage configuration
+    transformation_configuration_payload = _get_transformation_configuration(sql_statement)
+
+    client = KeboolaClient.from_state(ctx.session.state)
+    endpoint = f"branch/{client.storage_client._branch_id}/components/{transformation_id}/configs"
+    # Try to create the new transformation configuration and return the full object if successful
+    # or log an error and raise an exception if not
+    try:
+        # Create the new transformation configuration
+        logger.info(
+            f"Creating new transformation configuration: {name} for component: {transformation_id}."
+        )
+        new_raw_transformation_configuration = await client.post(
+            endpoint,
+            data={
+                "name": name,
+                "description": description,
+                "configuration": transformation_configuration_payload.model_dump(),
+            },
+        )
+        component = await _get_component_details(client=client, component_id=transformation_id)
+        new_transformation_configuration = ComponentConfiguration(
+            **new_raw_transformation_configuration,
+            component_id=transformation_id,
+            component=component,
+        )
+        logger.info(
+            f"Created new transformation '{transformation_id}' with configuration id "
+            f"'{new_transformation_configuration.configuration_id}'."
+        )
+        return new_transformation_configuration
+    except Exception as e:
+        logger.exception(f"Error when creating new transformation configuration: {e}")
+        raise e
 
 
 ############################## End of component tools #########################################
