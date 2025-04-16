@@ -128,16 +128,16 @@ def mock_metadata() -> list[dict[str, Any]]:
 
 
 @pytest.fixture
-def test_branch_id() -> str:
+def mock_branch_id() -> str:
     return "default"
 
 
 @pytest.fixture
-def mcp_context_components_configs(mcp_context_client, test_branch_id) -> Context:
+def mcp_context_components_configs(mcp_context_client, mock_branch_id) -> Context:
     keboola_client = mcp_context_client.session.state["sapi_client"]
     keboola_client.storage_client.components = MagicMock()
     keboola_client.storage_client.configurations = MagicMock()
-    keboola_client.storage_client._branch_id = test_branch_id
+    keboola_client.storage_client._branch_id = mock_branch_id
     return mcp_context_client
 
 
@@ -217,7 +217,7 @@ async def test_retrieve_components_configurations_by_types(
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
-    test_branch_id: str,
+    mock_branch_id: str,
     assert_retrieve_components: Callable[
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
@@ -240,15 +240,15 @@ async def test_retrieve_components_configurations_by_types(
     keboola_client.get.assert_has_calls(
         [
             call(
-                f"branch/{test_branch_id}/components",
+                f"branch/{mock_branch_id}/components",
                 params={"componentType": "application", "include": "configuration"},
             ),
             call(
-                f"branch/{test_branch_id}/components",
+                f"branch/{mock_branch_id}/components",
                 params={"componentType": "extractor", "include": "configuration"},
             ),
             call(
-                f"branch/{test_branch_id}/components",
+                f"branch/{mock_branch_id}/components",
                 params={"componentType": "writer", "include": "configuration"},
             ),
         ]
@@ -260,7 +260,7 @@ async def test_retrieve_transformations_configurations(
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
-    test_branch_id: str,
+    mock_branch_id: str,
     assert_retrieve_components: Callable[
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
@@ -281,7 +281,7 @@ async def test_retrieve_transformations_configurations(
     keboola_client.get.assert_has_calls(
         [
             call(
-                f"branch/{test_branch_id}/components",
+                f"branch/{mock_branch_id}/components",
                 params={"componentType": "transformation", "include": "configuration"},
             ),
         ]
@@ -293,7 +293,7 @@ async def test_retrieve_components_configurations_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    test_branch_id: str,
+    mock_branch_id: str,
     assert_retrieve_components: Callable[
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
@@ -311,7 +311,7 @@ async def test_retrieve_components_configurations_from_ids(
 
     keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component["id"])
     keboola_client.get.assert_called_once_with(
-        f"branch/{test_branch_id}/components/{mock_component['id']}"
+        f"branch/{mock_branch_id}/components/{mock_component['id']}"
     )
 
 
@@ -320,7 +320,7 @@ async def test_retrieve_transformations_configurations_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    test_branch_id: str,
+    mock_branch_id: str,
     assert_retrieve_components: Callable[
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
@@ -340,7 +340,7 @@ async def test_retrieve_transformations_configurations_from_ids(
 
     keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component["id"])
     keboola_client.get.assert_called_once_with(
-        f"branch/{test_branch_id}/components/{mock_component['id']}"
+        f"branch/{mock_branch_id}/components/{mock_component['id']}"
     )
 
 
@@ -416,11 +416,10 @@ def test_handle_component_types(
 
 
 @pytest.mark.parametrize(
-    "sql_dialect, expected_component_id, expected_configuration_id, expected_error",
+    "sql_dialect, expected_component_id, expected_configuration_id",
     [
-        ("Snowflake", "keboola.snowflake-transformation", "1234", False),
-        ("BigQuery", "keboola.bigquery-transformation", "5678", False),
-        ("Unknown", "keboola.postgres-transformation", "9101", True),
+        ("Snowflake", "keboola.snowflake-transformation", "1234"),
+        ("BigQuery", "keboola.bigquery-transformation", "5678"),
     ],
 )
 @pytest.mark.asyncio
@@ -431,8 +430,7 @@ async def test_create_transformation_configuration(
     sql_dialect: str,
     expected_component_id: str,
     expected_configuration_id: str,
-    expected_error: bool,
-    test_branch_id: str,
+    mock_branch_id: str,
 ):
     """Test create_transformation_configuration tool."""
     context = mcp_context_components_configs
@@ -453,61 +451,69 @@ async def test_create_transformation_configuration(
     test_name = mock_configuration["name"]
     test_description = mock_configuration["description"]
     test_sql_statement = "SELECT * FROM test"
-    test_output_table_name = ""  # empty do not test here
-    test_bucket_name = "test_bucket"
 
     # Test the create_sql_transformation tool
-    # We expect an error if the SQL dialect is not supported
-    if expected_error:
-        with pytest.raises(ValueError):
-            _ = await create_sql_transformation(
-                context,
-                test_name,
-                test_description,
-                test_sql_statement,
-            )
-    # In case we do not expect an error, we expect the transformation to be created and returned
-    else:
-        new_transformation_configuration = await create_sql_transformation(
-            context,
-            test_name,
-            test_description,
-            test_sql_statement,
-        )
-        assert isinstance(new_transformation_configuration, ComponentConfiguration)
-        assert new_transformation_configuration.component is not None
-        assert new_transformation_configuration.component.component_id == expected_component_id
-        assert new_transformation_configuration.component_id == expected_component_id
-        assert new_transformation_configuration.configuration_id == expected_configuration_id
-        assert new_transformation_configuration.configuration_name == test_name
-        assert new_transformation_configuration.configuration_description == test_description
+    new_transformation_configuration = await create_sql_transformation(
+        context,
+        test_name,
+        test_description,
+        test_sql_statement,
+    )
+    assert isinstance(new_transformation_configuration, ComponentConfiguration)
+    assert new_transformation_configuration.component is not None
+    assert new_transformation_configuration.component.component_id == expected_component_id
+    assert new_transformation_configuration.component_id == expected_component_id
+    assert new_transformation_configuration.configuration_id == expected_configuration_id
+    assert new_transformation_configuration.configuration_name == test_name
+    assert new_transformation_configuration.configuration_description == test_description
 
-        keboola_client.get.assert_called_once_with(
-            f"branch/{test_branch_id}/components/{expected_component_id}"
-        )
-        keboola_client.post.assert_called_once_with(
-            f"branch/{test_branch_id}/components/{expected_component_id}/configs",
-            data={
-                "name": test_name,
-                "description": test_description,
-                "configuration": {
-                    "parameters": {
-                        "blocks": [
-                            {
-                                "name": "Block 0",
-                                "codes": [{"name": "Code 0", "script": [test_sql_statement]}],
-                            }
-                        ]
-                    },
-                    "storage": {
-                        "input": {"tables": []},
-                        "output": {"tables": []},
-                    },
+    keboola_client.get.assert_called_once_with(
+        f"branch/{mock_branch_id}/components/{expected_component_id}"
+    )
+    keboola_client.post.assert_called_once_with(
+        f"branch/{mock_branch_id}/components/{expected_component_id}/configs",
+        data={
+            "name": test_name,
+            "description": test_description,
+            "configuration": {
+                "parameters": {
+                    "blocks": [
+                        {
+                            "name": "Block 0",
+                            "codes": [{"name": "Code 0", "script": [test_sql_statement]}],
+                        }
+                    ]
+                },
+                "storage": {
+                    "input": {"tables": []},
+                    "output": {"tables": []},
                 },
             },
+        },
+    )
+
+@pytest.mark.parametrize("sql_dialect", ["Unknown"])
+@pytest.mark.asyncio
+async def test_create_transformation_configuration_fail(
+    sql_dialect: str, 
+    mcp_context_components_configs: Context,
+):
+    """Test get_transformation_configuration tool which should return the correct transformation configuration
+    given the sql statement."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = AsyncMock(return_value=sql_dialect)
+
+    with pytest.raises(ValueError):
+        _ = await create_sql_transformation(
+            context,
+            "test_name",
+            "test_description",
+            "SELECT * FROM test",
         )
+    
 
-
+    
 @pytest.mark.parametrize("sql_statement", ["SELECT * FROM test"])
 def test_get_transformation_configuration(
     sql_statement: str,

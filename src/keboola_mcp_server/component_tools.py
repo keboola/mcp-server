@@ -641,7 +641,7 @@ async def create_sql_transformation(
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, and a detailed
     description.
     CONSIDERATIONS:
-        - The SQL query statement is executable and must follow the current SQL dialect (BigQuery, Snowflake), which
+        - The SQL query statement is executable and must follow the current SQL dialect, which
           can be retrieved using appropriate tool.
         - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
           fully qualified table name.
@@ -693,12 +693,12 @@ async def create_sql_transformation(
             component=component,
         )
         logger.info(
-            f"Created new transformation configuration: {new_transformation_configuration.configuration_id} for "
-            f"component: {transformation_id}."
+            f"Created new transformation '{transformation_id}' with configuration id "
+            f"'{new_transformation_configuration.configuration_id}'."
         )
         return new_transformation_configuration
     except Exception as e:
-        logger.error(f"Error when creating new transformation configuration: {e}")
+        logger.exception(f"Error when creating new transformation configuration: {e}")
         raise e
 
 
