@@ -1,4 +1,4 @@
-from typing import Any, Callable, Sequence, Union, get_args
+from typing import Any, Callable, Sequence, Union
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -492,10 +492,11 @@ async def test_create_transformation_configuration(
         },
     )
 
+
 @pytest.mark.parametrize("sql_dialect", ["Unknown"])
 @pytest.mark.asyncio
 async def test_create_transformation_configuration_fail(
-    sql_dialect: str, 
+    sql_dialect: str,
     mcp_context_components_configs: Context,
 ):
     """Test get_transformation_configuration tool which should return the correct transformation configuration
@@ -511,9 +512,8 @@ async def test_create_transformation_configuration_fail(
             "test_description",
             "SELECT * FROM test",
         )
-    
 
-    
+
 @pytest.mark.parametrize("sql_statement", ["SELECT * FROM test"])
 def test_get_transformation_configuration(
     sql_statement: str,
