@@ -9,6 +9,20 @@ from keboola_mcp_server.client import KeboolaClient
 
 logger = logging.getLogger(__name__)
 
+
+def add_jobs_tools(mcp: FastMCP) -> None:
+    """Add tools to the MCP server."""
+    jobs_tools = [
+        retrieve_jobs,
+        get_job_detail,
+        start_new_job,
+    ]
+    for tool in jobs_tools:
+        logger.info(f"Adding tool {tool.__name__} to the MCP server.")
+        mcp.add_tool(tool)
+
+    logger.info("Jobs tools initialized.")
+
 ######################################## Job Base Models ########################################
 
 JOB_STATUS = Literal[
@@ -132,19 +146,6 @@ class JobDetail(JobListItem):
 
 SORT_BY_VALUES = Literal["startTime", "endTime", "createdTime", "durationSeconds", "id"]
 SORT_ORDER_VALUES = Literal["asc", "desc"]
-
-
-def add_jobs_tools(mcp: FastMCP) -> None:
-    """Add tools to the MCP server."""
-    jobs_tools = [
-        retrieve_jobs,
-        get_job_detail,
-    ]
-    for tool in jobs_tools:
-        logger.info(f"Adding tool {tool.__name__} to the MCP server.")
-        mcp.add_tool(tool)
-
-    logger.info("Jobs tools initialized.")
 
 
 async def retrieve_jobs(
