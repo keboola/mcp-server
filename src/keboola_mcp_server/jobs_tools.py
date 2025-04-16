@@ -241,4 +241,30 @@ async def get_job_detail(
     return JobDetail.model_validate(raw_job)
 
 
+async def start_new_job(
+    ctx: Context,
+    component_id: Annotated[
+        str, Field(description="The ID of the component or transformation to run.")
+    ],
+    configuration_id: Annotated[str, Field(description="The ID of the configuration to run.")],
+) -> Annotated[JobDetail, Field(description="The newly created job detail.")]:
+    """
+    Starts a new job for a given component or transformation.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    try:
+        raw_job = client.jobs_queue.create(component_id, configuration_id)
+        job = JobDetail.model_validate(raw_job)
+        logger.info(
+            f"Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}."
+        )
+        return job
+    except Exception as e:
+        logger.exception(
+            f"Error when starting a new job for component {component_id} and configuration {configuration_id}: {e}"
+        )
+        raise e
+
+
 ######################################## End of MCP tools ########################################
