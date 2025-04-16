@@ -23,6 +23,7 @@ def add_jobs_tools(mcp: FastMCP) -> None:
 
     logger.info("Jobs tools initialized.")
 
+
 ######################################## Job Base Models ########################################
 
 JOB_STATUS = Literal[
@@ -134,7 +135,9 @@ class JobDetail(JobListItem):
         if not current_value:
             return dict()
         if isinstance(current_value, list):
-            raise ValueError(f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}.")
+            raise ValueError(
+                f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}."
+            )
         return current_value
 
 
