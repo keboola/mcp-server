@@ -510,8 +510,7 @@ async def test_create_transformation_configuration_fail(
     sql_dialect: str,
     mcp_context_components_configs: Context,
 ):
-    """Test get_transformation_configuration tool which should return the correct transformation configuration
-    given the sql statement."""
+    """Test create_sql_transformation tool which should raise an error if the sql dialect is unknown."""
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_sql_dialect = AsyncMock(return_value=sql_dialect)
@@ -534,12 +533,21 @@ async def test_create_transformation_configuration_fail(
         # testing with multiple sql statements and output table mappings
         # it should create output tables according to the mappings
         (
-            ["SELECT * FROM test"],
+            [
+                'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
+                'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+            ],
             ["test_table_1", "test_table_2"],
             "test name two",
             "out.c-test-name-two",
         ),
-        (["SELECT * FROM test"], ["test_table_1"], "test", "out.c-test"),
+        # testing with single sql statement and output table mappings
+        (
+            ['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
+            ["test_table_1"],
+            "test name",
+            "out.c-test-name",
+        ),
     ],
 )
 def test_get_transformation_configuration(
