@@ -1,9 +1,9 @@
 import datetime
 import logging
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 
@@ -16,6 +16,7 @@ JOB_STATUS = Literal[
     "processing",
     "success",
     "error",
+    "created",  # when the job is created
 ]
 
 
@@ -108,12 +109,21 @@ class JobDetail(JobListItem):
         serialization_alias="result",
         default=None,
     )
-    metrics: Optional[Dict[str, Any]] = Field(
-        description="The metrics of the job.",
-        validation_alias="metrics",
-        serialization_alias="metrics",
-        default=None,
-    )
+
+    @field_validator("result", mode="before")
+    def convert_empty_list_result_to_dict(
+        cls, current_value: Union[List, Dict[str, Any], None]
+    ) -> Dict[str, Any]:
+        # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
+        # Why? Because result is expected to be an Object, but create job endpoint sends [], perhaps it means
+        # "empty". This avoids type errors.
+        if not current_value:
+            return dict()
+        if isinstance(current_value, list):
+            raise ValidationError(
+                f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}."
+            )
+        return current_value
 
 
 ######################################## End of Job Base Models ########################################
