@@ -3,7 +3,7 @@ import logging
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 
@@ -134,9 +134,7 @@ class JobDetail(JobListItem):
         if not current_value:
             return dict()
         if isinstance(current_value, list):
-            raise ValidationError(
-                f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}."
-            )
+            raise ValueError(f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}.")
         return current_value
 
 
