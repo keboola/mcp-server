@@ -275,13 +275,13 @@ class JobsQueue(Endpoint):
         :return: The response from the API call - created job or raise an error.
         """
         url = f"{self.base_url}/jobs"
-        body = {
+        payload = {
             "component": component_id,
             "config": configuration_id,
             "mode": mode,
             "configRowIds": configuration_row_ids,
         }
-        return self._post(url, data=body)
+        return self._post(url, json=payload)
 
     def _search(self, params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
