@@ -13,18 +13,18 @@ logger = logging.getLogger(__name__)
 ################################## Add jobs tools to MCP SERVER ##################################
 
 
-def add_jobs_tools(mcp: FastMCP) -> None:
-    """Add tools to the MCP server."""
+def add_job_tools(mcp: FastMCP) -> None:
+    """Add job tools to the MCP server."""
     jobs_tools = [
         retrieve_jobs,
         get_job_detail,
-        run_job,
+        create_job_run,
     ]
     for tool in jobs_tools:
         logger.info(f"Adding tool {tool.__name__} to the MCP server.")
         mcp.add_tool(tool)
 
-    logger.info("Jobs tools initialized.")
+    logger.info("Job tools initialized.")
 
 
 ######################################## Job Base Models ########################################
@@ -34,7 +34,7 @@ JOB_STATUS = Literal[
     "processing",
     "success",
     "error",
-    "created",  # when the job is created
+    "created",
 ]
 
 
@@ -129,7 +129,7 @@ class JobDetail(JobListItem):
     )
 
     @field_validator("result", mode="before")
-    def convert_empty_list_result_to_dict(
+    def validate_result_field(
         cls, current_value: Union[List, Dict[str, Any], None]
     ) -> Dict[str, Any]:
         # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
@@ -256,20 +256,22 @@ async def get_job_detail(
     return JobDetail.model_validate(raw_job)
 
 
-async def run_job(
+async def create_job_run(
     ctx: Context,
     component_id: Annotated[
-        str, Field(description="The ID of the component or transformation to run.")
+        str, Field(description="The ID of the component or transformation for which to run a job.")
     ],
-    configuration_id: Annotated[str, Field(description="The ID of the configuration to run.")],
+    configuration_id: Annotated[
+        str, Field(description="The ID of the configuration for which to run a job.")
+    ],
 ) -> Annotated[JobDetail, Field(description="The newly created job detail.")]:
     """
-    Runs a new job for a given component or transformation.
+    Creates and runs a new job for a given component or transformation.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
     try:
-        raw_job = client.jobs_queue.create(
+        raw_job = client.jobs_queue.create_job(
             component_id=component_id, configuration_id=configuration_id
         )
         job = JobDetail.model_validate(raw_job)
@@ -277,11 +279,11 @@ async def run_job(
             f"Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}."
         )
         return job
-    except Exception as e:
+    except Exception as exception:
         logger.exception(
-            f"Error when starting a new job for component {component_id} and configuration {configuration_id}: {e}"
+            f"Error when starting a new job for component {component_id} and configuration {configuration_id}: {exception}"
         )
-        raise e
+        raise exception
 
 
 ######################################## End of MCP tools ########################################

@@ -256,7 +256,7 @@ class JobsQueue(Endpoint):
         }
         return self._search(params=params)
 
-    def create(
+    def create_job(
         self,
         component_id: str,
         configuration_id: str,
@@ -267,7 +267,7 @@ class JobsQueue(Endpoint):
         "The response from the API call - created job or raise an error.",
     ]:
         """
-        Create a new Basic job.
+        Create a new job.
         :param component_id: The id of the component.
         :param configuration_id: The id of the configuration.
         :param mode: The mode of the job.

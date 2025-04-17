@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Type, Union
+from typing import Annotated, Any, Type, Union
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,7 +12,7 @@ from keboola_mcp_server.jobs_tools import (
     JobListItem,
     get_job_detail,
     retrieve_jobs,
-    run_job,
+    create_job_run,
 )
 
 
@@ -234,17 +234,20 @@ async def retrieve_jobs_with_component_id_without_config_id(
 
 
 @pytest.mark.asyncio
-async def test_run_job(mcp_context_client: Context, mock_job: dict[str, Any]):
-    """Tests run_job tool."""
+async def test_create_job_run(
+    mcp_context_client: Context,
+    mock_job: Annotated[dict[str, Any], "The newly created job detail - expecting api response."],
+):
+    """Tests create_job_run tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_job["result"] = []  # simulate empty list as returned by create job endpoint
     mock_job["status"] = "created"  # simulate created status as returned by create job endpoint
-    keboola_client.jobs_queue.create = MagicMock(return_value=mock_job)
+    keboola_client.jobs_queue.create_job = MagicMock(return_value=mock_job)
 
     component_id = mock_job["component"]
     configuration_id = mock_job["config"]
-    job_detail = await run_job(
+    job_detail = await create_job_run(
         ctx=context, component_id=component_id, configuration_id=configuration_id
     )
 
@@ -256,7 +259,7 @@ async def test_run_job(mcp_context_client: Context, mock_job: dict[str, Any]):
     assert job_detail.config_id == configuration_id
     assert job_detail.result == {}
 
-    keboola_client.jobs_queue.create.assert_called_once_with(
+    keboola_client.jobs_queue.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
     )
@@ -267,15 +270,17 @@ async def test_run_job_fail(mcp_context_client: Context, mock_job: dict[str, Any
     """Tests run_job tool when job creation fails."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue.create = MagicMock(side_effect=HTTPError("Job creation failed"))
+    keboola_client.jobs_queue.create_job = MagicMock(side_effect=HTTPError("Job creation failed"))
 
     component_id = mock_job["component"]
     configuration_id = mock_job["config"]
 
     with pytest.raises(HTTPError):
-        await run_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
+        await create_job_run(
+            ctx=context, component_id=component_id, configuration_id=configuration_id
+        )
 
-    keboola_client.jobs_queue.create.assert_called_once_with(
+    keboola_client.jobs_queue.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
     )
