@@ -12,7 +12,7 @@ from keboola_mcp_server.jobs_tools import (
     JobListItem,
     get_job_detail,
     retrieve_jobs,
-    start_new_job,
+    run_job,
 )
 
 
@@ -234,8 +234,8 @@ async def retrieve_jobs_with_component_id_without_config_id(
 
 
 @pytest.mark.asyncio
-async def test_start_new_job(mcp_context_client: Context, mock_job: dict[str, Any]):
-    """Tests start_new_job tool."""
+async def test_run_job(mcp_context_client: Context, mock_job: dict[str, Any]):
+    """Tests run_job tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_job["result"] = []  # simulate empty list as returned by create job endpoint
@@ -244,7 +244,7 @@ async def test_start_new_job(mcp_context_client: Context, mock_job: dict[str, An
 
     component_id = mock_job["component"]
     configuration_id = mock_job["config"]
-    job_detail = await start_new_job(
+    job_detail = await run_job(
         ctx=context, component_id=component_id, configuration_id=configuration_id
     )
 
@@ -263,8 +263,8 @@ async def test_start_new_job(mcp_context_client: Context, mock_job: dict[str, An
 
 
 @pytest.mark.asyncio
-async def test_start_new_job_failed(mcp_context_client: Context, mock_job: dict[str, Any]):
-    """Tests start_new_job tool when job creation fails."""
+async def test_run_job_fail(mcp_context_client: Context, mock_job: dict[str, Any]):
+    """Tests run_job tool when job creation fails."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue.create = MagicMock(side_effect=HTTPError("Job creation failed"))
@@ -273,7 +273,7 @@ async def test_start_new_job_failed(mcp_context_client: Context, mock_job: dict[
     configuration_id = mock_job["config"]
 
     with pytest.raises(HTTPError):
-        await start_new_job(
+        await run_job(
             ctx=context, component_id=component_id, configuration_id=configuration_id
         )
 

@@ -10,12 +10,14 @@ from keboola_mcp_server.client import KeboolaClient
 logger = logging.getLogger(__name__)
 
 
+################################## Add jobs tools to MCP SERVER ##################################
+
 def add_jobs_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     jobs_tools = [
         retrieve_jobs,
         get_job_detail,
-        start_new_job,
+        run_job,
     ]
     for tool in jobs_tools:
         logger.info(f"Adding tool {tool.__name__} to the MCP server.")
@@ -253,7 +255,7 @@ async def get_job_detail(
     return JobDetail.model_validate(raw_job)
 
 
-async def start_new_job(
+async def run_job(
     ctx: Context,
     component_id: Annotated[
         str, Field(description="The ID of the component or transformation to run.")
@@ -261,7 +263,7 @@ async def start_new_job(
     configuration_id: Annotated[str, Field(description="The ID of the configuration to run.")],
 ) -> Annotated[JobDetail, Field(description="The newly created job detail.")]:
     """
-    Starts a new job for a given component or transformation.
+    Runs a new job for a given component or transformation.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
