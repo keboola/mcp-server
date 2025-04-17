@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 ################################## Add jobs tools to MCP SERVER ##################################
 
+
 def add_jobs_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     jobs_tools = [
