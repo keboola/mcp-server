@@ -376,7 +376,10 @@ def _get_sql_transformation_id_from_sql_dialect(
 
 
 class TransformationConfiguration(BaseModel):
-    """The configuration for the transformation serves as a schema for the transformation configuration in the API."""
+    """
+    Utility class to create the transformation configuration, a schema for the transformation configuration in the API.
+    Currently, the storage configuration uses only input and output tables, excluding files, etc.
+    """
 
     class Parameters(BaseModel):
         """The parameters for the transformation."""
@@ -424,28 +427,48 @@ class TransformationConfiguration(BaseModel):
     storage: Storage = Field(description="The storage configuration for the transformation")
 
 
-def _get_transformation_configuration(sql_statement: str) -> TransformationConfiguration:
+def _get_transformation_configuration(
+    statements: Sequence[str], transformation_name: str, output_tables: Sequence[str]
+) -> TransformationConfiguration:
     """
-    Utility function to set the transformation configuration from SQL statement.
+    Utility function to set the transformation configuration from code statements.
     It creates the expected configuration for the transformation, parameters and storage.
-    :param sql_statement: The SQL statements
+    :param statements: The code statements (sql for now)
+    :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
+    :param output_tables: The output tables of the transformation, created by the code statements
     :return: dictionary with parameters and storage following the TransformationConfiguration schema
     """
     # init Storage Configuration with empty input and output tables
     storage = TransformationConfiguration.Storage()
-    # build parameters configuration out of SQL statement
+    # build parameters configuration out of code statements
     parameters = TransformationConfiguration.Parameters(
         blocks=[
             TransformationConfiguration.Parameters.Block(
                 name=f"Block 0",
                 codes=[
                     TransformationConfiguration.Parameters.Block.Code(
-                        name=f"Code 0", script=[sql_statement]
+                        name=f"Code 0", script=list(statements)
                     )
                 ],
             )
         ]
     )
+    if output_tables:
+        # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
+        # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
+        # expected output table name format is `out.c-<sql_query_name>.<table_name>`
+        bucket_name = "-".join(transformation_name.lower().split())
+        destination = f"out.c-{bucket_name}"
+        storage.output.tables = [
+            TransformationConfiguration.Storage.Destination.Table(
+                # here the source refers to the table name from the sql statement
+                # and the destination to the full bucket table name
+                # WARNING: when implementing input.tables, source and destination are swapped.
+                source=out_table,
+                destination=f"{destination}.{out_table}",
+            )
+            for out_table in output_tables
+        ]
     return TransformationConfiguration(parameters=parameters, storage=storage)
 
 
@@ -613,7 +636,7 @@ async def create_sql_transformation(
     name: Annotated[
         str,
         Field(
-            description="The name of the SQL transformation expressing the sql functionality.",
+            description="A short, descriptive name summarizing the purpose of the SQL transformation.",
         ),
     ],
     description: Annotated[
@@ -625,12 +648,22 @@ async def create_sql_transformation(
             ),
         ),
     ],
-    sql_statement: Annotated[
-        str,
+    sql_statements: Annotated[
+        Sequence[str],
         Field(
-            description=("The SQL exacutable query statemenet following the current SQL dialect."),
+            description=(
+                "The executable SQL query statements written in the current SQL dialect. "
+                "Each statement should be a separate item in the list."
+            ),
         ),
     ],
+    created_table_names: Annotated[
+        Sequence[str],
+        Field(
+            description="An empty list or a list of created table names if and only if they are generated within SQL "
+            "statements (e.g., using `CREATE TABLE ...`).",
+        ),
+    ] = tuple(),
 ) -> Annotated[
     ComponentConfiguration,
     Field(
@@ -638,25 +671,26 @@ async def create_sql_transformation(
     ),
 ]:
     """
-    Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, and a detailed
-    description.
+    Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
+    description, and optionally a list of created table names if and only if they are generated within the SQL
+    statements.
     CONSIDERATIONS:
-        - The SQL query statement is executable and must follow the current SQL dialect, which
-          can be retrieved using appropriate tool.
-        - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
-          fully qualified table name.
+        - The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
+        appropriate tool.
         - When referring to the input tables within the SQL query, use fully qualified table names, which can be
           retrieved using appropriate tools.
+        - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
+          fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
         - Unless otherwise specified by user, transformation name and description are generated based on the sql query
           and user intent.
     USAGE:
         - Use when you want to create a new SQL transformation.
     EXAMPLES:
         - user_input: `Can you save me the SQL query you generated as a new transformation?`
-            -> set the sql_statement to the query, and set other parameters accordingly.
+            -> set the sql_statements to the query, and set other parameters accordingly.
             -> returns the created SQL transformation configuration if successful.
         - user_input: `Generate me an SQL transformation which [USER INTENT]`
-            -> set the sql_statement to the query based on the [USER INTENT], and set other parameters accordingly.
+            -> set the sql_statements to the query based on the [USER INTENT], and set other parameters accordingly.
             -> returns the created SQL transformation configuration if successful.
     """
 
@@ -666,18 +700,21 @@ async def create_sql_transformation(
     transformation_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
     logger.info(f"SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}")
 
-    # Process the data to be stored in the storage configuration
-    transformation_configuration_payload = _get_transformation_configuration(sql_statement)
+    # Process the data to be stored in the transformation configuration - parameters(sql statements)
+    # and storage(input and output tables)
+    transformation_configuration_payload = _get_transformation_configuration(
+        statements=sql_statements, transformation_name=name, output_tables=created_table_names
+    )
 
     client = KeboolaClient.from_state(ctx.session.state)
     endpoint = f"branch/{client.storage_client._branch_id}/components/{transformation_id}/configs"
-    # Try to create the new transformation configuration and return the full object if successful
+
+    logger.info(
+        f"Creating new transformation configuration: {name} for component: {transformation_id}."
+    )
+    # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
-        # Create the new transformation configuration
-        logger.info(
-            f"Creating new transformation configuration: {name} for component: {transformation_id}."
-        )
         new_raw_transformation_configuration = await client.post(
             endpoint,
             data={
@@ -686,12 +723,14 @@ async def create_sql_transformation(
                 "configuration": transformation_configuration_payload.model_dump(),
             },
         )
+
         component = await _get_component_details(client=client, component_id=transformation_id)
         new_transformation_configuration = ComponentConfiguration(
             **new_raw_transformation_configuration,
             component_id=transformation_id,
             component=component,
         )
+
         logger.info(
             f"Created new transformation '{transformation_id}' with configuration id "
             f"'{new_transformation_configuration.configuration_id}'."
