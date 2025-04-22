@@ -15,6 +15,7 @@ class TestServer:
         tools = await server.list_tools()
         assert sorted(t.name for t in tools) == [
             "create_job_run",
+            "create_sql_transformation",
             "get_bucket_detail",
             GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
             "get_job_detail",
