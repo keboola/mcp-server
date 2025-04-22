@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Any, Type, Union
+from typing import Any, Type, Union
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,12 +12,13 @@ from keboola_mcp_server.jobs_tools import (
     JobListItem,
     get_job_detail,
     retrieve_jobs,
-    create_job_run,
+    start_job,
 )
 
 
 @pytest.fixture
 def mock_jobs() -> list[dict[str, Any]]:
+    """list of mock jobs - simulating the api response."""
     return [
         {
             "id": "123",
@@ -46,6 +47,7 @@ def mock_jobs() -> list[dict[str, Any]]:
 
 @pytest.fixture
 def mock_job() -> dict[str, Any]:
+    """mock job - simulating the api response."""
     return {
         "id": "123",
         "status": "success",
@@ -234,11 +236,14 @@ async def retrieve_jobs_with_component_id_without_config_id(
 
 
 @pytest.mark.asyncio
-async def test_create_job_run(
+async def test_start_job(
     mcp_context_client: Context,
-    mock_job: Annotated[dict[str, Any], "The newly created job detail - expecting api response."],
+    mock_job: dict[str, Any],
 ):
-    """Tests create_job_run tool."""
+    """Tests start_job tool.
+    :param mock_job: The newly created job details - expecting api response.
+    :param mcp_context_client: The MCP context client.
+    """
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_job["result"] = []  # simulate empty list as returned by create job endpoint
@@ -247,7 +252,7 @@ async def test_create_job_run(
 
     component_id = mock_job["component"]
     configuration_id = mock_job["config"]
-    job_detail = await create_job_run(
+    job_detail = await start_job(
         ctx=context, component_id=component_id, configuration_id=configuration_id
     )
 
@@ -266,8 +271,8 @@ async def test_create_job_run(
 
 
 @pytest.mark.asyncio
-async def test_run_job_fail(mcp_context_client: Context, mock_job: dict[str, Any]):
-    """Tests run_job tool when job creation fails."""
+async def test_start_job_fail(mcp_context_client: Context, mock_job: dict[str, Any]):
+    """Tests start_job tool when job creation fails."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue.create_job = MagicMock(side_effect=HTTPError("Job creation failed"))
@@ -276,7 +281,7 @@ async def test_run_job_fail(mcp_context_client: Context, mock_job: dict[str, Any
     configuration_id = mock_job["config"]
 
     with pytest.raises(HTTPError):
-        await create_job_run(
+        await start_job(
             ctx=context, component_id=component_id, configuration_id=configuration_id
         )
 
@@ -287,29 +292,30 @@ async def test_run_job_fail(mcp_context_client: Context, mock_job: dict[str, Any
 
 
 @pytest.mark.parametrize(
-    "result_type, is_exception, expected_result",
+    "input_value, expected_result",
     [
-        ([], False, {}),  # empty list is not a valid result type but we convert it to {}, no error
-        ({}, False, {}),  # expected empty dict, no error
-        ({"result": []}, False, {"result": []}),  # expected result type, no error
-        (None, False, {}),  # None is valid and converted to {}
+        ([], {}),  # empty list is not a valid result type but we convert it to {}, no error
+        ({}, {}),  # expected empty dict, no error
+        ({"result": []}, {"result": []}),  # expected result type, no error
+        (None, {}),  # None is valid and converted to {}
         (
             ["result1", "result2"],
-            True,
             ValueError,
         ),  # list is not a valid result type, we raise an error
     ],
 )
 def test_job_detail_model_validate_for_result_field(
-    result_type: Union[list, dict, None],
-    is_exception: bool,
+    input_value: Union[list, dict, None],
     expected_result: Union[dict, Type[Exception]],
     mock_job: dict[str, Any],
 ):
-    """Tests JobDetail model validate for result field."""
-    mock_job["result"] = result_type
-    if is_exception:
-        assert isinstance(expected_result, type) and issubclass(expected_result, Exception)
+    """Tests JobDetail model validate for result field.
+    :param input_value: The input value to validate - simulating the api response.
+    :param expected_result: The expected result.
+    :param mock_job: The mock job details - expecting api response.
+    """
+    mock_job["result"] = input_value
+    if isinstance(expected_result, type) and issubclass(expected_result, Exception):
         with pytest.raises(expected_result):
             JobDetail.model_validate(mock_job)
     else:

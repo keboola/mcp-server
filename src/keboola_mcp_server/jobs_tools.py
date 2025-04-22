@@ -18,7 +18,7 @@ def add_job_tools(mcp: FastMCP) -> None:
     jobs_tools = [
         retrieve_jobs,
         get_job_detail,
-        create_job_run,
+        start_job,
     ]
     for tool in jobs_tools:
         logger.info(f"Adding tool {tool.__name__} to the MCP server.")
@@ -135,12 +135,13 @@ class JobDetail(JobListItem):
         # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
         # Why? Because result is expected to be an Object, but create job endpoint sends [], perhaps it means
         # "empty". This avoids type errors.
-        if not current_value:
-            return dict()
-        if isinstance(current_value, list):
-            raise ValueError(
-                f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}."
-            )
+        if not isinstance(current_value, dict):
+            if not current_value:
+                return dict()
+            if isinstance(current_value, list):
+                raise ValueError(
+                    f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}."
+                )
         return current_value
 
 
@@ -256,17 +257,17 @@ async def get_job_detail(
     return JobDetail.model_validate(raw_job)
 
 
-async def create_job_run(
+async def start_job(
     ctx: Context,
     component_id: Annotated[
-        str, Field(description="The ID of the component or transformation for which to run a job.")
+        str, Field(description="The ID of the component or transformation for which to start a job.")
     ],
     configuration_id: Annotated[
-        str, Field(description="The ID of the configuration for which to run a job.")
+        str, Field(description="The ID of the configuration for which to start a job.")
     ],
-) -> Annotated[JobDetail, Field(description="The newly created job detail.")]:
+) -> Annotated[JobDetail, Field(description="The newly started job details.")]:
     """
-    Creates and runs a new job for a given component or transformation.
+    Starts a new job for a given component or transformation.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
