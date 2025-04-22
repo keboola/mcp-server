@@ -448,45 +448,56 @@ async def test_create_transformation_configuration(
     keboola_client.get = AsyncMock(return_value=component)
     keboola_client.post = AsyncMock(return_value=configuration)
 
-    test_name = mock_configuration["name"]
-    test_description = mock_configuration["description"]
-    test_sql_statement = "SELECT * FROM test"
+    transformation_name = mock_configuration["name"]
+    bucket_name = "-".join(transformation_name.lower().split())
+    description = mock_configuration["description"]
+    sql_statements = ["SELECT * FROM test", "SELECT * FROM test2"]
+    created_table_name = "test_table_1"
 
     # Test the create_sql_transformation tool
     new_transformation_configuration = await create_sql_transformation(
         context,
-        test_name,
-        test_description,
-        test_sql_statement,
+        transformation_name,
+        description,
+        sql_statements,
+        created_table_names=[created_table_name],
     )
     assert isinstance(new_transformation_configuration, ComponentConfiguration)
     assert new_transformation_configuration.component is not None
     assert new_transformation_configuration.component.component_id == expected_component_id
     assert new_transformation_configuration.component_id == expected_component_id
     assert new_transformation_configuration.configuration_id == expected_configuration_id
-    assert new_transformation_configuration.configuration_name == test_name
-    assert new_transformation_configuration.configuration_description == test_description
+    assert new_transformation_configuration.configuration_name == transformation_name
+    assert new_transformation_configuration.configuration_description == description
 
     keboola_client.get.assert_called_once_with(
         f"branch/{mock_branch_id}/components/{expected_component_id}"
     )
+
     keboola_client.post.assert_called_once_with(
         f"branch/{mock_branch_id}/components/{expected_component_id}/configs",
         data={
-            "name": test_name,
-            "description": test_description,
+            "name": transformation_name,
+            "description": description,
             "configuration": {
                 "parameters": {
                     "blocks": [
                         {
                             "name": "Block 0",
-                            "codes": [{"name": "Code 0", "script": [test_sql_statement]}],
+                            "codes": [{"name": "Code 0", "script": sql_statements}],
                         }
                     ]
                 },
                 "storage": {
                     "input": {"tables": []},
-                    "output": {"tables": []},
+                    "output": {
+                        "tables": [
+                            {
+                                "source": created_table_name,
+                                "destination": f"out.c-{bucket_name}.{created_table_name}",
+                            }
+                        ]
+                    },
                 },
             },
         },
@@ -499,8 +510,7 @@ async def test_create_transformation_configuration_fail(
     sql_dialect: str,
     mcp_context_components_configs: Context,
 ):
-    """Test get_transformation_configuration tool which should return the correct transformation configuration
-    given the sql statement."""
+    """Test create_sql_transformation tool which should raise an error if the sql dialect is unknown."""
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_sql_dialect = AsyncMock(return_value=sql_dialect)
@@ -514,26 +524,66 @@ async def test_create_transformation_configuration_fail(
         )
 
 
-@pytest.mark.parametrize("sql_statement", ["SELECT * FROM test"])
+@pytest.mark.parametrize(
+    "sql_statements, created_table_names, transformation_name, expected_bucket_id",
+    [
+        # testing with multiple sql statements and no output table mappings
+        # it should not create any output tables
+        (["SELECT * FROM test", "SELECT * FROM test2"], [], "test name", "out.c-test-name"),
+        # testing with multiple sql statements and output table mappings
+        # it should create output tables according to the mappings
+        (
+            [
+                'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
+                'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+            ],
+            ["test_table_1", "test_table_2"],
+            "test name two",
+            "out.c-test-name-two",
+        ),
+        # testing with single sql statement and output table mappings
+        (
+            ['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
+            ["test_table_1"],
+            "test name",
+            "out.c-test-name",
+        ),
+    ],
+)
 def test_get_transformation_configuration(
-    sql_statement: str,
+    sql_statements: list[str],
+    created_table_names: list[str],
+    transformation_name: str,
+    expected_bucket_id: str,
 ):
     """Test get_transformation_configuration tool which should return the correct transformation configuration
-    given the sql statement."""
+    given the sql statement created_table_names and transformation_name."""
 
     configuration = _get_transformation_configuration(
-        sql_statement=sql_statement,
+        statements=sql_statements,
+        transformation_name=transformation_name,
+        output_tables=created_table_names,
     )
 
     assert configuration is not None
-
     assert isinstance(configuration, TransformationConfiguration)
-    assert configuration.parameters is not None
     # we expect only one block and one code for the given sql statements
+    assert configuration.parameters is not None
+    assert len(configuration.parameters.blocks) == 1
+    assert len(configuration.parameters.blocks[0].codes) == 1
     assert configuration.parameters.blocks[0].codes[0].name == "Code 0"
-    assert configuration.parameters.blocks[0].codes[0].script == [sql_statement]
+    assert configuration.parameters.blocks[0].codes[0].script == sql_statements
+    # given output_table_mappings, assert following tables are created
     assert configuration.storage is not None
     assert configuration.storage.input is not None
     assert configuration.storage.output is not None
     assert configuration.storage.input.tables == []
-    assert configuration.storage.output.tables == []
+    if not created_table_names:
+        assert configuration.storage.output.tables == []
+    else:
+        assert len(configuration.storage.output.tables) == len(created_table_names)
+        for created_table, expected_table_name in zip(
+            configuration.storage.output.tables, created_table_names
+        ):
+            assert created_table.source == expected_table_name
+            assert created_table.destination == f"{expected_bucket_id}.{expected_table_name}"
