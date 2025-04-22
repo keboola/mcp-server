@@ -1,13 +1,31 @@
 import datetime
 import logging
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 
 logger = logging.getLogger(__name__)
+
+
+################################## Add jobs tools to MCP SERVER ##################################
+
+
+def add_job_tools(mcp: FastMCP) -> None:
+    """Add job tools to the MCP server."""
+    jobs_tools = [
+        retrieve_jobs,
+        get_job_detail,
+        start_job,
+    ]
+    for tool in jobs_tools:
+        logger.info(f"Adding tool {tool.__name__} to the MCP server.")
+        mcp.add_tool(tool)
+
+    logger.info("Job tools initialized.")
+
 
 ######################################## Job Base Models ########################################
 
@@ -16,6 +34,7 @@ JOB_STATUS = Literal[
     "processing",
     "success",
     "error",
+    "created",
 ]
 
 
@@ -108,12 +127,22 @@ class JobDetail(JobListItem):
         serialization_alias="result",
         default=None,
     )
-    metrics: Optional[Dict[str, Any]] = Field(
-        description="The metrics of the job.",
-        validation_alias="metrics",
-        serialization_alias="metrics",
-        default=None,
-    )
+
+    @field_validator("result", mode="before")
+    def validate_result_field(
+        cls, current_value: Union[List, Dict[str, Any], None]
+    ) -> Dict[str, Any]:
+        # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
+        # Why? Because result is expected to be an Object, but create job endpoint sends [], perhaps it means
+        # "empty". This avoids type errors.
+        if not isinstance(current_value, dict):
+            if not current_value:
+                return dict()
+            if isinstance(current_value, list):
+                raise ValueError(
+                    f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}."
+                )
+        return current_value
 
 
 ######################################## End of Job Base Models ########################################
@@ -122,19 +151,6 @@ class JobDetail(JobListItem):
 
 SORT_BY_VALUES = Literal["startTime", "endTime", "createdTime", "durationSeconds", "id"]
 SORT_ORDER_VALUES = Literal["asc", "desc"]
-
-
-def add_jobs_tools(mcp: FastMCP) -> None:
-    """Add tools to the MCP server."""
-    jobs_tools = [
-        retrieve_jobs,
-        get_job_detail,
-    ]
-    for tool in jobs_tools:
-        logger.info(f"Adding tool {tool.__name__} to the MCP server.")
-        mcp.add_tool(tool)
-
-    logger.info("Jobs tools initialized.")
 
 
 async def retrieve_jobs(
@@ -239,6 +255,37 @@ async def get_job_detail(
     raw_job = client.jobs_queue.detail(job_id)
     logger.info(f"Found job details for {job_id}." if raw_job else f"Job {job_id} not found.")
     return JobDetail.model_validate(raw_job)
+
+
+async def start_job(
+    ctx: Context,
+    component_id: Annotated[
+        str,
+        Field(description="The ID of the component or transformation for which to start a job."),
+    ],
+    configuration_id: Annotated[
+        str, Field(description="The ID of the configuration for which to start a job.")
+    ],
+) -> Annotated[JobDetail, Field(description="The newly started job details.")]:
+    """
+    Starts a new job for a given component or transformation.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    try:
+        raw_job = client.jobs_queue.create_job(
+            component_id=component_id, configuration_id=configuration_id
+        )
+        job = JobDetail.model_validate(raw_job)
+        logger.info(
+            f"Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}."
+        )
+        return job
+    except Exception as exception:
+        logger.exception(
+            f"Error when starting a new job for component {component_id} and configuration {configuration_id}: {exception}"
+        )
+        raise exception
 
 
 ######################################## End of MCP tools ########################################

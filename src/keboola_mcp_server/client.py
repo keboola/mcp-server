@@ -256,6 +256,25 @@ class JobsQueue(Endpoint):
         }
         return self._search(params=params)
 
+    def create_job(
+        self,
+        component_id: str,
+        configuration_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Create a new job.
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :return: The response from the API call - created job or raise an error.
+        """
+        url = f"{self.base_url}/jobs"
+        payload = {
+            "component": component_id,
+            "config": configuration_id,
+            "mode": "run",
+        }
+        return self._post(url, json=payload)
+
     def _search(self, params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
         Search for jobs based on the provided parameters.
