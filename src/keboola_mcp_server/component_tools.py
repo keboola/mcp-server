@@ -428,14 +428,14 @@ class TransformationConfiguration(BaseModel):
 
 
 def _get_transformation_configuration(
-    statements: Sequence[str], transformation_name: str, output_table_mappings: Sequence[str]
+    statements: Sequence[str], transformation_name: str, output_tables: Sequence[str]
 ) -> TransformationConfiguration:
     """
     Utility function to set the transformation configuration from code statements.
     It creates the expected configuration for the transformation, parameters and storage.
     :param statements: The code statements (sql for now)
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
-    :param output_table_mappings: The output table mappings created tables in the transformation
+    :param output_tables: The output tables of the transformation, created by the code statements
     :return: dictionary with parameters and storage following the TransformationConfiguration schema
     """
     # init Storage Configuration with empty input and output tables
@@ -453,7 +453,7 @@ def _get_transformation_configuration(
             )
         ]
     )
-    if output_table_mappings:
+    if output_tables:
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
         # expected output table name format is `out.c-<sql_query_name>.<table_name>`
@@ -467,7 +467,7 @@ def _get_transformation_configuration(
                 source=out_table,
                 destination=f"{destination}.{out_table}",
             )
-            for out_table in output_table_mappings
+            for out_table in output_tables
         ]
     return TransformationConfiguration(parameters=parameters, storage=storage)
 
@@ -703,7 +703,7 @@ async def create_sql_transformation(
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage(input and output tables)
     transformation_configuration_payload = _get_transformation_configuration(
-        sql_statements, name, created_table_names
+        statements=sql_statements, transformation_name=name, output_tables=created_table_names
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -712,7 +712,7 @@ async def create_sql_transformation(
     logger.info(
         f"Creating new transformation configuration: {name} for component: {transformation_id}."
     )
-    # Try to create the new transformation configuration and return the full object if successful
+    # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
         new_raw_transformation_configuration = await client.post(

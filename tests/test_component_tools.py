@@ -525,7 +525,7 @@ async def test_create_transformation_configuration_fail(
 
 
 @pytest.mark.parametrize(
-    "sql_statements, created_table_names, transformation_name, expected_destination",
+    "sql_statements, created_table_names, transformation_name, expected_bucket_id",
     [
         # testing with multiple sql statements and no output table mappings
         # it should not create any output tables
@@ -554,7 +554,7 @@ def test_get_transformation_configuration(
     sql_statements: list[str],
     created_table_names: list[str],
     transformation_name: str,
-    expected_destination: str,
+    expected_bucket_id: str,
 ):
     """Test get_transformation_configuration tool which should return the correct transformation configuration
     given the sql statement created_table_names and transformation_name."""
@@ -562,7 +562,7 @@ def test_get_transformation_configuration(
     configuration = _get_transformation_configuration(
         statements=sql_statements,
         transformation_name=transformation_name,
-        output_table_mappings=created_table_names,
+        output_tables=created_table_names,
     )
 
     assert configuration is not None
@@ -586,4 +586,4 @@ def test_get_transformation_configuration(
             configuration.storage.output.tables, created_table_names
         ):
             assert created_table.source == expected_table_name
-            assert created_table.destination == f"{expected_destination}.{expected_table_name}"
+            assert created_table.destination == f"{expected_bucket_id}.{expected_table_name}"
