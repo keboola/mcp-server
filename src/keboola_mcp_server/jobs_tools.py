@@ -260,7 +260,8 @@ async def get_job_detail(
 async def start_job(
     ctx: Context,
     component_id: Annotated[
-        str, Field(description="The ID of the component or transformation for which to start a job.")
+        str,
+        Field(description="The ID of the component or transformation for which to start a job."),
     ],
     configuration_id: Annotated[
         str, Field(description="The ID of the configuration for which to start a job.")

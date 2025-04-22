@@ -281,9 +281,7 @@ async def test_start_job_fail(mcp_context_client: Context, mock_job: dict[str, A
     configuration_id = mock_job["config"]
 
     with pytest.raises(HTTPError):
-        await start_job(
-            ctx=context, component_id=component_id, configuration_id=configuration_id
-        )
+        await start_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
 
     keboola_client.jobs_queue.create_job.assert_called_once_with(
         component_id=component_id,
