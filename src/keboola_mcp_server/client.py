@@ -313,8 +313,12 @@ class JobsQueue(Endpoint):
 
 class DocsQuestionResponse(BaseModel):
     """The AI service response to a /docs/question request."""
-    response: str = Field(description="Text of the answer to a documentation query.")
-    source_urls: list[str] = Field(description="List of URLs to the sources of the answer.")
+
+    text: str = Field(description="Text of the answer to a documentation query.")
+    source_urls: list[str] = Field(
+        description="List of URLs to the sources of the answer.", default_factory=list,
+        alias="sourceUrls"
+    )
 
 
 class AIServiceClient(Endpoint):
@@ -352,5 +356,10 @@ class AIServiceClient(Endpoint):
         :param query: The query to answer.
         """
         url = f"{self.base_url}/docs/question"
-        response = self._post(url, data={"query": query})
+        response = self._post(
+            url,
+            json={"query": query},
+            headers={"Accept": "application/json"},
+        )
+
         return DocsQuestionResponse.model_validate(response)
