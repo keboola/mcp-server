@@ -3,13 +3,11 @@
 import logging
 import os
 import tempfile
-
 from typing import Any, Mapping, Optional, cast
 
-
 import httpx
-from kbcstorage.client import Client
 from kbcstorage.base import Endpoint
+from kbcstorage.client import Client
 
 LOG = logging.getLogger(__name__)
 
