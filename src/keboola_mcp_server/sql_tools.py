@@ -13,14 +13,14 @@ from pydantic.dataclasses import dataclass
 
 from keboola_mcp_server.client import KeboolaClient
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 def add_sql_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     mcp.add_tool(query_table)
     mcp.add_tool(get_sql_dialect)
-    logger.info("SQL tools added to the MCP server.")
+    LOG.info("SQL tools added to the MCP server.")
 
 
 @dataclass(frozen=True)
@@ -137,7 +137,7 @@ class _SnowflakeWorkspace(_Workspace):
             if result.is_ok and result.data and result.data.rows:
                 db_name = result.data.rows[0]["DATABASE_NAME"]
             else:
-                logger.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
+                LOG.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
 
         else:
             sql = f'select CURRENT_DATABASE() as "current_database";'
@@ -155,7 +155,7 @@ class _SnowflakeWorkspace(_Workspace):
                     schema_name = self._schema
                     table_name = table["name"]
             else:
-                logger.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
+                LOG.error(f"Failed to run SQL: {sql}, SAPI response: {result}")
 
         if db_name and schema_name and table_name:
             fqn = TableFqn(db_name, schema_name, table_name, quote_char='"')
@@ -234,7 +234,7 @@ class _BigQueryWorkspace(_Workspace):
             )
 
         except BadRequest as e:
-            logger.exception(f"Failed to run query: {sql_query}")
+            LOG.exception(f"Failed to run query: {sql_query}")
             result = QueryResult(status="error", message=str(e))
 
         return result
