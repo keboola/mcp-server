@@ -1,6 +1,7 @@
 import logging
 from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence, Union, cast, get_args
 
+import requests
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -335,14 +336,37 @@ async def _get_component_details(
     """
     Utility function to retrieve the component details by component ID, used in tools:
     - get_component_configuration_details
+
+    First tries to get component details from the AI service catalog. If the component
+    is not found (404) or returns empty data (private components), falls back to using the
+    Storage API endpoint.
+
     :param component_id: The ID of the Keboola component/transformation you want details about
     :param client: The Keboola client
     :return: The component details
     """
+    try:
+        raw_component = client.ai_service_client.get_component_detail(component_id)
+        logger.info(
+            f"Retrieved component details for component {component_id} from AI service catalog."
+        )
+        return Component.model_validate(raw_component)
+    except requests.HTTPError as e:
+        if e.response.status_code == 404:
+            logger.info(
+                f"Component {component_id} not found in AI service catalog (possibly private). "
+                f"Falling back to Storage API."
+            )
 
-    raw_component = client.ai_service_client.get_component_detail(component_id)
-    logger.info(f"Retrieved component details for component {component_id}.")
-    return Component.model_validate(raw_component)
+            endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
+            raw_component = await client.get(endpoint)
+            logger.info(
+                f"Retrieved component details for component {component_id} from Storage API."
+            )
+            return Component.model_validate(raw_component)
+        else:
+            # If it's not a 404, re-raise the error
+            raise
 
 
 def _get_sql_transformation_id_from_sql_dialect(

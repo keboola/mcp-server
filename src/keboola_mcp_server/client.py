@@ -51,7 +51,7 @@ class KeboolaClient:
         queue_api_url = (
             f"{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
         )
-        ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[-1]}"
+        ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
 
         self.base_storage_api_url = storage_api_url
         self.headers = {
@@ -308,12 +308,10 @@ class AIServiceClient(Endpoint):
         """
         super().__init__(root_url, "", token)
 
-        self.base_url = self.root_url.rstrip("/")
-
     def get_component_detail(self, component_id: str) -> Dict[str, Any]:
         """
         Retrieves information about a given component.
         :param component_id: The id of the component.
         """
-        url = f"{self.base_url}/docs/components/{component_id}"
+        url = f"{self.base_url.rstrip('/')}/docs/components/{component_id}"
         return self._get(url)
