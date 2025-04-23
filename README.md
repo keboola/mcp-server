@@ -25,26 +25,17 @@ npx -y @smithery/cli install keboola-mcp-server --client claude
 
 ### Manual Installation
 
-First, clone the repository and create a virtual environment:
+First, create a virtual environment:
 
 ```bash
-git clone https://github.com/keboola/keboola-mcp-server.git
-cd keboola-mcp-server
-python3 -m venv .venv
+python3 -m venv --upgrade-deps .venv
 source .venv/bin/activate
-pip3 install -U pip 
 ```
 
-Install the package in development mode:
+Install the [keboola_mcp_server](https://pypi.org/project/keboola-mcp-server/) package:
 
 ```bash
-pip3 install -e .
-```
-
-For development dependencies:
-
-```bash
-pip3 install -e ".[dev]"
+pip3 install keboola_mcp_server
 ```
 
 ## Claude Desktop Setup
