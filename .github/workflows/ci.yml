@@ -96,19 +96,8 @@ jobs:
           name: keboola_mcp_server-${{ needs.build.outputs.version }}-py3-none-any.whl
           path: dist/
 
-      - name: List dist files
-        run: |
-          ls -la dist/
-
-      - name: Print build outputs
-        run: |
-          echo "is_semantic_tag=${{ needs.build.outputs.is_semantic_tag }}"
-          echo "tag=${{ needs.build.outputs.tag }}"
-          echo "version=${{ needs.build.outputs.version }}"
-          echo "startsWith=${{ startsWith(github.ref, 'refs/tags/') }}"
-
-#      - name: Publish package
-#        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
-#        with:
-#          user: __token__
-#          password: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
