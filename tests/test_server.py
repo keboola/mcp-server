@@ -14,21 +14,21 @@ class TestServer:
         server = create_server()
         tools = await server.list_tools()
         assert sorted(t.name for t in tools) == [
-            "create_sql_transformation",
-            "get_bucket_detail",
+            'create_sql_transformation',
+            'get_bucket_detail',
             GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
-            "get_job_detail",
-            "get_sql_dialect",
-            "get_table_detail",
-            "query_table",
-            "retrieve_bucket_tables",
-            "retrieve_buckets",
+            'get_job_detail',
+            'get_sql_dialect',
+            'get_table_detail',
+            'query_table',
+            'retrieve_bucket_tables',
+            'retrieve_buckets',
             RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
-            "retrieve_jobs",
+            'retrieve_jobs',
             RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
-            "start_job",
-            "update_bucket_description",
-            "update_table_description",
+            'start_job',
+            'update_bucket_description',
+            'update_table_description',
         ]
 
     @pytest.mark.asyncio
@@ -42,4 +42,4 @@ class TestServer:
                 missing_descriptions.append(t.name)
 
         missing_descriptions.sort()
-        assert not missing_descriptions, f"These tools have no description: {missing_descriptions}"
+        assert not missing_descriptions, f'These tools have no description: {missing_descriptions}'
