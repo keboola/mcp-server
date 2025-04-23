@@ -36,7 +36,7 @@ from mcp.server.lowlevel.server import LifespanResultT
 from mcp.server.models import InitializationOptions
 from mcp.server.sse import SseServerTransport
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 SessionParams = dict[str, str]
 SessionState = dict[str, Any]
@@ -93,7 +93,7 @@ class _KeboolaServer(Server):
 
             async with anyio.create_task_group() as tg:
                 async for message in session.incoming_messages:
-                    logger.debug(f"Received message: {message}")
+                    LOG.debug(f"Received message: {message}")
 
                     tg.start_soon(
                         self._handle_message,

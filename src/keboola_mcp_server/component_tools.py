@@ -7,7 +7,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.sql_tools import get_sql_dialect
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 ############################## Add tools to the MCP server #########################################
@@ -27,25 +27,23 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         get_component_configuration_details, name=GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME
     )
-    logger.info(f"Added tool {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME} to the MCP server.")
+    LOG.info(f"Added tool {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME} to the MCP server.")
 
     mcp.add_tool(
         retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME
     )
-    logger.info(f"Added tool {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
+    LOG.info(f"Added tool {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
     mcp.add_tool(
         retrieve_transformations_configurations,
         name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     )
-    logger.info(
-        f"Added tool {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME} to the MCP server."
-    )
+    LOG.info(f"Added tool {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
     mcp.add_tool(create_sql_transformation)
-    logger.info(f"Added tool {create_sql_transformation.__name__} to the MCP server.")
+    LOG.info(f"Added tool {create_sql_transformation.__name__} to the MCP server.")
 
-    logger.info("Component tools initialized.")
+    LOG.info("Component tools initialized.")
 
 
 ############################## Base Models to #########################################
@@ -291,7 +289,7 @@ async def _retrieve_components_configurations_by_types(
     total_configurations = sum(
         len(component.configurations) for component in components_with_configurations
     )
-    logger.info(
+    LOG.info(
         f"Found {len(components_with_configurations)} components with total of {total_configurations} configurations "
         f"for types {component_types}."
     )
@@ -333,7 +331,7 @@ async def _retrieve_components_configurations_by_ids(
     total_configurations = sum(
         len(component.configurations) for component in components_with_configurations
     )
-    logger.info(
+    LOG.info(
         f"Found {len(components_with_configurations)} components with total of {total_configurations} configurations "
         f"for ids {component_ids}."
     )
@@ -354,7 +352,7 @@ async def _get_component_details(
 
     endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
     raw_component = await client.get(endpoint)
-    logger.info(f"Retrieved component details for component {component_id}.")
+    LOG.info(f"Retrieved component details for component {component_id}.")
     return Component.model_validate(raw_component)
 
 
@@ -604,7 +602,7 @@ async def get_component_configuration_details(
     component = await _get_component_details(client=client, component_id=component_id)
     # Get Configuration Details
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
-    logger.info(
+    LOG.info(
         f"Retrieved configuration details for {component_id} component with configuration {configuration_id}."
     )
 
@@ -612,11 +610,11 @@ async def get_component_configuration_details(
     endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata"
     r_metadata = await client.get(endpoint)
     if r_metadata:
-        logger.info(
+        LOG.info(
             f"Retrieved configuration metadata for {component_id} component with configuration {configuration_id}."
         )
     else:
-        logger.info(
+        LOG.info(
             f"No metadata found for {component_id} component with configuration {configuration_id}."
         )
 
@@ -698,7 +696,7 @@ async def create_sql_transformation(
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
     sql_dialect = await get_sql_dialect(ctx)
     transformation_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    logger.info(f"SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}")
+    LOG.info(f"SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}")
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage(input and output tables)
@@ -709,7 +707,7 @@ async def create_sql_transformation(
     client = KeboolaClient.from_state(ctx.session.state)
     endpoint = f"branch/{client.storage_client._branch_id}/components/{transformation_id}/configs"
 
-    logger.info(
+    LOG.info(
         f"Creating new transformation configuration: {name} for component: {transformation_id}."
     )
     # Try to create the new transformation configuration and return the new object if successful
@@ -731,13 +729,13 @@ async def create_sql_transformation(
             component=component,
         )
 
-        logger.info(
+        LOG.info(
             f"Created new transformation '{transformation_id}' with configuration id "
             f"'{new_transformation_configuration.configuration_id}'."
         )
         return new_transformation_configuration
     except Exception as e:
-        logger.exception(f"Error when creating new transformation configuration: {e}")
+        LOG.exception(f"Error when creating new transformation configuration: {e}")
         raise e
 
 
