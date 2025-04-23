@@ -1,9 +1,6 @@
-from unittest.mock import MagicMock
-
 import pytest
 from kbcstorage.client import Client
 from mcp.server.fastmcp import Context
-
 
 from keboola_mcp_server.client import JobsQueue, KeboolaClient
 from keboola_mcp_server.mcp import StatefullServerSession
