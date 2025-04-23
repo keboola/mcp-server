@@ -15,10 +15,10 @@ from keboola_mcp_server.sql_tools import WorkspaceManager
 
 
 @pytest.mark.parametrize(
-    "sql_dialect, expected_component_id, expected_configuration_id",
+    'sql_dialect, expected_component_id, expected_configuration_id',
     [
-        ("Snowflake", "keboola.snowflake-transformation", "1234"),
-        ("BigQuery", "keboola.bigquery-transformation", "5678"),
+        ('Snowflake', 'keboola.snowflake-transformation', '1234'),
+        ('BigQuery', 'keboola.bigquery-transformation', '5678'),
     ],
 )
 @pytest.mark.asyncio
@@ -40,18 +40,18 @@ async def test_create_transformation_configuration(
     # Mock the KeboolaClient
     keboola_client = KeboolaClient.from_state(context.session.state)
     component = mock_component
-    component["id"] = expected_component_id
+    component['id'] = expected_component_id
     configuration = mock_configuration
-    configuration["id"] = expected_configuration_id
+    configuration['id'] = expected_configuration_id
 
     keboola_client.get = AsyncMock(return_value=component)
     keboola_client.post = AsyncMock(return_value=configuration)
 
-    transformation_name = mock_configuration["name"]
-    bucket_name = "-".join(transformation_name.lower().split())
-    description = mock_configuration["description"]
-    sql_statements = ["SELECT * FROM test", "SELECT * FROM test2"]
-    created_table_name = "test_table_1"
+    transformation_name = mock_configuration['name']
+    bucket_name = '-'.join(transformation_name.lower().split())
+    description = mock_configuration['description']
+    sql_statements = ['SELECT * FROM test', 'SELECT * FROM test2']
+    created_table_name = 'test_table_1'
 
     # Test the create_sql_transformation tool
     new_transformation_configuration = await create_sql_transformation(
@@ -70,30 +70,30 @@ async def test_create_transformation_configuration(
     assert new_transformation_configuration.configuration_description == description
 
     keboola_client.get.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{expected_component_id}"
+        f'branch/{mock_branch_id}/components/{expected_component_id}'
     )
 
     keboola_client.post.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{expected_component_id}/configs",
+        f'branch/{mock_branch_id}/components/{expected_component_id}/configs',
         data={
-            "name": transformation_name,
-            "description": description,
-            "configuration": {
-                "parameters": {
-                    "blocks": [
+            'name': transformation_name,
+            'description': description,
+            'configuration': {
+                'parameters': {
+                    'blocks': [
                         {
-                            "name": "Block 0",
-                            "codes": [{"name": "Code 0", "script": sql_statements}],
+                            'name': 'Block 0',
+                            'codes': [{'name': 'Code 0', 'script': sql_statements}],
                         }
                     ]
                 },
-                "storage": {
-                    "input": {"tables": []},
-                    "output": {
-                        "tables": [
+                'storage': {
+                    'input': {'tables': []},
+                    'output': {
+                        'tables': [
                             {
-                                "source": created_table_name,
-                                "destination": f"out.c-{bucket_name}.{created_table_name}",
+                                'source': created_table_name,
+                                'destination': f'out.c-{bucket_name}.{created_table_name}',
                             }
                         ]
                     },
@@ -103,7 +103,7 @@ async def test_create_transformation_configuration(
     )
 
 
-@pytest.mark.parametrize("sql_dialect", ["Unknown"])
+@pytest.mark.parametrize('sql_dialect', ['Unknown'])
 @pytest.mark.asyncio
 async def test_create_transformation_configuration_fail(
     sql_dialect: str,
@@ -117,7 +117,7 @@ async def test_create_transformation_configuration_fail(
     with pytest.raises(ValueError):
         _ = await create_sql_transformation(
             context,
-            "test_name",
-            "test_description",
-            "SELECT * FROM test",
+            'test_name',
+            'test_description',
+            'SELECT * FROM test',
         )

@@ -45,22 +45,22 @@ def assert_retrieve_components() -> (
         )
         # assert component list details
         assert all(
-            returned.component.component_id == expected["id"]
+            returned.component.component_id == expected['id']
             for returned, expected in zip(result, components)
         )
         assert all(
-            returned.component.component_name == expected["name"]
+            returned.component.component_name == expected['name']
             for returned, expected in zip(result, components)
         )
         assert all(
-            returned.component.component_type == expected["type"]
+            returned.component.component_type == expected['type']
             for returned, expected in zip(result, components)
         )
         assert all(
-            returned.component.component_description == expected["description"]
+            returned.component.component_description == expected['description']
             for returned, expected in zip(result, components)
         )
-        assert all(not hasattr(returned.component, "version") for returned in result)
+        assert all(not hasattr(returned.component, 'version') for returned in result)
 
         # assert configurations list details
         assert all(len(component.configurations) == len(configurations) for component in result)
@@ -74,14 +74,14 @@ def assert_retrieve_components() -> (
         # use zip to iterate over the result and mock_configurations since we artifically mock the .get method
         assert all(
             all(
-                config.configuration_id == expected["id"]
+                config.configuration_id == expected['id']
                 for config, expected in zip(component.configurations, configurations)
             )
             for component in result
         )
         assert all(
             all(
-                config.configuration_name == expected["name"]
+                config.configuration_name == expected['name']
                 for config, expected in zip(component.configurations, configurations)
             )
             for component in result
@@ -107,7 +107,7 @@ async def test_retrieve_components_configurations_by_types(
     # simulate the response from the API
     keboola_client.get = AsyncMock(
         side_effect=[
-            [{**component, "configurations": mock_configurations}] for component in mock_components
+            [{**component, 'configurations': mock_configurations}] for component in mock_components
         ]
     )
 
@@ -118,16 +118,16 @@ async def test_retrieve_components_configurations_by_types(
     keboola_client.get.assert_has_calls(
         [
             call(
-                f"branch/{mock_branch_id}/components",
-                params={"componentType": "application", "include": "configuration"},
+                f'branch/{mock_branch_id}/components',
+                params={'componentType': 'application', 'include': 'configuration'},
             ),
             call(
-                f"branch/{mock_branch_id}/components",
-                params={"componentType": "extractor", "include": "configuration"},
+                f'branch/{mock_branch_id}/components',
+                params={'componentType': 'extractor', 'include': 'configuration'},
             ),
             call(
-                f"branch/{mock_branch_id}/components",
-                params={"componentType": "writer", "include": "configuration"},
+                f'branch/{mock_branch_id}/components',
+                params={'componentType': 'writer', 'include': 'configuration'},
             ),
         ]
     )
@@ -149,7 +149,7 @@ async def test_retrieve_transformations_configurations(
     # mock the get method to return the mock_component with the mock_configurations
     # simulate the response from the API
     keboola_client.get = AsyncMock(
-        return_value=[{**mock_component, "configurations": mock_configurations}]
+        return_value=[{**mock_component, 'configurations': mock_configurations}]
     )
 
     result = await retrieve_transformations_configurations(context)
@@ -159,8 +159,8 @@ async def test_retrieve_transformations_configurations(
     keboola_client.get.assert_has_calls(
         [
             call(
-                f"branch/{mock_branch_id}/components",
-                params={"componentType": "transformation", "include": "configuration"},
+                f'branch/{mock_branch_id}/components',
+                params={'componentType': 'transformation', 'include': 'configuration'},
             ),
         ]
     )
@@ -189,7 +189,7 @@ async def test_retrieve_components_configurations_from_ids(
 
     keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component["id"])
     keboola_client.get.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{mock_component['id']}"
+        f'branch/{mock_branch_id}/components/{mock_component["id"]}'
     )
 
 
@@ -211,14 +211,14 @@ async def test_retrieve_transformations_configurations_from_ids(
     keboola_client.get = AsyncMock(return_value=mock_component)
 
     result = await retrieve_transformations_configurations(
-        context, transformation_ids=[mock_component["id"]]
+        context, transformation_ids=[mock_component['id']]
     )
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
-    keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component["id"])
+    keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component['id'])
     keboola_client.get.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{mock_component['id']}"
+        f'branch/{mock_branch_id}/components/{mock_component["id"]}'
     )
 
 
@@ -238,39 +238,39 @@ async def test_get_component_configuration_details(
     # Setup mock to return test data
     keboola_client.storage_client.configurations.detail = MagicMock(return_value=mock_configuration)
     keboola_client.storage_client.components.detail = MagicMock(return_value=mock_component)
-    keboola_client.storage_client._branch_id = "123"
+    keboola_client.storage_client._branch_id = '123'
     keboola_client.get = AsyncMock(
         side_effect=[mock_component, mock_metadata]
     )  # Mock two results of the .get method first for component and then for metadata
 
-    result = await get_component_configuration_details("keboola.ex-aws-s3", "123", context)
+    result = await get_component_configuration_details('keboola.ex-aws-s3', '123', context)
 
     assert isinstance(result, ComponentConfiguration)
     assert result.component is not None
-    assert result.component.component_id == mock_component["id"]
-    assert result.component.component_name == mock_component["name"]
-    assert result.component.component_type == mock_component["type"]
-    assert result.component.component_description == mock_component["description"]
-    assert result.component.long_description == mock_component["longDescription"]
-    assert result.component.categories == mock_component["categories"]
-    assert result.component.version == mock_component["version"]
-    assert result.configuration_id == mock_configuration["id"]
-    assert result.configuration_name == mock_configuration["name"]
-    assert result.configuration_description == mock_configuration["description"]
-    assert result.is_disabled == mock_configuration["isDisabled"]
-    assert result.is_deleted == mock_configuration["isDeleted"]
-    assert result.version == mock_configuration["version"]
-    assert result.configuration == mock_configuration["configuration"]
-    assert result.rows == mock_configuration["rows"]
+    assert result.component.component_id == mock_component['id']
+    assert result.component.component_name == mock_component['name']
+    assert result.component.component_type == mock_component['type']
+    assert result.component.component_description == mock_component['description']
+    assert result.component.long_description == mock_component['longDescription']
+    assert result.component.categories == mock_component['categories']
+    assert result.component.version == mock_component['version']
+    assert result.configuration_id == mock_configuration['id']
+    assert result.configuration_name == mock_configuration['name']
+    assert result.configuration_description == mock_configuration['description']
+    assert result.is_disabled == mock_configuration['isDisabled']
+    assert result.is_deleted == mock_configuration['isDeleted']
+    assert result.version == mock_configuration['version']
+    assert result.configuration == mock_configuration['configuration']
+    assert result.rows == mock_configuration['rows']
     assert result.configuration_metadata == mock_metadata
 
     keboola_client.storage_client.configurations.detail.assert_called_once_with(
-        "keboola.ex-aws-s3", "123"
+        'keboola.ex-aws-s3', '123'
     )
 
     keboola_client.get.assert_has_calls(
         [
-            call("branch/123/components/keboola.ex-aws-s3"),
-            call("branch/123/components/keboola.ex-aws-s3/configs/123/metadata"),
+            call('branch/123/components/keboola.ex-aws-s3'),
+            call('branch/123/components/keboola.ex-aws-s3/configs/123/metadata'),
         ]
     )
