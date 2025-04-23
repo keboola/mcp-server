@@ -44,15 +44,15 @@ async def _retrieve_components_configurations_by_types(
     :return: a list of items, each containing a component and its associated configurations
     """
 
-    endpoint = f"branch/{client.storage_client._branch_id}/components"
+    endpoint = f'branch/{client.storage_client._branch_id}/components'
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
     raw_components_with_configurations = []
     for type in component_types:
         # retrieve components by type with configurations
         params = {
-            "include": "configuration",
-            "componentType": type,
+            'include': 'configuration',
+            'componentType': type,
         }
         raw_components_with_configurations_by_type = cast(
             List[Dict[str, Any]], await client.get(endpoint, params=params)
@@ -66,9 +66,9 @@ async def _retrieve_components_configurations_by_types(
             component=ReducedComponent.model_validate(raw_component),
             configurations=[
                 ReducedComponentConfiguration.model_validate(
-                    {**raw_configuration, "component_id": raw_component["id"]}
+                    {**raw_configuration, 'component_id': raw_component['id']}
                 )
-                for raw_configuration in raw_component.get("configurations", [])
+                for raw_configuration in raw_component.get('configurations', [])
             ],
         )
         for raw_component in raw_components_with_configurations
@@ -79,8 +79,8 @@ async def _retrieve_components_configurations_by_types(
         len(component.configurations) for component in components_with_configurations
     )
     LOG.info(
-        f"Found {len(components_with_configurations)} components with total of {total_configurations} configurations "
-        f"for types {component_types}."
+        f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
+        f'for types {component_types}.'
     )
     return components_with_configurations
 
@@ -101,7 +101,7 @@ async def _retrieve_components_configurations_by_ids(
         # retrieve configurations for component ids
         raw_configurations = client.storage_client.configurations.list(component_id)
         # retrieve component details
-        endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
+        endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}'
         raw_component = await client.get(endpoint)
         # build component configurations list grouped by components
         components_with_configurations.append(
@@ -109,7 +109,7 @@ async def _retrieve_components_configurations_by_ids(
                 component=ReducedComponent.model_validate(raw_component),
                 configurations=[
                     ReducedComponentConfiguration.model_validate(
-                        {**raw_configuration, "component_id": raw_component["id"]}
+                        {**raw_configuration, 'component_id': raw_component['id']}
                     )
                     for raw_configuration in raw_configurations
                 ],
@@ -121,8 +121,8 @@ async def _retrieve_components_configurations_by_ids(
         len(component.configurations) for component in components_with_configurations
     )
     LOG.info(
-        f"Found {len(components_with_configurations)} components with total of {total_configurations} configurations "
-        f"for ids {component_ids}."
+        f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
+        f'for ids {component_ids}.'
     )
     return components_with_configurations
 
@@ -139,9 +139,9 @@ async def _get_component_details(
     :return: The component details
     """
 
-    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
+    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}'
     raw_component = await client.get(endpoint)
-    LOG.info(f"Retrieved component details for component {component_id}.")
+    LOG.info(f'Retrieved component details for component {component_id}.')
     return Component.model_validate(raw_component)
 
 
@@ -154,12 +154,12 @@ def _get_sql_transformation_id_from_sql_dialect(
     :return: The SQL transformation ID
     :raises ValueError: If the SQL dialect is not supported
     """
-    if sql_dialect.lower() == "snowflake":
-        return "keboola.snowflake-transformation"
-    elif sql_dialect.lower() == "bigquery":
-        return "keboola.bigquery-transformation"
+    if sql_dialect.lower() == 'snowflake':
+        return 'keboola.snowflake-transformation'
+    elif sql_dialect.lower() == 'bigquery':
+        return 'keboola.bigquery-transformation'
     else:
-        raise ValueError(f"Unsupported SQL dialect: {sql_dialect}")
+        raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
 
 
 class TransformationConfiguration(BaseModel):
@@ -177,13 +177,13 @@ class TransformationConfiguration(BaseModel):
             class Code(BaseModel):
                 """The code for the transformation block."""
 
-                name: str = Field(description="The name of the current code script")
-                script: list[str] = Field(description="List of current code statements")
+                name: str = Field(description='The name of the current code script')
+                script: list[str] = Field(description='List of current code statements')
 
-            name: str = Field(description="The name of the current block")
-            codes: list[Code] = Field(description="The code scripts")
+            name: str = Field(description='The name of the current block')
+            codes: list[Code] = Field(description='The code scripts')
 
-        blocks: list[Block] = Field(description="The blocks for the transformation")
+        blocks: list[Block] = Field(description='The blocks for the transformation')
 
     class Storage(BaseModel):
         """The storage configuration for the transformation. For now it stores only input and output tables."""
@@ -195,23 +195,23 @@ class TransformationConfiguration(BaseModel):
                 """The table used in the transformation"""
 
                 destination: Optional[str] = Field(
-                    description="The destination table name", default=None
+                    description='The destination table name', default=None
                 )
-                source: Optional[str] = Field(description="The source table name", default=None)
+                source: Optional[str] = Field(description='The source table name', default=None)
 
             tables: list[Table] = Field(
-                description="The tables used in the transformation", default=[]
+                description='The tables used in the transformation', default=[]
             )
 
         input: Destination = Field(
-            description="The input tables for the transformation", default=Destination()
+            description='The input tables for the transformation', default=Destination()
         )
         output: Destination = Field(
-            description="The output tables for the transformation", default=Destination()
+            description='The output tables for the transformation', default=Destination()
         )
 
-    parameters: Parameters = Field(description="The parameters for the transformation")
-    storage: Storage = Field(description="The storage configuration for the transformation")
+    parameters: Parameters = Field(description='The parameters for the transformation')
+    storage: Storage = Field(description='The storage configuration for the transformation')
 
 
 def _get_transformation_configuration(
@@ -231,10 +231,10 @@ def _get_transformation_configuration(
     parameters = TransformationConfiguration.Parameters(
         blocks=[
             TransformationConfiguration.Parameters.Block(
-                name=f"Block 0",
+                name=f'Block 0',
                 codes=[
                     TransformationConfiguration.Parameters.Block.Code(
-                        name=f"Code 0", script=list(statements)
+                        name=f'Code 0', script=list(statements)
                     )
                 ],
             )
@@ -244,15 +244,15 @@ def _get_transformation_configuration(
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
         # expected output table name format is `out.c-<sql_query_name>.<table_name>`
-        bucket_name = "-".join(transformation_name.lower().split())
-        destination = f"out.c-{bucket_name}"
+        bucket_name = '-'.join(transformation_name.lower().split())
+        destination = f'out.c-{bucket_name}'
         storage.output.tables = [
             TransformationConfiguration.Storage.Destination.Table(
                 # here the source refers to the table name from the sql statement
                 # and the destination to the full bucket table name
                 # WARNING: when implementing input.tables, source and destination are swapped.
                 source=out_table,
-                destination=f"{destination}.{out_table}",
+                destination=f'{destination}.{out_table}',
             )
             for out_table in output_tables
         ]

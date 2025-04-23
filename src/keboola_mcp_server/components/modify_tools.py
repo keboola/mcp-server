@@ -23,7 +23,7 @@ def add_component_write_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
 
     mcp.add_tool(create_sql_transformation)
-    LOG.info(f"Added tool {create_sql_transformation.__name__}.")
+    LOG.info(f'Added tool {create_sql_transformation.__name__}.')
 
 
 ############################## Write tools #########################################
@@ -34,15 +34,15 @@ async def create_sql_transformation(
     name: Annotated[
         str,
         Field(
-            description="A short, descriptive name summarizing the purpose of the SQL transformation.",
+            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
         ),
     ],
     description: Annotated[
         str,
         Field(
             description=(
-                "The detailed description of the SQL transformation capturing the user intent, explaining the "
-                "SQL query, and the expected output."
+                'The detailed description of the SQL transformation capturing the user intent, explaining the '
+                'SQL query, and the expected output.'
             ),
         ),
     ],
@@ -50,22 +50,24 @@ async def create_sql_transformation(
         Sequence[str],
         Field(
             description=(
-                "The executable SQL query statements written in the current SQL dialect. "
-                "Each statement should be a separate item in the list."
+                'The executable SQL query statements written in the current SQL dialect. '
+                'Each statement should be a separate item in the list.'
             ),
         ),
     ],
     created_table_names: Annotated[
         Sequence[str],
         Field(
-            description="An empty list or a list of created table names if and only if they are generated within SQL "
-            "statements (e.g., using `CREATE TABLE ...`).",
+            description=(
+                'An empty list or a list of created table names if and only if they are generated within SQL '
+                'statements (e.g., using `CREATE TABLE ...`).'
+            ),
         ),
     ] = tuple(),
 ) -> Annotated[
     ComponentConfiguration,
     Field(
-        description="Newly created SQL Transformation Configuration.",
+        description='Newly created SQL Transformation Configuration.',
     ),
 ]:
     """
@@ -96,7 +98,7 @@ async def create_sql_transformation(
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
     sql_dialect = await get_sql_dialect(ctx)
     transformation_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    LOG.info(f"SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}")
+    LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}')
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage(input and output tables)
@@ -105,10 +107,12 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f"branch/{client.storage_client._branch_id}/components/{transformation_id}/configs"
+    endpoint = (
+        f'branch/{client.storage_client._branch_id}/components/{transformation_id}/configs'
+    )
 
     LOG.info(
-        f"Creating new transformation configuration: {name} for component: {transformation_id}."
+        f'Creating new transformation configuration: {name} for component: {transformation_id}.'
     )
     # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -116,9 +120,9 @@ async def create_sql_transformation(
         new_raw_transformation_configuration = await client.post(
             endpoint,
             data={
-                "name": name,
-                "description": description,
-                "configuration": transformation_configuration_payload.model_dump(),
+                'name': name,
+                'description': description,
+                'configuration': transformation_configuration_payload.model_dump(),
             },
         )
 
@@ -130,12 +134,12 @@ async def create_sql_transformation(
         )
 
         LOG.info(
-            f"Created new transformation '{transformation_id}' with configuration id "
-            f"'{new_transformation_configuration.configuration_id}'."
+            f'Created new transformation "{transformation_id}" with configuration id '
+            f'"{new_transformation_configuration.configuration_id}".'
         )
         return new_transformation_configuration
     except Exception as e:
-        LOG.exception(f"Error when creating new transformation configuration: {e}")
+        LOG.exception(f'Error when creating new transformation configuration: {e}')
         raise e
 
 

@@ -15,4 +15,4 @@ def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     add_component_read_tools(mcp)
     add_component_write_tools(mcp)
-    LOG.info("Component tools initialized.")
+    LOG.info('Component tools initialized.')

@@ -26,9 +26,9 @@ LOG = logging.getLogger(__name__)
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
 # These tool names now reflect their conventional usage, removing redundant parts for users while still
 # providing the same functionality as described in the original tool names.
-RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components"
-RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations"
-GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = "get_component_details"
+RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_components'
+RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
+GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = 'get_component_details'
 
 
 def add_component_read_tools(mcp: FastMCP) -> None:
@@ -37,18 +37,18 @@ def add_component_read_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         get_component_configuration_details, name=GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME
     )
-    LOG.info(f"Added tool: {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME}.")
+    LOG.info(f'Added tool: {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME}.')
 
     mcp.add_tool(
         retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME
     )
-    LOG.info(f"Added tool: {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME}.")
+    LOG.info(f'Added tool: {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME}.')
 
     mcp.add_tool(
         retrieve_transformations_configurations,
         name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     )
-    LOG.info(f"Added tool: {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME}.")
+    LOG.info(f'Added tool: {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME}.')
 
 
 ############################## Component read tools #########################################
@@ -59,19 +59,19 @@ async def retrieve_components_configurations(
     component_types: Annotated[
         Sequence[ComponentType],
         Field(
-            description="List of component types to filter by. ",
+            description='List of component types to filter by. If none, return all components.',
         ),
     ] = tuple(),
     component_ids: Annotated[
         Sequence[str],
         Field(
-            description="List of component IDs to retrieve configurations for.",
+            description='List of component IDs to retrieve configurations for. If none, return all components.',
         ),
     ] = tuple(),
 ) -> Annotated[
     List[ComponentWithConfigurations],
     Field(
-        description="List of objects, each containing a component and its associated configurations.",
+        description='List of objects, each containing a component and its associated configurations.',
     ),
 ]:
     """
@@ -110,13 +110,13 @@ async def retrieve_transformations_configurations(
     transformation_ids: Annotated[
         Sequence[str],
         Field(
-            description="List of transformation component IDs to retrieve configurations for.",
+            description='List of transformation component IDs to retrieve configurations for.',
         ),
     ] = tuple(),
 ) -> Annotated[
     List[ComponentWithConfigurations],
     Field(
-        description="List of objects, each containing a transformation component and its associated configurations.",
+        description='List of objects, each containing a transformation component and its associated configurations.',
     ),
 ]:
     """
@@ -138,7 +138,7 @@ async def retrieve_transformations_configurations(
     # If no transformation IDs are provided, retrieve transformations configurations by transformation type
     if not transformation_ids:
         client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_types(client, ["transformation"])
+        return await _retrieve_components_configurations_by_types(client, ['transformation'])
     # If transformation IDs are provided, retrieve transformations configurations by IDs
     else:
         client = KeboolaClient.from_state(ctx.session.state)
@@ -147,20 +147,20 @@ async def retrieve_transformations_configurations(
 
 async def get_component_configuration_details(
     component_id: Annotated[
-        str, Field(description="Unique identifier of the Keboola component/transformation")
+        str, Field(description='Unique identifier of the Keboola component/transformation')
     ],
     configuration_id: Annotated[
         str,
         Field(
-            description="Unique identifier of the Keboola component/transformation configuration you want details "
-            "about",
+            description='Unique identifier of the Keboola component/transformation configuration you want details '
+            'about',
         ),
     ],
     ctx: Context,
 ) -> Annotated[
     ComponentConfiguration,
     Field(
-        description="Detailed information about a Keboola component/transformation and its configuration.",
+        description='Detailed information about a Keboola component/transformation and its configuration.',
     ),
 ]:
     """
@@ -182,27 +182,29 @@ async def get_component_configuration_details(
     # Get Configuration Details
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
     LOG.info(
-        f"Retrieved configuration details for {component_id} component with configuration {configuration_id}."
+        f'Retrieved configuration details for {component_id} component with configuration {configuration_id}.'
     )
 
     # Get Configuration Metadata if exists
-    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata"
+    endpoint = (
+        f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+    )
     r_metadata = await client.get(endpoint)
     if r_metadata:
         LOG.info(
-            f"Retrieved configuration metadata for {component_id} component with configuration {configuration_id}."
+            f'Retrieved configuration metadata for {component_id} component with configuration {configuration_id}.'
         )
     else:
         LOG.info(
-            f"No metadata found for {component_id} component with configuration {configuration_id}."
+            f'No metadata found for {component_id} component with configuration {configuration_id}.'
         )
 
     # Create Component Configuration Detail Object
     return ComponentConfiguration.model_validate(
         {
             **raw_configuration,
-            "component": component,
-            "component_id": component_id,
-            "metadata": r_metadata,
+            'component': component,
+            'component_id': component_id,
+            'metadata': r_metadata,
         }
     )
