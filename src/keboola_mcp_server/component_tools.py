@@ -10,7 +10,7 @@ from keboola_mcp_server.sql_tools import get_sql_dialect
 LOG = logging.getLogger(__name__)
 
 
-############################## Add tools to the MCP server #########################################
+# Add tools to the MCP server #########################################
 
 # Regarding the conventional naming of entity models for components and their associated configurations,
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
@@ -46,7 +46,7 @@ def add_component_tools(mcp: FastMCP) -> None:
     LOG.info("Component tools initialized.")
 
 
-############################## Base Models to #########################################
+# Base Models to #########################################
 
 
 class ReducedComponent(BaseModel):
@@ -218,9 +218,9 @@ class ComponentConfiguration(ReducedComponentConfiguration):
     )
 
 
-############################## End of Base Models #########################################
+# End of Base Models #########################################
 
-############################## Utility functions #########################################
+# Utility functions #########################################
 
 ComponentType = Literal["application", "extractor", "writer"]
 TransformationType = Literal["transformation"]
@@ -442,10 +442,10 @@ def _get_transformation_configuration(
     parameters = TransformationConfiguration.Parameters(
         blocks=[
             TransformationConfiguration.Parameters.Block(
-                name=f"Block 0",
+                name="Block 0",
                 codes=[
                     TransformationConfiguration.Parameters.Block.Code(
-                        name=f"Code 0", script=list(statements)
+                        name="Code 0", script=list(statements)
                     )
                 ],
             )
@@ -470,9 +470,9 @@ def _get_transformation_configuration(
     return TransformationConfiguration(parameters=parameters, storage=storage)
 
 
-############################## End of utility functions #########################################
+# End of utility functions #########################################
 
-############################## Component tools #########################################
+# Component tools #########################################
 
 
 async def retrieve_components_configurations(
@@ -739,4 +739,4 @@ async def create_sql_transformation(
         raise e
 
 
-############################## End of component tools #########################################
+# End of component tools #########################################
