@@ -40,6 +40,7 @@ def mcp_context_client(
     keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, empty_context: Context
 ) -> Context:
     """Fills the empty_context's state with the `KeboolaClient` and `WorkspaceManager` mocks."""
-    empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
-    empty_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
-    return empty_context
+    client_context = empty_context
+    client_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+    client_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+    return client_context
