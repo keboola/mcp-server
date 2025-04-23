@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "0.9.1"
+version = "0.10.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,13 +21,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "black ~= 25.1",
+    "build ~= 1.2",
+    "isort ~= 6.0",
+    "mypy ~= 1.5",
     "pytest ~= 8.3",
     "pytest-asyncio ~= 0.25",
     "pytest-cov ~= 6.0",
     "pytest-mock ~= 3.14",
-    "black ~= 25.1",
-    "isort ~= 6.0",
-    "mypy ~= 1.5",
 ]
 
 [project.scripts]
