@@ -14,12 +14,12 @@ from keboola_mcp_server.components.utils import (
 
 
 @pytest.mark.parametrize(
-    "component_type, expected",
+    'component_type, expected',
     [
-        ("application", ["application"]),
-        (["extractor", "writer"], ["extractor", "writer"]),
-        (None, ["application", "extractor", "writer"]),
-        ([], ["application", "extractor", "writer"]),
+        ('application', ['application']),
+        (['extractor', 'writer'], ['extractor', 'writer']),
+        (None, ['application', 'extractor', 'writer']),
+        ([], ['application', 'extractor', 'writer']),
     ],
 )
 def test_handle_component_types(
@@ -31,11 +31,11 @@ def test_handle_component_types(
 
 
 @pytest.mark.parametrize(
-    "sql_statements, created_table_names, transformation_name, expected_bucket_id",
+    'sql_statements, created_table_names, transformation_name, expected_bucket_id',
     [
         # testing with multiple sql statements and no output table mappings
         # it should not create any output tables
-        (["SELECT * FROM test", "SELECT * FROM test2"], [], "test name", "out.c-test-name"),
+        (['SELECT * FROM test', 'SELECT * FROM test2'], [], 'test name', 'out.c-test-name'),
         # testing with multiple sql statements and output table mappings
         # it should create output tables according to the mappings
         (
@@ -43,16 +43,16 @@ def test_handle_component_types(
                 'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
                 'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
             ],
-            ["test_table_1", "test_table_2"],
-            "test name two",
-            "out.c-test-name-two",
+            ['test_table_1', 'test_table_2'],
+            'test name two',
+            'out.c-test-name-two',
         ),
         # testing with single sql statement and output table mappings
         (
             ['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
-            ["test_table_1"],
-            "test name",
-            "out.c-test-name",
+            ['test_table_1'],
+            'test name',
+            'out.c-test-name',
         ),
     ],
 )
@@ -77,7 +77,7 @@ def test_get_transformation_configuration(
     assert configuration.parameters is not None
     assert len(configuration.parameters.blocks) == 1
     assert len(configuration.parameters.blocks[0].codes) == 1
-    assert configuration.parameters.blocks[0].codes[0].name == "Code 0"
+    assert configuration.parameters.blocks[0].codes[0].name == 'Code 0'
     assert configuration.parameters.blocks[0].codes[0].script == sql_statements
     # given output_table_mappings, assert following tables are created
     assert configuration.storage is not None
