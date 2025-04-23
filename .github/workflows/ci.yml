@@ -93,7 +93,7 @@ jobs:
       - name: Download wheel package
         uses: actions/download-artifact@v4
         with:
-          artifact-ids: ${{ needs.build.outputs.wheel_artifact_id }}
+          name: keboola_mcp_server-${{ needs.build.outputs.version }}-py3-none-any.whl
           path: dist/
 
       - name: List dist files
