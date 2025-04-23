@@ -147,7 +147,6 @@ class KeboolaClient:
 
         Args:
             endpoint: API endpoint to call
-            data: Request payload
 
         Returns:
             API response as dictionary
