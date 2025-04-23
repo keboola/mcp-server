@@ -8,6 +8,7 @@ from typing import Any, cast, Dict, List, Mapping, Optional
 import httpx
 from kbcstorage.base import Endpoint
 from kbcstorage.client import Client
+from pydantic import BaseModel, Field
 
 LOG = logging.getLogger(__name__)
 
@@ -310,6 +311,12 @@ class JobsQueue(Endpoint):
         return self._get(url, params=params, **kwargs)
 
 
+class DocsQuestionResponse(BaseModel):
+    """The AI service response to a /docs/question request."""
+    response: str = Field(description="Text of the answer to a documentation query.")
+    source_urls: list[str] = Field(description="List of URLs to the sources of the answer.")
+
+
 class AIServiceClient(Endpoint):
     """
     Class handling endpoints for interacting with the Keboola AI Service.
@@ -319,7 +326,7 @@ class AIServiceClient(Endpoint):
         token (str): A key for the Storage API.
     """
 
-    def __init__(self, root_url: str, token: str):
+    def __init__(self, root_url: str, token: str) -> None:
         """
         Create an AIService endpoint.
         :param root_url: Root url of API. e.g. "https://ai.keboola.com/"
@@ -338,3 +345,12 @@ class AIServiceClient(Endpoint):
         url = f"{self.base_url}/docs/components/{component_id}"
 
         return self._get(url)
+
+    def docs_question(self, query: str) -> DocsQuestionResponse:
+        """
+        Answer a question using the Keboola documentation as a source.
+        :param query: The query to answer.
+        """
+        url = f"{self.base_url}/docs/question"
+        response = self._post(url, data={"query": query})
+        return DocsQuestionResponse.model_validate(response)
