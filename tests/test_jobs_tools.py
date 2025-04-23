@@ -69,7 +69,7 @@ def mock_job() -> dict[str, Any]:
 
 
 @pytest.fixture
-def iso_format() -> str:    
+def iso_format() -> str:
     return '%Y-%m-%dT%H:%M:%SZ'
 
 
@@ -87,10 +87,20 @@ async def test_retrieve_jobs(
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.component_id == expected['component'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.config_id == expected['config'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.is_finished == expected['isFinished'] for returned, expected in zip(result, mock_jobs))
+    assert all(
+        returned.status == expected['status'] for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.component_id == expected['component']
+        for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.config_id == expected['config'] for returned, expected in zip(result, mock_jobs)
+    )
+    assert all(
+        returned.is_finished == expected['isFinished']
+        for returned, expected in zip(result, mock_jobs)
+    )
     assert all(
         returned.created_time is not None
         and returned.created_time.replace(tzinfo=None)
@@ -180,7 +190,9 @@ async def retrieve_jobs_with_component_and_config_id(
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
+    assert all(
+        returned.status == expected['status'] for returned, expected in zip(result, mock_jobs)
+    )
 
     keboola_client.jobs_queue.search_jobs_by.assert_called_once_with(
         status=None,
@@ -208,7 +220,9 @@ async def retrieve_jobs_with_component_id_without_config_id(
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
+    assert all(
+        returned.status == expected['status'] for returned, expected in zip(result, mock_jobs)
+    )
 
     keboola_client.jobs_queue.search_jobs_by.assert_called_once_with(
         status=None,
