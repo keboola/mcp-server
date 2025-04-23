@@ -8,7 +8,7 @@ Example:
 def factory(params: HttpRequestParams) -> SessionState:
     return { 'sapi_client': KeboolaClient(params['storage_token']) }
 
-mcp = KeboolaMcpServer(name="SAPI Connector", session_state_factory=factory)
+mcp = KeboolaMcpServer(name='SAPI Connector', session_state_factory=factory)
 
 @mcp.tool()
 def list_all_buckets(ctx: Context):
@@ -69,7 +69,7 @@ class _KeboolaServer(Server):
         name: str,
         version: str | None = None,
         instructions: str | None = None,
-        lifespan: Callable[["Server"], AbstractAsyncContextManager[LifespanResultT]] | None = None,
+        lifespan: Callable[['Server'], AbstractAsyncContextManager[LifespanResultT]] | None = None,
     ) -> None:
         super().__init__(name, version=version, instructions=instructions, lifespan=lifespan)
 
@@ -93,7 +93,7 @@ class _KeboolaServer(Server):
 
             async with anyio.create_task_group() as tg:
                 async for message in session.incoming_messages:
-                    LOG.debug(f"Received message: {message}")
+                    LOG.debug(f'Received message: {message}')
 
                     tg.start_soon(
                         self._handle_message,
@@ -139,7 +139,7 @@ class KeboolaMcpServer(FastMCP):
         from starlette.requests import Request
         from starlette.routing import Mount, Route
 
-        sse = SseServerTransport("/messages/")
+        sse = SseServerTransport('/messages/')
 
         async def handle_sse(request: Request):
             async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
@@ -153,8 +153,8 @@ class KeboolaMcpServer(FastMCP):
         starlette_app = Starlette(
             debug=self.settings.debug,
             routes=[
-                Route("/sse", endpoint=handle_sse),
-                Mount("/messages/", app=sse.handle_post_message),
+                Route('/sse', endpoint=handle_sse),
+                Mount('/messages/', app=sse.handle_post_message),
                 # TODO: add endpoints for health-check and info
             ],
         )

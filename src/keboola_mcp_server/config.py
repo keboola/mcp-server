@@ -14,7 +14,7 @@ class Config:
     """Server configuration."""
 
     storage_token: Optional[str] = None
-    storage_api_url: str = "https://connection.keboola.com"
+    storage_api_url: str = 'https://connection.keboola.com'
     workspace_schema: Optional[str] = None
 
     @classmethod
@@ -23,12 +23,12 @@ class Config:
         for f in dataclasses.fields(cls):
             if f.name in d:
                 options[f.name] = d.get(f.name)
-            elif (dict_name := f"KBC_{f.name.upper()}") in d:
+            elif (dict_name := f'KBC_{f.name.upper()}') in d:
                 options[f.name] = d.get(dict_name)
         return options
 
     @classmethod
-    def from_dict(cls, d: Mapping[str, str]) -> "Config":
+    def from_dict(cls, d: Mapping[str, str]) -> 'Config':
         """
         Creates new `Config` instance with values read from the input mapping.
         The keys in the input mapping can either be the names of the fields in `Config` class
@@ -36,7 +36,7 @@ class Config:
         """
         return cls(**cls._read_options(d))
 
-    def replace_by(self, d: Mapping[str, str]) -> "Config":
+    def replace_by(self, d: Mapping[str, str]) -> 'Config':
         """
         Creates new `Config` instance from the existing one by replacing the values from the input mapping.
         The keys in the input mapping can either be the names of the fields in `Config` class
@@ -49,13 +49,14 @@ class Config:
         for f in dataclasses.fields(self):
             value = getattr(self, f.name)
             if value:
-                if "token" in f.name or "password" in f.name:
-                    params.append(f"{f.name}='****'")
+                if 'token' in f.name or 'password' in f.name:
+                    params.append(f'{f.name}=\'****\'')
                 else:
-                    params.append(f"{f.name}='{value}'")
+                    params.append(f'{f.name}=\'{value}\'')
             else:
-                params.append(f"{f.name}=None")
-        return f'Config({", ".join(params)})'
+                params.append(f'{f.name}=None')
+        joined_params = ', '.join(params)
+        return f'Config({joined_params})'
 
 
 class MetadataField(str, Enum):
@@ -64,4 +65,4 @@ class MetadataField(str, Enum):
     Add others as needed
     """
 
-    DESCRIPTION = "KBC.description"
+    DESCRIPTION = 'KBC.description'
