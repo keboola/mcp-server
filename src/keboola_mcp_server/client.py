@@ -4,7 +4,7 @@ import logging
 import os
 import tempfile
 
-from typing import Annotated, Any, Dict, Mapping, Optional, cast, List
+from typing import Any, Dict, Mapping, Optional, cast, List
 
 
 import httpx
@@ -73,7 +73,7 @@ class KeboolaClient:
     async def get(
         self,
         endpoint: str,
-        params: Annotated[Optional[Dict[str, Any]], "Query parameters for the request"] = None,
+        params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Make a GET request to Keboola Storage API.
 
@@ -96,10 +96,7 @@ class KeboolaClient:
     async def post(
         self,
         endpoint: str,
-        data: Annotated[
-            Optional[Dict[str, Any]],
-            "Request payload parameters as a dictionary.",
-        ],
+        data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Make a POST request to Keboola Storage API.
 
@@ -122,9 +119,7 @@ class KeboolaClient:
     async def put(
         self,
         endpoint: str,
-        data: Annotated[
-            Optional[Dict[str, Any]], "Request payload parameters as a dictionary."
-        ] = None,
+        data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Make a PUT request to Keboola Storage API.
 
@@ -147,9 +142,6 @@ class KeboolaClient:
     async def delete(
         self,
         endpoint: str,
-        data: Annotated[
-            Optional[Dict[str, Any]], "Request payload parameters as a dictionary."
-        ] = None,
     ) -> Dict[str, Any]:
         """Make a DELETE request to Keboola Storage API.
 
