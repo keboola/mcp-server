@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 def add_doc_tools(mcp: FastMCP) -> None:
@@ -15,10 +15,10 @@ def add_doc_tools(mcp: FastMCP) -> None:
         docs_query,
     ]
     for tool in doc_tools:
-        logger.info(f"Adding tool {tool.__name__} to the MCP server.")
+        LOG.info(f"Adding tool {tool.__name__} to the MCP server.")
         mcp.add_tool(tool)
 
-    logger.info("Doc tools initialized.")
+    LOG.info("Doc tools initialized.")
 
 
 class DocsAnswer(BaseModel):
