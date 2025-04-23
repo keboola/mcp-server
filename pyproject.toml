@@ -29,6 +29,7 @@ dev = [
     "pytest-asyncio ~= 0.25",
     "pytest-cov ~= 6.0",
     "pytest-mock ~= 3.14",
+    "tox~=4.23",
 ]
 
 [project.scripts]
@@ -68,3 +69,56 @@ show_error_codes = true
 ignore_missing_imports = true
 namespace_packages = true
 explicit_package_bases = true
+
+[tool.flake8]
+max-line-length = 120
+import-order-style = "edited"
+min_python_version = "3.10.0"
+# Skip checking I101, we want to sort imports in case sensitive manner
+extend-ignore = ["I101"]
+application-package-names = ["keboola_mcp_server"]
+
+[tool.tox]
+requires = ["tox>=4.23", "black>=25.1", "isort>=6.0"]
+env_list = ["python", "black", "isort", "flake8"]
+
+[tool.tox.env_run_base]
+description = "Run tests"
+extras = ["dev"]
+package = "wheel"
+wheel_build_env = ".pkg"
+commands = [["pytest", "--junitxml", "./test-results.xml"]]
+
+[tool.tox.env.black]
+description = "Run black"
+deps = [
+    "black"
+]
+commands = [
+    ["black", "src/", "tests/", "--check"]
+]
+
+[tool.tox.env.isort]
+description = "Run isort"
+deps = [
+    "isort"
+]
+commands = [
+    ["isort", "src/", "tests/", "--check"]
+]
+
+[tool.tox.env.flake8]
+description = "Run code style check by flake8"
+deps = [
+    "flake8",
+    "flake8-bugbear",
+    "flake8-colors",
+    "flake8-import-order",
+    "flake8-typing-imports",
+    "Flake8-pyproject",
+    "pep8-naming",
+]
+package = "skip"
+commands = [
+    ["flake8", "src/", "tests/"]
+]
