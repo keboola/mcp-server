@@ -13,10 +13,16 @@ from keboola_mcp_server.sql_tools import WorkspaceManager
 @pytest.fixture
 def keboola_client(mocker) -> KeboolaClient:
     """Creates mocked `KeboolaClient` instance."""
-    client = mocker.AsyncMock(KeboolaClient)
-    client.storage_client = mocker.AsyncMock(Client)
+    client = mocker.MagicMock(KeboolaClient)
+    client.storage_client = mocker.MagicMock(Client)
     client.jobs_queue = mocker.MagicMock(JobsQueue)
     return client
+
+
+@pytest.fixture
+def workspace_manager(mocker) -> WorkspaceManager:
+    """Creates mocked `WorkspaceManager` instance."""
+    return mocker.MagicMock(WorkspaceManager)
 
 
 @pytest.fixture()
@@ -30,8 +36,10 @@ def empty_context(mocker) -> Context:
 
 
 @pytest.fixture
-def mcp_context_client(keboola_client: KeboolaClient, empty_context: Context) -> Context:
+def mcp_context_client(
+    keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, empty_context: Context
+) -> Context:
     """Fills the empty_context's state with the `KeboolaClient` and `WorkspaceManager` mocks."""
-    empty_context.session.state[WorkspaceManager.STATE_KEY] = MagicMock(spec=WorkspaceManager)
+    empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
     empty_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
     return empty_context

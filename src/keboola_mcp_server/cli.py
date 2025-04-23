@@ -8,7 +8,7 @@ from typing import List, Optional
 from .config import Config
 from .server import create_server
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
@@ -68,7 +68,7 @@ def main(args: Optional[List[str]] = None) -> None:
         mcp = create_server(config)
         mcp.run(transport=parsed_args.transport)
     except Exception as e:
-        logger.exception(f"Server failed: {e}")
+        LOG.exception(f"Server failed: {e}")
         sys.exit(1)
 
 
