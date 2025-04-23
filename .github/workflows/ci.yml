@@ -29,7 +29,15 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest
+          pytest --junitxml ./test-results.xml
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: success() || failure() # run this step even if a previous step failed
+        with:
+          name: Test results
+          path: ./test-results.xml
+          reporter: 'java-junit'
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
