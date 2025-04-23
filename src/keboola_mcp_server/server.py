@@ -72,7 +72,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
 
     add_component_tools(mcp)
     add_doc_tools(mcp)
-    add_jobs_tools(mcp)
+    add_job_tools(mcp)
     add_storage_tools(mcp)
     add_sql_tools(mcp)
 
