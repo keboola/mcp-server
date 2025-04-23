@@ -7,7 +7,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 ################################## Add jobs tools to MCP SERVER ##################################
@@ -21,10 +21,10 @@ def add_job_tools(mcp: FastMCP) -> None:
         start_job,
     ]
     for tool in jobs_tools:
-        logger.info(f"Adding tool {tool.__name__} to the MCP server.")
+        LOG.info(f"Adding tool {tool.__name__} to the MCP server.")
         mcp.add_tool(tool)
 
-    logger.info("Job tools initialized.")
+    LOG.info("Job tools initialized.")
 
 
 ######################################## Job Base Models ########################################
@@ -233,7 +233,7 @@ async def retrieve_jobs(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    logger.info(f"Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.")
+    LOG.info(f"Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.")
     return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
 
 
@@ -253,7 +253,7 @@ async def get_job_detail(
     client = KeboolaClient.from_state(ctx.session.state)
 
     raw_job = client.jobs_queue.detail(job_id)
-    logger.info(f"Found job details for {job_id}." if raw_job else f"Job {job_id} not found.")
+    LOG.info(f"Found job details for {job_id}." if raw_job else f"Job {job_id} not found.")
     return JobDetail.model_validate(raw_job)
 
 
@@ -277,12 +277,12 @@ async def start_job(
             component_id=component_id, configuration_id=configuration_id
         )
         job = JobDetail.model_validate(raw_job)
-        logger.info(
+        LOG.info(
             f"Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}."
         )
         return job
     except Exception as exception:
-        logger.exception(
+        LOG.exception(
             f"Error when starting a new job for component {component_id} and configuration {configuration_id}: {exception}"
         )
         raise exception
