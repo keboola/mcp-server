@@ -40,4 +40,4 @@ async def docs_query(
     client = KeboolaClient.from_state(ctx.session.state)
     answer = client.ai_service_client.docs_question(query)
 
-    return DocsAnswer(text=answer.response, source_urls=answer.source_urls)
+    return DocsAnswer(text=answer.text, source_urls=answer.source_urls)
