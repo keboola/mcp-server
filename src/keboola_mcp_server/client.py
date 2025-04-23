@@ -55,7 +55,8 @@ class KeboolaClient:
 
         self.base_storage_api_url = storage_api_url
         self.base_queue_api_url = queue_api_url
-        self.base_ai_service_api_url = ai_service_api_url
+        # self.base_ai_service_api_url = ai_service_api_url
+        self.base_ai_service_api_url = "http://localhost:5000/v1"
 
         self.headers = {
             "X-StorageApi-Token": self.token,

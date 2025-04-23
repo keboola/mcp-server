@@ -30,22 +30,34 @@ def mock_components() -> list[dict[str, Any]]:
             "id": "keboola.ex-aws-s3",
             "name": "AWS S3 Extractor",
             "type": "extractor",
-            "description": "Extract data from AWS S3",
-            "version": "1",
+            "component_categories": [],
+            "documentation_url": "https://components.keboola.com/components/keboola.ex-aws-s3",
+            "documentation": None,
+            "configuration_schema": {},
+            "configuration_row_schema": {},
+            "configuration_description": None,
         },
         {
             "id": "keboola.wr-google-drive",
             "name": "Google Drive Writer",
             "type": "writer",
-            "description": "Write data to Google Drive",
-            "version": "1",
+            "component_categories": [],
+            "documentation_url": "https://components.keboola.com/components/keboola.wr-google-drive",
+            "documentation": None,
+            "configuration_schema": {},
+            "configuration_row_schema": {},
+            "configuration_description": None,
         },
         {
             "id": "keboola.app-google-drive",
             "name": "Google Drive Application",
             "type": "application",
-            "description": "Application for Google Drive",
-            "version": "1",
+            "component_categories": [],
+            "documentation_url": "https://components.keboola.com/components/keboola.app-google-drive",
+            "documentation": None,
+            "configuration_schema": {},
+            "configuration_row_schema": {},
+            "configuration_description": None,
         },
     ]
 
@@ -84,16 +96,12 @@ def mock_component() -> dict[str, Any]:
         "id": "keboola.ex-aws-s3",
         "name": "AWS S3 Extractor",
         "type": "extractor",
-        "description": "Extract data from AWS S3",
-        "longDescription": "Extract data from AWS S3 looooooooong",
-        "categories": ["extractor"],
-        "version": 1,
-        "created": "2024-01-01T00:00:00Z",
-        "data": {"data1": "data1", "data2": "data2"},
-        "flags": ["flag1", "flag2"],
+        "componentCategories": ["extractor"],
+        "documentationUrl": "https://components.keboola.com/components/keboola.ex-aws-s3",
+        "documentation": None,
         "configurationSchema": {},
-        "configurationDescription": "Extract data from AWS S3",
-        "emptyConfiguration": {},
+        "configurationRowSchema": {},
+        "configurationDescription": None,
     }
 
 
@@ -176,10 +184,6 @@ def assert_retrieve_components() -> (
         )
         assert all(
             returned.component.component_type == expected["type"]
-            for returned, expected in zip(result, components)
-        )
-        assert all(
-            returned.component.component_description == expected["description"]
             for returned, expected in zip(result, components)
         )
         assert all(not hasattr(returned.component, "version") for returned in result)
@@ -359,11 +363,11 @@ async def test_get_component_configuration_details(
 
     # Setup mock to return test data
     keboola_client.storage_client.configurations.detail = MagicMock(return_value=mock_configuration)
+    keboola_client.ai_service_client = MagicMock()
+    keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=mock_component)
     keboola_client.storage_client.components.detail = MagicMock(return_value=mock_component)
     keboola_client.storage_client._branch_id = "123"
-    keboola_client.get = AsyncMock(
-        side_effect=[mock_component, mock_metadata]
-    )  # Mock two results of the .get method first for component and then for metadata
+    keboola_client.get = AsyncMock(return_value=mock_metadata)
 
     result = await get_component_configuration_details("keboola.ex-aws-s3", "123", context)
 
@@ -372,10 +376,6 @@ async def test_get_component_configuration_details(
     assert result.component.component_id == mock_component["id"]
     assert result.component.component_name == mock_component["name"]
     assert result.component.component_type == mock_component["type"]
-    assert result.component.component_description == mock_component["description"]
-    assert result.component.long_description == mock_component["longDescription"]
-    assert result.component.categories == mock_component["categories"]
-    assert result.component.version == mock_component["version"]
     assert result.configuration_id == mock_configuration["id"]
     assert result.configuration_name == mock_configuration["name"]
     assert result.configuration_description == mock_configuration["description"]
@@ -390,11 +390,12 @@ async def test_get_component_configuration_details(
         "keboola.ex-aws-s3", "123"
     )
 
-    keboola_client.get.assert_has_calls(
-        [
-            call("branch/123/components/keboola.ex-aws-s3"),
-            call("branch/123/components/keboola.ex-aws-s3/configs/123/metadata"),
-        ]
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(
+        "keboola.ex-aws-s3"
+    )
+
+    keboola_client.get.assert_called_once_with(
+        "branch/123/components/keboola.ex-aws-s3/configs/123/metadata"
     )
 
 
@@ -445,7 +446,9 @@ async def test_create_transformation_configuration(
     configuration = mock_configuration
     configuration["id"] = expected_configuration_id
 
-    keboola_client.get = AsyncMock(return_value=component)
+    # Set up the mock for ai_service_client
+    keboola_client.ai_service_client = MagicMock()
+    keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=component)
     keboola_client.post = AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration["name"]
@@ -470,8 +473,8 @@ async def test_create_transformation_configuration(
     assert new_transformation_configuration.configuration_name == transformation_name
     assert new_transformation_configuration.configuration_description == description
 
-    keboola_client.get.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{expected_component_id}"
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(
+        expected_component_id
     )
 
     keboola_client.post.assert_called_once_with(
