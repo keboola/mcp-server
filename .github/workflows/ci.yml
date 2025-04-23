@@ -39,7 +39,7 @@ jobs:
         uses: dorny/test-reporter@v1
         if: success() || failure() # run this step even if a previous step failed
         with:
-          name: Test results
+          name: Test results (${{ matrix.python-version }})
           path: ./test-results.xml
           reporter: 'java-junit'
 
