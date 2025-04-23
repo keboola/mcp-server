@@ -21,68 +21,68 @@ def add_job_tools(mcp: FastMCP) -> None:
         start_job,
     ]
     for tool in jobs_tools:
-        LOG.info(f"Adding tool {tool.__name__} to the MCP server.")
+        LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
         mcp.add_tool(tool)
 
-    LOG.info("Job tools initialized.")
+    LOG.info('Job tools initialized.')
 
 
 ######################################## Job Base Models ########################################
 
 JOB_STATUS = Literal[
-    "waiting",
-    "processing",
-    "success",
-    "error",
-    "created",
+    'waiting',
+    'processing',
+    'success',
+    'error',
+    'created',
 ]
 
 
 class JobListItem(BaseModel):
     """Represents a summary of a job with minimal information, used in lists where detailed job data is not required."""
 
-    id: str = Field(description="The ID of the job.")
-    status: JOB_STATUS = Field(description="The status of the job.")
+    id: str = Field(description='The ID of the job.')
+    status: JOB_STATUS = Field(description='The status of the job.')
     component_id: Optional[str] = Field(
-        description="The ID of the component that the job is running on.",
-        validation_alias=AliasChoices("component", "componentId", "component_id", "component-id"),
-        serialization_alias="componentId",
+        description='The ID of the component that the job is running on.',
+        validation_alias=AliasChoices('component', 'componentId', 'component_id', 'component-id'),
+        serialization_alias='componentId',
         default=None,
     )
     config_id: Optional[str] = Field(
-        description="The ID of the component configuration that the job is running on.",
-        validation_alias=AliasChoices("config", "configId", "config_id", "config-id"),
-        serialization_alias="configId",
+        description='The ID of the component configuration that the job is running on.',
+        validation_alias=AliasChoices('config', 'configId', 'config_id', 'config-id'),
+        serialization_alias='configId',
         default=None,
     )
     is_finished: bool = Field(
-        description="Whether the job is finished.",
-        validation_alias=AliasChoices("isFinished", "is_finished", "is-finished"),
-        serialization_alias="isFinished",
+        description='Whether the job is finished.',
+        validation_alias=AliasChoices('isFinished', 'is_finished', 'is-finished'),
+        serialization_alias='isFinished',
         default=False,
     )
     created_time: Optional[datetime.datetime] = Field(
-        description="The creation time of the job.",
-        validation_alias=AliasChoices("createdTime", "created_time", "created-time"),
-        serialization_alias="createdTime",
+        description='The creation time of the job.',
+        validation_alias=AliasChoices('createdTime', 'created_time', 'created-time'),
+        serialization_alias='createdTime',
         default=None,
     )
     start_time: Optional[datetime.datetime] = Field(
-        description="The start time of the job.",
-        validation_alias=AliasChoices("startTime", "start_time", "start-time"),
-        serialization_alias="startTime",
+        description='The start time of the job.',
+        validation_alias=AliasChoices('startTime', 'start_time', 'start-time'),
+        serialization_alias='startTime',
         default=None,
     )
     end_time: Optional[datetime.datetime] = Field(
-        description="The end time of the job.",
-        validation_alias=AliasChoices("endTime", "end_time", "end-time"),
-        serialization_alias="endTime",
+        description='The end time of the job.',
+        validation_alias=AliasChoices('endTime', 'end_time', 'end-time'),
+        serialization_alias='endTime',
         default=None,
     )
     duration_seconds: Optional[float] = Field(
-        description="The duration of the job in seconds.",
-        validation_alias=AliasChoices("durationSeconds", "duration_seconds", "duration-seconds"),
-        serialization_alias="durationSeconds",
+        description='The duration of the job in seconds.',
+        validation_alias=AliasChoices('durationSeconds', 'duration_seconds', 'duration-seconds'),
+        serialization_alias='durationSeconds',
         default=None,
     )
 
@@ -90,45 +90,45 @@ class JobListItem(BaseModel):
 class JobDetail(JobListItem):
     """Represents a detailed job with all available information."""
 
-    url: str = Field(description="The URL of the job.")
+    url: str = Field(description='The URL of the job.')
     table_id: Optional[str] = Field(
-        description="The ID of the table that the job is running on.",
-        validation_alias=AliasChoices("tableId", "table_id", "table-id"),
-        serialization_alias="tableId",
+        description='The ID of the table that the job is running on.',
+        validation_alias=AliasChoices('tableId', 'table_id', 'table-id'),
+        serialization_alias='tableId',
         default=None,
     )
     config_data: Optional[List[Any]] = Field(
-        description="The data of the configuration.",
-        validation_alias=AliasChoices("configData", "config_data", "config-data"),
-        serialization_alias="configData",
+        description='The data of the configuration.',
+        validation_alias=AliasChoices('configData', 'config_data', 'config-data'),
+        serialization_alias='configData',
         default=None,
     )
     config_row_ids: Optional[List[str]] = Field(
-        description="The row IDs of the configuration.",
-        validation_alias=AliasChoices("configRowIds", "config_row_ids", "config-row-ids"),
-        serialization_alias="configRowIds",
+        description='The row IDs of the configuration.',
+        validation_alias=AliasChoices('configRowIds', 'config_row_ids', 'config-row-ids'),
+        serialization_alias='configRowIds',
         default=None,
     )
     run_id: Optional[str] = Field(
-        description="The ID of the run that the job is running on.",
-        validation_alias=AliasChoices("runId", "run_id", "run-id"),
-        serialization_alias="runId",
+        description='The ID of the run that the job is running on.',
+        validation_alias=AliasChoices('runId', 'run_id', 'run-id'),
+        serialization_alias='runId',
         default=None,
     )
     parent_run_id: Optional[str] = Field(
-        description="The ID of the parent run that the job is running on.",
-        validation_alias=AliasChoices("parentRunId", "parent_run_id", "parent-run-id"),
-        serialization_alias="parentRunId",
+        description='The ID of the parent run that the job is running on.',
+        validation_alias=AliasChoices('parentRunId', 'parent_run_id', 'parent-run-id'),
+        serialization_alias='parentRunId',
         default=None,
     )
     result: Optional[Dict[str, Any]] = Field(
-        description="The results of the job.",
-        validation_alias="result",
-        serialization_alias="result",
+        description='The results of the job.',
+        validation_alias='result',
+        serialization_alias='result',
         default=None,
     )
 
-    @field_validator("result", mode="before")
+    @field_validator('result', mode='before')
     def validate_result_field(
         cls, current_value: Union[List, Dict[str, Any], None]
     ) -> Dict[str, Any]:
@@ -140,7 +140,7 @@ class JobDetail(JobListItem):
                 return dict()
             if isinstance(current_value, list):
                 raise ValueError(
-                    f"Field 'result' cannot be a list, expecting dictionary, got: {current_value}."
+                    f'Field "result" cannot be a list, expecting dictionary, got: {current_value}.'
                 )
         return current_value
 
@@ -149,8 +149,8 @@ class JobDetail(JobListItem):
 
 ######################################## MCP tools ########################################
 
-SORT_BY_VALUES = Literal["startTime", "endTime", "createdTime", "durationSeconds", "id"]
-SORT_ORDER_VALUES = Literal["asc", "desc"]
+SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
+SORT_ORDER_VALUES = Literal['asc', 'desc']
 
 
 async def retrieve_jobs(
@@ -159,51 +159,51 @@ async def retrieve_jobs(
         JOB_STATUS,
         Field(
             Optional[JOB_STATUS],
-            description="The optional status of the jobs to filter by, if None then default all.",
+            description='The optional status of the jobs to filter by, if None then default all.',
         ),
     ] = None,
     component_id: Annotated[
         str,
         Field(
             Optional[str],
-            description="The optional ID of the component whose jobs you want to list, default = None.",
+            description='The optional ID of the component whose jobs you want to list, default = None.',
         ),
     ] = None,
     config_id: Annotated[
         str,
         Field(
             Optional[str],
-            description="The optional ID of the component configuration whose jobs you want to list, default = None.",
+            description='The optional ID of the component configuration whose jobs you want to list, default = None.',
         ),
     ] = None,
     limit: Annotated[
         int,
         Field(
-            int, description="The number of jobs to list, default = 100, max = 500.", ge=1, le=500
+            int, description='The number of jobs to list, default = 100, max = 500.', ge=1, le=500
         ),
     ] = 100,
     offset: Annotated[
-        int, Field(int, description="The offset of the jobs to list, default = 0.", ge=0)
+        int, Field(int, description='The offset of the jobs to list, default = 0.', ge=0)
     ] = 0,
     sort_by: Annotated[
         SORT_BY_VALUES,
         Field(
             Optional[SORT_BY_VALUES],
-            description="The field to sort the jobs by, default = 'startTime'.",
+            description='The field to sort the jobs by, default = "startTime".',
         ),
-    ] = "startTime",
+    ] = 'startTime',
     sort_order: Annotated[
         SORT_ORDER_VALUES,
         Field(
             Optional[SORT_ORDER_VALUES],
-            description="The order to sort the jobs by, default = 'desc'.",
+            description='The order to sort the jobs by, default = "desc".',
         ),
-    ] = "desc",
+    ] = 'desc',
 ) -> Annotated[
     List[JobListItem],
     Field(
         List[JobListItem],
-        description=("The retrieved list of jobs list items. If empty then no jobs were found."),
+        description=('The retrieved list of jobs list items. If empty then no jobs were found.'),
     ),
 ]:
     """
@@ -233,17 +233,17 @@ async def retrieve_jobs(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    LOG.info(f"Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.")
+    LOG.info(f'Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.')
     return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
 
 
 async def get_job_detail(
     job_id: Annotated[
         str,
-        Field(description="The unique identifier of the job whose details should be retrieved."),
+        Field(description='The unique identifier of the job whose details should be retrieved.'),
     ],
     ctx: Context,
-) -> Annotated[JobDetail, Field(JobDetail, description="The detailed information about the job.")]:
+) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
     """
     Retrieve a detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.
@@ -253,7 +253,7 @@ async def get_job_detail(
     client = KeboolaClient.from_state(ctx.session.state)
 
     raw_job = client.jobs_queue.detail(job_id)
-    LOG.info(f"Found job details for {job_id}." if raw_job else f"Job {job_id} not found.")
+    LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
     return JobDetail.model_validate(raw_job)
 
 
@@ -261,12 +261,12 @@ async def start_job(
     ctx: Context,
     component_id: Annotated[
         str,
-        Field(description="The ID of the component or transformation for which to start a job."),
+        Field(description='The ID of the component or transformation for which to start a job.'),
     ],
     configuration_id: Annotated[
-        str, Field(description="The ID of the configuration for which to start a job.")
+        str, Field(description='The ID of the configuration for which to start a job.')
     ],
-) -> Annotated[JobDetail, Field(description="The newly started job details.")]:
+) -> Annotated[JobDetail, Field(description='The newly started job details.')]:
     """
     Starts a new job for a given component or transformation.
     """
@@ -278,12 +278,12 @@ async def start_job(
         )
         job = JobDetail.model_validate(raw_job)
         LOG.info(
-            f"Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}."
+            f'Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}.'
         )
         return job
     except Exception as exception:
         LOG.exception(
-            f"Error when starting a new job for component {component_id} and configuration {configuration_id}: {exception}"
+            f'Error when starting a new job for component {component_id} and configuration {configuration_id}: {exception}'
         )
         raise exception
 
