@@ -107,9 +107,7 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = (
-        f'branch/{client.storage_client._branch_id}/components/{transformation_id}/configs'
-    )
+    endpoint = f'branch/{client.storage_client._branch_id}/components/{transformation_id}/configs'
 
     LOG.info(
         f'Creating new transformation configuration: {name} for component: {transformation_id}.'

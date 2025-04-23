@@ -63,9 +63,7 @@ class SqlSelectData:
 @dataclass(frozen=True)
 class QueryResult:
     status: QueryStatus = Field(description='Status of running the SQL query.')
-    data: SqlSelectData | None = Field(
-        None, description='Data selected by the SQL SELECT query.'
-    )
+    data: SqlSelectData | None = Field(None, description='Data selected by the SQL SELECT query.')
     message: str | None = Field(
         None, description='Either an error message or the information from non-SELECT queries.'
     )

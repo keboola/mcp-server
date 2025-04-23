@@ -186,9 +186,7 @@ async def get_component_configuration_details(
     )
 
     # Get Configuration Metadata if exists
-    endpoint = (
-        f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
-    )
+    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
     r_metadata = await client.get(endpoint)
     if r_metadata:
         LOG.info(
