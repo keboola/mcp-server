@@ -1,4 +1,3 @@
-
 from typing import Any, Callable, Sequence, Union
 from unittest.mock import AsyncMock, MagicMock, call
 
@@ -13,6 +12,7 @@ from keboola_mcp_server.components.modify_tools import (
     create_sql_transformation,
 )
 from keboola_mcp_server.sql_tools import WorkspaceManager
+
 
 @pytest.mark.parametrize(
     "sql_dialect, expected_component_id, expected_configuration_id",

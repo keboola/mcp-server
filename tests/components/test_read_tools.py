@@ -18,6 +18,7 @@ from keboola_mcp_server.components.read_tools import (
     retrieve_transformations_configurations,
 )
 
+
 @pytest.fixture
 def assert_retrieve_components() -> (
     Callable[[list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None]
@@ -87,7 +88,6 @@ def assert_retrieve_components() -> (
         )
 
     return _assert_retrieve_components
-
 
 
 @pytest.mark.asyncio
