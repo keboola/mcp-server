@@ -10,7 +10,7 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.sql_tools import WorkspaceManager
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 def add_storage_tools(mcp: FastMCP) -> None:
@@ -22,7 +22,7 @@ def add_storage_tools(mcp: FastMCP) -> None:
     mcp.add_tool(update_bucket_description)
     mcp.add_tool(update_table_description)
 
-    logger.info("Storage tools added to the MCP server.")
+    LOG.info("Storage tools added to the MCP server.")
 
 
 def extract_description(values: Dict[str, Any]) -> Optional[str]:
