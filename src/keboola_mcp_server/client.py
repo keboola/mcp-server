@@ -17,22 +17,22 @@ LOG = logging.getLogger(__name__)
 class KeboolaClient:
     """Helper class to interact with Keboola Storage API and Job Queue API."""
 
-    STATE_KEY = "sapi_client"
+    STATE_KEY = 'sapi_client'
     # Prefixes for the storage and queue API URLs, we do not use http:// or https:// here since we split the storage
     # api url by `connection` word
-    _PREFIX_STORAGE_API_URL = "connection."
-    _PREFIX_QUEUE_API_URL = "https://queue."
+    _PREFIX_STORAGE_API_URL = 'connection.'
+    _PREFIX_QUEUE_API_URL = 'https://queue.'
 
     @classmethod
-    def from_state(cls, state: Mapping[str, Any]) -> "KeboolaClient":
+    def from_state(cls, state: Mapping[str, Any]) -> 'KeboolaClient':
         instance = state[cls.STATE_KEY]
-        assert isinstance(instance, KeboolaClient), f"Expected KeboolaClient, got: {instance}"
+        assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
     def __init__(
         self,
         storage_api_token: str,
-        storage_api_url: str = "https://connection.keboola.com",
+        storage_api_url: str = 'https://connection.keboola.com',
     ) -> None:
         """Initialize the client.
 
@@ -43,24 +43,24 @@ class KeboolaClient:
         """
         self.token = storage_api_token
         # Ensure the base URL has a scheme
-        if not storage_api_url.startswith(("http://", "https://")):
-            storage_api_url = f"https://{storage_api_url}"
+        if not storage_api_url.startswith(('http://', 'https://')):
+            storage_api_url = f'https://{storage_api_url}'
 
         # Construct the queue API URL from the storage API URL expecting the following format:
         # https://connection.REGION.keboola.com
         # Remove the prefix from the storage API URL https://connection.REGION.keboola.com -> REGION.keboola.com
         # and add the prefix for the queue API https://queue.REGION.keboola.com
         queue_api_url = (
-            f"{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
+            f'{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
         )
 
         self.base_storage_api_url = storage_api_url
         self.base_queue_api_url = queue_api_url
 
         self.headers = {
-            "X-StorageApi-Token": self.token,
-            "Content-Type": "application/json",
-            "Accept-encoding": "gzip",
+            'X-StorageApi-Token': self.token,
+            'Content-Type': 'application/json',
+            'Accept-encoding': 'gzip',
         }
         # Initialize the official client for operations it handles well
         # The storage_client.jobs endpoint is for storage jobs
@@ -86,7 +86,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
+                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
                 headers=self.headers,
                 params=params,
             )
@@ -109,7 +109,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
+                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
                 headers=self.headers,
                 json=data if data is not None else {},
             )
@@ -132,7 +132,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.put(
-                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
+                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
                 headers=self.headers,
                 data=data if data is not None else {},
             )
@@ -153,7 +153,7 @@ class KeboolaClient:
         """
         async with httpx.AsyncClient() as client:
             response = await client.delete(
-                f"{self.base_storage_api_url}/v2/storage/{endpoint}",
+                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
                 headers=self.headers,
             )
             response.raise_for_status()
@@ -172,17 +172,17 @@ class KeboolaClient:
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Get just the table name from the table_id
-                table_name = table_id.split(".")[-1]
+                table_name = table_id.split('.')[-1]
                 # Export the table data
                 self.storage_client.tables.export_to_file(table_id, temp_dir)
                 # Read the exported file
                 actual_file = os.path.join(temp_dir, table_name)
-                with open(actual_file, "r") as f:
+                with open(actual_file, 'r') as f:
                     data = f.read()
                 return data
         except Exception as e:
-            LOG.error(f"Error downloading table {table_id}: {str(e)}")
-            return f"Error downloading table: {str(e)}"
+            LOG.error(f'Error downloading table {table_id}: {str(e)}')
+            return f'Error downloading table: {str(e)}'
 
 
 class JobsQueue(Endpoint):
@@ -202,17 +202,17 @@ class JobsQueue(Endpoint):
         :param root_url: Root url of API. e.g. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console.
         """
-        super().__init__(root_url, "", token)
+        super().__init__(root_url, '', token)
 
         # set the base url to the root url
-        self.base_url = self.root_url.rstrip("/")
+        self.base_url = self.root_url.rstrip('/')
 
     def detail(self, job_id: str) -> Dict[str, Any]:
         """
         Retrieves information about a given job.
         :param job_id: The id of the job.
         """
-        url = f"{self.base_url}/jobs/{job_id}"
+        url = f'{self.base_url}/jobs/{job_id}'
 
         return self._get(url)
 
@@ -223,8 +223,8 @@ class JobsQueue(Endpoint):
         status: Optional[List[str]] = None,
         limit: int = 100,
         offset: int = 0,
-        sort_by: Optional[str] = "startTime",
-        sort_order: Optional[str] = "desc",
+        sort_by: Optional[str] = 'startTime',
+        sort_order: Optional[str] = 'desc',
     ) -> Dict[str, Any]:
         """
         Search for jobs based on the provided parameters.
@@ -237,13 +237,13 @@ class JobsQueue(Endpoint):
         :param sort_order: The order to sort the jobs by.
         """
         params = {
-            "componentId": component_id,
-            "configId": config_id,
-            "status": status,
-            "limit": limit,
-            "offset": offset,
-            "sortBy": sort_by,
-            "sortOrder": sort_order,
+            'componentId': component_id,
+            'configId': config_id,
+            'status': status,
+            'limit': limit,
+            'offset': offset,
+            'sortBy': sort_by,
+            'sortOrder': sort_order,
         }
         return self._search(params=params)
 
@@ -258,11 +258,11 @@ class JobsQueue(Endpoint):
         :param configuration_id: The id of the configuration.
         :return: The response from the API call - created job or raise an error.
         """
-        url = f"{self.base_url}/jobs"
+        url = f'{self.base_url}/jobs'
         payload = {
-            "component": component_id,
-            "config": configuration_id,
-            "mode": "run",
+            'component': component_id,
+            'config': configuration_id,
+            'mode': 'run',
         }
         return self._post(url, json=payload)
 
@@ -304,6 +304,6 @@ class JobsQueue(Endpoint):
             - sortOrder str: The jobs sorting order, default "desc"
                 values: asc, desc
         """
-        url = f"{self.base_url}/search/jobs"
+        url = f'{self.base_url}/search/jobs'
 
         return self._get(url, params=params, **kwargs)
