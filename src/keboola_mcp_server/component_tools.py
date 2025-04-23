@@ -147,6 +147,7 @@ class ComponentWithConfigurations(BaseModel):
 class Component(ReducedComponent):
     component_categories: list[str] = Field(
         default_factory=list,
+        description="The categories the component belongs to.",
         validation_alias=AliasChoices(
             "componentCategories", "component_categories", "component-categories", "categories"
         ),
@@ -154,12 +155,18 @@ class Component(ReducedComponent):
     )
     documentation_url: Optional[str] = Field(
         default=None,
+        description="The url where the documentation can be found.",
         validation_alias=AliasChoices("documentationUrl", "documentation_url", "documentation-url"),
         serialization_alias="documentationUrl",
     )
-    documentation: Optional[str] = Field(default=None)
+    documentation: Optional[str] = Field(
+        default=None,
+        description="The documentation of the component.",
+        serialization_alias="documentation",
+    )
     configuration_schema: Optional[dict[str, Any]] = Field(
         default=None,
+        description="The configuration schema for the component.",
         validation_alias=AliasChoices(
             "configurationSchema", "configuration_schema", "configuration-schema"
         ),
@@ -167,17 +174,11 @@ class Component(ReducedComponent):
     )
     configuration_row_schema: Optional[dict[str, Any]] = Field(
         default=None,
+        description="The configuration row schema of the component.",
         validation_alias=AliasChoices(
             "configurationRowSchema", "configuration_row_schema", "configuration-row-schema"
         ),
         serialization_alias="configurationRowSchema",
-    )
-    configuration_description: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "configurationDescription", "configuration_description", "configuration-description"
-        ),
-        serialization_alias="configurationDescription",
     )
 
 
@@ -340,7 +341,6 @@ async def _get_component_details(
     """
 
     raw_component = client.ai_service_client.get_component_detail(component_id)
-    print(raw_component)
     logger.info(f"Retrieved component details for component {component_id}.")
     return Component.model_validate(raw_component)
 
@@ -598,7 +598,6 @@ async def get_component_configuration_details(
     # Get Configuration Metadata if exists
     endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata"
     r_metadata = await client.get(endpoint)
-    print(f"metadata: {r_metadata}")
     if r_metadata:
         logger.info(
             f"Retrieved configuration metadata for {component_id} component with configuration {configuration_id}."
@@ -607,14 +606,6 @@ async def get_component_configuration_details(
         logger.info(
             f"No metadata found for {component_id} component with configuration {configuration_id}."
         )
-    print(
-        {
-            **raw_configuration,
-            "component": component,
-            "component_id": component_id,
-            "metadata": r_metadata,
-        }
-    )
     # Create Component Configuration Detail Object
     return ComponentConfiguration.model_validate(
         {

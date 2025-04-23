@@ -54,10 +54,6 @@ class KeboolaClient:
         ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[-1]}"
 
         self.base_storage_api_url = storage_api_url
-        self.base_queue_api_url = queue_api_url
-        # self.base_ai_service_api_url = ai_service_api_url
-        self.base_ai_service_api_url = "http://localhost:5000/v1"
-
         self.headers = {
             "X-StorageApi-Token": self.token,
             "Content-Type": "application/json",
@@ -69,8 +65,8 @@ class KeboolaClient:
         # that handles component/transformation jobs
         # The AI Service API is used to various endpoints built in KaiBot - such as documentation fetching
         self.storage_client = Client(self.base_storage_api_url, self.token)
-        self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
-        self.ai_service_client = AIServiceClient(self.base_ai_service_api_url, self.token)
+        self.jobs_queue = JobsQueue(queue_api_url, self.token)
+        self.ai_service_client = AIServiceClient(ai_service_api_url, self.token)
 
     async def get(
         self,
@@ -302,23 +298,16 @@ class JobsQueue(Endpoint):
 
 
 class AIServiceClient(Endpoint):
-    """
-    Class handling endpoints for interacting with the Keboola AI Service.
-
-    Attributes:
-        base_url (str): The base URL for this endpoint.
-        token (str): A key for the Storage API.
-    """
+    """Class handling endpoints for interacting with the Keboola AI Service."""
 
     def __init__(self, root_url: str, token: str):
         """
         Create an AIService endpoint.
         :param root_url: Root url of API. e.g. "https://ai.keboola.com/"
-        :param token: A key for the Storage API. Can be found in the storage console.
+        :param token: A Keboola Storage API token.
         """
         super().__init__(root_url, "", token)
 
-        # set the base url to the root url
         self.base_url = self.root_url.rstrip("/")
 
     def get_component_detail(self, component_id: str) -> Dict[str, Any]:
@@ -327,5 +316,4 @@ class AIServiceClient(Endpoint):
         :param component_id: The id of the component.
         """
         url = f"{self.base_url}/docs/components/{component_id}"
-
         return self._get(url)

@@ -32,10 +32,12 @@ def mock_components() -> list[dict[str, Any]]:
             "type": "extractor",
             "component_categories": [],
             "documentation_url": "https://components.keboola.com/components/keboola.ex-aws-s3",
-            "documentation": None,
-            "configuration_schema": {},
-            "configuration_row_schema": {},
-            "configuration_description": None,
+            "documentation": "AWS S3 extractor documentation",
+            "configuration_schema": {"type": "object", "properties": {"foo": {"type": "string"}}},
+            "configuration_row_schema": {
+                "type": "object",
+                "properties": {"bar": {"type": "string"}},
+            },
         },
         {
             "id": "keboola.wr-google-drive",
@@ -43,10 +45,12 @@ def mock_components() -> list[dict[str, Any]]:
             "type": "writer",
             "component_categories": [],
             "documentation_url": "https://components.keboola.com/components/keboola.wr-google-drive",
-            "documentation": None,
-            "configuration_schema": {},
-            "configuration_row_schema": {},
-            "configuration_description": None,
+            "documentation": "Google drive writer documentation.",
+            "configuration_schema": {"type": "object", "properties": {"foo": {"type": "string"}}},
+            "configuration_row_schema": {
+                "type": "object",
+                "properties": {"bar": {"type": "string"}},
+            },
         },
         {
             "id": "keboola.app-google-drive",
@@ -54,10 +58,12 @@ def mock_components() -> list[dict[str, Any]]:
             "type": "application",
             "component_categories": [],
             "documentation_url": "https://components.keboola.com/components/keboola.app-google-drive",
-            "documentation": None,
-            "configuration_schema": {},
-            "configuration_row_schema": {},
-            "configuration_description": None,
+            "documentation": "Google drive application documentation.",
+            "configuration_schema": {"type": "object", "properties": {"foo": {"type": "string"}}},
+            "configuration_row_schema": {
+                "type": "object",
+                "properties": {"bar": {"type": "string"}},
+            },
         },
     ]
 
@@ -98,10 +104,9 @@ def mock_component() -> dict[str, Any]:
         "type": "extractor",
         "componentCategories": ["extractor"],
         "documentationUrl": "https://components.keboola.com/components/keboola.ex-aws-s3",
-        "documentation": None,
-        "configurationSchema": {},
-        "configurationRowSchema": {},
-        "configurationDescription": None,
+        "documentation": "AWS S3 extractor documentation",
+        "configurationSchema": {"type": "object", "properties": {"foo": {"type": "string"}}},
+        "configurationRowSchema": {"type": "object", "properties": {"bar": {"type": "string"}}},
     }
 
 
@@ -354,6 +359,7 @@ async def test_get_component_configuration_details(
     mock_configuration: dict[str, Any],
     mock_component: dict[str, Any],
     mock_metadata: list[dict[str, Any]],
+    mock_branch_id: str,
 ):
     """Test get_component_configuration_details tool."""
     context = mcp_context_components_configs
@@ -366,25 +372,20 @@ async def test_get_component_configuration_details(
     keboola_client.ai_service_client = MagicMock()
     keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=mock_component)
     keboola_client.storage_client.components.detail = MagicMock(return_value=mock_component)
-    keboola_client.storage_client._branch_id = "123"
+    keboola_client.storage_client._branch_id = mock_branch_id
     keboola_client.get = AsyncMock(return_value=mock_metadata)
 
     result = await get_component_configuration_details("keboola.ex-aws-s3", "123", context)
-
+    expected = ComponentConfiguration.model_validate(
+        {
+            **mock_configuration,
+            "component_id": mock_component["id"],
+            "component": mock_component,
+            "metadata": mock_metadata,
+        }
+    )
     assert isinstance(result, ComponentConfiguration)
-    assert result.component is not None
-    assert result.component.component_id == mock_component["id"]
-    assert result.component.component_name == mock_component["name"]
-    assert result.component.component_type == mock_component["type"]
-    assert result.configuration_id == mock_configuration["id"]
-    assert result.configuration_name == mock_configuration["name"]
-    assert result.configuration_description == mock_configuration["description"]
-    assert result.is_disabled == mock_configuration["isDisabled"]
-    assert result.is_deleted == mock_configuration["isDeleted"]
-    assert result.version == mock_configuration["version"]
-    assert result.configuration == mock_configuration["configuration"]
-    assert result.rows == mock_configuration["rows"]
-    assert result.configuration_metadata == mock_metadata
+    assert result.model_dump() == expected.model_dump()
 
     keboola_client.storage_client.configurations.detail.assert_called_once_with(
         "keboola.ex-aws-s3", "123"
@@ -395,7 +396,7 @@ async def test_get_component_configuration_details(
     )
 
     keboola_client.get.assert_called_once_with(
-        "branch/123/components/keboola.ex-aws-s3/configs/123/metadata"
+        f"branch/{mock_branch_id}/components/{mock_component['id']}/configs/{mock_configuration['id']}/metadata"
     )
 
 
@@ -465,13 +466,13 @@ async def test_create_transformation_configuration(
         sql_statements,
         created_table_names=[created_table_name],
     )
+
+    expected_config = ComponentConfiguration.model_validate(
+        {**configuration, "component_id": expected_component_id, "component": component}
+    )
+
     assert isinstance(new_transformation_configuration, ComponentConfiguration)
-    assert new_transformation_configuration.component is not None
-    assert new_transformation_configuration.component.component_id == expected_component_id
-    assert new_transformation_configuration.component_id == expected_component_id
-    assert new_transformation_configuration.configuration_id == expected_configuration_id
-    assert new_transformation_configuration.configuration_name == transformation_name
-    assert new_transformation_configuration.configuration_description == description
+    assert new_transformation_configuration.model_dump() == expected_config.model_dump()
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(
         expected_component_id
