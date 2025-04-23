@@ -316,8 +316,9 @@ class DocsQuestionResponse(BaseModel):
 
     text: str = Field(description="Text of the answer to a documentation query.")
     source_urls: list[str] = Field(
-        description="List of URLs to the sources of the answer.", default_factory=list,
-        alias="sourceUrls"
+        description="List of URLs to the sources of the answer.",
+        default_factory=list,
+        alias="sourceUrls",
     )
 
 
