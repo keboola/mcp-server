@@ -7,8 +7,8 @@ from mcp.server.fastmcp import FastMCP
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.component_tools import add_component_tools
-from keboola_mcp_server.doc_tools import add_doc_tools
 from keboola_mcp_server.config import Config
+from keboola_mcp_server.doc_tools import add_doc_tools
 from keboola_mcp_server.jobs_tools import add_job_tools
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
