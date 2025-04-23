@@ -5,16 +5,22 @@ import pytest
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.component_tools import (
+from keboola_mcp_server.components.model import (
     ComponentConfiguration,
     ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
     ReducedComponentConfiguration,
-    TransformationConfiguration,
+)
+from keboola_mcp_server.components.utils import (
     _get_transformation_configuration,
     _handle_component_types,
+    TransformationConfiguration,
+)
+from keboola_mcp_server.components.modify_tools import (
     create_sql_transformation,
+)
+from keboola_mcp_server.components.read_tools import (
     get_component_configuration_details,
     retrieve_components_configurations,
     retrieve_transformations_configurations,

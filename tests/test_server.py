@@ -1,7 +1,7 @@
 import pytest
 
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.component_tools import (
+from keboola_mcp_server.components.read_tools import (
     RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
