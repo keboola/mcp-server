@@ -38,9 +38,7 @@ def add_component_tools(mcp: FastMCP) -> None:
         retrieve_transformations_configurations,
         name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     )
-    LOG.info(
-        f"Added tool {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME} to the MCP server."
-    )
+    LOG.info(f"Added tool {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME} to the MCP server.")
 
     mcp.add_tool(create_sql_transformation)
     LOG.info(f"Added tool {create_sql_transformation.__name__} to the MCP server.")
