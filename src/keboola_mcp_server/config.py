@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Mapping, Optional
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
