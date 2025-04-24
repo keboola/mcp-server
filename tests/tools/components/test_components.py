@@ -21,7 +21,6 @@ from keboola_mcp_server.tools.components.tools import (
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
 
-
 @pytest.mark.parametrize(
     "sql_dialect, expected_component_id, expected_configuration_id",
     [
@@ -129,7 +128,6 @@ async def test_create_transformation_configuration_fail(
             "test_description",
             "SELECT * FROM test",
         )
-
 
 
 @pytest.fixture

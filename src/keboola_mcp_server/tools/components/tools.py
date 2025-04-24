@@ -21,7 +21,6 @@ from keboola_mcp_server.tools.components.utils import (
     _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
-
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 
@@ -62,7 +61,6 @@ def add_component_tools(mcp: FastMCP) -> None:
     LOG.info(f"Added tool: {create_sql_transformation.__name__}.")
 
     LOG.info("Component tools initialized.")
-
 
 
 ############################## Component read tools #########################################
@@ -336,5 +334,3 @@ async def create_sql_transformation(
 
 
 ############################## End of component tools #########################################
-
-
