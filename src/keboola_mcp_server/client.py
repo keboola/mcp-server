@@ -52,12 +52,9 @@ class KeboolaClient:
         queue_api_url = (
             f"{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
         )
-        ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[-1]}"
+        ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
 
         self.base_storage_api_url = storage_api_url
-        self.base_queue_api_url = queue_api_url
-        self.base_ai_service_api_url = ai_service_api_url
-
         self.headers = {
             "X-StorageApi-Token": self.token,
             "Content-Type": "application/json",
@@ -69,8 +66,8 @@ class KeboolaClient:
         # that handles component/transformation jobs
         # The AI Service API is used to various endpoints built in KaiBot - such as documentation fetching
         self.storage_client = Client(self.base_storage_api_url, self.token)
-        self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
-        self.ai_service_client = AIServiceClient(self.base_ai_service_api_url, self.token)
+        self.jobs_queue = JobsQueue(queue_api_url, self.token)
+        self.ai_service_client = AIServiceClient(ai_service_api_url, self.token)
 
     async def get(
         self,
