@@ -1,11 +1,11 @@
 import pytest
 
-from keboola_mcp_server.server import create_server
 from keboola_mcp_server.component_tools import (
+    GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
     RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
-    GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
 )
+from keboola_mcp_server.server import create_server
 
 
 class TestServer:
@@ -15,6 +15,7 @@ class TestServer:
         tools = await server.list_tools()
         assert sorted(t.name for t in tools) == [
             "create_sql_transformation",
+            "docs_query",
             "get_bucket_detail",
             GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
             "get_job_detail",

@@ -9,16 +9,16 @@ from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.sql_tools import TableFqn, WorkspaceManager
 from keboola_mcp_server.storage_tools import (
     BucketDetail,
+    TableColumnInfo,
+    TableDetail,
+    UpdateBucketDescriptionResponse,
+    UpdateTableDescriptionResponse,
     get_bucket_detail,
     get_table_detail,
     retrieve_bucket_tables,
     retrieve_buckets,
-    TableColumnInfo,
-    TableDetail,
     update_bucket_description,
     update_table_description,
-    UpdateBucketDescriptionResponse,
-    UpdateTableDescriptionResponse,
 )
 
 
