@@ -1,0 +1,71 @@
+kind: Deployment
+apiVersion: {{ include "chart.deployment.apiVersion" . }}
+metadata:
+  name: {{ include "chart.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+    # Add specific app labels if needed, matching selector below
+    app: {{ include "chart.name" . }}
+    releaseId: {{ .Values.releaseId | quote }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+      # Add specific app labels if needed
+      app: {{ include "chart.name" . }}
+  template:
+    metadata:
+      labels:
+        {{- include "chart.selectorLabels" . | nindent 8 }}
+        # Add specific app labels if needed
+        app: {{ include "chart.name" . }}
+        releaseId: {{ .Values.releaseId | quote }}
+    spec:
+      serviceAccountName: {{ include "chart.serviceAccountName" . }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: MCP_TRANSPORT
+              value: {{ .Values.appConfig.transport | quote }}
+          startupProbe:
+            httpGet:
+              path: /health-check # Assuming health check endpoint
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: KubernetesStartupProbe
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health-check # Assuming health check endpoint
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: KubernetesReadinessProbe
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health-check # Assuming health check endpoint
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: KubernetesLivenessProbe
+            periodSeconds: 10
+            failureThreshold: 3
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
