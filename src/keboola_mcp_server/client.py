@@ -320,32 +320,22 @@ class DocsQuestionResponse(BaseModel):
 
 
 class AIServiceClient(Endpoint):
-    """
-    Class handling endpoints for interacting with the Keboola AI Service.
-
-    Attributes:
-        base_url (str): The base URL for this endpoint.
-        token (str): A key for the Storage API.
-    """
+    """Class handling endpoints for interacting with the Keboola AI Service."""
 
     def __init__(self, root_url: str, token: str) -> None:
         """
         Create an AIService endpoint.
         :param root_url: Root url of API. e.g. "https://ai.keboola.com/"
-        :param token: A key for the Storage API. Can be found in the storage console.
+        :param token: A Keboola Storage API token.
         """
         super().__init__(root_url, "", token)
-
-        # set the base url to the root url
-        self.base_url = self.root_url.rstrip("/")
 
     def get_component_detail(self, component_id: str) -> Dict[str, Any]:
         """
         Retrieves information about a given component.
         :param component_id: The id of the component.
         """
-        url = f"{self.base_url}/docs/components/{component_id}"
-
+        url = f"{self.base_url.rstrip('/')}/docs/components/{component_id}"
         return self._get(url)
 
     def docs_question(self, query: str) -> DocsQuestionResponse:
