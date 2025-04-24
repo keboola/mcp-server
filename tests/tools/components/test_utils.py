@@ -3,10 +3,10 @@ from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
-from keboola_mcp_server.components.model import (
+from keboola_mcp_server.tools.components.model import (
     ComponentType,
 )
-from keboola_mcp_server.components.utils import (
+from keboola_mcp_server.tools.components.utils import (
     _get_transformation_configuration,
     _handle_component_types,
     TransformationConfiguration,

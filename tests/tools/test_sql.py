@@ -9,7 +9,7 @@ from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.sql_tools import (
+from keboola_mcp_server.tools.sql import (
     QueryResult,
     SqlSelectData,
     TableFqn,
@@ -277,9 +277,9 @@ class TestWorkspaceManagerBigQuery:
     )
     async def test_execute_query(self, query: str, expected: QueryResult, context: Context, mocker):
         # disable BigQuery's Client's constructor to avoid Google authentication
-        bq_client = mocker.patch('keboola_mcp_server.sql_tools.Client.__init__')
+        bq_client = mocker.patch('keboola_mcp_server.tools.sql.Client.__init__')
         bq_client.return_value = None
-        bq_query = mocker.patch('keboola_mcp_server.sql_tools.Client.query')
+        bq_query = mocker.patch('keboola_mcp_server.tools.sql.Client.query')
         bq_query.return_value = (bq_job := mocker.MagicMock(QueryJob))
         bq_job.result.return_value = (bq_rows := mocker.MagicMock(RowIterator))
         if expected.is_ok:
