@@ -335,7 +335,7 @@ class AIServiceClient(Endpoint):
         Retrieves information about a given component.
         :param component_id: The id of the component.
         """
-        url = f"{self.base_url.rstrip('/')}/docs/components/{component_id}"
+        url = f"{self.root_url.rstrip('/')}/docs/components/{component_id}"
         return self._get(url)
 
     def docs_question(self, query: str) -> DocsQuestionResponse:
@@ -343,7 +343,7 @@ class AIServiceClient(Endpoint):
         Answers a question using the Keboola documentation as a source.
         :param query: The query to answer.
         """
-        url = f"{self.base_url}/docs/question"
+        url = f"{self.root_url.rstrip('/')}/docs/question"
         response = self._post(
             url,
             json={"query": query},
