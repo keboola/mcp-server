@@ -9,7 +9,7 @@ import httpx
 from kbcstorage.base import Endpoint
 from kbcstorage.client import Client
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 class KeboolaClient:
@@ -71,7 +71,7 @@ class KeboolaClient:
     async def get(
         self,
         endpoint: str,
-        params: Annotated[Optional[Dict[str, Any]], "Query parameters for the request"] = None,
+        params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Make a GET request to Keboola Storage API.
 
@@ -94,10 +94,7 @@ class KeboolaClient:
     async def post(
         self,
         endpoint: str,
-        data: Annotated[
-            Optional[Dict[str, Any]],
-            "Request payload parameters as a dictionary.",
-        ],
+        data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Make a POST request to Keboola Storage API.
 
@@ -120,9 +117,7 @@ class KeboolaClient:
     async def put(
         self,
         endpoint: str,
-        data: Annotated[
-            Optional[Dict[str, Any]], "Request payload parameters as a dictionary."
-        ] = None,
+        data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Make a PUT request to Keboola Storage API.
 
@@ -145,15 +140,11 @@ class KeboolaClient:
     async def delete(
         self,
         endpoint: str,
-        data: Annotated[
-            Optional[Dict[str, Any]], "Request payload parameters as a dictionary."
-        ] = None,
     ) -> Dict[str, Any]:
         """Make a DELETE request to Keboola Storage API.
 
         Args:
             endpoint: API endpoint to call
-            data: Request payload
 
         Returns:
             API response as dictionary
@@ -188,7 +179,7 @@ class KeboolaClient:
                     data = f.read()
                 return data
         except Exception as e:
-            logger.error(f"Error downloading table {table_id}: {str(e)}")
+            LOG.error(f"Error downloading table {table_id}: {str(e)}")
             return f"Error downloading table: {str(e)}"
 
 
@@ -253,6 +244,25 @@ class JobsQueue(Endpoint):
             "sortOrder": sort_order,
         }
         return self._search(params=params)
+
+    def create_job(
+        self,
+        component_id: str,
+        configuration_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Create a new job.
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :return: The response from the API call - created job or raise an error.
+        """
+        url = f"{self.base_url}/jobs"
+        payload = {
+            "component": component_id,
+            "config": configuration_id,
+            "mode": "run",
+        }
+        return self._post(url, json=payload)
 
     def _search(self, params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """

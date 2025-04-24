@@ -26,6 +26,7 @@ class TestServer:
             RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
             "retrieve_jobs",
             RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
+            "start_job",
             "update_bucket_description",
             "update_table_description",
         ]

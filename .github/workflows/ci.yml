@@ -1,56 +1,103 @@
 name: CI
 
-on:
-  push:
-    branches: [ "**" ]
-  pull_request:
-    branches: [ main ]
+on: [ push ]
+concurrency: ci-${{ github.ref }}
+
+permissions:
+  contents: read
+  checks: write
 
 jobs:
-  test:
+  build:
+    name: Build, test and package
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-
+    outputs:
+      is_semantic_tag: ${{ steps.get_package_version.outputs.is_semantic_tag }}
+      tag: ${{ steps.get_package_version.outputs.tag }}
+      version: ${{ steps.get_package_version.outputs.version }}
+      wheel_artifact_id: ${{ steps.wheel_artifact_upload.outputs.artifact-id }}
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[dev]"
-        
-    - name: Run tests with coverage
-      run: |
-        pytest
-        
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.xml
-        fail_ci_if_error: true
-        token: ${{ secrets.CODECOV_TOKEN }}
+      - uses: actions/checkout@v4
 
-  lint:
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests with coverage
+        run: |
+          pytest --junitxml ./test-results.xml
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: success() || failure() # run this step even if a previous step failed
+        with:
+          name: Test results (${{ matrix.python-version }})
+          path: ./test-results.xml
+          reporter: 'java-junit'
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Check formatting with black
+        run: black . --check
+
+      - name: Build wheels package
+        run: |
+          python -m build --wheel
+
+      - name: Get package version
+        id: get_package_version
+        if: matrix.python-version == '3.10'
+        run: |
+          VERSION=`python3 -c 'import importlib.metadata; print(importlib.metadata.version("keboola_mcp_server"))'`
+          TAG="${GITHUB_REF##*/}"
+          IS_SEMANTIC_TAG=$(echo "$TAG" | grep -q '^v\?[0-9]\+\.[0-9]\+\.[0-9]\+$' && echo true || echo false)
+          echo "Version = '$VERSION', Tag = '$TAG', is semantic tag = '$IS_SEMANTIC_TAG'"
+          echo "is_semantic_tag=$IS_SEMANTIC_TAG" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Upload wheel package
+        id: wheel_artifact_upload
+        if: matrix.python-version == '3.10'
+        uses: actions/upload-artifact@v4
+        with:
+          name: keboola_mcp_server-${{ steps.get_package_version.outputs.version }}-py3-none-any.whl
+          path: dist/keboola_mcp_server-${{ steps.get_package_version.outputs.version }}-py3-none-any.whl
+          if-no-files-found: error
+          compression-level: 0  # wheels are ZIP archives
+          retention-days: 7
+
+  deploy_to_pypi:
+    needs:
+      - build
     runs-on: ubuntu-latest
+    if: |
+      startsWith(github.ref, 'refs/tags/') &&
+      needs.build.outputs.is_semantic_tag == 'true' &&
+      needs.build.outputs.tag == format('v{0}', needs.build.outputs.version)
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install black isort mypy
-        
-    - name: Check formatting with black
-      run: black . --check
+      - name: Download wheel package
+        uses: actions/download-artifact@v4
+        with:
+          name: keboola_mcp_server-${{ needs.build.outputs.version }}-py3-none-any.whl
+          path: dist/
+
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
