@@ -1,0 +1,10 @@
+apiVersion: v2
+name: keboola-mcp-server
+description: A Helm chart for deploying the Keboola MCP Server
+type: application
+version: 0.1.0 # Chart version
+appVersion: "latest" # Corresponds to the application version. Use "latest" or a specific tag.
+
+maintainers:
+  - name: Keboola
+    url: https://github.com/keboola/keboola-mcp-server 

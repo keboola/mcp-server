@@ -1,0 +1,119 @@
+# Default values for keboola-mcp-server chart.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/keboola/keboola-mcp-server
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext:
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+service:
+  type: ClusterIP # Use LoadBalancer for public access, ClusterIP for internal
+  port: 8000      # Port the service listens on
+  targetPort: 8000 # Port the container listens on (defined in the MCP server)
+
+# Ingress configuration if service.type is not LoadBalancer
+ingress:
+  enabled: false
+  # className: ""
+  # annotations: {}
+  #   kubernetes.io/ingress.class: nginx
+  #   kubernetes.io/tls-acme: "true"
+  # hosts:
+  #   - host: chart-example.local
+  #     paths:
+  #       - path: /
+  #         pathType: ImplementationSpecific
+  # tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with limited
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Keboola specific configuration
+keboola:
+  apiUrl: "https://connection.keboola.com" # Default, override with region e.g., https://connection.north-europe.keboola.com
+  # Storage API Token - Recommended to be provided via a secret
+  storageTokenSecretName: ""
+  storageTokenSecretKey: "token"
+  # Workspace Schema (Snowflake schema or BigQuery dataset)
+  workspaceSchema: ""
+  # Google Application Credentials for BigQuery - Recommended to be provided via a secret
+  googleCredentialsSecretName: ""
+  googleCredentialsSecretKey: "credentials.json"
+  # Set to true if using BigQuery backend
+  useGoogleCredentials: false
+
+# Existing secret containing Keboola credentials
+# If provided, the secret keys `KBC_STORAGE_TOKEN` and optionally `GOOGLE_APPLICATION_CREDENTIALS`
+# will be used directly. `keboola.storageTokenSecretName` and `keboola.googleCredentialsSecretName` are ignored.
+existingSecret: ""
+
+# Configuration for the MCP server transport method
+# Options: "stdio", "sse"
+mcpTransport: "sse"
+
+# Additional environment variables to set in the container
+env: []
+# Example:
+# env:
+#   - name: MY_CUSTOM_VAR
+#     value: "my_value"
+#   - name: ANOTHER_VAR
+#     valueFrom:
+#       secretKeyRef:
+#         name: mysecret
+#         key: mykey 

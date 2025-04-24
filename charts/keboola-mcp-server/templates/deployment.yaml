@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "keboola-mcp-server.fullname" . }}
+  labels:
+    {{- include "keboola-mcp-server.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "keboola-mcp-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "keboola-mcp-server.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "keboola-mcp-server.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "-m"
+            - "keboola_mcp_server"
+            - "--transport"
+            - "{{ .Values.mcpTransport }}"
+            - "--api-url"
+            - "{{ .Values.keboola.apiUrl }}"
+            # The port argument is only needed for SSE transport
+            {{- if eq .Values.mcpTransport "sse" }}
+            - "--port"
+            - "{{ .Values.service.targetPort | toString }}"
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          # livenessProbe:
+          #   httpGet:
+          #     path: /
+          #     port: http
+          # readinessProbe:
+          #   httpGet:
+          #     path: /
+          #     port: http
+          env:
+            - name: KBC_STORAGE_TOKEN
+              {{- include "keboola-mcp-server.storageTokenValue" . | nindent 14 }}
+            - name: KBC_WORKSPACE_SCHEMA
+              value: {{ .Values.keboola.workspaceSchema | quote }}
+            {{- if .Values.keboola.useGoogleCredentials }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              {{- include "keboola-mcp-server.googleCredentialsValue" . | nindent 14 }}
+              # Mount the secret as a file and set the env var to the path
+              # value: "/etc/gcp/credentials.json"
+            {{- end }}
+            # Add any additional environment variables
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              {{- if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if and .Values.keboola.useGoogleCredentials .Values.keboola.googleCredentialsSecretName (not .Values.existingSecret) }}
+          volumeMounts:
+            - name: gcp-credentials
+              mountPath: "/etc/gcp"
+              readOnly: true
+          {{- end }}
+      {{- if and .Values.keboola.useGoogleCredentials .Values.keboola.googleCredentialsSecretName (not .Values.existingSecret) }}
+      volumes:
+        - name: gcp-credentials
+          secret:
+            secretName: {{ .Values.keboola.googleCredentialsSecretName }}
+            items:
+              - key: {{ .Values.keboola.googleCredentialsSecretKey }}
+                path: credentials.json # This needs to match the GOOGLE_APPLICATION_CREDENTIALS env var if set to a file path
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }} 

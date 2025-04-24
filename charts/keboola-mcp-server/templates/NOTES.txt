@@ -1,0 +1,49 @@
+{{- /*
+This NOTES.txt file is used to print information after a successful Helm install.
+*/}}
+{{- define "keboola-mcp-server.notes" -}}
+Keboola MCP Server has been deployed.
+
+1. Get the application URL by running these commands:
+{{- if contains "LoadBalancer" .Values.service.type }}
+     NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+           You can watch the status of by running 'kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "keboola-mcp-server.fullname" . }}'
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "keboola-mcp-server.fullname" . }} --template "{{ range .status.loadBalancer.ingress }}{{ .ip }}{{ end }}")
+  echo "Keboola MCP Server URL: http://$SERVICE_IP:{{ .Values.service.port }}"
+{{- else if contains "ClusterIP" .Values.service.type }}
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "keboola-mcp-server.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  export CONTAINER_PORT={{ .Values.service.targetPort }}
+  echo "Visit http://127.0.0.1:8080 to use your application"
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
+{{- else if .Values.ingress.enabled }}
+  {{- range .Values.ingress.hosts }}
+  {{- range .paths }}
+  echo "Keboola MCP Server URL: http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}{{ .path }}"
+  {{- end }}
+  {{- end }}
+{{- end }}
+
+{{- if not .Values.keboola.storageTokenSecretName }}
+WARNING: KBC_STORAGE_TOKEN is not configured via a secret.
+It is highly recommended to create a Kubernetes secret and configure `keboola.storageTokenSecretName` or `existingSecret` in values.yaml.
+Example secret creation:
+  kubectl create secret generic kbc-credentials --from-literal=token='YOUR_KBC_STORAGE_TOKEN'
+Then set `keboola.storageTokenSecretName=kbc-credentials` in your values.
+{{- end }}
+
+{{- if not .Values.keboola.workspaceSchema }}
+WARNING: KBC_WORKSPACE_SCHEMA is not set.
+Please configure `keboola.workspaceSchema` in values.yaml with your Snowflake schema or BigQuery dataset.
+{{- end }}
+
+{{- if and .Values.keboola.useGoogleCredentials (not .Values.keboola.googleCredentialsSecretName) }}
+WARNING: `keboola.useGoogleCredentials` is true, but `keboola.googleCredentialsSecretName` is not set.
+If using BigQuery, create a secret with your Google Cloud credentials and configure `keboola.googleCredentialsSecretName` or `existingSecret`.
+Example secret creation (replace credentials.json with your file path):
+  kubectl create secret generic gcp-sa-key --from-file=credentials.json
+Then set `keboola.googleCredentialsSecretName=gcp-sa-key` in your values.
+{{- end }}
+{{- end -}}
+
+{{- /* Print the notes */}}
+{{- include "keboola-mcp-server.notes" . -}} 
