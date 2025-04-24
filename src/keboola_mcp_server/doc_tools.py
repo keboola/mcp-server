@@ -35,7 +35,7 @@ async def docs_query(
     ],
 ) -> Annotated[DocsAnswer, Field(description="The retrieved documentation.")]:
     """
-    Answer a question using the Keboola documentation as a source.
+    Answers a question using the Keboola documentation as a source.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     answer = client.ai_service_client.docs_question(query)

@@ -353,7 +353,7 @@ class AIServiceClient(Endpoint):
 
     def docs_question(self, query: str) -> DocsQuestionResponse:
         """
-        Answer a question using the Keboola documentation as a source.
+        Answers a question using the Keboola documentation as a source.
         :param query: The query to answer.
         """
         url = f"{self.base_url}/docs/question"
