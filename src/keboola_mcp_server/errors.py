@@ -52,33 +52,3 @@ def tool_errors(
         return cast(F, wrapped)
 
     return decorator
-
-
-# if __name__ == "__main__":
-#     import random
-#     # Example of a tool using the new decorator with multiple possible errors and custom recovery instructions
-#     @tool_errors(
-#         default_recovery="Retry the operation after checking the network",
-#         recovery_instructions={
-#             ValueError: "Check input data for any invalid or missing values.",
-#             KeyError: "Ensure that the required keys are present in the data dictionary.",
-#             IOError: "Check file permissions and ensure the file is accessible."
-#         }
-#     )
-#     def mcp_tool():
-#         # Simulate an operation that could randomly raise different exceptions
-#         exception_chance = random.random()  # Generates a float between 0 and 1
-
-#         if exception_chance < 0.33:
-#             raise ValueError("Invalid input!")
-#         elif exception_chance < 0.66:
-#             raise KeyError("Required key is missing!")
-#         else:
-#             raise IOError("File not found!")
-
-#     # Test the function for different error scenarios
-#     for _ in range(25):  # Run it a few times to see different errors
-#         try:
-#             mcp_tool()
-#         except ToolException as e:
-#             print(f"Caught a ToolException: {e}\n\n")
