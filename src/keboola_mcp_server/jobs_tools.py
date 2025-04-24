@@ -1,6 +1,6 @@
 import datetime
 import logging
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, field_validator
@@ -97,13 +97,13 @@ class JobDetail(JobListItem):
         serialization_alias="tableId",
         default=None,
     )
-    config_data: Optional[List[Any]] = Field(
+    config_data: Optional[list[Any]] = Field(
         description="The data of the configuration.",
         validation_alias=AliasChoices("configData", "config_data", "config-data"),
         serialization_alias="configData",
         default=None,
     )
-    config_row_ids: Optional[List[str]] = Field(
+    config_row_ids: Optional[list[str]] = Field(
         description="The row IDs of the configuration.",
         validation_alias=AliasChoices("configRowIds", "config_row_ids", "config-row-ids"),
         serialization_alias="configRowIds",
@@ -121,7 +121,7 @@ class JobDetail(JobListItem):
         serialization_alias="parentRunId",
         default=None,
     )
-    result: Optional[Dict[str, Any]] = Field(
+    result: Optional[dict[str, Any]] = Field(
         description="The results of the job.",
         validation_alias="result",
         serialization_alias="result",
@@ -130,8 +130,8 @@ class JobDetail(JobListItem):
 
     @field_validator("result", mode="before")
     def validate_result_field(
-        cls, current_value: Union[List, Dict[str, Any], None]
-    ) -> Dict[str, Any]:
+        cls, current_value: Union[list[Any], dict[str, Any], None]
+    ) -> dict[str, Any]:
         # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
         # Why? Because result is expected to be an Object, but create job endpoint sends [], perhaps it means
         # "empty". This avoids type errors.
@@ -200,9 +200,9 @@ async def retrieve_jobs(
         ),
     ] = "desc",
 ) -> Annotated[
-    List[JobListItem],
+    list[JobListItem],
     Field(
-        List[JobListItem],
+        list[JobListItem],
         description=("The retrieved list of jobs list items. If empty then no jobs were found."),
     ),
 ]:

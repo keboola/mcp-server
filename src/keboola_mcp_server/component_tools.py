@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence, Union, cast, get_args
+from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast, get_args
 
 import requests
 from mcp.server.fastmcp import Context, FastMCP
@@ -138,7 +138,7 @@ class ComponentWithConfigurations(BaseModel):
     """
 
     component: ReducedComponent = Field(description="The Keboola component.")
-    configurations: List[ReducedComponentConfiguration] = Field(
+    configurations: list[ReducedComponentConfiguration] = Field(
         description="The list of component configurations for the given component."
     )
 
@@ -187,11 +187,11 @@ class ComponentConfiguration(ReducedComponentConfiguration):
     """
 
     version: int = Field(description="The version of the component configuration")
-    configuration: Dict[str, Any] = Field(description="The configuration of the component")
-    rows: Optional[List[Dict[str, Any]]] = Field(
+    configuration: dict[str, Any] = Field(description="The configuration of the component")
+    rows: Optional[list[dict[str, Any]]] = Field(
         description="The rows of the component configuration", default=None
     )
-    configuration_metadata: List[Dict[str, Any]] = Field(
+    configuration_metadata: list[dict[str, Any]] = Field(
         description="The metadata of the component configuration",
         default=[],
         validation_alias=AliasChoices(
@@ -234,7 +234,7 @@ def _handle_component_types(
 
 async def _retrieve_components_configurations_by_types(
     client: KeboolaClient, component_types: Sequence[AllComponentTypes]
-) -> List[ComponentWithConfigurations]:
+) -> list[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by types - used in tools:
     - retrieve_components_configurations
@@ -255,7 +255,7 @@ async def _retrieve_components_configurations_by_types(
             "componentType": type,
         }
         raw_components_with_configurations_by_type = cast(
-            List[Dict[str, Any]], await client.get(endpoint, params=params)
+            list[dict[str, Any]], await client.get(endpoint, params=params)
         )
         # extend the list with the raw components with configurations
         raw_components_with_configurations.extend(raw_components_with_configurations_by_type)
@@ -287,7 +287,7 @@ async def _retrieve_components_configurations_by_types(
 
 async def _retrieve_components_configurations_by_ids(
     client: KeboolaClient, component_ids: Sequence[str]
-) -> List[ComponentWithConfigurations]:
+) -> list[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by component IDs - used in tools:
     - retrieve_components_configurations
@@ -499,7 +499,7 @@ async def retrieve_components_configurations(
         ),
     ] = tuple(),
 ) -> Annotated[
-    List[ComponentWithConfigurations],
+    list[ComponentWithConfigurations],
     Field(
         description="List of objects, each containing a component and its associated configurations.",
     ),
@@ -544,7 +544,7 @@ async def retrieve_transformations_configurations(
         ),
     ] = tuple(),
 ) -> Annotated[
-    List[ComponentWithConfigurations],
+    list[ComponentWithConfigurations],
     Field(
         description="List of objects, each containing a transformation component and its associated configurations.",
     ),
