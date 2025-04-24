@@ -1,0 +1,18 @@
+{{- if .Values.pdb.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "chart.fullname" . }}-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+spec:
+  # Ensures that at least N-1 replicas are available during voluntary disruptions.
+  # If replicas=1, this means voluntary disruptions (like node drains for updates)
+  # won't proceed if this is the only pod.
+  maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+      app: {{ include "chart.name" . }}
+{{- end }} 
