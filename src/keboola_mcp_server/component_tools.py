@@ -358,9 +358,7 @@ async def _get_component_details(
 
             endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
             raw_component = await client.get(endpoint)
-            LOG.info(
-                f"Retrieved component details for component {component_id} from Storage API."
-            )
+            LOG.info(f"Retrieved component details for component {component_id} from Storage API.")
             return Component.model_validate(raw_component)
         else:
             # If it's not a 404, re-raise the error
