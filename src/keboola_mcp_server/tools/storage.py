@@ -8,7 +8,7 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.sql_tools import WorkspaceManager
+from keboola_mcp_server.tools.sql import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 

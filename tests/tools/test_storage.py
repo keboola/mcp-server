@@ -6,8 +6,8 @@ from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField
-from keboola_mcp_server.sql_tools import TableFqn, WorkspaceManager
-from keboola_mcp_server.storage_tools import (
+from keboola_mcp_server.tools.sql import TableFqn, WorkspaceManager
+from keboola_mcp_server.tools.storage import (
     BucketDetail,
     get_bucket_detail,
     get_table_detail,
