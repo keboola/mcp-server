@@ -1,6 +1,7 @@
 import logging
 from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast, get_args
 
+import requests
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -74,14 +75,6 @@ class ReducedComponent(BaseModel):
         validation_alias=AliasChoices("type", "component_type", "componentType", "component-type"),
         serialization_alias="componentType",
     )
-    component_description: Optional[str] = Field(
-        description="The description of the component",
-        default=None,
-        validation_alias=AliasChoices(
-            "description", "component_description", "componentDescription", "component-description"
-        ),
-        serialization_alias="componentDescription",
-    )
 
 
 class ReducedComponentConfiguration(BaseModel):
@@ -151,44 +144,40 @@ class ComponentWithConfigurations(BaseModel):
 
 
 class Component(ReducedComponent):
-    """
-    Detailed information about a Keboola Component, containing all the relevant details.
-    """
-
-    long_description: Optional[str] = Field(
-        description="The long description of the component",
-        default=None,
-        validation_alias=AliasChoices("longDescription", "long_description", "long-description"),
-        serialization_alias="longDescription",
-    )
-    categories: list[str] = Field(description="The categories of the component", default=[])
-    version: int = Field(description="The version of the component")
-    configuration_schema: Optional[dict[str, Any]] = Field(
-        description=(
-            "The configuration schema of the component, detailing the structure and requirements of the "
-            "configuration."
+    component_categories: list[str] = Field(
+        default_factory=list,
+        description="The categories the component belongs to.",
+        validation_alias=AliasChoices(
+            "componentCategories", "component_categories", "component-categories", "categories"
         ),
+        serialization_alias="categories",
+    )
+    documentation_url: Optional[str] = Field(
+        default=None,
+        description="The url where the documentation can be found.",
+        validation_alias=AliasChoices("documentationUrl", "documentation_url", "documentation-url"),
+        serialization_alias="documentationUrl",
+    )
+    documentation: Optional[str] = Field(
+        default=None,
+        description="The documentation of the component.",
+        serialization_alias="documentation",
+    )
+    configuration_schema: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="The configuration schema for the component.",
         validation_alias=AliasChoices(
             "configurationSchema", "configuration_schema", "configuration-schema"
         ),
         serialization_alias="configurationSchema",
-        default=None,
     )
-    configuration_description: Optional[str] = Field(
-        description="The configuration description of the component",
-        validation_alias=AliasChoices(
-            "configurationDescription", "configuration_description", "configuration-description"
-        ),
-        serialization_alias="configurationDescription",
+    configuration_row_schema: Optional[dict[str, Any]] = Field(
         default=None,
-    )
-    empty_configuration: Optional[dict[str, Any]] = Field(
-        description="The empty configuration of the component",
+        description="The configuration row schema of the component.",
         validation_alias=AliasChoices(
-            "emptyConfiguration", "empty_configuration", "empty-configuration"
+            "configurationRowSchema", "configuration_row_schema", "configuration-row-schema"
         ),
-        serialization_alias="emptyConfiguration",
-        default=None,
+        serialization_alias="configurationRowSchema",
     )
 
 
@@ -345,15 +334,35 @@ async def _get_component_details(
     """
     Utility function to retrieve the component details by component ID, used in tools:
     - get_component_configuration_details
+
+    First tries to get component details from the AI service catalog. If the component
+    is not found (404) or returns empty data (private components), falls back to using the
+    Storage API endpoint.
+
     :param component_id: The ID of the Keboola component/transformation you want details about
     :param client: The Keboola client
     :return: The component details
     """
+    try:
+        raw_component = client.ai_service_client.get_component_detail(component_id)
+        LOG.info(
+            f"Retrieved component details for component {component_id} from AI service catalog."
+        )
+        return Component.model_validate(raw_component)
+    except requests.HTTPError as e:
+        if e.response.status_code == 404:
+            LOG.info(
+                f"Component {component_id} not found in AI service catalog (possibly private). "
+                f"Falling back to Storage API."
+            )
 
-    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
-    raw_component = await client.get(endpoint)
-    LOG.info(f"Retrieved component details for component {component_id}.")
-    return Component.model_validate(raw_component)
+            endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}"
+            raw_component = await client.get(endpoint)
+            LOG.info(f"Retrieved component details for component {component_id} from Storage API.")
+            return Component.model_validate(raw_component)
+        else:
+            # If it's not a 404, re-raise the error
+            raise
 
 
 def _get_sql_transformation_id_from_sql_dialect(
@@ -617,7 +626,6 @@ async def get_component_configuration_details(
         LOG.info(
             f"No metadata found for {component_id} component with configuration {configuration_id}."
         )
-
     # Create Component Configuration Detail Object
     return ComponentConfiguration.model_validate(
         {
