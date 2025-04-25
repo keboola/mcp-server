@@ -23,11 +23,13 @@ FROM python:3.12-slim-bookworm
 
 WORKDIR /app
  
-COPY --from=uv /root/.local /root/.local
+# Copy only the necessary artifacts from the uv stage
+# COPY --from=uv /root/.local /root/.local # Removed this line as /root/.local likely doesn't exist in the uv stage
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
 # when running the container, add --api-url and a bind mount to the host's db file
-ENTRYPOINT ["python", "-m", "keboola_mcp_server.cli", "--api-url", "https://connection.YOUR_REGION.keboola.com", "--log-level", "DEBUG"]
+#ENTRYPOINT ["python", "-m", "keboola_mcp_server.cli", "--api-url", "https://connection.YOUR_REGION.keboola.com", "--log-level", "DEBUG"]
+ENTRYPOINT [ "python", "-m", "keboola_mcp_server", "--api-url", "https://connection.YOUR_REGION.keboola.com", "--log-level", "DEBUG" ]

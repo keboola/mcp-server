@@ -1,8 +1,0 @@
-apiVersion: v2
-name: keboola-mcp-server
-description: A Helm chart for the Keboola Multi-Component Provisioning (MCP) Server
-type: application
-# Chart version
-version: 0.1.0
-# Version of the application being deployed
-appVersion: "latest" # This will likely be overridden by CI/CD with a specific tag 

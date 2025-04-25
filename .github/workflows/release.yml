@@ -14,13 +14,12 @@ jobs:
 
     env:
       # DockerHub login
-      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_PUSH_USER }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
 
       # Proxy image
       IMAGE_NAME: "keboola/mcp-server"
       IMAGE_TAG: ${{ github.ref_name }} # Use the tag name as the image tag
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,12 +35,12 @@ jobs:
           password: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile # Explicitly specify the Dockerfile path
-          push: true
           tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64 # Example platforms, adjust if needed
