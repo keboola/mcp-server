@@ -3,13 +3,12 @@
 import logging
 import os
 import tempfile
-
-from typing import Any, Dict, Mapping, Optional, cast, List
-
+from typing import Any, Mapping, Optional, cast
 
 import httpx
-from kbcstorage.client import Client
 from kbcstorage.base import Endpoint
+from kbcstorage.client import Client
+from pydantic import BaseModel, Field
 
 LOG = logging.getLogger(__name__)
 
@@ -22,6 +21,7 @@ class KeboolaClient:
     # api url by `connection` word
     _PREFIX_STORAGE_API_URL = "connection."
     _PREFIX_QUEUE_API_URL = "https://queue."
+    _PREFIX_AISERVICE_API_URL = "https://ai."
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> "KeboolaClient":
@@ -39,7 +39,6 @@ class KeboolaClient:
         Args:
             storage_api_token: Keboola Storage API token
             storage_api_url: Keboola Storage API URL
-            queue_api_url: Keboola Job Queue API URL
         """
         self.token = storage_api_token
         # Ensure the base URL has a scheme
@@ -53,10 +52,9 @@ class KeboolaClient:
         queue_api_url = (
             f"{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
         )
+        ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
 
         self.base_storage_api_url = storage_api_url
-        self.base_queue_api_url = queue_api_url
-
         self.headers = {
             "X-StorageApi-Token": self.token,
             "Content-Type": "application/json",
@@ -66,15 +64,16 @@ class KeboolaClient:
         # The storage_client.jobs endpoint is for storage jobs
         # Use self.jobs_queue instead which provides access to the Job Queue API
         # that handles component/transformation jobs
+        # The AI Service API is used to various endpoints built in KaiBot - such as documentation fetching
         self.storage_client = Client(self.base_storage_api_url, self.token)
-
-        self.jobs_queue = JobsQueue(self.base_queue_api_url, self.token)
+        self.jobs_queue = JobsQueue(queue_api_url, self.token)
+        self.ai_service_client = AIServiceClient(ai_service_api_url, self.token)
 
     async def get(
         self,
         endpoint: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """Make a GET request to Keboola Storage API.
 
         Args:
@@ -91,13 +90,13 @@ class KeboolaClient:
                 params=params,
             )
             response.raise_for_status()
-            return cast(Dict[str, Any], response.json())
+            return cast(dict[str, Any], response.json())
 
     async def post(
         self,
         endpoint: str,
-        data: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        data: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """Make a POST request to Keboola Storage API.
 
         Args:
@@ -114,13 +113,13 @@ class KeboolaClient:
                 json=data if data is not None else {},
             )
             response.raise_for_status()
-            return cast(Dict[str, Any], response.json())
+            return cast(dict[str, Any], response.json())
 
     async def put(
         self,
         endpoint: str,
-        data: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        data: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """Make a PUT request to Keboola Storage API.
 
         Args:
@@ -137,12 +136,12 @@ class KeboolaClient:
                 data=data if data is not None else {},
             )
             response.raise_for_status()
-            return cast(Dict[str, Any], response.json())
+            return cast(dict[str, Any], response.json())
 
     async def delete(
         self,
         endpoint: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Make a DELETE request to Keboola Storage API.
 
         Args:
@@ -158,7 +157,7 @@ class KeboolaClient:
             )
             response.raise_for_status()
 
-            return cast(Dict[str, Any], response.json())
+            return cast(dict[str, Any], response.json())
 
     async def download_table_data_async(self, table_id: str) -> str:
         """Download table data using the export endpoint.
@@ -207,7 +206,7 @@ class JobsQueue(Endpoint):
         # set the base url to the root url
         self.base_url = self.root_url.rstrip("/")
 
-    def detail(self, job_id: str) -> Dict[str, Any]:
+    def detail(self, job_id: str) -> dict[str, Any]:
         """
         Retrieves information about a given job.
         :param job_id: The id of the job.
@@ -220,12 +219,12 @@ class JobsQueue(Endpoint):
         self,
         component_id: Optional[str] = None,
         config_id: Optional[str] = None,
-        status: Optional[List[str]] = None,
+        status: Optional[list[str]] = None,
         limit: int = 100,
         offset: int = 0,
         sort_by: Optional[str] = "startTime",
         sort_order: Optional[str] = "desc",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Search for jobs based on the provided parameters.
         :param component_id: The id of the component.
@@ -251,7 +250,7 @@ class JobsQueue(Endpoint):
         self,
         component_id: str,
         configuration_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Create a new job.
         :param component_id: The id of the component.
@@ -266,7 +265,7 @@ class JobsQueue(Endpoint):
         }
         return self._post(url, json=payload)
 
-    def _search(self, params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+    def _search(self, params: dict[str, Any], **kwargs) -> dict[str, Any]:
         """
         Search for jobs based on the provided parameters.
         :param params: The parameters to search for.
@@ -307,3 +306,48 @@ class JobsQueue(Endpoint):
         url = f"{self.base_url}/search/jobs"
 
         return self._get(url, params=params, **kwargs)
+
+
+class DocsQuestionResponse(BaseModel):
+    """The AI service response to a /docs/question request."""
+
+    text: str = Field(description="Text of the answer to a documentation query.")
+    source_urls: list[str] = Field(
+        description="List of URLs to the sources of the answer.",
+        default_factory=list,
+        alias="sourceUrls",
+    )
+
+
+class AIServiceClient(Endpoint):
+    """Class handling endpoints for interacting with the Keboola AI Service."""
+
+    def __init__(self, root_url: str, token: str) -> None:
+        """
+        Create an AIService endpoint.
+        :param root_url: Root url of API. e.g. "https://ai.keboola.com/"
+        :param token: A Keboola Storage API token.
+        """
+        super().__init__(root_url, "", token)
+
+    def get_component_detail(self, component_id: str) -> dict[str, Any]:
+        """
+        Retrieves information about a given component.
+        :param component_id: The id of the component.
+        """
+        url = f"{self.root_url.rstrip('/')}/docs/components/{component_id}"
+        return self._get(url)
+
+    def docs_question(self, query: str) -> DocsQuestionResponse:
+        """
+        Answers a question using the Keboola documentation as a source.
+        :param query: The query to answer.
+        """
+        url = f"{self.root_url.rstrip('/')}/docs/question"
+        response = self._post(
+            url,
+            json={"query": query},
+            headers={"Accept": "application/json"},
+        )
+
+        return DocsQuestionResponse.model_validate(response)

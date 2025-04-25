@@ -3,7 +3,7 @@
 import argparse
 import logging
 import sys
-from typing import List, Optional
+from typing import Optional
 
 from .config import Config
 from .server import create_server
@@ -11,7 +11,7 @@ from .server import create_server
 LOG = logging.getLogger(__name__)
 
 
-def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     """Parse command line arguments.
 
     Args:
@@ -40,7 +40,7 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
-def main(args: Optional[List[str]] = None) -> None:
+def main(args: Optional[list[str]] = None) -> None:
     """Run the MCP server.
 
     Args:

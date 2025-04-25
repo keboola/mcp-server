@@ -15,36 +15,24 @@ A Model Context Protocol (MCP) server for interacting with Keboola Connection. T
 
 ## Installation
 
+### Installing via Pip
+
+First, create a virtual environment and then install 
+the [keboola_mcp_server](https://pypi.org/project/keboola-mcp-server/) package:
+
+```bash
+python3 -m venv --upgrade-deps .venv
+source .venv/bin/activate
+
+pip3 install keboola_mcp_server
+```
+
 ### Installing via Smithery
 
-To install Keboola Explorer for Claude Desktop automatically via [Smithery](https://smithery.ai/server/keboola-mcp-server):
+To install Keboola MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/keboola-mcp-server):
 
 ```bash
 npx -y @smithery/cli install keboola-mcp-server --client claude
-```
-
-### Manual Installation
-
-First, clone the repository and create a virtual environment:
-
-```bash
-git clone https://github.com/keboola/keboola-mcp-server.git
-cd keboola-mcp-server
-python3 -m venv .venv
-source .venv/bin/activate
-pip3 install -U pip 
-```
-
-Install the package in development mode:
-
-```bash
-pip3 install -e .
-```
-
-For development dependencies:
-
-```bash
-pip3 install -e ".[dev]"
 ```
 
 ## Claude Desktop Setup

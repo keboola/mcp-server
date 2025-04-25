@@ -6,7 +6,6 @@ ComponentType = Literal["application", "extractor", "writer"]
 TransformationType = Literal["transformation"]
 AllComponentTypes = Union[ComponentType, TransformationType]
 
-
 class ReducedComponent(BaseModel):
     """
     A Reduced Component containing reduced information about the Keboola Component used in a list or comprehensive view.
@@ -31,14 +30,6 @@ class ReducedComponent(BaseModel):
         description="The type of the component",
         validation_alias=AliasChoices("type", "component_type", "componentType", "component-type"),
         serialization_alias="componentType",
-    )
-    component_description: Optional[str] = Field(
-        description="The description of the component",
-        default=None,
-        validation_alias=AliasChoices(
-            "description", "component_description", "componentDescription", "component-description"
-        ),
-        serialization_alias="componentDescription",
     )
 
 
@@ -103,50 +94,46 @@ class ComponentWithConfigurations(BaseModel):
     """
 
     component: ReducedComponent = Field(description="The Keboola component.")
-    configurations: List[ReducedComponentConfiguration] = Field(
+    configurations: list[ReducedComponentConfiguration] = Field(
         description="The list of component configurations for the given component."
     )
 
 
 class Component(ReducedComponent):
-    """
-    Detailed information about a Keboola Component, containing all the relevant details.
-    """
-
-    long_description: Optional[str] = Field(
-        description="The long description of the component",
-        default=None,
-        validation_alias=AliasChoices("longDescription", "long_description", "long-description"),
-        serialization_alias="longDescription",
-    )
-    categories: List[str] = Field(description="The categories of the component", default=[])
-    version: int = Field(description="The version of the component")
-    configuration_schema: Optional[Dict[str, Any]] = Field(
-        description=(
-            "The configuration schema of the component, detailing the structure and requirements of the "
-            "configuration."
+    component_categories: list[str] = Field(
+        default_factory=list,
+        description="The categories the component belongs to.",
+        validation_alias=AliasChoices(
+            "componentCategories", "component_categories", "component-categories", "categories"
         ),
+        serialization_alias="categories",
+    )
+    documentation_url: Optional[str] = Field(
+        default=None,
+        description="The url where the documentation can be found.",
+        validation_alias=AliasChoices("documentationUrl", "documentation_url", "documentation-url"),
+        serialization_alias="documentationUrl",
+    )
+    documentation: Optional[str] = Field(
+        default=None,
+        description="The documentation of the component.",
+        serialization_alias="documentation",
+    )
+    configuration_schema: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="The configuration schema for the component.",
         validation_alias=AliasChoices(
             "configurationSchema", "configuration_schema", "configuration-schema"
         ),
         serialization_alias="configurationSchema",
-        default=None,
     )
-    configuration_description: Optional[str] = Field(
-        description="The configuration description of the component",
-        validation_alias=AliasChoices(
-            "configurationDescription", "configuration_description", "configuration-description"
-        ),
-        serialization_alias="configurationDescription",
+    configuration_row_schema: Optional[dict[str, Any]] = Field(
         default=None,
-    )
-    empty_configuration: Optional[Dict[str, Any]] = Field(
-        description="The empty configuration of the component",
+        description="The configuration row schema of the component.",
         validation_alias=AliasChoices(
-            "emptyConfiguration", "empty_configuration", "empty-configuration"
+            "configurationRowSchema", "configuration_row_schema", "configuration-row-schema"
         ),
-        serialization_alias="emptyConfiguration",
-        default=None,
+        serialization_alias="configurationRowSchema",
     )
 
 
@@ -156,11 +143,11 @@ class ComponentConfiguration(ReducedComponentConfiguration):
     """
 
     version: int = Field(description="The version of the component configuration")
-    configuration: Dict[str, Any] = Field(description="The configuration of the component")
-    rows: Optional[List[Dict[str, Any]]] = Field(
+    configuration: dict[str, Any] = Field(description="The configuration of the component")
+    rows: Optional[list[dict[str, Any]]] = Field(
         description="The rows of the component configuration", default=None
     )
-    configuration_metadata: List[Dict[str, Any]] = Field(
+    configuration_metadata: list[dict[str, Any]] = Field(
         description="The metadata of the component configuration",
         default=[],
         validation_alias=AliasChoices(

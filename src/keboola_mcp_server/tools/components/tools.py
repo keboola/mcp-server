@@ -81,7 +81,7 @@ async def retrieve_components_configurations(
         ),
     ] = tuple(),
 ) -> Annotated[
-    List[ComponentWithConfigurations],
+    list[ComponentWithConfigurations],
     Field(
         description="List of objects, each containing a component and its associated configurations.",
     ),
@@ -126,7 +126,7 @@ async def retrieve_transformations_configurations(
         ),
     ] = tuple(),
 ) -> Annotated[
-    List[ComponentWithConfigurations],
+    list[ComponentWithConfigurations],
     Field(
         description="List of objects, each containing a transformation component and its associated configurations.",
     ),
@@ -208,7 +208,6 @@ async def get_component_configuration_details(
         LOG.info(
             f"No metadata found for {component_id} component with configuration {configuration_id}."
         )
-
     # Create Component Configuration Detail Object
     return ComponentConfiguration.model_validate(
         {
@@ -218,9 +217,6 @@ async def get_component_configuration_details(
             "metadata": r_metadata,
         }
     )
-
-
-############################## Write tools #########################################
 
 
 async def create_sql_transformation(
@@ -331,6 +327,7 @@ async def create_sql_transformation(
     except Exception as e:
         LOG.exception(f"Error when creating new transformation configuration: {e}")
         raise e
+
 
 
 ############################## End of component tools #########################################

@@ -4,6 +4,9 @@ from keboola_mcp_server.tools.components.tools import (
     retrieve_components_configurations,
     retrieve_transformations_configurations,
     get_component_configuration_details,
+    GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
+    RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
+    RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
 )
 from keboola_mcp_server.tools.components.model import (
     ReducedComponent,
