@@ -7,9 +7,9 @@ from keboola_mcp_server.tools.components.model import (
     ComponentType,
 )
 from keboola_mcp_server.tools.components.utils import (
+    TransformationConfiguration,
     _get_transformation_configuration,
     _handle_component_types,
-    TransformationConfiguration,
 )
 
 

@@ -6,16 +6,16 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.tools.doc import add_doc_tools
-from keboola_mcp_server.tools.jobs import add_job_tools
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     SessionParams,
     SessionState,
     SessionStateFactory,
 )
+from keboola_mcp_server.tools.components import add_component_tools
+from keboola_mcp_server.tools.doc import add_doc_tools
+from keboola_mcp_server.tools.jobs import add_job_tools
 from keboola_mcp_server.tools.sql import WorkspaceManager, add_sql_tools, query_table
 from keboola_mcp_server.tools.storage import add_storage_tools
 

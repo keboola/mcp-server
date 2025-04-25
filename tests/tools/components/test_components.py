@@ -10,14 +10,13 @@ from keboola_mcp_server.tools.components import (
     ComponentWithConfigurations,
     ReducedComponent,
     ReducedComponentConfiguration,
-)
-from keboola_mcp_server.tools.components import (
     create_sql_transformation,
     get_component_configuration_details,
     retrieve_components_configurations,
     retrieve_transformations_configurations,
 )
 from keboola_mcp_server.tools.sql import WorkspaceManager
+
 
 @pytest.fixture
 def assert_retrieve_components() -> (

@@ -1,8 +1,4 @@
 import logging
-
-from mcp.server.fastmcp import FastMCP
-
-import logging
 from typing import Annotated, List, Sequence
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -327,7 +323,6 @@ async def create_sql_transformation(
     except Exception as e:
         LOG.exception(f"Error when creating new transformation configuration: {e}")
         raise e
-
 
 
 ############################## End of component tools #########################################

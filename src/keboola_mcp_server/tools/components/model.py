@@ -6,6 +6,7 @@ ComponentType = Literal["application", "extractor", "writer"]
 TransformationType = Literal["transformation"]
 AllComponentTypes = Union[ComponentType, TransformationType]
 
+
 class ReducedComponent(BaseModel):
     """
     A Reduced Component containing reduced information about the Keboola Component used in a list or comprehensive view.

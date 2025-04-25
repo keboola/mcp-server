@@ -1,8 +1,8 @@
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Union, cast, get_args
 
-from pydantic import BaseModel, Field
 import requests
+from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components.model import (
