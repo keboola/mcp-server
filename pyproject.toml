@@ -37,9 +37,7 @@ dev = [
     "pytest-cov ~= 6.0",
     "pytest-mock ~= 3.14",
     "tox ~= 4.23",
-]
-build = [
-    "tox ~= 4.23",
+    "wheel~=0.45",
 ]
 
 [project.scripts]
@@ -51,7 +49,6 @@ skip_string_normalization = true
 line-length = 120
 
 [tool.isort]
-
 profile = "black"
 line_length = 120
 multi_line_output = 3
@@ -102,10 +99,10 @@ env_list = ["python", "black", "isort", "flake8"]
 
 [tool.tox.env_run_base]
 description = "Run tests"
-extras = ["dev"]
+extras = ["build"]
 package = "wheel"
 wheel_build_env = ".pkg"
-commands = [["pytest", "--junitxml", "./test-results.xml"]]
+commands = [["pytest", "--junitxml", "./test-results.xml", { replace = "posargs", default = ["tests"], extend = true }]]
 
 [tool.tox.env.black]
 description = "Run black"
