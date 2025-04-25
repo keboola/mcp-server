@@ -44,18 +44,18 @@ def assert_retrieve_components() -> (
         )
         # assert component list details
         assert all(
-            returned.component.component_id == expected["id"]
+            returned.component.component_id == expected['id']
             for returned, expected in zip(result, components)
         )
         assert all(
-            returned.component.component_name == expected["name"]
+            returned.component.component_name == expected['name']
             for returned, expected in zip(result, components)
         )
         assert all(
-            returned.component.component_type == expected["type"]
+            returned.component.component_type == expected['type']
             for returned, expected in zip(result, components)
         )
-        assert all(not hasattr(returned.component, "version") for returned in result)
+        assert all(not hasattr(returned.component, 'version') for returned in result)
 
         # assert configurations list details
         assert all(len(component.configurations) == len(configurations) for component in result)
@@ -69,14 +69,14 @@ def assert_retrieve_components() -> (
         # use zip to iterate over the result and mock_configurations since we artifically mock the .get method
         assert all(
             all(
-                config.configuration_id == expected["id"]
+                config.configuration_id == expected['id']
                 for config, expected in zip(component.configurations, configurations)
             )
             for component in result
         )
         assert all(
             all(
-                config.configuration_name == expected["name"]
+                config.configuration_name == expected['name']
                 for config, expected in zip(component.configurations, configurations)
             )
             for component in result
@@ -102,7 +102,7 @@ async def test_retrieve_components_configurations_by_types(
     # simulate the response from the API
     keboola_client.get = AsyncMock(
         side_effect=[
-            [{**component, "configurations": mock_configurations}] for component in mock_components
+            [{**component, 'configurations': mock_configurations}] for component in mock_components
         ]
     )
 
@@ -113,16 +113,16 @@ async def test_retrieve_components_configurations_by_types(
     keboola_client.get.assert_has_calls(
         [
             call(
-                f"branch/{mock_branch_id}/components",
-                params={"componentType": "application", "include": "configuration"},
+                f'branch/{mock_branch_id}/components',
+                params={'componentType': 'application', 'include': 'configuration'},
             ),
             call(
-                f"branch/{mock_branch_id}/components",
-                params={"componentType": "extractor", "include": "configuration"},
+                f'branch/{mock_branch_id}/components',
+                params={'componentType': 'extractor', 'include': 'configuration'},
             ),
             call(
-                f"branch/{mock_branch_id}/components",
-                params={"componentType": "writer", "include": "configuration"},
+                f'branch/{mock_branch_id}/components',
+                params={'componentType': 'writer', 'include': 'configuration'},
             ),
         ]
     )
@@ -144,7 +144,7 @@ async def test_retrieve_transformations_configurations(
     # mock the get method to return the mock_component with the mock_configurations
     # simulate the response from the API
     keboola_client.get = AsyncMock(
-        return_value=[{**mock_component, "configurations": mock_configurations}]
+        return_value=[{**mock_component, 'configurations': mock_configurations}]
     )
 
     result = await retrieve_transformations_configurations(context)
@@ -154,8 +154,8 @@ async def test_retrieve_transformations_configurations(
     keboola_client.get.assert_has_calls(
         [
             call(
-                f"branch/{mock_branch_id}/components",
-                params={"componentType": "transformation", "include": "configuration"},
+                f'branch/{mock_branch_id}/components',
+                params={'componentType': 'transformation', 'include': 'configuration'},
             ),
         ]
     )
@@ -178,13 +178,13 @@ async def test_retrieve_components_configurations_from_ids(
     keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configurations)
     keboola_client.get = AsyncMock(return_value=mock_component)
 
-    result = await retrieve_components_configurations(context, component_ids=[mock_component["id"]])
+    result = await retrieve_components_configurations(context, component_ids=[mock_component['id']])
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
-    keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component["id"])
+    keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component['id'])
     keboola_client.get.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{mock_component['id']}"
+        f'branch/{mock_branch_id}/components/{mock_component["id"]}'
     )
 
 
@@ -206,14 +206,14 @@ async def test_retrieve_transformations_configurations_from_ids(
     keboola_client.get = AsyncMock(return_value=mock_component)
 
     result = await retrieve_transformations_configurations(
-        context, transformation_ids=[mock_component["id"]]
+        context, transformation_ids=[mock_component['id']]
     )
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
-    keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component["id"])
+    keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component['id'])
     keboola_client.get.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{mock_component['id']}"
+        f'branch/{mock_branch_id}/components/{mock_component["id"]}'
     )
 
 
@@ -239,36 +239,36 @@ async def test_get_component_configuration_details(
     keboola_client.storage_client._branch_id = mock_branch_id
     keboola_client.get = AsyncMock(return_value=mock_metadata)
 
-    result = await get_component_configuration_details("keboola.ex-aws-s3", "123", context)
+    result = await get_component_configuration_details('keboola.ex-aws-s3', '123', context)
     expected = ComponentConfiguration.model_validate(
         {
             **mock_configuration,
-            "component_id": mock_component["id"],
-            "component": mock_component,
-            "metadata": mock_metadata,
+            'component_id': mock_component['id'],
+            'component': mock_component,
+            'metadata': mock_metadata,
         }
     )
     assert isinstance(result, ComponentConfiguration)
     assert result.model_dump() == expected.model_dump()
 
     keboola_client.storage_client.configurations.detail.assert_called_once_with(
-        "keboola.ex-aws-s3", "123"
+        'keboola.ex-aws-s3', '123'
     )
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(
-        "keboola.ex-aws-s3"
+        'keboola.ex-aws-s3'
     )
 
     keboola_client.get.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{mock_component['id']}/configs/{mock_configuration['id']}/metadata"
+        f'branch/{mock_branch_id}/components/{mock_component["id"]}/configs/{mock_configuration["id"]}/metadata'
     )
 
 
 @pytest.mark.parametrize(
-    "sql_dialect, expected_component_id, expected_configuration_id",
+    'sql_dialect, expected_component_id, expected_configuration_id',
     [
-        ("Snowflake", "keboola.snowflake-transformation", "1234"),
-        ("BigQuery", "keboola.bigquery-transformation", "5678"),
+        ('Snowflake', 'keboola.snowflake-transformation', '1234'),
+        ('BigQuery', 'keboola.bigquery-transformation', '5678'),
     ],
 )
 @pytest.mark.asyncio
@@ -290,20 +290,20 @@ async def test_create_transformation_configuration(
     # Mock the KeboolaClient
     keboola_client = KeboolaClient.from_state(context.session.state)
     component = mock_component
-    component["id"] = expected_component_id
+    component['id'] = expected_component_id
     configuration = mock_configuration
-    configuration["id"] = expected_configuration_id
+    configuration['id'] = expected_configuration_id
 
     # Set up the mock for ai_service_client
     keboola_client.ai_service_client = MagicMock()
     keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=component)
     keboola_client.post = AsyncMock(return_value=configuration)
 
-    transformation_name = mock_configuration["name"]
-    bucket_name = "-".join(transformation_name.lower().split())
-    description = mock_configuration["description"]
-    sql_statements = ["SELECT * FROM test", "SELECT * FROM test2"]
-    created_table_name = "test_table_1"
+    transformation_name = mock_configuration['name']
+    bucket_name = '-'.join(transformation_name.lower().split())
+    description = mock_configuration['description']
+    sql_statements = ['SELECT * FROM test', 'SELECT * FROM test2']
+    created_table_name = 'test_table_1'
 
     # Test the create_sql_transformation tool
     new_transformation_configuration = await create_sql_transformation(
@@ -315,7 +315,7 @@ async def test_create_transformation_configuration(
     )
 
     expected_config = ComponentConfiguration.model_validate(
-        {**configuration, "component_id": expected_component_id, "component": component}
+        {**configuration, 'component_id': expected_component_id, 'component': component}
     )
 
     assert isinstance(new_transformation_configuration, ComponentConfiguration)
@@ -326,26 +326,26 @@ async def test_create_transformation_configuration(
     )
 
     keboola_client.post.assert_called_once_with(
-        f"branch/{mock_branch_id}/components/{expected_component_id}/configs",
+        f'branch/{mock_branch_id}/components/{expected_component_id}/configs',
         data={
-            "name": transformation_name,
-            "description": description,
-            "configuration": {
-                "parameters": {
-                    "blocks": [
+            'name': transformation_name,
+            'description': description,
+            'configuration': {
+                'parameters': {
+                    'blocks': [
                         {
-                            "name": "Block 0",
-                            "codes": [{"name": "Code 0", "script": sql_statements}],
+                            'name': 'Block 0',
+                            'codes': [{'name': 'Code 0', 'script': sql_statements}],
                         }
                     ]
                 },
-                "storage": {
-                    "input": {"tables": []},
-                    "output": {
-                        "tables": [
+                'storage': {
+                    'input': {'tables': []},
+                    'output': {
+                        'tables': [
                             {
-                                "source": created_table_name,
-                                "destination": f"out.c-{bucket_name}.{created_table_name}",
+                                'source': created_table_name,
+                                'destination': f'out.c-{bucket_name}.{created_table_name}',
                             }
                         ]
                     },
@@ -355,7 +355,7 @@ async def test_create_transformation_configuration(
     )
 
 
-@pytest.mark.parametrize("sql_dialect", ["Unknown"])
+@pytest.mark.parametrize('sql_dialect', ['Unknown'])
 @pytest.mark.asyncio
 async def test_create_transformation_configuration_fail(
     sql_dialect: str,
@@ -369,7 +369,7 @@ async def test_create_transformation_configuration_fail(
     with pytest.raises(ValueError):
         _ = await create_sql_transformation(
             context,
-            "test_name",
-            "test_description",
-            ["SELECT * FROM test"],
+            'test_name',
+            'test_description',
+            ['SELECT * FROM test'],
         )

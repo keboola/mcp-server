@@ -29,9 +29,9 @@ LOG = logging.getLogger(__name__)
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
 # These tool names now reflect their conventional usage, removing redundant parts for users while still
 # providing the same functionality as described in the original tool names.
-RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = "retrieve_components"
-RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = "retrieve_transformations"
-GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = "get_component_details"
+RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_components'
+RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
+GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = 'get_component_details'
 
 
 def add_component_tools(mcp: FastMCP) -> None:
@@ -40,26 +40,26 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         get_component_configuration_details, name=GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME
     )
-    LOG.info(f"Added tool: {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME}.")
+    LOG.info(f'Added tool: {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME}.')
 
     mcp.add_tool(
         retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME
     )
-    LOG.info(f"Added tool: {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME}.")
+    LOG.info(f'Added tool: {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME}.')
 
     mcp.add_tool(
         retrieve_transformations_configurations,
         name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     )
-    LOG.info(f"Added tool: {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME}.")
+    LOG.info(f'Added tool: {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME}.')
 
     mcp.add_tool(create_sql_transformation)
-    LOG.info(f"Added tool: {create_sql_transformation.__name__}.")
+    LOG.info(f'Added tool: {create_sql_transformation.__name__}.')
 
-    LOG.info("Component tools initialized.")
+    LOG.info('Component tools initialized.')
 
 
-############################## Component read tools #########################################
+############################## read tools #########################################
 
 
 async def retrieve_components_configurations(
@@ -67,19 +67,19 @@ async def retrieve_components_configurations(
     component_types: Annotated[
         Sequence[ComponentType],
         Field(
-            description="List of component types to filter by. ",
+            description='List of component types to filter by. If none, return all components.',
         ),
     ] = tuple(),
     component_ids: Annotated[
         Sequence[str],
         Field(
-            description="List of component IDs to retrieve configurations for.",
+            description='List of component IDs to retrieve configurations for. If none, return all components.',
         ),
     ] = tuple(),
 ) -> Annotated[
     list[ComponentWithConfigurations],
     Field(
-        description="List of objects, each containing a component and its associated configurations.",
+        description='List of objects, each containing a component and its associated configurations.',
     ),
 ]:
     """
@@ -118,13 +118,13 @@ async def retrieve_transformations_configurations(
     transformation_ids: Annotated[
         Sequence[str],
         Field(
-            description="List of transformation component IDs to retrieve configurations for.",
+            description='List of transformation component IDs to retrieve configurations for.',
         ),
     ] = tuple(),
 ) -> Annotated[
     list[ComponentWithConfigurations],
     Field(
-        description="List of objects, each containing a transformation component and its associated configurations.",
+        description='List of objects, each containing a transformation component and its associated configurations.',
     ),
 ]:
     """
@@ -146,7 +146,7 @@ async def retrieve_transformations_configurations(
     # If no transformation IDs are provided, retrieve transformations configurations by transformation type
     if not transformation_ids:
         client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_types(client, ["transformation"])
+        return await _retrieve_components_configurations_by_types(client, ['transformation'])
     # If transformation IDs are provided, retrieve transformations configurations by IDs
     else:
         client = KeboolaClient.from_state(ctx.session.state)
@@ -155,20 +155,20 @@ async def retrieve_transformations_configurations(
 
 async def get_component_configuration_details(
     component_id: Annotated[
-        str, Field(description="Unique identifier of the Keboola component/transformation")
+        str, Field(description='Unique identifier of the Keboola component/transformation')
     ],
     configuration_id: Annotated[
         str,
         Field(
-            description="Unique identifier of the Keboola component/transformation configuration you want details "
-            "about",
+            description='Unique identifier of the Keboola component/transformation configuration you want details '
+            'about',
         ),
     ],
     ctx: Context,
 ) -> Annotated[
     ComponentConfiguration,
     Field(
-        description="Detailed information about a Keboola component/transformation and its configuration.",
+        description='Detailed information about a Keboola component/transformation and its configuration.',
     ),
 ]:
     """
@@ -190,27 +190,27 @@ async def get_component_configuration_details(
     # Get Configuration Details
     raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
     LOG.info(
-        f"Retrieved configuration details for {component_id} component with configuration {configuration_id}."
+        f'Retrieved configuration details for {component_id} component with configuration {configuration_id}.'
     )
 
     # Get Configuration Metadata if exists
-    endpoint = f"branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata"
+    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
     r_metadata = await client.get(endpoint)
     if r_metadata:
         LOG.info(
-            f"Retrieved configuration metadata for {component_id} component with configuration {configuration_id}."
+            f'Retrieved configuration metadata for {component_id} component with configuration {configuration_id}.'
         )
     else:
         LOG.info(
-            f"No metadata found for {component_id} component with configuration {configuration_id}."
+            f'No metadata found for {component_id} component with configuration {configuration_id}.'
         )
     # Create Component Configuration Detail Object
     return ComponentConfiguration.model_validate(
         {
             **raw_configuration,
-            "component": component,
-            "component_id": component_id,
-            "metadata": r_metadata,
+            'component': component,
+            'component_id': component_id,
+            'metadata': r_metadata,
         }
     )
 
@@ -220,15 +220,15 @@ async def create_sql_transformation(
     name: Annotated[
         str,
         Field(
-            description="A short, descriptive name summarizing the purpose of the SQL transformation.",
+            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
         ),
     ],
     description: Annotated[
         str,
         Field(
             description=(
-                "The detailed description of the SQL transformation capturing the user intent, explaining the "
-                "SQL query, and the expected output."
+                'The detailed description of the SQL transformation capturing the user intent, explaining the '
+                'SQL query, and the expected output.'
             ),
         ),
     ],
@@ -236,22 +236,24 @@ async def create_sql_transformation(
         Sequence[str],
         Field(
             description=(
-                "The executable SQL query statements written in the current SQL dialect. "
-                "Each statement should be a separate item in the list."
+                'The executable SQL query statements written in the current SQL dialect. '
+                'Each statement should be a separate item in the list.'
             ),
         ),
     ],
     created_table_names: Annotated[
         Sequence[str],
         Field(
-            description="An empty list or a list of created table names if and only if they are generated within SQL "
-            "statements (e.g., using `CREATE TABLE ...`).",
+            description=(
+                'An empty list or a list of created table names if and only if they are generated within SQL '
+                'statements (e.g., using `CREATE TABLE ...`).'
+            ),
         ),
     ] = tuple(),
 ) -> Annotated[
     ComponentConfiguration,
     Field(
-        description="Newly created SQL Transformation Configuration.",
+        description='Newly created SQL Transformation Configuration.',
     ),
 ]:
     """
@@ -282,7 +284,7 @@ async def create_sql_transformation(
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
     sql_dialect = await get_sql_dialect(ctx)
     transformation_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    LOG.info(f"SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}")
+    LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}')
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage(input and output tables)
@@ -291,10 +293,10 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f"branch/{client.storage_client._branch_id}/components/{transformation_id}/configs"
+    endpoint = f'branch/{client.storage_client._branch_id}/components/{transformation_id}/configs'
 
     LOG.info(
-        f"Creating new transformation configuration: {name} for component: {transformation_id}."
+        f'Creating new transformation configuration: {name} for component: {transformation_id}.'
     )
     # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -302,9 +304,9 @@ async def create_sql_transformation(
         new_raw_transformation_configuration = await client.post(
             endpoint,
             data={
-                "name": name,
-                "description": description,
-                "configuration": transformation_configuration_payload.model_dump(),
+                'name': name,
+                'description': description,
+                'configuration': transformation_configuration_payload.model_dump(),
             },
         )
 
@@ -316,12 +318,12 @@ async def create_sql_transformation(
         )
 
         LOG.info(
-            f"Created new transformation '{transformation_id}' with configuration id "
-            f"'{new_transformation_configuration.configuration_id}'."
+            f'Created new transformation "{transformation_id}" with configuration id '
+            f'"{new_transformation_configuration.configuration_id}".'
         )
         return new_transformation_configuration
     except Exception as e:
-        LOG.exception(f"Error when creating new transformation configuration: {e}")
+        LOG.exception(f'Error when creating new transformation configuration: {e}')
         raise e
 
 
