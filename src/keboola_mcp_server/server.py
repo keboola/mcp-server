@@ -66,9 +66,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         Configured FastMCP server instance
     """
     # Initialize FastMCP server with system instructions
-    mcp = KeboolaMcpServer(
-        'Keboola Explorer', session_state_factory=_create_session_state_factory(config)
-    )
+    mcp = KeboolaMcpServer('Keboola Explorer', session_state_factory=_create_session_state_factory(config))
 
     add_component_tools(mcp)
     add_doc_tools(mcp)

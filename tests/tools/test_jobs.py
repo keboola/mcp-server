@@ -74,9 +74,7 @@ def iso_format() -> str:
 
 
 @pytest.mark.asyncio
-async def test_retrieve_jobs(
-    mcp_context_client: Context, mock_jobs: list[dict[str, Any]], iso_format: str
-):
+async def test_retrieve_jobs(mcp_context_client: Context, mock_jobs: list[dict[str, Any]], iso_format: str):
     """Tests retrieve_jobs tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
@@ -87,36 +85,23 @@ async def test_retrieve_jobs(
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(
-        returned.status == expected['status'] for returned, expected in zip(result, mock_jobs)
-    )
-    assert all(
-        returned.component_id == expected['component']
-        for returned, expected in zip(result, mock_jobs)
-    )
-    assert all(
-        returned.config_id == expected['config'] for returned, expected in zip(result, mock_jobs)
-    )
-    assert all(
-        returned.is_finished == expected['isFinished']
-        for returned, expected in zip(result, mock_jobs)
-    )
+    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
+    assert all(returned.component_id == expected['component'] for returned, expected in zip(result, mock_jobs))
+    assert all(returned.config_id == expected['config'] for returned, expected in zip(result, mock_jobs))
+    assert all(returned.is_finished == expected['isFinished'] for returned, expected in zip(result, mock_jobs))
     assert all(
         returned.created_time is not None
-        and returned.created_time.replace(tzinfo=None)
-        == datetime.strptime(expected['createdTime'], iso_format)
+        and returned.created_time.replace(tzinfo=None) == datetime.strptime(expected['createdTime'], iso_format)
         for returned, expected in zip(result, mock_jobs)
     )
     assert all(
         returned.start_time is not None
-        and returned.start_time.replace(tzinfo=None)
-        == datetime.strptime(expected['startTime'], iso_format)
+        and returned.start_time.replace(tzinfo=None) == datetime.strptime(expected['startTime'], iso_format)
         for returned, expected in zip(result, mock_jobs)
     )
     assert all(
         returned.end_time is not None
-        and returned.end_time.replace(tzinfo=None)
-        == datetime.strptime(expected['endTime'], iso_format)
+        and returned.end_time.replace(tzinfo=None) == datetime.strptime(expected['endTime'], iso_format)
         for returned, expected in zip(result, mock_jobs)
     )
     assert all(hasattr(returned, 'not_a_desired_field') is False for returned in result)
@@ -133,9 +118,7 @@ async def test_retrieve_jobs(
 
 
 @pytest.mark.asyncio
-async def test_get_job_detail(
-    mcp_context_client: Context, mock_job: dict[str, Any], iso_format: str
-):
+async def test_get_job_detail(mcp_context_client: Context, mock_job: dict[str, Any], iso_format: str):
     """Tests get_job_detail tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
@@ -149,15 +132,15 @@ async def test_get_job_detail(
     assert result.component_id == mock_job['component']
     assert result.config_id == mock_job['config']
     assert result.is_finished == mock_job['isFinished']
-    assert result.created_time is not None and result.created_time.replace(
-        tzinfo=None
-    ) == datetime.strptime(mock_job['createdTime'], iso_format)
-    assert result.start_time is not None and result.start_time.replace(
-        tzinfo=None
-    ) == datetime.strptime(mock_job['startTime'], iso_format)
-    assert result.end_time is not None and result.end_time.replace(
-        tzinfo=None
-    ) == datetime.strptime(mock_job['endTime'], iso_format)
+    assert result.created_time is not None and result.created_time.replace(tzinfo=None) == datetime.strptime(
+        mock_job['createdTime'], iso_format
+    )
+    assert result.start_time is not None and result.start_time.replace(tzinfo=None) == datetime.strptime(
+        mock_job['startTime'], iso_format
+    )
+    assert result.end_time is not None and result.end_time.replace(tzinfo=None) == datetime.strptime(
+        mock_job['endTime'], iso_format
+    )
     assert result.url == mock_job['url']
     assert result.config_data == mock_job['configData']
     assert result.config_row_ids == mock_job['configRowIds']
@@ -172,9 +155,7 @@ async def test_get_job_detail(
 
 
 @pytest.mark.asyncio
-async def retrieve_jobs_with_component_and_config_id(
-    mcp_context_client: Context, mock_jobs: list[dict[str, Any]]
-):
+async def retrieve_jobs_with_component_and_config_id(mcp_context_client: Context, mock_jobs: list[dict[str, Any]]):
     """
     Tests retrieve_jobs tool with config_id and component_id. With config_id, the tool will return
     only jobs for the given config_id and component_id.
@@ -183,16 +164,12 @@ async def retrieve_jobs_with_component_and_config_id(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue.search_jobs_by = MagicMock(return_value=mock_jobs)
 
-    result = await retrieve_jobs(
-        ctx=context, component_id='keboola.ex-aws-s3', config_id='config-123'
-    )
+    result = await retrieve_jobs(ctx=context, component_id='keboola.ex-aws-s3', config_id='config-123')
 
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(
-        returned.status == expected['status'] for returned, expected in zip(result, mock_jobs)
-    )
+    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
 
     keboola_client.jobs_queue.search_jobs_by.assert_called_once_with(
         status=None,
@@ -220,9 +197,7 @@ async def retrieve_jobs_with_component_id_without_config_id(
     assert len(result) == 2
     assert all(isinstance(job, JobListItem) for job in result)
     assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(
-        returned.status == expected['status'] for returned, expected in zip(result, mock_jobs)
-    )
+    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
 
     keboola_client.jobs_queue.search_jobs_by.assert_called_once_with(
         status=None,
@@ -252,9 +227,7 @@ async def test_start_job(
 
     component_id = mock_job['component']
     configuration_id = mock_job['config']
-    job_detail = await start_job(
-        ctx=context, component_id=component_id, configuration_id=configuration_id
-    )
+    job_detail = await start_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
 
     assert isinstance(job_detail, JobDetail)
     assert job_detail.result == {}

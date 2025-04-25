@@ -130,9 +130,7 @@ class JobDetail(JobListItem):
 
     @field_validator('result', mode='before')
     @classmethod
-    def validate_result_field(
-        cls, current_value: Union[list[Any], dict[str, Any], None]
-    ) -> dict[str, Any]:
+    def validate_result_field(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
         # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
         # Why? Because result is expected to be an Object, but create job endpoint sends [], perhaps it means
         # "empty". This avoids type errors.
@@ -140,9 +138,7 @@ class JobDetail(JobListItem):
             if not current_value:
                 return dict()
             if isinstance(current_value, list):
-                raise ValueError(
-                    f'Field "result" cannot be a list, expecting dictionary, got: {current_value}.'
-                )
+                raise ValueError(f'Field "result" cannot be a list, expecting dictionary, got: {current_value}.')
         return current_value
 
 
@@ -179,13 +175,9 @@ async def retrieve_jobs(
     ] = None,
     limit: Annotated[
         int,
-        Field(
-            int, description='The number of jobs to list, default = 100, max = 500.', ge=1, le=500
-        ),
+        Field(int, description='The number of jobs to list, default = 100, max = 500.', ge=1, le=500),
     ] = 100,
-    offset: Annotated[
-        int, Field(int, description='The offset of the jobs to list, default = 0.', ge=0)
-    ] = 0,
+    offset: Annotated[int, Field(int, description='The offset of the jobs to list, default = 0.', ge=0)] = 0,
     sort_by: Annotated[
         SORT_BY_VALUES,
         Field(
@@ -264,9 +256,7 @@ async def start_job(
         str,
         Field(description='The ID of the component or transformation for which to start a job.'),
     ],
-    configuration_id: Annotated[
-        str, Field(description='The ID of the configuration for which to start a job.')
-    ],
+    configuration_id: Annotated[str, Field(description='The ID of the configuration for which to start a job.')],
 ) -> Annotated[JobDetail, Field(description='The newly started job details.')]:
     """
     Starts a new job for a given component or transformation.
@@ -274,9 +264,7 @@ async def start_job(
     client = KeboolaClient.from_state(ctx.session.state)
 
     try:
-        raw_job = client.jobs_queue.create_job(
-            component_id=component_id, configuration_id=configuration_id
-        )
+        raw_job = client.jobs_queue.create_job(component_id=component_id, configuration_id=configuration_id)
         job = JobDetail.model_validate(raw_job)
         LOG.info(
             f'Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}.'

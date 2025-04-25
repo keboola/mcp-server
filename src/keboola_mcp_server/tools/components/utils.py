@@ -66,9 +66,7 @@ async def _retrieve_components_configurations_by_types(
         ComponentWithConfigurations(
             component=ReducedComponent.model_validate(raw_component),
             configurations=[
-                ReducedComponentConfiguration.model_validate(
-                    {**raw_configuration, 'component_id': raw_component['id']}
-                )
+                ReducedComponentConfiguration.model_validate({**raw_configuration, 'component_id': raw_component['id']})
                 for raw_configuration in raw_component.get('configurations', [])
             ],
         )
@@ -76,9 +74,7 @@ async def _retrieve_components_configurations_by_types(
     ]
 
     # perform logging
-    total_configurations = sum(
-        len(component.configurations) for component in components_with_configurations
-    )
+    total_configurations = sum(len(component.configurations) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
         f'for types {component_types}.'
@@ -118,9 +114,7 @@ async def _retrieve_components_configurations_by_ids(
         )
 
     # perform logging
-    total_configurations = sum(
-        len(component.configurations) for component in components_with_configurations
-    )
+    total_configurations = sum(len(component.configurations) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
         f'for ids {component_ids}.'
@@ -146,9 +140,7 @@ async def _get_component_details(
     """
     try:
         raw_component = client.ai_service_client.get_component_detail(component_id)
-        LOG.info(
-            f'Retrieved component details for component {component_id} from AI service catalog.'
-        )
+        LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
         return Component.model_validate(raw_component)
     except requests.HTTPError as e:
         if e.response.status_code == 404:
@@ -215,21 +207,13 @@ class TransformationConfiguration(BaseModel):
             class Table(BaseModel):
                 """The table used in the transformation"""
 
-                destination: Optional[str] = Field(
-                    description='The destination table name', default=None
-                )
+                destination: Optional[str] = Field(description='The destination table name', default=None)
                 source: Optional[str] = Field(description='The source table name', default=None)
 
-            tables: list[Table] = Field(
-                description='The tables used in the transformation', default=[]
-            )
+            tables: list[Table] = Field(description='The tables used in the transformation', default=[])
 
-        input: Destination = Field(
-            description='The input tables for the transformation', default=Destination()
-        )
-        output: Destination = Field(
-            description='The output tables for the transformation', default=Destination()
-        )
+        input: Destination = Field(description='The input tables for the transformation', default=Destination())
+        output: Destination = Field(description='The output tables for the transformation', default=Destination())
 
     parameters: Parameters = Field(description='The parameters for the transformation')
     storage: Storage = Field(description='The storage configuration for the transformation')
@@ -253,11 +237,7 @@ def _get_transformation_configuration(
         blocks=[
             TransformationConfiguration.Parameters.Block(
                 name='Block 0',
-                codes=[
-                    TransformationConfiguration.Parameters.Block.Code(
-                        name='Code 0', script=list(statements)
-                    )
-                ],
+                codes=[TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=list(statements))],
             )
         ]
     )

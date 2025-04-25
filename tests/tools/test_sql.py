@@ -49,9 +49,7 @@ from keboola_mcp_server.tools.sql import (
         ),
     ],
 )
-async def test_query_table(
-    query: str, result: QueryResult, expected: str, empty_context: Context, mocker
-):
+async def test_query_table(query: str, result: QueryResult, expected: str, empty_context: Context, mocker):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.execute_query.return_value = result
     empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
@@ -110,17 +108,13 @@ class TestWorkspaceManagerSnowflake:
                 # table in.c-foo.bar in its own project
                 {'id': 'in.c-foo.bar', 'name': 'bar'},
                 {'current_database': 'db_xyz'},
-                TableFqn(
-                    db_name='db_xyz', schema_name='in.c-foo', table_name='bar', quote_char='"'
-                ),
+                TableFqn(db_name='db_xyz', schema_name='in.c-foo', table_name='bar', quote_char='"'),
             ),
             (
                 # temporary table not in a project, but in the writable schema of the workspace
                 {'id': 'bar', 'name': 'bar'},
                 {'current_database': 'db_xyz'},
-                TableFqn(
-                    db_name='db_xyz', schema_name='workspace_1234', table_name='bar', quote_char='"'
-                ),
+                TableFqn(db_name='db_xyz', schema_name='workspace_1234', table_name='bar', quote_char='"'),
             ),
             (
                 # table out.c-baz.bam exported from project 1234
@@ -131,9 +125,7 @@ class TestWorkspaceManagerSnowflake:
                     'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam'},
                 },
                 {'DATABASE_NAME': 'sapi_1234'},
-                TableFqn(
-                    db_name='sapi_1234', schema_name='out.c-baz', table_name='bam', quote_char='"'
-                ),
+                TableFqn(db_name='sapi_1234', schema_name='out.c-baz', table_name='bam', quote_char='"'),
             ),
         ],
     )
@@ -227,9 +219,7 @@ class TestWorkspaceManagerBigQuery:
             (
                 # table in.c-foo.bar in its own project or a tables shared from other project
                 {'id': 'in.c-foo.bar', 'name': 'bar'},
-                TableFqn(
-                    db_name='project_1234', schema_name='in_c_foo', table_name='bar', quote_char='`'
-                ),
+                TableFqn(db_name='project_1234', schema_name='in_c_foo', table_name='bar', quote_char='`'),
             ),
             (
                 # temporary table not in a project, but in the writable schema of the workspace
