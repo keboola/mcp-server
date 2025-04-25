@@ -74,7 +74,7 @@ async def test_get_sql_dialect(dialect: str, empty_context: Context, mocker):
 class TestWorkspaceManagerSnowflake:
     @pytest.fixture()
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
-        keboola_client.get.return_value = [
+        keboola_client.storage_client.get.return_value = [
             {
                 'id': 'workspace_1234',
                 'connection': {
@@ -145,7 +145,7 @@ class TestWorkspaceManagerSnowflake:
         keboola_client: KeboolaClient,
         context: Context,
     ):
-        keboola_client.post.return_value = QueryResult(
+        keboola_client.storage_client.post.return_value = QueryResult(
             status='ok',
             data=SqlSelectData(columns=list(sapi_result.keys()), rows=[sapi_result]),
         )
@@ -183,7 +183,7 @@ class TestWorkspaceManagerSnowflake:
     async def test_execute_query(
         self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context
     ):
-        keboola_client.post.return_value = TypeAdapter(QueryResult).dump_python(expected)
+        keboola_client.storage_client.post.return_value = TypeAdapter(QueryResult).dump_python(expected)
         m = WorkspaceManager.from_state(context.session.state)
         result = await m.execute_query(query)
         assert result == expected
@@ -192,7 +192,7 @@ class TestWorkspaceManagerSnowflake:
 class TestWorkspaceManagerBigQuery:
     @pytest.fixture()
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
-        keboola_client.get.return_value = [
+        keboola_client.storage_client.get.return_value = [
             {
                 'id': 'workspace_1234',
                 'connection': {

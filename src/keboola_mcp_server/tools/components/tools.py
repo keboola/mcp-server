@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, List, Sequence
+from typing import Annotated, Sequence
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
@@ -188,14 +188,14 @@ async def get_component_configuration_details(
     # Get Component Details
     component = await _get_component_details(client=client, component_id=component_id)
     # Get Configuration Details
-    raw_configuration = client.storage_client.configurations.detail(component_id, configuration_id)
+    raw_configuration = client.storage_client_sync.configurations.detail(component_id, configuration_id)
     LOG.info(
         f'Retrieved configuration details for {component_id} component with configuration {configuration_id}.'
     )
 
     # Get Configuration Metadata if exists
-    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
-    r_metadata = await client.get(endpoint)
+    endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+    r_metadata = await client.storage_client.get(endpoint)
     if r_metadata:
         LOG.info(
             f'Retrieved configuration metadata for {component_id} component with configuration {configuration_id}.'
@@ -293,7 +293,7 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f'branch/{client.storage_client._branch_id}/components/{transformation_id}/configs'
+    endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{transformation_id}/configs'
 
     LOG.info(
         f'Creating new transformation configuration: {name} for component: {transformation_id}.'
@@ -301,7 +301,7 @@ async def create_sql_transformation(
     # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
-        new_raw_transformation_configuration = await client.post(
+        new_raw_transformation_configuration = await client.storage_client.post(
             endpoint,
             data={
                 'name': name,

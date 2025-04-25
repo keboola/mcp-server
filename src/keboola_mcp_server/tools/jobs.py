@@ -133,7 +133,7 @@ class JobDetail(JobListItem):
         cls, current_value: Union[list[Any], dict[str, Any], None]
     ) -> dict[str, Any]:
         # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
-        # Why? Because result is expected to be an Object, but create job endpoint sends [], perhaps it means
+        # Why? Because the result is expected to be an Object, but create job endpoint sends [], perhaps it means
         # "empty". This avoids type errors.
         if not isinstance(current_value, dict):
             if not current_value:
@@ -203,7 +203,7 @@ async def retrieve_jobs(
     list[JobListItem],
     Field(
         list[JobListItem],
-        description=('The retrieved list of jobs list items. If empty then no jobs were found.'),
+        description='The retrieved list of jobs list items. If empty then no jobs were found.',
     ),
 ]:
     """
@@ -245,7 +245,7 @@ async def get_job_detail(
     ctx: Context,
 ) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
     """
-    Retrieve a detailed information about a specific job, identified by the job_id, including its status, parameters,
+    Retrieve detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.
     EXAMPLES:
         - if job_id = "123", then the details of the job with id "123" will be retrieved.

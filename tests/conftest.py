@@ -1,19 +1,35 @@
+from unittest.mock import MagicMock
+
 import pytest
-from kbcstorage.client import Client
+from kbcstorage.client import Client as KBCClient
 from mcp.server.fastmcp import Context
 
-from keboola_mcp_server.client import AIServiceClient, JobsQueue, KeboolaClient
+from keboola_mcp_server.client import (
+    AIServiceClient,
+    AsyncKeboolaClient,
+    JobsQueueClient,
+    KeboolaClient,
+    StorageAsyncClient,
+)
 from keboola_mcp_server.mcp import StatefullServerSession
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
 
 @pytest.fixture
 def keboola_client(mocker) -> KeboolaClient:
-    """Creates mocked `KeboolaClient` instance."""
+    """Creates mocked `KeboolaClient` instance with mocked sub-clients."""
     client = mocker.MagicMock(KeboolaClient)
-    client.storage_client = mocker.MagicMock(Client)
-    client.jobs_queue = mocker.MagicMock(JobsQueue)
+    # Mock synchronous client
+    client.storage_client_sync = mocker.MagicMock(KBCClient)
+    # Mock asynchronous clients
+    client.storage_client = mocker.MagicMock(StorageAsyncClient)
+    client.jobs_queue = mocker.MagicMock(JobsQueueClient)
     client.ai_service_client = mocker.MagicMock(AIServiceClient)
+    # Mock the underlying api_client for async clients if needed for deeper testing
+    client.storage_client.api_client = mocker.MagicMock(AsyncKeboolaClient)
+    client.jobs_queue.api_client = mocker.MagicMock(AsyncKeboolaClient)
+    client.ai_service_client.api_client = mocker.MagicMock(AsyncKeboolaClient)
+
     return client
 
 

@@ -1,12 +1,9 @@
 """Keboola Storage API client wrapper."""
 
 import logging
-import os
-import tempfile
 from typing import Any, Mapping, Optional, cast
 
 import httpx
-from kbcstorage.base import Endpoint
 from kbcstorage.client import Client
 from pydantic import BaseModel, Field
 
@@ -34,7 +31,8 @@ class KeboolaClient:
         storage_api_token: str,
         storage_api_url: str = 'https://connection.keboola.com',
     ) -> None:
-        """Initialize the client.
+        """
+        Initialize the client.
 
         Args:
             storage_api_token: Keboola Storage API token
@@ -54,26 +52,139 @@ class KeboolaClient:
         )
         ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
 
-        self.base_storage_api_url = storage_api_url
+        # Initialize clients for individual services
+        self.storage_client_sync = Client(storage_api_url, self.token)
+        self.storage_client = StorageAsyncClient.create(root_url=storage_api_url, token=self.token)
+        self.jobs_queue = JobsQueueClient.create(queue_api_url, self.token)
+        self.ai_service_client = AIServiceClient.create(root_url=ai_service_api_url, token=self.token)
+
+
+class AsyncKeboolaClient():
+    """Async client for Keboola services"""
+
+    def __init__(self, base_api_url: str, api_token: str, headers: dict[str, Any] | None = None) -> None:
+        self.base_api_url = base_api_url
         self.headers = {
-            'X-StorageApi-Token': self.token,
+            'X-StorageApi-Token': api_token,
             'Content-Type': 'application/json',
             'Accept-encoding': 'gzip',
         }
-        # Initialize the official client for operations it handles well
-        # The storage_client.jobs endpoint is for storage jobs
-        # Use self.jobs_queue instead which provides access to the Job Queue API
-        # that handles component/transformation jobs
-        # The AI Service API is used to various endpoints built in KaiBot - such as documentation fetching
-        self.storage_client = Client(self.base_storage_api_url, self.token)
-        self.jobs_queue = JobsQueue(queue_api_url, self.token)
-        self.ai_service_client = AIServiceClient(ai_service_api_url, self.token)
+        if headers:
+            self.headers.update(headers)
 
     async def get(
         self,
         endpoint: str,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Make a GET request to a Keboola service API.
+
+        Args:
+            endpoint: API endpoint to call
+            params: Query parameters for the request
+
+        Returns:
+            API response as dictionary
+        """
+        headers = self.headers | (headers or {})
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f'{self.base_api_url}/{endpoint}',
+                headers=headers,
+                params=params,
+            )
+            response.raise_for_status()
+            return cast(dict[str, Any], response.json())
+
+    async def post(
+        self,
+        endpoint: str,
+        data: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Make a POST request to a Keboola service API.
+
+        Args:
+            endpoint: API endpoint to call
+            data: Request payload
+
+        Returns:
+            API response as dictionary
+        """ 
+        headers = self.headers | (headers or {})
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f'{self.base_api_url}/{endpoint}',
+                headers=headers,
+                json=data or {},
+            )
+            response.raise_for_status()
+            return cast(dict[str, Any], response.json())
+
+    async def put(
+        self,
+        endpoint: str,
+        data: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Make a PUT request to a Keboola service API.
+
+        Args:
+            endpoint: API endpoint to call
+            data: Request payload
+
+        Returns:
+            API response as dictionary
+        """
+        headers = self.headers | (headers or {})
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f'{self.base_api_url}/{endpoint}',
+                headers=headers,
+                data=data or {},
+            )
+            response.raise_for_status()
+            return cast(dict[str, Any], response.json())
+
+    async def delete(
+        self,
+        endpoint: str,
+        headers: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Make a DELETE request to a Keboola service API.
+
+        Args:
+            endpoint: API endpoint to call
+
+        Returns:
+            API response as dictionary
+        """
+        headers = self.headers | (headers or {})
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f'{self.base_api_url}/{endpoint}',
+                headers=headers,
+            )
+            response.raise_for_status()
+
+            return cast(dict[str, Any], response.json())
+
+
+class StorageAsyncClient:
+    def __init__(self, api_client: AsyncKeboolaClient) -> None:
+        """
+        Creates an StorageAsyncClient.
+        :param api_client: The API client to use.
+        """
+        self.api_client = api_client
+
+    @classmethod
+    def create(cls, root_url: str, token: str) -> 'StorageAsyncClient':
+        """Creates an StorageAsyncClient from a Keboola Storage API token."""
+        return cls(api_client=AsyncKeboolaClient(base_api_url=f'{root_url}/v2/storage', api_token=token))
+
+    async def get(self, endpoint: str, params: Optional[dict[str, Any]] = None,) -> dict[str, Any]:
         """Make a GET request to Keboola Storage API.
 
         Args:
@@ -83,20 +194,9 @@ class KeboolaClient:
         Returns:
             API response as dictionary
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
-                headers=self.headers,
-                params=params,
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        return await self.api_client.get(endpoint=endpoint, params=params)
 
-    async def post(
-        self,
-        endpoint: str,
-        data: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
+    async def post(self, endpoint: str, data: Optional[dict[str, Any]] = None,) -> dict[str, Any]:
         """Make a POST request to Keboola Storage API.
 
         Args:
@@ -106,20 +206,9 @@ class KeboolaClient:
         Returns:
             API response as dictionary
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
-                headers=self.headers,
-                json=data if data is not None else {},
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        return await self.api_client.post(endpoint=endpoint, data=data)
 
-    async def put(
-        self,
-        endpoint: str,
-        data: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
+    async def put(self, endpoint: str, data: Optional[dict[str, Any]] = None,) -> dict[str, Any]:
         """Make a PUT request to Keboola Storage API.
 
         Args:
@@ -129,19 +218,9 @@ class KeboolaClient:
         Returns:
             API response as dictionary
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.put(
-                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
-                headers=self.headers,
-                data=data if data is not None else {},
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        return await self.api_client.put(endpoint=endpoint, data=data)
 
-    async def delete(
-        self,
-        endpoint: str,
-    ) -> dict[str, Any]:
+    async def delete(self, endpoint: str,) -> dict[str, Any]:
         """Make a DELETE request to Keboola Storage API.
 
         Args:
@@ -150,41 +229,10 @@ class KeboolaClient:
         Returns:
             API response as dictionary
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.delete(
-                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
-                headers=self.headers,
-            )
-            response.raise_for_status()
-
-            return cast(dict[str, Any], response.json())
-
-    async def download_table_data_async(self, table_id: str) -> str:
-        """Download table data using the export endpoint.
-
-        Args:
-            table_id: ID of the table to download
-
-        Returns:
-            Table data as string
-        """
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                # Get just the table name from the table_id
-                table_name = table_id.split('.')[-1]
-                # Export the table data
-                self.storage_client.tables.export_to_file(table_id, temp_dir)
-                # Read the exported file
-                actual_file = os.path.join(temp_dir, table_name)
-                with open(actual_file, 'r') as f:
-                    data = f.read()
-                return data
-        except Exception as e:
-            LOG.error(f'Error downloading table {table_id}: {str(e)}')
-            return f'Error downloading table: {str(e)}'
+        return await self.api_client.delete(endpoint=endpoint)
 
 
-class JobsQueue(Endpoint):
+class JobsQueueClient:
     """
     Class handling endpoints for interacting with the Keboola Job Queue API. This class extends the Endpoint class
     from the kbcstorage library to leverage its core functionality, while using a different base URL
@@ -194,28 +242,29 @@ class JobsQueue(Endpoint):
         base_url (str): The base URL for this endpoint.
         token (str): A key for the Storage API.
     """
+    def __init__(self, api_client: AsyncKeboolaClient):
+        self.api_client = api_client
 
-    def __init__(self, root_url: str, token: str):
+
+    @classmethod
+    def create(cls, root_url: str, token: str) -> 'JobsQueueClient':
         """
-        Create a JobsQueue endpoint.
+        Create a JobsQueue client.
         :param root_url: Root url of API. e.g. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console.
         """
-        super().__init__(root_url, '', token)
+        return cls(api_client=AsyncKeboolaClient(base_api_url=root_url, api_token=token))
 
-        # set the base url to the root url
-        self.base_url = self.root_url.rstrip('/')
 
-    def detail(self, job_id: str) -> dict[str, Any]:
+    async def detail(self, job_id: str) -> dict[str, Any]:
         """
         Retrieves information about a given job.
         :param job_id: The id of the job.
         """
-        url = f'{self.base_url}/jobs/{job_id}'
 
-        return self._get(url)
+        return await self.api_client.get(endpoint=f'jobs/{job_id}')
 
-    def search_jobs_by(
+    async def search_jobs_by(
         self,
         component_id: Optional[str] = None,
         config_id: Optional[str] = None,
@@ -244,9 +293,9 @@ class JobsQueue(Endpoint):
             'sortBy': sort_by,
             'sortOrder': sort_order,
         }
-        return self._search(params=params)
+        return await self._search(params=params)
 
-    def create_job(
+    async def create_job(
         self,
         component_id: str,
         configuration_id: str,
@@ -257,15 +306,14 @@ class JobsQueue(Endpoint):
         :param configuration_id: The id of the configuration.
         :return: The response from the API call - created job or raise an error.
         """
-        url = f'{self.base_url}/jobs'
         payload = {
             'component': component_id,
             'config': configuration_id,
             'mode': 'run',
         }
-        return self._post(url, json=payload)
+        return await self.api_client.post(endpoint='jobs', data=payload)
 
-    def _search(self, params: dict[str, Any], **kwargs) -> dict[str, Any]:
+    async def _search(self, params: dict[str, Any]) -> dict[str, Any]:
         """
         Search for jobs based on the provided parameters.
         :param params: The parameters to search for.
@@ -303,9 +351,7 @@ class JobsQueue(Endpoint):
             - sortOrder str: The jobs sorting order, default "desc"
                 values: asc, desc
         """
-        url = f'{self.base_url}/search/jobs'
-
-        return self._get(url, params=params, **kwargs)
+        return await self.api_client.get(endpoint='search/jobs', params=params)
 
 
 class DocsQuestionResponse(BaseModel):
@@ -319,34 +365,36 @@ class DocsQuestionResponse(BaseModel):
     )
 
 
-class AIServiceClient(Endpoint):
+class AIServiceClient:
     """Class handling endpoints for interacting with the Keboola AI Service."""
 
-    def __init__(self, root_url: str, token: str) -> None:
+    def __init__(self, api_client: AsyncKeboolaClient) -> None:
         """
-        Create an AIService endpoint.
-        :param root_url: Root url of API. e.g. "https://ai.keboola.com/"
-        :param token: A Keboola Storage API token.
+        Creates an AIServiceClient.
+        :param api_client: The API client to use.
         """
-        super().__init__(root_url, '', token)
+        self.api_client = api_client
 
-    def get_component_detail(self, component_id: str) -> dict[str, Any]:
+    @classmethod
+    def create(cls, root_url: str, token: str) -> 'AIServiceClient':
+        """Creates an AIServiceClient from a Keboola Storage API token."""
+        return cls(api_client=AsyncKeboolaClient(base_api_url=root_url, api_token=token))
+
+    async def get_component_detail(self, component_id: str) -> dict[str, Any]:
         """
         Retrieves information about a given component.
         :param component_id: The id of the component.
         """
-        url = f'{self.root_url.rstrip("/")}/docs/components/{component_id}'
-        return self._get(url)
+        return await self.api_client.get(endpoint=f'docs/components/{component_id}')
 
-    def docs_question(self, query: str) -> DocsQuestionResponse:
+    async def docs_question(self, query: str) -> DocsQuestionResponse:
         """
         Answers a question using the Keboola documentation as a source.
         :param query: The query to answer.
         """
-        url = f'{self.root_url.rstrip("/")}/docs/question'
-        response = self._post(
-            url,
-            json={'query': query},
+        response = await self.api_client.post(
+            endpoint='docs/question',
+            data={'query': query},
             headers={'Accept': 'application/json'},
         )
 

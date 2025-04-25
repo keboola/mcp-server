@@ -100,7 +100,7 @@ async def test_retrieve_components_configurations_by_types(
     keboola_client = KeboolaClient.from_state(context.session.state)
     # mock the get method to return the mock_component with the mock_configurations
     # simulate the response from the API
-    keboola_client.get = AsyncMock(
+    keboola_client.storage_client.get = AsyncMock(
         side_effect=[
             [{**component, 'configurations': mock_configurations}] for component in mock_components
         ]
@@ -110,7 +110,7 @@ async def test_retrieve_components_configurations_by_types(
 
     assert_retrieve_components(result, mock_components, mock_configurations)
 
-    keboola_client.get.assert_has_calls(
+    keboola_client.storage_client.get.assert_has_calls(
         [
             call(
                 f'branch/{mock_branch_id}/components',
@@ -143,7 +143,7 @@ async def test_retrieve_transformations_configurations(
     keboola_client = KeboolaClient.from_state(context.session.state)
     # mock the get method to return the mock_component with the mock_configurations
     # simulate the response from the API
-    keboola_client.get = AsyncMock(
+    keboola_client.storage_client.get = AsyncMock(
         return_value=[{**mock_component, 'configurations': mock_configurations}]
     )
 
@@ -151,7 +151,7 @@ async def test_retrieve_transformations_configurations(
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
-    keboola_client.get.assert_has_calls(
+    keboola_client.storage_client.get.assert_has_calls(
         [
             call(
                 f'branch/{mock_branch_id}/components',
@@ -175,15 +175,15 @@ async def test_retrieve_components_configurations_from_ids(
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
-    keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configurations)
-    keboola_client.get = AsyncMock(return_value=mock_component)
+    keboola_client.storage_client_sync.configurations.list = MagicMock(return_value=mock_configurations)
+    keboola_client.storage_client.get = AsyncMock(return_value=mock_component)
 
     result = await retrieve_components_configurations(context, component_ids=[mock_component['id']])
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
-    keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component['id'])
-    keboola_client.get.assert_called_once_with(
+    keboola_client.storage_client_sync.configurations.list.assert_called_once_with(mock_component['id'])
+    keboola_client.storage_client.get.assert_called_once_with(
         f'branch/{mock_branch_id}/components/{mock_component["id"]}'
     )
 
@@ -202,8 +202,8 @@ async def test_retrieve_transformations_configurations_from_ids(
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
-    keboola_client.storage_client.configurations.list = MagicMock(return_value=mock_configurations)
-    keboola_client.get = AsyncMock(return_value=mock_component)
+    keboola_client.storage_client_sync.configurations.list = MagicMock(return_value=mock_configurations)
+    keboola_client.storage_client.get = AsyncMock(return_value=mock_component)
 
     result = await retrieve_transformations_configurations(
         context, transformation_ids=[mock_component['id']]
@@ -211,8 +211,8 @@ async def test_retrieve_transformations_configurations_from_ids(
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
-    keboola_client.storage_client.configurations.list.assert_called_once_with(mock_component['id'])
-    keboola_client.get.assert_called_once_with(
+    keboola_client.storage_client_sync.configurations.list.assert_called_once_with(mock_component['id'])
+    keboola_client.storage_client.get.assert_called_once_with(
         f'branch/{mock_branch_id}/components/{mock_component["id"]}'
     )
 
@@ -228,16 +228,16 @@ async def test_get_component_configuration_details(
     """Test get_component_configuration_details tool."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.storage_client.configurations = MagicMock()
-    keboola_client.storage_client.components = MagicMock()
+    keboola_client.storage_client_sync.configurations = MagicMock()
+    keboola_client.storage_client_sync.components = MagicMock()
 
     # Setup mock to return test data
-    keboola_client.storage_client.configurations.detail = MagicMock(return_value=mock_configuration)
+    keboola_client.storage_client_sync.configurations.detail = MagicMock(return_value=mock_configuration)
     keboola_client.ai_service_client = MagicMock()
     keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=mock_component)
-    keboola_client.storage_client.components.detail = MagicMock(return_value=mock_component)
-    keboola_client.storage_client._branch_id = mock_branch_id
-    keboola_client.get = AsyncMock(return_value=mock_metadata)
+    keboola_client.storage_client_sync.components.detail = MagicMock(return_value=mock_component)
+    keboola_client.storage_client_sync._branch_id = mock_branch_id
+    keboola_client.storage_client.get = AsyncMock(return_value=mock_metadata)
 
     result = await get_component_configuration_details('keboola.ex-aws-s3', '123', context)
     expected = ComponentConfiguration.model_validate(
@@ -251,7 +251,7 @@ async def test_get_component_configuration_details(
     assert isinstance(result, ComponentConfiguration)
     assert result.model_dump() == expected.model_dump()
 
-    keboola_client.storage_client.configurations.detail.assert_called_once_with(
+    keboola_client.storage_client_sync.configurations.detail.assert_called_once_with(
         'keboola.ex-aws-s3', '123'
     )
 
@@ -259,7 +259,7 @@ async def test_get_component_configuration_details(
         'keboola.ex-aws-s3'
     )
 
-    keboola_client.get.assert_called_once_with(
+    keboola_client.storage_client.get.assert_called_once_with(
         f'branch/{mock_branch_id}/components/{mock_component["id"]}/configs/{mock_configuration["id"]}/metadata'
     )
 
@@ -297,7 +297,7 @@ async def test_create_transformation_configuration(
     # Set up the mock for ai_service_client
     keboola_client.ai_service_client = MagicMock()
     keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=component)
-    keboola_client.post = AsyncMock(return_value=configuration)
+    keboola_client.storage_client.post = AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration['name']
     bucket_name = '-'.join(transformation_name.lower().split())
@@ -325,7 +325,7 @@ async def test_create_transformation_configuration(
         expected_component_id
     )
 
-    keboola_client.post.assert_called_once_with(
+    keboola_client.storage_client.post.assert_called_once_with(
         f'branch/{mock_branch_id}/components/{expected_component_id}/configs',
         data={
             'name': transformation_name,

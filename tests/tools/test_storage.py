@@ -94,10 +94,10 @@ async def test_get_bucket_detail(
     """Test get_bucket_detail tool."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.buckets = MagicMock()
+    keboola_client.storage_client_sync.buckets = MagicMock()
 
     expected_bucket = next(b for b in mock_buckets if b['id'] == bucket_id)
-    keboola_client.storage_client.buckets.detail = MagicMock(return_value=expected_bucket)
+    keboola_client.storage_client_sync.buckets.detail = MagicMock(return_value=expected_bucket)
 
     result = await get_bucket_detail(bucket_id, mcp_context_client)
 
@@ -125,10 +125,10 @@ async def test_retrieve_buckets_in_project(
     """Test the retrieve_buckets_in_project tool."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.buckets = MagicMock()
+    keboola_client.storage_client_sync.buckets = MagicMock()
 
     # Mock the list method to return the mock_buckets data
-    keboola_client.storage_client.buckets.list = MagicMock(return_value=mock_buckets)
+    keboola_client.storage_client_sync.buckets.list = MagicMock(return_value=mock_buckets)
 
     result = await retrieve_buckets(mcp_context_client)
 
@@ -151,7 +151,7 @@ async def test_retrieve_buckets_in_project(
         if 'data_size_bytes' in expected_bucket:
             assert result_bucket.data_size_bytes == expected_bucket['data_size_bytes']
 
-    keboola_client.storage_client.buckets.list.assert_called_once()
+    keboola_client.storage_client_sync.buckets.list.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -161,8 +161,8 @@ async def test_get_table_detail(
     """Test get_table_detail tool."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.tables = MagicMock()
-    keboola_client.storage_client.tables.detail = MagicMock(
+    keboola_client.storage_client_sync.tables = MagicMock()
+    keboola_client.storage_client_sync.tables.detail = MagicMock(
         return_value=mock_table_data['raw_table_data']
     )
 
@@ -208,11 +208,11 @@ async def test_lretrieve_bucket_tables_in_project(
 ) -> None:
     """Test retrieve_bucket_tables_in_project tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.buckets = MagicMock()
-    keboola_client.storage_client.buckets.list_tables.return_value = sapi_response
+    keboola_client.storage_client_sync.buckets = MagicMock()
+    keboola_client.storage_client_sync.buckets.list_tables.return_value = sapi_response
     result = await retrieve_bucket_tables('bucket-id', mcp_context_client)
     assert result == expected
-    keboola_client.storage_client.buckets.list_tables.assert_called_once_with(
+    keboola_client.storage_client_sync.buckets.list_tables.assert_called_once_with(
         'bucket-id', include=['metadata']
     )
 
@@ -254,7 +254,7 @@ async def test_update_bucket_description_success(
     """Test successful update of bucket description."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.post = AsyncMock(return_value=mock_update_bucket_description_response)
+    keboola_client.storage_client.post = AsyncMock(return_value=mock_update_bucket_description_response)
 
     result = await update_bucket_description(
         bucket_id='in.c-test.bucket-id',
@@ -266,7 +266,7 @@ async def test_update_bucket_description_success(
     assert result.success is True
     assert result.description == 'Updated bucket description'
     assert result.timestamp == '2025-04-07T17:47:18+0200'
-    keboola_client.post.assert_called_once_with(
+    keboola_client.storage_client.post.assert_called_once_with(
         endpoint='buckets/in.c-test.bucket-id/metadata',
         data={
             'provider': 'user',
@@ -284,8 +284,8 @@ async def test_update_table_description_success(
     """Test successful update of table description."""
 
     # Mock the Keboola client post method
-    keboola_client = mcp_context_client.session.state['sapi_client']
-    keboola_client.post = AsyncMock(return_value=mock_update_table_description_response)
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.post = AsyncMock(return_value=mock_update_table_description_response)
 
     result = await update_table_description(
         table_id='in.c-test.test-table',
@@ -297,7 +297,7 @@ async def test_update_table_description_success(
     assert result.success is True
     assert result.description == 'Updated test description'
     assert result.timestamp == '2025-04-07T16:47:18+0200'
-    keboola_client.post.assert_called_once_with(
+    keboola_client.storage_client.post.assert_called_once_with(
         endpoint='tables/in.c-test.test-table/metadata',
         data={
             'provider': 'user',
