@@ -23,7 +23,8 @@ FROM python:3.12-slim-bookworm
 
 WORKDIR /app
  
-COPY --from=uv /root/.local /root/.local
+# Copy only the necessary artifacts from the uv stage
+# COPY --from=uv /root/.local /root/.local # Removed this line as /root/.local likely doesn't exist in the uv stage
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 
 # Place executables in the environment at the front of the path
