@@ -50,7 +50,7 @@ class KeboolaClient:
         # Remove the prefix from the storage API URL https://connection.REGION.keboola.com -> REGION.keboola.com
         # and add the prefix for the queue API https://queue.REGION.keboola.com
         queue_api_url = f'{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
-        ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
+        ai_service_api_url = f'{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
 
         self.base_storage_api_url = storage_api_url
         self.headers = {

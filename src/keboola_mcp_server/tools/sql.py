@@ -197,7 +197,7 @@ class _BigQueryWorkspace(_Workspace):
             table_name = table['name']
 
         if schema_name and table_name:
-            fqn = TableFqn(self._project_id, schema_name, table_name, quote_char="`")
+            fqn = TableFqn(self._project_id, schema_name, table_name, quote_char='`')
             return fqn
         else:
             return None

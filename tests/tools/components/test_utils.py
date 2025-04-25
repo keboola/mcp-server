@@ -89,4 +89,4 @@ def test_get_transformation_configuration(
         assert len(configuration.storage.output.tables) == len(created_table_names)
         for created_table, expected_table_name in zip(configuration.storage.output.tables, created_table_names):
             assert created_table.source == expected_table_name
-            assert created_table.destination == f"{expected_bucket_id}.{expected_table_name}"
+            assert created_table.destination == f'{expected_bucket_id}.{expected_table_name}'
