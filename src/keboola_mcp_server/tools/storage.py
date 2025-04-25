@@ -1,7 +1,7 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
 import logging
-from typing import Annotated, Any, Dict, List, Mapping, Optional, cast
+from typing import Annotated, Any, Mapping, Optional, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, model_validator
@@ -25,7 +25,7 @@ def add_storage_tools(mcp: FastMCP) -> None:
     LOG.info('Storage tools added to the MCP server.')
 
 
-def extract_description(values: Dict[str, Any]) -> Optional[str]:
+def extract_description(values: dict[str, Any]) -> Optional[str]:
     """Extracts the description from values or metadata."""
     if description := values.get('description'):
         return description
@@ -95,7 +95,7 @@ class TableDetail(BaseModel):
     id: str = Field(description='Unique identifier for the table')
     name: str = Field(description='Name of the table')
     description: Optional[str] = Field(None, description='Description of the table')
-    primary_key: Optional[List[str]] = Field(
+    primary_key: Optional[list[str]] = Field(
         None,
         description='List of primary key columns',
         validation_alias=AliasChoices('primaryKey', 'primary_key', 'primary-key'),
@@ -114,7 +114,7 @@ class TableDetail(BaseModel):
         validation_alias=AliasChoices('dataSizeBytes', 'data_size_bytes', 'data-size-bytes'),
         serialization_alias='dataSizeBytes',
     )
-    columns: Optional[List[TableColumnInfo]] = Field(
+    columns: Optional[list[TableColumnInfo]] = Field(
         None,
         description='List of column information including database identifiers',
     )
@@ -181,12 +181,12 @@ async def get_bucket_detail(
     """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
-    raw_bucket = cast(Dict[str, Any], client.storage_client.buckets.detail(bucket_id))
+    raw_bucket = cast(dict[str, Any], client.storage_client.buckets.detail(bucket_id))
 
     return BucketDetail(**raw_bucket)
 
 
-async def retrieve_buckets(ctx: Context) -> List[BucketDetail]:
+async def retrieve_buckets(ctx: Context) -> list[BucketDetail]:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
@@ -228,7 +228,7 @@ async def retrieve_bucket_tables(
     #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
     raw_tables = cast(
-        List[Mapping[str, Any]],
+        list[Mapping[str, Any]],
         client.storage_client.buckets.list_tables(bucket_id, include=['metadata']),
     )
     return [TableDetail(**raw_table) for raw_table in raw_tables]

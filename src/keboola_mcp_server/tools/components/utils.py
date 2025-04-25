@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Union, cast, get_args
 
+import requests
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
@@ -34,7 +35,7 @@ def _handle_component_types(
 
 async def _retrieve_components_configurations_by_types(
     client: KeboolaClient, component_types: Sequence[AllComponentTypes]
-) -> List[ComponentWithConfigurations]:
+) -> list[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by types - used in tools:
     - retrieve_components_configurations
@@ -55,7 +56,7 @@ async def _retrieve_components_configurations_by_types(
             'componentType': type,
         }
         raw_components_with_configurations_by_type = cast(
-            List[Dict[str, Any]], await client.get(endpoint, params=params)
+            list[dict[str, Any]], await client.get(endpoint, params=params)
         )
         # extend the list with the raw components with configurations
         raw_components_with_configurations.extend(raw_components_with_configurations_by_type)
@@ -87,7 +88,7 @@ async def _retrieve_components_configurations_by_types(
 
 async def _retrieve_components_configurations_by_ids(
     client: KeboolaClient, component_ids: Sequence[str]
-) -> List[ComponentWithConfigurations]:
+) -> list[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by component IDs - used in tools:
     - retrieve_components_configurations
@@ -134,15 +135,37 @@ async def _get_component_details(
     """
     Utility function to retrieve the component details by component ID, used in tools:
     - get_component_configuration_details
+
+    First tries to get component details from the AI service catalog. If the component
+    is not found (404) or returns empty data (private components), falls back to using the
+    Storage API endpoint.
+
     :param component_id: The ID of the Keboola component/transformation you want details about
     :param client: The Keboola client
     :return: The component details
     """
+    try:
+        raw_component = client.ai_service_client.get_component_detail(component_id)
+        LOG.info(
+            f'Retrieved component details for component {component_id} from AI service catalog.'
+        )
+        return Component.model_validate(raw_component)
+    except requests.HTTPError as e:
+        if e.response.status_code == 404:
+            LOG.info(
+                f'Component {component_id} not found in AI service catalog (possibly private). '
+                f'Falling back to Storage API.'
+            )
 
-    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}'
-    raw_component = await client.get(endpoint)
-    LOG.info(f'Retrieved component details for component {component_id}.')
-    return Component.model_validate(raw_component)
+            endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}'
+            raw_component = await client.get(endpoint)
+            LOG.info(
+                f'Retrieved component details for component {component_id} from Storage API.'
+            )
+            return Component.model_validate(raw_component)
+        else:
+            # If it's not a 404, re-raise the error
+            raise
 
 
 def _get_sql_transformation_id_from_sql_dialect(

@@ -1,8 +1,4 @@
 import logging
-
-from mcp.server.fastmcp import FastMCP
-
-import logging
 from typing import Annotated, List, Sequence
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -81,7 +77,7 @@ async def retrieve_components_configurations(
         ),
     ] = tuple(),
 ) -> Annotated[
-    List[ComponentWithConfigurations],
+    list[ComponentWithConfigurations],
     Field(
         description='List of objects, each containing a component and its associated configurations.',
     ),
@@ -126,7 +122,7 @@ async def retrieve_transformations_configurations(
         ),
     ] = tuple(),
 ) -> Annotated[
-    List[ComponentWithConfigurations],
+    list[ComponentWithConfigurations],
     Field(
         description='List of objects, each containing a transformation component and its associated configurations.',
     ),
@@ -208,7 +204,6 @@ async def get_component_configuration_details(
         LOG.info(
             f'No metadata found for {component_id} component with configuration {configuration_id}.'
         )
-
     # Create Component Configuration Detail Object
     return ComponentConfiguration.model_validate(
         {
@@ -219,8 +214,6 @@ async def get_component_configuration_details(
         }
     )
 
-
-############################## Write tools #########################################
 
 async def create_sql_transformation(
     ctx: Context,
