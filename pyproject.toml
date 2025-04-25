@@ -124,6 +124,7 @@ deps = [
     "flake8-import-order",
     "flake8-typing-imports",
     "Flake8-pyproject",
+    "flake8-quotes",
     "pep8-naming",
 ]
 package = "skip"
