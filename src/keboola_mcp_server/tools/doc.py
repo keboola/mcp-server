@@ -15,25 +15,25 @@ def add_doc_tools(mcp: FastMCP) -> None:
         docs_query,
     ]
     for tool in doc_tools:
-        LOG.info(f"Adding tool {tool.__name__} to the MCP server.")
+        LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
         mcp.add_tool(tool)
 
-    LOG.info("Doc tools initialized.")
+    LOG.info('Doc tools initialized.')
 
 
 class DocsAnswer(BaseModel):
     """An answer to a documentation query."""
 
-    text: str = Field(description="Text of the answer to a documentation query.")
-    source_urls: list[str] = Field(description="List of URLs to the sources of the answer.")
+    text: str = Field(description='Text of the answer to a documentation query.')
+    source_urls: list[str] = Field(description='List of URLs to the sources of the answer.')
 
 
 async def docs_query(
     ctx: Context,
     query: Annotated[
-        str, Field(description="Natural language query to search for in the documentation.")
+        str, Field(description='Natural language query to search for in the documentation.')
     ],
-) -> Annotated[DocsAnswer, Field(description="The retrieved documentation.")]:
+) -> Annotated[DocsAnswer, Field(description='The retrieved documentation.')]:
     """
     Answers a question using the Keboola documentation as a source.
     """

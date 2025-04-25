@@ -11,8 +11,8 @@ from keboola_mcp_server.tools.doc import DocsAnswer, docs_query
 def mock_docs_response() -> DocsQuestionResponse:
     """Mock response from the AI service client docs_question method."""
     return DocsQuestionResponse(
-        text="This is a test answer to the documentation query.",
-        source_urls=["https://docs.keboola.com/page1", "https://docs.keboola.com/page2"],
+        text='This is a test answer to the documentation query.',
+        source_urls=['https://docs.keboola.com/page1', 'https://docs.keboola.com/page2'],
     )
 
 
@@ -23,7 +23,7 @@ async def test_docs_query(mcp_context_client: Context, mock_docs_response: DocsQ
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.ai_service_client.docs_question = MagicMock(return_value=mock_docs_response)
 
-    query = "How do I create a transformation?"
+    query = 'How do I create a transformation?'
     result = await docs_query(context, query)
 
     assert isinstance(result, DocsAnswer)
