@@ -225,7 +225,6 @@ class JobsQueue(Endpoint):
         sort_by: Optional[str] = 'startTime',
         sort_order: Optional[str] = 'desc',
     ) -> dict[str, Any]:
-
         """
         Search for jobs based on the provided parameters.
         :param component_id: The id of the component.

@@ -327,5 +327,4 @@ async def create_sql_transformation(
         raise e
 
 
-
 ############################## End of component tools #########################################
