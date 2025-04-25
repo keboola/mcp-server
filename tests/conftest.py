@@ -4,7 +4,7 @@ from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import AIServiceClient, JobsQueue, KeboolaClient
 from keboola_mcp_server.mcp import StatefullServerSession
-from keboola_mcp_server.sql_tools import WorkspaceManager
+from keboola_mcp_server.tools.sql import WorkspaceManager
 
 
 @pytest.fixture

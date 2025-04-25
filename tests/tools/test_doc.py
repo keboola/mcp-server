@@ -4,7 +4,7 @@ import pytest
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import DocsQuestionResponse, KeboolaClient
-from keboola_mcp_server.doc_tools import DocsAnswer, docs_query
+from keboola_mcp_server.tools.doc import DocsAnswer, docs_query
 
 
 @pytest.fixture
