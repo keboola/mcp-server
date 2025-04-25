@@ -140,6 +140,7 @@ class UpdateBucketDescriptionResponse(BaseModel):
     timestamp: str = Field(description='When the description was updated')
 
     @model_validator(mode='before')
+    @classmethod
     def extract_from_response(cls, values):
         if isinstance(values, list) and values:
             data = values[0]  # the response returns a list - elements for each update
@@ -160,6 +161,7 @@ class UpdateTableDescriptionResponse(BaseModel):
     timestamp: str = Field(description='When the description was updated')
 
     @model_validator(mode='before')
+    @classmethod
     def extract_metadata(cls, values):
         metadata = values.get('metadata', [])
         if isinstance(metadata, list) and metadata:

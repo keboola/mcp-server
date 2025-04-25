@@ -10,7 +10,7 @@ from keboola_mcp_server.client import KeboolaClient
 LOG = logging.getLogger(__name__)
 
 
-################################## Add jobs tools to MCP SERVER ##################################
+# Add jobs tools to MCP SERVER ##################################
 
 
 def add_job_tools(mcp: FastMCP) -> None:
@@ -27,7 +27,7 @@ def add_job_tools(mcp: FastMCP) -> None:
     LOG.info('Job tools initialized.')
 
 
-######################################## Job Base Models ########################################
+# Job Base Models ########################################
 
 JOB_STATUS = Literal[
     'waiting',
@@ -129,6 +129,7 @@ class JobDetail(JobListItem):
     )
 
     @field_validator('result', mode='before')
+    @classmethod
     def validate_result_field(
         cls, current_value: Union[list[Any], dict[str, Any], None]
     ) -> dict[str, Any]:
@@ -145,9 +146,9 @@ class JobDetail(JobListItem):
         return current_value
 
 
-######################################## End of Job Base Models ########################################
+# End of Job Base Models ########################################
 
-######################################## MCP tools ########################################
+# MCP tools ########################################
 
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
@@ -283,9 +284,10 @@ async def start_job(
         return job
     except Exception as exception:
         LOG.exception(
-            f'Error when starting a new job for component {component_id} and configuration {configuration_id}: {exception}'
+            f'Error when starting a new job for component {component_id} and configuration {configuration_id}: '
+            f'{exception}'
         )
         raise exception
 
 
-######################################## End of MCP tools ########################################
+# End of MCP tools ########################################

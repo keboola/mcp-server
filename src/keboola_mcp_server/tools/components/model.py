@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -36,8 +36,8 @@ class ReducedComponent(BaseModel):
 
 class ReducedComponentConfiguration(BaseModel):
     """
-    A Reduced Component Configuration containing the Keboola Component ID and the reduced information about configuration
-    used in a list.
+    A Reduced Component Configuration containing the Keboola Component ID and the reduced information about
+    configuration used in a list.
     """
 
     component_id: str = Field(

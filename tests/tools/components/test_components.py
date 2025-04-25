@@ -1,4 +1,4 @@
-from typing import Any, Callable, Sequence, Union
+from typing import Any, Callable
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest

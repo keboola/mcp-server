@@ -36,19 +36,21 @@ dev = [
 keboola-mcp = "keboola_mcp_server.cli:main"
 
 [tool.black]
-line-length = 100
 target-version = ["py310"]
 skip_string_normalization = true
+line-length = 120
 
 [tool.isort]
+
 profile = "black"
-line_length = 100
+line_length = 120
 multi_line_output = 3
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keboola_mcp_server"]
 
 [tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 addopts = "--cov=keboola_mcp_server --cov-report=term-missing --cov-report=xml"
 testpaths = ["tests"]
 asyncio_mode = "strict"
@@ -74,10 +76,15 @@ explicit_package_bases = true
 [tool.flake8]
 max-line-length = 120
 import-order-style = "edited"
-min_python_version = "3.10.0"
-# Skip checking I101, we want to sort imports in case sensitive manner
-extend-ignore = ["I101"]
 application-package-names = ["keboola_mcp_server"]
+min_python_version = "3.10.0"
+# Skip checking I101 (import order), we want to sort imports in case sensitive manner using simply `isort`
+extend-ignore = ["I101"]
+# Skip checking F401 in __init__.py files (unused imports), we simplify imports in __init__.py and it is expected
+# not to use them there. 
+per-file-ignores = [
+    "__init__.py: F401",
+]
 
 [tool.tox]
 requires = ["tox>=4.23", "black>=25.1", "isort>=6.0"]

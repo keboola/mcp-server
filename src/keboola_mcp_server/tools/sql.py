@@ -140,7 +140,7 @@ class _SnowflakeWorkspace(_Workspace):
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
         else:
-            sql = f'select CURRENT_DATABASE() as "current_database";'
+            sql = 'select CURRENT_DATABASE() as "current_database";'
             result = await self.execute_query(sql)
             if result.is_ok and result.data and result.data.rows:
                 row = result.data.rows[0]

@@ -6,7 +6,6 @@ from keboola_mcp_server.tools.components import (
     RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
 )
-from keboola_mcp_server.server import create_server
 
 
 class TestServer:

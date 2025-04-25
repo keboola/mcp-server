@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Union, cast, get_args
+from typing import Any, Optional, Sequence, Union, cast, get_args
 
 import requests
 from pydantic import BaseModel, Field
@@ -252,10 +252,10 @@ def _get_transformation_configuration(
     parameters = TransformationConfiguration.Parameters(
         blocks=[
             TransformationConfiguration.Parameters.Block(
-                name=f'Block 0',
+                name='Block 0',
                 codes=[
                     TransformationConfiguration.Parameters.Block.Code(
-                        name=f'Code 0', script=list(statements)
+                        name='Code 0', script=list(statements)
                     )
                 ],
             )
