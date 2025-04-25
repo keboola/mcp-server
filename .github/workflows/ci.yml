@@ -27,11 +27,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
       # Runs tests with coverage and generates coverage.xml file and test-results.xml file
       # and checks isort & black & flake8 code-style formatting
       # see setup in pyproject.toml
