@@ -17,7 +17,7 @@ jobs:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_PUSH_USER }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
 
-      # Proxy image
+      # MCP Server image
       IMAGE_NAME: "keboola/mcp-server"
       IMAGE_TAG: ${{ github.ref_name }} # Use the tag name as the image tag
     steps:
