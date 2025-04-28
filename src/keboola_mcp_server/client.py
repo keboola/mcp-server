@@ -263,16 +263,19 @@ class KeboolaServiceClient:
 class AsyncStorageClient(KeboolaServiceClient):
 
     @classmethod
-    def create(cls, root_url: str, token: str) -> 'AsyncStorageClient':
+    def create(cls, root_url: str, token: str, version: str = 'v2') -> 'AsyncStorageClient':
         """
         Creates an AsyncStorageClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token
+        :param version: The version of the API to use (default: 'v2')
         :return: A new instance of AsyncStorageClient
         """
         return cls(
-            raw_client=RawKeboolaClient(base_api_url=f'{root_url}/v2/storage', api_token=token)
+            raw_client=RawKeboolaClient(
+                base_api_url=f'{root_url}/{version}/storage', api_token=token
+            )
         )
 
 
@@ -432,7 +435,7 @@ class AIServiceClient(KeboolaServiceClient):
         :param component_id: The id of the component
         :return: Component details as dictionary
         """
-        return await self.raw_client.get(endpoint=f'docs/components/{component_id}')
+        return await self.get(endpoint=f'docs/components/{component_id}')
 
     async def docs_question(self, query: str) -> DocsQuestionResponse:
         """
