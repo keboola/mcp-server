@@ -40,35 +40,23 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "component_id": {
+      "description": "Unique identifier of the Keboola component/transformation",
+      "title": "Component Id",
       "type": "string"
     },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
+    "configuration_id": {
+      "description": "Unique identifier of the Keboola component/transformation configuration you want details about",
+      "title": "Configuration Id",
+      "type": "string"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "component_id",
+    "configuration_id"
   ],
-  "title": "Tool",
+  "title": "get_component_configuration_detailsArguments",
   "type": "object"
 }
 ```
@@ -107,35 +95,32 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
-      "type": "string"
+    "component_types": {
+      "default": [],
+      "description": "List of component types to filter by. If none, return all components.",
+      "items": {
+        "enum": [
+          "application",
+          "extractor",
+          "writer"
+        ],
+        "type": "string"
+      },
+      "title": "Component Types",
+      "type": "array"
     },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
+    "component_ids": {
+      "default": [],
+      "description": "List of component IDs to retrieve configurations for. If none, return all components.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Component Ids",
+      "type": "array"
     }
   },
-  "required": [
-    "name",
-    "inputSchema"
-  ],
-  "title": "Tool",
+  "title": "retrieve_components_configurationsArguments",
   "type": "object"
 }
 ```
@@ -170,35 +155,18 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
+    "transformation_ids": {
+      "default": [],
+      "description": "List of transformation component IDs to retrieve configurations for.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Transformation Ids",
+      "type": "array"
     }
   },
-  "required": [
-    "name",
-    "inputSchema"
-  ],
-  "title": "Tool",
+  "title": "retrieve_transformations_configurationsArguments",
   "type": "object"
 }
 ```
@@ -240,35 +208,41 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
     "name": {
+      "description": "A short, descriptive name summarizing the purpose of the SQL transformation.",
       "title": "Name",
       "type": "string"
     },
     "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
+      "description": "The detailed description of the SQL transformation capturing the user intent, explaining the SQL query, and the expected output.",
+      "title": "Description",
+      "type": "string"
     },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
+    "sql_statements": {
+      "description": "The executable SQL query statements written in the current SQL dialect. Each statement should be a separate item in the list.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sql Statements",
+      "type": "array"
+    },
+    "created_table_names": {
+      "default": [],
+      "description": "An empty list or a list of created table names if and only if they are generated within SQL statements (e.g., using `CREATE TABLE ...`).",
+      "items": {
+        "type": "string"
+      },
+      "title": "Created Table Names",
+      "type": "array"
     }
   },
   "required": [
     "name",
-    "inputSchema"
+    "description",
+    "sql_statements"
   ],
-  "title": "Tool",
+  "title": "create_sql_transformationArguments",
   "type": "object"
 }
 ```
@@ -290,35 +264,17 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "query": {
+      "description": "Natural language query to search for in the documentation.",
+      "title": "Query",
       "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "query"
   ],
-  "title": "Tool",
+  "title": "docs_queryArguments",
   "type": "object"
 }
 ```
@@ -352,35 +308,72 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "status": {
+      "default": null,
+      "description": "The optional status of the jobs to filter by, if None then default all.",
+      "enum": [
+        "waiting",
+        "processing",
+        "success",
+        "error",
+        "created"
+      ],
+      "title": "Status",
       "type": "string"
     },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
+    "component_id": {
       "default": null,
-      "title": "Description"
+      "description": "The optional ID of the component whose jobs you want to list, default = None.",
+      "title": "Component Id",
+      "type": "string"
     },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
+    "config_id": {
+      "default": null,
+      "description": "The optional ID of the component configuration whose jobs you want to list, default = None.",
+      "title": "Config Id",
+      "type": "string"
+    },
+    "limit": {
+      "default": 100,
+      "description": "The number of jobs to list, default = 100, max = 500.",
+      "maximum": 500,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "The offset of the jobs to list, default = 0.",
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "sort_by": {
+      "default": "startTime",
+      "description": "The field to sort the jobs by, default = \"startTime\".",
+      "enum": [
+        "startTime",
+        "endTime",
+        "createdTime",
+        "durationSeconds",
+        "id"
+      ],
+      "title": "Sort By",
+      "type": "string"
+    },
+    "sort_order": {
+      "default": "desc",
+      "description": "The order to sort the jobs by, default = \"desc\".",
+      "enum": [
+        "asc",
+        "desc"
+      ],
+      "title": "Sort Order",
+      "type": "string"
     }
   },
-  "required": [
-    "name",
-    "inputSchema"
-  ],
-  "title": "Tool",
+  "title": "retrieve_jobsArguments",
   "type": "object"
 }
 ```
@@ -405,35 +398,17 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "job_id": {
+      "description": "The unique identifier of the job whose details should be retrieved.",
+      "title": "Job Id",
       "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "job_id"
   ],
-  "title": "Tool",
+  "title": "get_job_detailArguments",
   "type": "object"
 }
 ```
@@ -455,35 +430,23 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "component_id": {
+      "description": "The ID of the component or transformation for which to start a job.",
+      "title": "Component Id",
       "type": "string"
     },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
+    "configuration_id": {
+      "description": "The ID of the configuration for which to start a job.",
+      "title": "Configuration Id",
+      "type": "string"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "component_id",
+    "configuration_id"
   ],
-  "title": "Tool",
+  "title": "start_jobArguments",
   "type": "object"
 }
 ```
@@ -493,7 +456,7 @@ This document provides details about the tools available in the MCP server.
 ---
 <a name="get_bucket_detail"></a>
 ## get_bucket_detail
-**Description**: Gets detailed information about a specific bucket.
+**Description**: bla bla bla
 
 ### Parameters
 - **name**: <class 'str'> - None
@@ -503,35 +466,17 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "bucket_id": {
+      "description": "Unique ID of the bucket.",
+      "title": "Bucket Id",
       "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "bucket_id"
   ],
-  "title": "Tool",
+  "title": "get_bucket_detailArguments",
   "type": "object"
 }
 ```
@@ -551,35 +496,8 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
-  "properties": {
-    "name": {
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
-    }
-  },
-  "required": [
-    "name",
-    "inputSchema"
-  ],
-  "title": "Tool",
+  "properties": {},
+  "title": "retrieve_bucketsArguments",
   "type": "object"
 }
 ```
@@ -599,35 +517,17 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "table_id": {
+      "description": "Unique ID of the table.",
+      "title": "Table Id",
       "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "table_id"
   ],
-  "title": "Tool",
+  "title": "get_table_detailArguments",
   "type": "object"
 }
 ```
@@ -647,35 +547,17 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "bucket_id": {
+      "description": "Unique ID of the bucket.",
+      "title": "Bucket Id",
       "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "bucket_id"
   ],
-  "title": "Tool",
+  "title": "retrieve_bucket_tablesArguments",
   "type": "object"
 }
 ```
@@ -695,35 +577,23 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "bucket_id": {
+      "description": "The ID of the bucket to update.",
+      "title": "Bucket Id",
       "type": "string"
     },
     "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
+      "description": "The new description for the bucket.",
+      "title": "Description",
+      "type": "string"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "bucket_id",
+    "description"
   ],
-  "title": "Tool",
+  "title": "update_bucket_descriptionArguments",
   "type": "object"
 }
 ```
@@ -743,35 +613,23 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "table_id": {
+      "description": "The ID of the table to update.",
+      "title": "Table Id",
       "type": "string"
     },
     "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
+      "description": "The new description for the table.",
+      "title": "Description",
+      "type": "string"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "table_id",
+    "description"
   ],
-  "title": "Tool",
+  "title": "update_table_descriptionArguments",
   "type": "object"
 }
 ```
@@ -801,35 +659,17 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
   "properties": {
-    "name": {
-      "title": "Name",
+    "sql_query": {
+      "description": "SQL SELECT query to run.",
+      "title": "Sql Query",
       "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
     }
   },
   "required": [
-    "name",
-    "inputSchema"
+    "sql_query"
   ],
-  "title": "Tool",
+  "title": "query_tableArguments",
   "type": "object"
 }
 ```
@@ -849,35 +689,8 @@ This document provides details about the tools available in the MCP server.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": true,
-  "description": "Definition for a tool the client can call.",
-  "properties": {
-    "name": {
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
-    "inputSchema": {
-      "title": "Inputschema",
-      "type": "object"
-    }
-  },
-  "required": [
-    "name",
-    "inputSchema"
-  ],
-  "title": "Tool",
+  "properties": {},
+  "title": "get_sql_dialectArguments",
   "type": "object"
 }
 ```

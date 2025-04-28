@@ -69,7 +69,7 @@ class ToolDocumentationGenerator:
         if hasattr(tool, 'model_json_schema'):
             f.write(f"\n**Input JSON Schema**:\n")
             f.write("```json\n")
-            f.write(json.dumps(tool.model_json_schema(), indent=2))
+            f.write(json.dumps(tool.inputSchema, indent=2))
             f.write("\n```\n")
         else:
             f.write("No JSON schema available for this tool.\n")
