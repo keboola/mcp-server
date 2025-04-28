@@ -54,7 +54,7 @@ class KeboolaClient:
         # Initialize clients for individual services
         self.storage_client_sync = SyncStorageClient(storage_api_url, self.token)
         self.storage_client = AsyncStorageClient.create(root_url=storage_api_url, token=self.token)
-        self.jobs_queue = JobsQueueClient.create(queue_api_url, self.token)
+        self.jobs_queue_client = JobsQueueClient.create(queue_api_url, self.token)
         self.ai_service_client = AIServiceClient.create(
             root_url=ai_service_api_url, token=self.token
         )

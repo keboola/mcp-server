@@ -2,6 +2,7 @@ from typing import Any, Callable
 
 import pytest
 from mcp.server.fastmcp import Context
+from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components import (
@@ -86,7 +87,7 @@ def assert_retrieve_components() -> (
 
 @pytest.mark.asyncio
 async def test_retrieve_components_configurations_by_types(
-    mocker,
+    mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
@@ -99,7 +100,7 @@ async def test_retrieve_components_configurations_by_types(
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     # mock the get method to return the mock_component with the mock_configurations
-    # simulate the response from the APIAsyncMock
+    # simulate the response from the API
     keboola_client.storage_client.get = mocker.AsyncMock(
         side_effect=[
             [{**component, 'configurations': mock_configurations}] for component in mock_components
@@ -130,7 +131,7 @@ async def test_retrieve_components_configurations_by_types(
 
 @pytest.mark.asyncio
 async def test_retrieve_transformations_configurations(
-    mocker,
+    mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
@@ -164,7 +165,7 @@ async def test_retrieve_transformations_configurations(
 
 @pytest.mark.asyncio
 async def test_retrieve_components_configurations_from_ids(
-    mocker,
+    mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
@@ -196,7 +197,7 @@ async def test_retrieve_components_configurations_from_ids(
 
 @pytest.mark.asyncio
 async def test_retrieve_transformations_configurations_from_ids(
-    mocker,
+    mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
@@ -230,7 +231,7 @@ async def test_retrieve_transformations_configurations_from_ids(
 
 @pytest.mark.asyncio
 async def test_get_component_configuration_details(
-    mocker,
+    mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_configuration: dict[str, Any],
     mock_component: dict[str, Any],
@@ -291,7 +292,7 @@ async def test_get_component_configuration_details(
 )
 @pytest.mark.asyncio
 async def test_create_transformation_configuration(
-    mocker,
+    mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configuration: dict[str, Any],
@@ -377,7 +378,7 @@ async def test_create_transformation_configuration(
 @pytest.mark.parametrize('sql_dialect', ['Unknown'])
 @pytest.mark.asyncio
 async def test_create_transformation_configuration_fail(
-    mocker,
+    mocker: MockerFixture,
     sql_dialect: str,
     mcp_context_components_configs: Context,
 ):

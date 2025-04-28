@@ -1,5 +1,5 @@
 import pytest
-from kbcstorage.client import Client as KBCClient
+from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import (
@@ -18,14 +18,14 @@ def keboola_client(mocker) -> KeboolaClient:
     """Creates mocked `KeboolaClient` instance with mocked sub-clients."""
     client = mocker.MagicMock(KeboolaClient)
     # Mock synchronous client
-    client.storage_client_sync = mocker.MagicMock(KBCClient)
+    client.storage_client_sync = mocker.MagicMock(SyncStorageClient)
     # Mock asynchronous clients
     client.storage_client = mocker.MagicMock(AsyncStorageClient)
-    client.jobs_queue = mocker.MagicMock(JobsQueueClient)
+    client.jobs_queue_client = mocker.MagicMock(JobsQueueClient)
     client.ai_service_client = mocker.MagicMock(AIServiceClient)
     # Mock the underlying api_client for async clients if needed for deeper testing
     client.storage_client.api_client = mocker.MagicMock(RawKeboolaClient)
-    client.jobs_queue.api_client = mocker.MagicMock(RawKeboolaClient)
+    client.jobs_queue_client.api_client = mocker.MagicMock(RawKeboolaClient)
     client.ai_service_client.api_client = mocker.MagicMock(RawKeboolaClient)
 
     return client

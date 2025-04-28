@@ -224,7 +224,7 @@ async def retrieve_jobs(
     client = KeboolaClient.from_state(ctx.session.state)
     _status = [status] if status else None
 
-    raw_jobs = client.jobs_queue.search_jobs_by(
+    raw_jobs = client.jobs_queue_client.search_jobs_by(
         component_id=component_id,
         config_id=config_id,
         limit=limit,
@@ -252,7 +252,7 @@ async def get_job_detail(
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
-    raw_job = client.jobs_queue.detail(job_id)
+    raw_job = client.jobs_queue_client.detail(job_id)
     LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
     return JobDetail.model_validate(raw_job)
 
@@ -273,7 +273,7 @@ async def start_job(
     client = KeboolaClient.from_state(ctx.session.state)
 
     try:
-        raw_job = client.jobs_queue.create_job(
+        raw_job = client.jobs_queue_client.create_job(
             component_id=component_id, configuration_id=configuration_id
         )
         job = JobDetail.model_validate(raw_job)

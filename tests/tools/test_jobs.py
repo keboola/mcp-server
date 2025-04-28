@@ -83,7 +83,7 @@ async def test_retrieve_jobs(
     """Tests retrieve_jobs tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
+    keboola_client.jobs_queue_client.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
 
     result = await retrieve_jobs(context)
 
@@ -124,7 +124,7 @@ async def test_retrieve_jobs(
     )
     assert all(hasattr(returned, 'not_a_desired_field') is False for returned in result)
 
-    keboola_client.jobs_queue.search_jobs_by.assert_called_once_with(
+    keboola_client.jobs_queue_client.search_jobs_by.assert_called_once_with(
         status=None,
         component_id=None,
         config_id=None,
@@ -142,7 +142,7 @@ async def test_get_job_detail(
     """Tests get_job_detail tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue.detail = mocker.MagicMock(return_value=mock_job)
+    keboola_client.jobs_queue_client.detail = mocker.MagicMock(return_value=mock_job)
 
     result = await get_job_detail('123', context)
 
@@ -171,7 +171,7 @@ async def test_get_job_detail(
     # table_id is not present in the mock_job, should be None
     assert result.table_id is None
 
-    keboola_client.jobs_queue.detail.assert_called_once_with('123')
+    keboola_client.jobs_queue_client.detail.assert_called_once_with('123')
 
 
 @pytest.mark.asyncio
@@ -184,7 +184,7 @@ async def retrieve_jobs_with_component_and_config_id(
     """
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
+    keboola_client.jobs_queue_client.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
 
     result = await retrieve_jobs(
         ctx=context, component_id='keboola.ex-aws-s3', config_id='config-123'
@@ -197,7 +197,7 @@ async def retrieve_jobs_with_component_and_config_id(
         returned.status == expected['status'] for returned, expected in zip(result, mock_jobs)
     )
 
-    keboola_client.jobs_queue.search_jobs_by.assert_called_once_with(
+    keboola_client.jobs_queue_client.search_jobs_by.assert_called_once_with(
         status=None,
         component_id='keboola.ex-aws-s3',
         config_id='config-123',
@@ -216,7 +216,7 @@ async def retrieve_jobs_with_component_id_without_config_id(
     It will return all jobs for the given component_id."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
+    keboola_client.jobs_queue_client.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
 
     result = await retrieve_jobs(ctx=context, component_id='keboola.ex-aws-s3')
 
@@ -227,7 +227,7 @@ async def retrieve_jobs_with_component_id_without_config_id(
         returned.status == expected['status'] for returned, expected in zip(result, mock_jobs)
     )
 
-    keboola_client.jobs_queue.search_jobs_by.assert_called_once_with(
+    keboola_client.jobs_queue_client.search_jobs_by.assert_called_once_with(
         status=None,
         component_id='keboola.ex-aws-s3',
         config_id=None,
@@ -252,7 +252,7 @@ async def test_start_job(
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_job['result'] = []  # simulate empty list as returned by create job endpoint
     mock_job['status'] = 'created'  # simulate created status as returned by create job endpoint
-    keboola_client.jobs_queue.create_job = mocker.MagicMock(return_value=mock_job)
+    keboola_client.jobs_queue_client.create_job = mocker.MagicMock(return_value=mock_job)
 
     component_id = mock_job['component']
     configuration_id = mock_job['config']
@@ -268,7 +268,7 @@ async def test_start_job(
     assert job_detail.config_id == configuration_id
     assert job_detail.result == {}
 
-    keboola_client.jobs_queue.create_job.assert_called_once_with(
+    keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
     )
@@ -281,7 +281,7 @@ async def test_start_job_fail(
     """Tests start_job tool when job creation fails."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue.create_job = mocker.MagicMock(
+    keboola_client.jobs_queue_client.create_job = mocker.MagicMock(
         side_effect=HTTPError('Job creation failed')
     )
 
@@ -291,7 +291,7 @@ async def test_start_job_fail(
     with pytest.raises(HTTPError):
         await start_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
 
-    keboola_client.jobs_queue.create_job.assert_called_once_with(
+    keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
     )

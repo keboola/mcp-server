@@ -7,6 +7,7 @@ from google.cloud.bigquery import QueryJob
 from google.cloud.bigquery.table import Row, RowIterator
 from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
+from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.sql import (
@@ -277,7 +278,9 @@ class TestWorkspaceManagerBigQuery:
             ),
         ],
     )
-    async def test_execute_query(self, query: str, expected: QueryResult, context: Context, mocker):
+    async def test_execute_query(
+        self, query: str, expected: QueryResult, context: Context, mocker: MockerFixture
+    ):
         # disable BigQuery's Client's constructor to avoid Google authentication
         bq_client = mocker.patch('keboola_mcp_server.tools.sql.Client.__init__')
         bq_client.return_value = None

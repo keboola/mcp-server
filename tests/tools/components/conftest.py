@@ -119,10 +119,9 @@ def mock_branch_id() -> str:
 
 @pytest.fixture
 def mcp_context_components_configs(
-    mocker: MockerFixture, mcp_context_client, mock_branch_id
+    mocker: MockerFixture, mcp_context_client: Context, mock_branch_id: str
 ) -> Context:
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client_sync = mocker.MagicMock()
+    keboola_client = mcp_context_client.session.state[KeboolaClient.STATE_KEY]
     keboola_client.storage_client_sync.components = mocker.MagicMock()
     keboola_client.storage_client_sync.configurations = mocker.MagicMock()
     keboola_client.storage_client_sync._branch_id = mock_branch_id
