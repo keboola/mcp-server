@@ -1,33 +1,42 @@
 # Tools Documentation
-This document provides details about the tools available in the MCP server.
+This document provides details about the tools available in the Keboola MCP server.
 
 ## Index
 
 ### Component Tools
-- [get_component_details](#get_component_details)
-- [retrieve_components](#retrieve_components)
-- [retrieve_transformations](#retrieve_transformations)
-- [create_sql_transformation](#create_sql_transformation)
+- [get_component_details](#get_component_details): Gets detailed information about a specific Keboola component configuration given component/transformation ID and
+    configuration ID
+- [retrieve_components](#retrieve_components): Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
+    If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
+    component_types
+- [retrieve_transformations](#retrieve_transformations): Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs
+- [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
+    description, and optionally a list of created table names if and only if they are generated within the SQL
+    statements
 
 ### Documentation Tools
-- [docs_query](#docs_query)
+- [docs_query](#docs_query): Answers a question using the Keboola documentation as a source
 
 ### Jobs Tools
-- [retrieve_jobs](#retrieve_jobs)
-- [get_job_detail](#get_job_detail)
-- [start_job](#start_job)
+- [retrieve_jobs](#retrieve_jobs): Retrieve all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
+    filtering
+- [get_job_detail](#get_job_detail): Retrieve a detailed information about a specific job, identified by the job_id, including its status, parameters,
+    results, and any relevant metadata
+- [start_job](#start_job): Starts a new job for a given component or transformation
 
 ### SQL Tools
-- [query_table](#query_table)
-- [get_sql_dialect](#get_sql_dialect)
+- [query_table](#query_table): Executes an SQL SELECT query to get the data from the underlying database
+- [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database
 
 ### Storage Tools
-- [get_bucket_detail](#get_bucket_detail)
-- [retrieve_buckets](#retrieve_buckets)
-- [get_table_detail](#get_table_detail)
-- [retrieve_bucket_tables](#retrieve_bucket_tables)
-- [update_bucket_description](#update_bucket_description)
-- [update_table_description](#update_table_description)
+- [get_bucket_detail](#get_bucket_detail): Gets detailed information about a specific bla bla bla
+- [retrieve_buckets](#retrieve_buckets): Retrieves information about all buckets in the project
+- [get_table_detail](#get_table_detail): Gets detailed information about a specific table including its DB identifier and column information
+- [retrieve_bucket_tables](#retrieve_bucket_tables): Retrieves all tables in a specific bucket with their basic information
+- [update_bucket_description](#update_bucket_description): Update the description for a given Keboola bucket
+- [update_table_description](#update_table_description): Update the description for a given Keboola table
+
+---
 
 # Component Tools Tools
 <a name="get_component_details"></a>
