@@ -6,10 +6,10 @@ from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import (
     AIServiceClient,
-    AsyncKeboolaClient,
+    RawKeboolaClient,
     JobsQueueClient,
     KeboolaClient,
-    StorageAsyncClient,
+    AsyncStorageClient,
 )
 from keboola_mcp_server.mcp import StatefullServerSession
 from keboola_mcp_server.tools.sql import WorkspaceManager
@@ -22,13 +22,13 @@ def keboola_client(mocker) -> KeboolaClient:
     # Mock synchronous client
     client.storage_client_sync = mocker.MagicMock(KBCClient)
     # Mock asynchronous clients
-    client.storage_client = mocker.MagicMock(StorageAsyncClient)
+    client.storage_client = mocker.MagicMock(AsyncStorageClient)
     client.jobs_queue = mocker.MagicMock(JobsQueueClient)
     client.ai_service_client = mocker.MagicMock(AIServiceClient)
     # Mock the underlying api_client for async clients if needed for deeper testing
-    client.storage_client.api_client = mocker.MagicMock(AsyncKeboolaClient)
-    client.jobs_queue.api_client = mocker.MagicMock(AsyncKeboolaClient)
-    client.ai_service_client.api_client = mocker.MagicMock(AsyncKeboolaClient)
+    client.storage_client.api_client = mocker.MagicMock(RawKeboolaClient)
+    client.jobs_queue.api_client = mocker.MagicMock(RawKeboolaClient)
+    client.ai_service_client.api_client = mocker.MagicMock(RawKeboolaClient)
 
     return client
 
