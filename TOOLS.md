@@ -3,17 +3,19 @@ This document provides details about the tools available in the MCP server.
 
 ## Index
 
-### Jobs Tools
-- [retrieve_jobs](#retrieve_jobs)
-- [get_job_detail](#get_job_detail)
-- [start_job](#start_job)
-
-### Other
+### Component Tools
 - [get_component_details](#get_component_details)
 - [retrieve_components](#retrieve_components)
 - [retrieve_transformations](#retrieve_transformations)
 - [create_sql_transformation](#create_sql_transformation)
+
+### Documentation Tools
 - [docs_query](#docs_query)
+
+### Jobs Tools
+- [retrieve_jobs](#retrieve_jobs)
+- [get_job_detail](#get_job_detail)
+- [start_job](#start_job)
 
 ### SQL Tools
 - [query_table](#query_table)
@@ -27,163 +29,7 @@ This document provides details about the tools available in the MCP server.
 - [update_bucket_description](#update_bucket_description)
 - [update_table_description](#update_table_description)
 
-# Jobs Tools Tools
-<a name="retrieve_jobs"></a>
-## retrieve_jobs
-**Description**: 
-    Retrieve all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
-    filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
-    USAGE:
-        Use when you want to list jobs for given component_id and optionally for given config_id.
-        Use when you want to list all jobs in the project or filter them by status.
-    EXAMPLES:
-        - if status = "error", only jobs with status "error" will be listed.
-        - if status = None, then all jobs with arbitrary status will be listed.
-        - if component_id = "123" and config_id = "456", then the jobs for the component with id "123" and configuration
-          with id "456" will be listed.
-        - if limit = 100 and offset = 0, the first 100 jobs will be listed.
-        - if limit = 100 and offset = 100, the second 100 jobs will be listed.
-        - if sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
-    
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "status": {
-      "default": null,
-      "description": "The optional status of the jobs to filter by, if None then default all.",
-      "enum": [
-        "waiting",
-        "processing",
-        "success",
-        "error",
-        "created"
-      ],
-      "title": "Status",
-      "type": "string"
-    },
-    "component_id": {
-      "default": null,
-      "description": "The optional ID of the component whose jobs you want to list, default = None.",
-      "title": "Component Id",
-      "type": "string"
-    },
-    "config_id": {
-      "default": null,
-      "description": "The optional ID of the component configuration whose jobs you want to list, default = None.",
-      "title": "Config Id",
-      "type": "string"
-    },
-    "limit": {
-      "default": 100,
-      "description": "The number of jobs to list, default = 100, max = 500.",
-      "maximum": 500,
-      "minimum": 1,
-      "title": "Limit",
-      "type": "integer"
-    },
-    "offset": {
-      "default": 0,
-      "description": "The offset of the jobs to list, default = 0.",
-      "minimum": 0,
-      "title": "Offset",
-      "type": "integer"
-    },
-    "sort_by": {
-      "default": "startTime",
-      "description": "The field to sort the jobs by, default = \"startTime\".",
-      "enum": [
-        "startTime",
-        "endTime",
-        "createdTime",
-        "durationSeconds",
-        "id"
-      ],
-      "title": "Sort By",
-      "type": "string"
-    },
-    "sort_order": {
-      "default": "desc",
-      "description": "The order to sort the jobs by, default = \"desc\".",
-      "enum": [
-        "asc",
-        "desc"
-      ],
-      "title": "Sort Order",
-      "type": "string"
-    }
-  },
-  "title": "retrieve_jobsArguments",
-  "type": "object"
-}
-```
-
----
-<a name="get_job_detail"></a>
-## get_job_detail
-**Description**: 
-    Retrieve a detailed information about a specific job, identified by the job_id, including its status, parameters,
-    results, and any relevant metadata.
-    EXAMPLES:
-        - if job_id = "123", then the details of the job with id "123" will be retrieved.
-    
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "job_id": {
-      "description": "The unique identifier of the job whose details should be retrieved.",
-      "title": "Job Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "job_id"
-  ],
-  "title": "get_job_detailArguments",
-  "type": "object"
-}
-```
-
----
-<a name="start_job"></a>
-## start_job
-**Description**: 
-    Starts a new job for a given component or transformation.
-    
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "component_id": {
-      "description": "The ID of the component or transformation for which to start a job.",
-      "title": "Component Id",
-      "type": "string"
-    },
-    "configuration_id": {
-      "description": "The ID of the configuration for which to start a job.",
-      "title": "Configuration Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "component_id",
-    "configuration_id"
-  ],
-  "title": "start_jobArguments",
-  "type": "object"
-}
-```
-
----
-
-# Other Tools
+# Component Tools Tools
 <a name="get_component_details"></a>
 ## get_component_details
 **Description**: 
@@ -392,6 +238,8 @@ This document provides details about the tools available in the MCP server.
 ```
 
 ---
+
+# Documentation Tools Tools
 <a name="docs_query"></a>
 ## docs_query
 **Description**: 
@@ -413,6 +261,162 @@ This document provides details about the tools available in the MCP server.
     "query"
   ],
   "title": "docs_queryArguments",
+  "type": "object"
+}
+```
+
+---
+
+# Jobs Tools Tools
+<a name="retrieve_jobs"></a>
+## retrieve_jobs
+**Description**: 
+    Retrieve all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
+    filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
+    USAGE:
+        Use when you want to list jobs for given component_id and optionally for given config_id.
+        Use when you want to list all jobs in the project or filter them by status.
+    EXAMPLES:
+        - if status = "error", only jobs with status "error" will be listed.
+        - if status = None, then all jobs with arbitrary status will be listed.
+        - if component_id = "123" and config_id = "456", then the jobs for the component with id "123" and configuration
+          with id "456" will be listed.
+        - if limit = 100 and offset = 0, the first 100 jobs will be listed.
+        - if limit = 100 and offset = 100, the second 100 jobs will be listed.
+        - if sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
+    
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "status": {
+      "default": null,
+      "description": "The optional status of the jobs to filter by, if None then default all.",
+      "enum": [
+        "waiting",
+        "processing",
+        "success",
+        "error",
+        "created"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "component_id": {
+      "default": null,
+      "description": "The optional ID of the component whose jobs you want to list, default = None.",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "config_id": {
+      "default": null,
+      "description": "The optional ID of the component configuration whose jobs you want to list, default = None.",
+      "title": "Config Id",
+      "type": "string"
+    },
+    "limit": {
+      "default": 100,
+      "description": "The number of jobs to list, default = 100, max = 500.",
+      "maximum": 500,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "The offset of the jobs to list, default = 0.",
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "sort_by": {
+      "default": "startTime",
+      "description": "The field to sort the jobs by, default = \"startTime\".",
+      "enum": [
+        "startTime",
+        "endTime",
+        "createdTime",
+        "durationSeconds",
+        "id"
+      ],
+      "title": "Sort By",
+      "type": "string"
+    },
+    "sort_order": {
+      "default": "desc",
+      "description": "The order to sort the jobs by, default = \"desc\".",
+      "enum": [
+        "asc",
+        "desc"
+      ],
+      "title": "Sort Order",
+      "type": "string"
+    }
+  },
+  "title": "retrieve_jobsArguments",
+  "type": "object"
+}
+```
+
+---
+<a name="get_job_detail"></a>
+## get_job_detail
+**Description**: 
+    Retrieve a detailed information about a specific job, identified by the job_id, including its status, parameters,
+    results, and any relevant metadata.
+    EXAMPLES:
+        - if job_id = "123", then the details of the job with id "123" will be retrieved.
+    
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "job_id": {
+      "description": "The unique identifier of the job whose details should be retrieved.",
+      "title": "Job Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "get_job_detailArguments",
+  "type": "object"
+}
+```
+
+---
+<a name="start_job"></a>
+## start_job
+**Description**: 
+    Starts a new job for a given component or transformation.
+    
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "component_id": {
+      "description": "The ID of the component or transformation for which to start a job.",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the configuration for which to start a job.",
+      "title": "Configuration Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "component_id",
+    "configuration_id"
+  ],
+  "title": "start_jobArguments",
   "type": "object"
 }
 ```
