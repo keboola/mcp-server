@@ -183,7 +183,9 @@ class TestWorkspaceManagerSnowflake:
     async def test_execute_query(
         self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context
     ):
-        keboola_client.storage_client.post.return_value = TypeAdapter(QueryResult).dump_python(expected)
+        keboola_client.storage_client.post.return_value = TypeAdapter(QueryResult).dump_python(
+            expected
+        )
         m = WorkspaceManager.from_state(context.session.state)
         result = await m.execute_query(query)
         assert result == expected

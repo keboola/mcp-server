@@ -1,8 +1,8 @@
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from mcp.server.fastmcp import Context
+from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
 
@@ -118,11 +118,13 @@ def mock_branch_id() -> str:
 
 
 @pytest.fixture
-def mcp_context_components_configs(mcp_context_client, mock_branch_id) -> Context:
+def mcp_context_components_configs(
+    mocker: MockerFixture, mcp_context_client, mock_branch_id
+) -> Context:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client_sync = MagicMock()
-    keboola_client.storage_client_sync.components = MagicMock()
-    keboola_client.storage_client_sync.configurations = MagicMock()
+    keboola_client.storage_client_sync = mocker.MagicMock()
+    keboola_client.storage_client_sync.components = mocker.MagicMock()
+    keboola_client.storage_client_sync.configurations = mocker.MagicMock()
     keboola_client.storage_client_sync._branch_id = mock_branch_id
 
     return mcp_context_client

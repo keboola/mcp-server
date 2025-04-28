@@ -188,7 +188,9 @@ async def get_component_configuration_details(
     # Get Component Details
     component = await _get_component_details(client=client, component_id=component_id)
     # Get Configuration Details
-    raw_configuration = client.storage_client_sync.configurations.detail(component_id, configuration_id)
+    raw_configuration = client.storage_client_sync.configurations.detail(
+        component_id, configuration_id
+    )
     LOG.info(
         f'Retrieved configuration details for {component_id} component with configuration {configuration_id}.'
     )
@@ -293,7 +295,9 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{transformation_id}/configs'
+    endpoint = (
+        f'branch/{client.storage_client_sync._branch_id}/components/{transformation_id}/configs'
+    )
 
     LOG.info(
         f'Creating new transformation configuration: {name} for component: {transformation_id}.'

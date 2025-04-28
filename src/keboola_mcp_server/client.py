@@ -55,10 +55,12 @@ class KeboolaClient:
         self.storage_client_sync = SyncStorageClient(storage_api_url, self.token)
         self.storage_client = AsyncStorageClient.create(root_url=storage_api_url, token=self.token)
         self.jobs_queue = JobsQueueClient.create(queue_api_url, self.token)
-        self.ai_service_client = AIServiceClient.create(root_url=ai_service_api_url, token=self.token)
+        self.ai_service_client = AIServiceClient.create(
+            root_url=ai_service_api_url, token=self.token
+        )
 
 
-class RawKeboolaClient():
+class RawKeboolaClient:
     """
     Raw async client for Keboola services.
 
@@ -66,7 +68,9 @@ class RawKeboolaClient():
     and can be used to implement high-level functions in clients for individual services.
     """
 
-    def __init__(self, base_api_url: str, api_token: str, headers: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, base_api_url: str, api_token: str, headers: dict[str, Any] | None = None
+    ) -> None:
         self.base_api_url = base_api_url
         self.headers = {
             'X-StorageApi-Token': api_token,
@@ -201,7 +205,11 @@ class KeboolaServiceClient:
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
 
-    async def get(self, endpoint: str, params: Optional[dict[str, Any]] = None,) -> dict[str, Any]:
+    async def get(
+        self,
+        endpoint: str,
+        params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """
         Makes a GET request to the service API.
 
@@ -211,7 +219,11 @@ class KeboolaServiceClient:
         """
         return await self.raw_client.get(endpoint=endpoint, params=params)
 
-    async def post(self, endpoint: str, data: Optional[dict[str, Any]] = None,) -> dict[str, Any]:
+    async def post(
+        self,
+        endpoint: str,
+        data: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """
         Makes a POST request to the service API.
 
@@ -221,7 +233,11 @@ class KeboolaServiceClient:
         """
         return await self.raw_client.post(endpoint=endpoint, data=data)
 
-    async def put(self, endpoint: str, data: Optional[dict[str, Any]] = None,) -> dict[str, Any]:
+    async def put(
+        self,
+        endpoint: str,
+        data: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """
         Makes a PUT request to the service API.
 
@@ -231,7 +247,10 @@ class KeboolaServiceClient:
         """
         return await self.raw_client.put(endpoint=endpoint, data=data)
 
-    async def delete(self, endpoint: str,) -> dict[str, Any]:
+    async def delete(
+        self,
+        endpoint: str,
+    ) -> dict[str, Any]:
         """
         Makes a DELETE request to the service API.
 
@@ -252,7 +271,9 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param token: The Keboola Storage API token
         :return: A new instance of AsyncStorageClient
         """
-        return cls(raw_client=RawKeboolaClient(base_api_url=f'{root_url}/v2/storage', api_token=token))
+        return cls(
+            raw_client=RawKeboolaClient(base_api_url=f'{root_url}/v2/storage', api_token=token)
+        )
 
 
 class JobsQueueClient(KeboolaServiceClient):
@@ -270,7 +291,6 @@ class JobsQueueClient(KeboolaServiceClient):
         :return: A new instance of JobsQueueClient
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
-
 
     async def detail(self, job_id: str) -> dict[str, Any]:
         """

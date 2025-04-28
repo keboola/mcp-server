@@ -1,15 +1,13 @@
-from unittest.mock import MagicMock
-
 import pytest
 from kbcstorage.client import Client as KBCClient
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import (
     AIServiceClient,
-    RawKeboolaClient,
+    AsyncStorageClient,
     JobsQueueClient,
     KeboolaClient,
-    AsyncStorageClient,
+    RawKeboolaClient,
 )
 from keboola_mcp_server.mcp import StatefullServerSession
 from keboola_mcp_server.tools.sql import WorkspaceManager
