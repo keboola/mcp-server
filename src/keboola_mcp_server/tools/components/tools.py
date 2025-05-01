@@ -29,9 +29,9 @@ LOG = logging.getLogger(__name__)
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
 # These tool names now reflect their conventional usage, removing redundant parts for users while still
 # providing the same functionality as described in the original tool names.
-RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_components'
+RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_component_configurations'
 RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
-GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = 'get_component_details'
+GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = 'get_component_configuration_details'
 
 
 def add_component_tools(mcp: FastMCP) -> None:
@@ -83,7 +83,7 @@ async def retrieve_components_configurations(
     ),
 ]:
     """
-    Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
+    Retrieves configurations of components present in the project, optionally filtered by component types or specific component IDs
     If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
     component_types.
     USAGE:
