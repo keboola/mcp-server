@@ -33,6 +33,7 @@ dev = [
 
 [project.scripts]
 keboola_mcp_server = "keboola_mcp_server.cli:main"
+keboola-mcp-server = "keboola_mcp_server.cli:main"
 
 [tool.black]
 line-length = 100

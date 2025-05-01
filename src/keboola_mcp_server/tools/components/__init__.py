@@ -1,9 +1,9 @@
 from keboola_mcp_server.tools.components.model import (
-    ComponentConfiguration,
+    ComponentConfigurationResponse,
     ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
-    ReducedComponentConfiguration,
+    ComponentConfigurationResponseBase,
 )
 from keboola_mcp_server.tools.components.tools import (
     GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,

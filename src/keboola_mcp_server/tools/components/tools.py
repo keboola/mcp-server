@@ -6,7 +6,7 @@ from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components.model import (
-    ComponentConfiguration,
+    ComponentConfigurationResponse,
     ComponentType,
     ComponentWithConfigurations,
 )
@@ -166,7 +166,7 @@ async def get_component_configuration_details(
     ],
     ctx: Context,
 ) -> Annotated[
-    ComponentConfiguration,
+    ComponentConfigurationResponse,
     Field(
         description='Detailed information about a Keboola component/transformation and its configuration.',
     ),
@@ -205,7 +205,7 @@ async def get_component_configuration_details(
             f'No metadata found for {component_id} component with configuration {configuration_id}.'
         )
     # Create Component Configuration Detail Object
-    return ComponentConfiguration.model_validate(
+    return ComponentConfigurationResponse.model_validate(
         {
             **raw_configuration,
             'component': component,
@@ -251,7 +251,7 @@ async def create_sql_transformation(
         ),
     ] = tuple(),
 ) -> Annotated[
-    ComponentConfiguration,
+    ComponentConfigurationResponse,
     Field(
         description='Newly created SQL Transformation Configuration.',
     ),
@@ -311,7 +311,7 @@ async def create_sql_transformation(
         )
 
         component = await _get_component_details(client=client, component_id=transformation_id)
-        new_transformation_configuration = ComponentConfiguration(
+        new_transformation_configuration = ComponentConfigurationResponse(
             **new_raw_transformation_configuration,
             component_id=transformation_id,
             component=component,
