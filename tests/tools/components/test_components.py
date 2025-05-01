@@ -401,7 +401,7 @@ async def test_create_component_configuration_success(
         name="Test Config",
         description="Test Description",
         component_id=mock_component['id'],
-        configuration={"param1": "value1"}
+        configuration={"param1": "value1"},
     )
 
     # Verify result
@@ -411,7 +411,9 @@ async def test_create_component_configuration_success(
 
     # Verify API calls
     keboola_client.post.assert_called_once()
-    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(mock_component['id'])
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(
+        mock_component['id']
+    )
 
 
 @pytest.mark.asyncio
@@ -437,7 +439,7 @@ async def test_create_component_configuration_with_row(
         description="Test Description",
         component_id=mock_component['id'],
         configuration={"param1": "value1"},
-        configuration_row={"row_param": "row_value"}
+        configuration_row={"row_param": "row_value"},
     )
 
     # Verify result
@@ -468,7 +470,7 @@ async def test_create_component_configuration_failure(
             name="Test Config",
             description="Test Description",
             component_id=mock_component['id'],
-            configuration={"param1": "value1"}
+            configuration={"param1": "value1"},
         )
 
     assert str(exc_info.value) == "API Error"
@@ -498,7 +500,7 @@ async def test_create_component_configuration_row_failure(
             description="Test Description",
             component_id=mock_component['id'],
             configuration={"param1": "value1"},
-            configuration_row={"row_param": "row_value"}
+            configuration_row={"row_param": "row_value"},
         )
 
     assert str(exc_info.value) == "Row API Error"
@@ -521,7 +523,7 @@ async def test_get_component_configuration_examples_success(
     test_data = {
         "component_id": mock_component['id'],
         "config_example": {"param1": "value1", "param2": "value2"},
-        "config_row_example": {"row_param1": "row_value1"}
+        "config_row_example": {"row_param1": "row_value1"},
     }
     with open(test_file, 'w', encoding='utf-8') as f:
         f.write(json.dumps(test_data) + "\n")
@@ -581,11 +583,16 @@ async def test_get_component_configuration_examples_invalid_json(
     # Write invalid JSON to file
     with open(test_file, 'w', encoding='utf-8') as f:
         f.write("invalid json\n")
-        f.write(json.dumps({
-            "component_id": mock_component['id'],
-            "config_example": {"param1": "value1"},
-            "config_row_example": {"row_param1": "row_value1"}
-        }) + "\n")
+        f.write(
+            json.dumps(
+                {
+                    "component_id": mock_component['id'],
+                    "config_example": {"param1": "value1"},
+                    "config_row_example": {"row_param1": "row_value1"},
+                }
+            )
+            + "\n"
+        )
 
     try:
         # Call the function
@@ -619,10 +626,7 @@ async def test_get_component_configuration_examples_no_examples(
     test_file = jsonl_path / f"sample_data_{mock_component['id']}.jsonl"
 
     # Write test data with different component_id
-    test_data = {
-        "component_id": "different.component.id",
-        "config_example": {"param1": "value1"}
-    }
+    test_data = {"component_id": "different.component.id", "config_example": {"param1": "value1"}}
     with open(test_file, 'w', encoding='utf-8') as f:
         f.write(json.dumps(test_data) + "\n")
 

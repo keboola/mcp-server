@@ -377,7 +377,7 @@ async def create_component_configuration(
     Creates a component configuration using the specified name, component ID, configuration JSON, and description.
     Optionally adds a configuration row if provided.
     CONSIDERATIONS:
-        The configuration JSON object must follow the configuration schema of the specified component. The 
+        The configuration JSON object must follow the configuration schema of the specified component. The
         configuration JSON object should adhere to the component's configuration examples.
         If configuration_row is provided, it must follow the configuration row schema of the specified component.
 
@@ -396,9 +396,7 @@ async def create_component_configuration(
     client = KeboolaClient.from_state(ctx.session.state)
     endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs'
 
-    LOG.info(
-        f'Creating new configuration: {name} for component: {component_id}.'
-    )
+    LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
@@ -470,7 +468,7 @@ async def get_component_configuration_examples(
 
     # Construct the path to the JSONL file TODO: fix the path somehow
     jsonl_path = Path("json-schemas/output") / f"sample_data_{component_id}.jsonl"
-    
+
     if not jsonl_path.exists():
         return f"No configuration examples found for component {component_id}"
 
