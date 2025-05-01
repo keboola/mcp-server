@@ -1,5 +1,7 @@
 from typing import Any, Callable, Sequence, Union
 from unittest.mock import AsyncMock, MagicMock, call
+from pathlib import Path
+import json
 
 import pytest
 from mcp.server.fastmcp import Context
@@ -14,6 +16,8 @@ from keboola_mcp_server.tools.components import (
     get_component_configuration_details,
     retrieve_components_configurations,
     retrieve_transformations_configurations,
+    create_component_configuration,
+    get_component_configuration_examples,
 )
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
@@ -373,3 +377,264 @@ async def test_create_transformation_configuration_fail(
             'test_description',
             ['SELECT * FROM test'],
         )
+
+
+@pytest.mark.asyncio
+async def test_create_component_configuration_success(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    mock_branch_id: str,
+):
+    """Test successful creation of component configuration without configuration row."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    # Setup mocks
+    keboola_client.ai_service_client = MagicMock()
+    keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=mock_component)
+    keboola_client.post = AsyncMock(return_value=mock_configuration)
+
+    # Call the function
+    result = await create_component_configuration(
+        context,
+        name="Test Config",
+        description="Test Description",
+        component_id=mock_component['id'],
+        configuration={"param1": "value1"}
+    )
+
+    # Verify result
+    assert isinstance(result, ComponentConfiguration)
+    assert result.component_id == mock_component['id']
+    assert result.configuration_id == mock_configuration['id']
+
+    # Verify API calls
+    keboola_client.post.assert_called_once()
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(mock_component['id'])
+
+
+@pytest.mark.asyncio
+async def test_create_component_configuration_with_row(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    mock_branch_id: str,
+):
+    """Test creation of component configuration with configuration row."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    # Setup mocks
+    keboola_client.ai_service_client = MagicMock()
+    keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=mock_component)
+    keboola_client.post = AsyncMock(side_effect=[mock_configuration, {"id": "row-1"}])
+
+    # Call the function with configuration row
+    result = await create_component_configuration(
+        context,
+        name="Test Config",
+        description="Test Description",
+        component_id=mock_component['id'],
+        configuration={"param1": "value1"},
+        configuration_row={"row_param": "row_value"}
+    )
+
+    # Verify result
+    assert isinstance(result, ComponentConfiguration)
+    assert result.component_id == mock_component['id']
+
+    # Verify API calls
+    assert keboola_client.post.call_count == 2  # One for configuration, one for row
+
+
+@pytest.mark.asyncio
+async def test_create_component_configuration_failure(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_branch_id: str,
+):
+    """Test error state when creating configuration."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    # Setup mock to raise exception
+    keboola_client.post = AsyncMock(side_effect=Exception("API Error"))
+
+    # Verify that function raises exception
+    with pytest.raises(Exception) as exc_info:
+        await create_component_configuration(
+            context,
+            name="Test Config",
+            description="Test Description",
+            component_id=mock_component['id'],
+            configuration={"param1": "value1"}
+        )
+
+    assert str(exc_info.value) == "API Error"
+
+
+@pytest.mark.asyncio
+async def test_create_component_configuration_row_failure(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    mock_branch_id: str,
+):
+    """Test error state when adding configuration row."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    # Setup mocks - first call successful, second raises exception
+    keboola_client.ai_service_client = MagicMock()
+    keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=mock_component)
+    keboola_client.post = AsyncMock(side_effect=[mock_configuration, Exception("Row API Error")])
+
+    # Verify that function raises exception
+    with pytest.raises(Exception) as exc_info:
+        await create_component_configuration(
+            context,
+            name="Test Config",
+            description="Test Description",
+            component_id=mock_component['id'],
+            configuration={"param1": "value1"},
+            configuration_row={"row_param": "row_value"}
+        )
+
+    assert str(exc_info.value) == "Row API Error"
+
+
+@pytest.mark.asyncio
+async def test_get_component_configuration_examples_success(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """Test successful retrieval of component configuration examples."""
+    context = mcp_context_components_configs
+
+    # Create test JSONL file in the correct location
+    jsonl_path = Path("json-schemas/output")
+    jsonl_path.mkdir(parents=True, exist_ok=True)
+    test_file = jsonl_path / f"sample_data_{mock_component['id']}.jsonl"
+
+    # Write test data to JSONL file
+    test_data = {
+        "component_id": mock_component['id'],
+        "config_example": {"param1": "value1", "param2": "value2"},
+        "config_row_example": {"row_param1": "row_value1"}
+    }
+    with open(test_file, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(test_data) + "\n")
+
+    try:
+        # Call the function
+        result = await get_component_configuration_examples(context, mock_component['id'])
+
+        # Verify result
+        assert isinstance(result, str)
+        assert "Configuration examples" in result
+        assert "param1" in result
+        assert "value1" in result
+        assert "row_param1" in result
+        assert "row_value1" in result
+    finally:
+        # Clean up
+        test_file.unlink(missing_ok=True)
+        jsonl_path.rmdir()
+        Path("json-schemas").rmdir()
+
+
+@pytest.mark.asyncio
+async def test_get_component_configuration_examples_no_file(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """Test retrieval of component configuration examples when file does not exist."""
+    context = mcp_context_components_configs
+
+    # Ensure file does not exist
+    jsonl_path = Path("json-schemas/output")
+    test_file = jsonl_path / f"sample_data_{mock_component['id']}.jsonl"
+    test_file.unlink(missing_ok=True)
+
+    # Call the function
+    result = await get_component_configuration_examples(context, mock_component['id'])
+
+    # Verify result
+    assert isinstance(result, str)
+    assert result == f"No configuration examples found for component {mock_component['id']}"
+
+
+@pytest.mark.asyncio
+async def test_get_component_configuration_examples_invalid_json(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """Test retrieval of component configuration examples with invalid JSON."""
+    context = mcp_context_components_configs
+
+    # Create test JSONL file in the correct location
+    jsonl_path = Path("json-schemas/output")
+    jsonl_path.mkdir(parents=True, exist_ok=True)
+    test_file = jsonl_path / f"sample_data_{mock_component['id']}.jsonl"
+
+    # Write invalid JSON to file
+    with open(test_file, 'w', encoding='utf-8') as f:
+        f.write("invalid json\n")
+        f.write(json.dumps({
+            "component_id": mock_component['id'],
+            "config_example": {"param1": "value1"},
+            "config_row_example": {"row_param1": "row_value1"}
+        }) + "\n")
+
+    try:
+        # Call the function
+        result = await get_component_configuration_examples(context, mock_component['id'])
+
+        # Verify result
+        assert isinstance(result, str)
+        assert "Configuration examples" in result
+        assert "param1" in result
+        assert "value1" in result
+        assert "row_param1" in result
+        assert "row_value1" in result
+    finally:
+        # Clean up
+        test_file.unlink(missing_ok=True)
+        jsonl_path.rmdir()
+        Path("json-schemas").rmdir()
+
+
+@pytest.mark.asyncio
+async def test_get_component_configuration_examples_no_examples(
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """Test retrieval of component configuration examples when no examples are found."""
+    context = mcp_context_components_configs
+
+    # Create test JSONL file in the correct location
+    jsonl_path = Path("json-schemas/output")
+    jsonl_path.mkdir(parents=True, exist_ok=True)
+    test_file = jsonl_path / f"sample_data_{mock_component['id']}.jsonl"
+
+    # Write test data with different component_id
+    test_data = {
+        "component_id": "different.component.id",
+        "config_example": {"param1": "value1"}
+    }
+    with open(test_file, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(test_data) + "\n")
+
+    try:
+        # Call the function
+        result = await get_component_configuration_examples(context, mock_component['id'])
+
+        # Verify result
+        assert isinstance(result, str)
+        assert result == f"No configuration examples found for component {mock_component['id']}"
+    finally:
+        # Clean up
+        test_file.unlink(missing_ok=True)
+        jsonl_path.rmdir()
+        Path("json-schemas").rmdir()

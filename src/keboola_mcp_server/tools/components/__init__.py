@@ -10,8 +10,10 @@ from keboola_mcp_server.tools.components.tools import (
     RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     add_component_tools,
+    create_component_configuration,
     create_sql_transformation,
     get_component_configuration_details,
+    get_component_configuration_examples,
     retrieve_components_configurations,
     retrieve_transformations_configurations,
 )

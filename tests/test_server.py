@@ -14,9 +14,11 @@ class TestServer:
         server = create_server()
         tools = await server.list_tools()
         assert sorted(t.name for t in tools) == [
+            'create_component_configuration',
             'create_sql_transformation',
             'docs_query',
             'get_bucket_detail',
+            'get_component_configuration_examples',
             GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
             'get_job_detail',
             'get_sql_dialect',
