@@ -1,18 +1,26 @@
-# Python-generated files
+# Python (build) related files
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
+
+# IDE related files
+.cursor/
 .idea/
 .vscode/
+
 # Virtual environments
 .venv
+
+# Environment variables
 .env
-# Coverage files
+
+# Test related files
 .coverage
 .coverage.*
 coverage.xml
 htmlcov/
+.pytest_cache/
 test-results.xml

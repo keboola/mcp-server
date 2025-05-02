@@ -164,7 +164,7 @@ class _SnowflakeWorkspace(_Workspace):
             return None
 
     async def execute_query(self, sql_query: str) -> QueryResult:
-        resp = await self._client.post(
+        resp = await self._client.storage_client.post(
             f'branch/default/workspaces/{self.id}/query', {'query': sql_query}
         )
         return TypeAdapter(QueryResult).validate_python(resp)
@@ -259,7 +259,7 @@ class WorkspaceManager:
         if self._workspace:
             return self._workspace
 
-        for wsp_info in await self._client.get('workspaces'):
+        for wsp_info in await self._client.storage_client.get('workspaces'):
             assert isinstance(wsp_info, dict)
             _id = wsp_info.get('id')
             backend = wsp_info.get('connection', {}).get('backend')
