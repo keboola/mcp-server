@@ -227,8 +227,27 @@ async def create_sql_transformation(
         str,
         Field(
             description=(
-                'The detailed description of the SQL transformation capturing the user intent, explaining the '
-                'SQL query, and the expected output.'
+                'The structured documentation for the SQL transformation. Suggested format:\n\n'
+                '# SQL Transformation Documentation\n\n'
+                '## Overview\n'
+                'Brief description of what this transformation does and its purpose in the overall data flow.\n\n'
+                '### Usage Example\n'
+                '1. Ensure required input mapping is configured (e.g., `in.c.source.table_name`).\n'
+                '2. Add the transformation to a flow in the desired order.\n'
+                '3. Output will be available in `out.c.target.table_name`.\n\n'
+                '## User Parameters Description\n'
+                '| Parameter Name | Description | Required | Default |\n'
+                '|----------------|-------------|----------|--------|\n'
+                '| `source_table` | Input table with raw data | ✅ | N/A |\n'
+                '| `target_table` | Destination table after transformation | ✅ | N/A |\n\n'
+                '> 🧠 **Tip:** Document any variables or shared code dependencies here.\n\n'
+                '## Code Logic\n\n'
+                '### Dependencies\n'
+                'List any used DB-specific functions or external shared code blocks.\n\n'
+                '- DB functions used (e.g., `NOW()`, `REGEXP_REPLACE()`)\n'
+                '- Shared code blocks referenced\n\n'
+                '### Component Workflow\n'
+                'Describe the transformation logic flow from input to output.'
             ),
         ),
     ],
@@ -302,7 +321,7 @@ async def create_sql_transformation(
     # or log an error and raise an exception if not
     try:
         new_raw_transformation_configuration = await client.post(
-            endpoint,
+            endpoint,	
             data={
                 'name': name,
                 'description': description,
@@ -328,3 +347,4 @@ async def create_sql_transformation(
 
 
 ############################## End of component tools #########################################
+
