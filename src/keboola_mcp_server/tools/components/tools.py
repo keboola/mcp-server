@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, List, Sequence
+from typing import Annotated, Sequence, Optional, Any
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
@@ -8,7 +8,7 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationResponse,
     ComponentType,
-    ComponentWithConfigurations,
+    ComponentWithConfigurations, ComponentConfigurationOutput, ComponentRootConfiguration, ComponentDetail,
 )
 from keboola_mcp_server.tools.components.utils import (
     _get_component_details,
@@ -21,7 +21,6 @@ from keboola_mcp_server.tools.components.utils import (
 from keboola_mcp_server.tools.sql import get_sql_dialect
 
 LOG = logging.getLogger(__name__)
-
 
 ############################## Add component tools to the MCP server #########################################
 
@@ -56,8 +55,11 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(create_sql_transformation)
     LOG.info(f'Added tool: {create_sql_transformation.__name__}.')
 
-    mcp.add_tool(create_component_configuration)
-    LOG.info(f'Added tool: {create_component_configuration.__name__}.')
+    mcp.add_tool(get_component_detail)
+    LOG.info(f'Added tool: {get_component_detail.__name__}.')
+
+    mcp.add_tool(create_component_root_configuration)
+    LOG.info(f'Added tool: {create_component_root_configuration.__name__}.')
 
     mcp.add_tool(get_component_configuration_examples)
     LOG.info(f'Added tool: {get_component_configuration_examples.__name__}.')
@@ -69,19 +71,19 @@ def add_component_tools(mcp: FastMCP) -> None:
 
 
 async def retrieve_components_configurations(
-    ctx: Context,
-    component_types: Annotated[
-        Sequence[ComponentType],
-        Field(
-            description='List of component types to filter by. If none, return all components.',
-        ),
-    ] = tuple(),
-    component_ids: Annotated[
-        Sequence[str],
-        Field(
-            description='List of component IDs to retrieve configurations for. If none, return all components.',
-        ),
-    ] = tuple(),
+        ctx: Context,
+        component_types: Annotated[
+            Sequence[ComponentType],
+            Field(
+                description='List of component types to filter by. If none, return all components.',
+            ),
+        ] = tuple(),
+        component_ids: Annotated[
+            Sequence[str],
+            Field(
+                description='List of component IDs to retrieve configurations for. If none, return all components.',
+            ),
+        ] = tuple(),
 ) -> Annotated[
     list[ComponentWithConfigurations],
     Field(
@@ -120,13 +122,13 @@ async def retrieve_components_configurations(
 
 
 async def retrieve_transformations_configurations(
-    ctx: Context,
-    transformation_ids: Annotated[
-        Sequence[str],
-        Field(
-            description='List of transformation component IDs to retrieve configurations for.',
-        ),
-    ] = tuple(),
+        ctx: Context,
+        transformation_ids: Annotated[
+            Sequence[str],
+            Field(
+                description='List of transformation component IDs to retrieve configurations for.',
+            ),
+        ] = tuple(),
 ) -> Annotated[
     list[ComponentWithConfigurations],
     Field(
@@ -159,20 +161,45 @@ async def retrieve_transformations_configurations(
         return await _retrieve_components_configurations_by_ids(client, transformation_ids)
 
 
-async def get_component_configuration_details(
-    component_id: Annotated[
-        str, Field(description='Unique identifier of the Keboola component/transformation')
-    ],
-    configuration_id: Annotated[
-        str,
-        Field(
-            description='Unique identifier of the Keboola component/transformation configuration you want details '
-            'about',
-        ),
-    ],
-    ctx: Context,
+async def get_component_detail(
+        ctx: Context,
+        component_id: Annotated[
+            str, Field(description='Unique identifier of the Keboola component/transformation')
+        ],
 ) -> Annotated[
-    ComponentConfigurationResponse,
+    ComponentDetail,
+    Field(
+        description='Detailed information about a Keboola component.',
+    ),
+]:
+    """
+    Gets detailed information about a specific Keboola component given component ID.
+    USAGE:
+        - Use when you want to see the details of a specific component to get its documentation, configuration schemas
+        ,etc. Especially in situation when the users asks to create or update a component configuration. This tool is mainly for internal use by the agent.
+    EXAMPLES:
+        - user_input: `Create a generic extractor configuration for x`
+            -> Set the component_id if you know it or find the component_id by component lookup or docs use tool and set it
+            -> returns the details of the component/transformation configuration pair
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    return await _get_component_details(component_id=component_id, client=client)
+
+
+async def get_component_configuration_details(
+        component_id: Annotated[
+            str, Field(description='Unique identifier of the Keboola component/transformation')
+        ],
+        configuration_id: Annotated[
+            str,
+            Field(
+                description='Unique identifier of the Keboola component/transformation configuration you want details '
+                            'about',
+            ),
+        ],
+        ctx: Context,
+) -> Annotated[
+    ComponentConfigurationOutput,
     Field(
         description='Detailed information about a Keboola component/transformation and its configuration.',
     ),
@@ -211,51 +238,52 @@ async def get_component_configuration_details(
             f'No metadata found for {component_id} component with configuration {configuration_id}.'
         )
     # Create Component Configuration Detail Object
-    return ComponentConfigurationResponse.model_validate(
+    configuration_response = ComponentConfigurationResponse.model_validate(
         {
             **raw_configuration,
-            'component': component,
             'component_id': component_id,
             'metadata': r_metadata,
         }
     )
+    # Create Component Configuration Output Object
+    return ComponentConfigurationOutput.from_component_configuration_response(configuration_response, component)
 
 
 async def create_sql_transformation(
-    ctx: Context,
-    name: Annotated[
-        str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
-        ),
-    ],
-    description: Annotated[
-        str,
-        Field(
-            description=(
-                'The detailed description of the SQL transformation capturing the user intent, explaining the '
-                'SQL query, and the expected output.'
+        ctx: Context,
+        name: Annotated[
+            str,
+            Field(
+                description='A short, descriptive name summarizing the purpose of the SQL transformation.',
             ),
-        ),
-    ],
-    sql_statements: Annotated[
-        Sequence[str],
-        Field(
-            description=(
-                'The executable SQL query statements written in the current SQL dialect. '
-                'Each statement should be a separate item in the list.'
+        ],
+        description: Annotated[
+            str,
+            Field(
+                description=(
+                        'The detailed description of the SQL transformation capturing the user intent, explaining the '
+                        'SQL query, and the expected output.'
+                ),
             ),
-        ),
-    ],
-    created_table_names: Annotated[
-        Sequence[str],
-        Field(
-            description=(
-                'An empty list or a list of created table names if and only if they are generated within SQL '
-                'statements (e.g., using `CREATE TABLE ...`).'
+        ],
+        sql_statements: Annotated[
+            Sequence[str],
+            Field(
+                description=(
+                        'The executable SQL query statements written in the current SQL dialect. '
+                        'Each statement should be a separate item in the list.'
+                ),
             ),
-        ),
-    ] = tuple(),
+        ],
+        created_table_names: Annotated[
+            Sequence[str],
+            Field(
+                description=(
+                        'An empty list or a list of created table names if and only if they are generated within SQL '
+                        'statements (e.g., using `CREATE TABLE ...`).'
+                ),
+            ),
+        ] = tuple(),
 ) -> Annotated[
     ComponentConfigurationResponse,
     Field(
@@ -333,70 +361,61 @@ async def create_sql_transformation(
         raise e
 
 
-async def create_component_configuration(
-    ctx: Context,
-    name: Annotated[
-        str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
-        ),
-    ],
-    description: Annotated[
-        str,
-        Field(
-            description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
-            ),
-        ),
-    ],
-    component_id: Annotated[
-        str,
-        Field(
-            description='The ID of the component for which to create the configuration.',
-        ),
-    ],
-    configuration: Annotated[
-        dict,
-        Field(
-            description='The configuration JSON object containing the component-specific settings.',
-        ),
-    ],
-    configuration_row: Annotated[
-        dict | None,
-        Field(
-            description='Optional configuration row JSON object. If provided, it will be added to the configuration.',
-        ),
-    ] = None,
-) -> Annotated[
-    ComponentConfigurationResponse,
+async def create_component_root_configuration(ctx: Context,
+                                              name: Annotated[
+                                                  str,
+                                                  Field(
+                                                      description='A short, descriptive name summarizing the purpose of the component configuration.',
+                                                  ),
+                                              ],
+                                              description: Annotated[
+                                                  str,
+                                                  Field(
+                                                      description=(
+                                                              'The detailed description of the component configuration explaining its purpose and functionality.'
+                                                      ),
+                                                  ),
+                                              ],
+                                              component_id: Annotated[
+                                                  str,
+                                                  Field(
+                                                      description='The ID of the component for which to create the configuration.',
+                                                  ),
+                                              ],
+                                              storage: Optional[dict[str, Any]] = Field(
+                                                  description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined',
+                                                  default=None,
+                                              ),
+                                              parameters: dict[str, Any] = Field(
+                                                  description='The component configuration parameters, adhering to the root configuration schema')
+                                              ) -> Annotated[
+    ComponentRootConfiguration,
     Field(
-        description='Newly created Component Configuration with optional configuration row.',
+        description='Created component root configuration object,',
     ),
 ]:
     """
-    Creates a component configuration using the specified name, component ID, configuration JSON, and description.
-    Optionally adds a configuration row if provided.
-    CONSIDERATIONS:
-        The configuration JSON object must follow the configuration schema of the specified component. The
-        configuration JSON object should adhere to the component's configuration examples.
-        If configuration_row is provided, it must follow the configuration row schema of the specified component.
+       Creates a component configuration using the specified name, component ID, configuration JSON, and description.
+       Optionally adds a configuration row if provided.
+       CONSIDERATIONS:
+           The configuration JSON object must follow the root configuration schema of the specified component. The
+           configuration JSON object should adhere to the component's configuration examples.
 
-    USAGE:
-        - Use when you want to create a new configuration for a specific component.
-        - Use when you want to create a new configuration with a configuration row.
-    EXAMPLES:
-        - user_input: `Create a new configuration for component X with these settings`
-            -> set the component_id and configuration parameters accordingly
-            -> returns the created component configuration if successful.
-        - user_input: `Create a new configuration for component X with these settings and this row configuration`
-            -> set the component_id, configuration, and configuration_row parameters accordingly
-            -> returns the created component configuration with the row if successful.
-    """
+       USAGE:
+           - Use when you want to create a new root configuration for a specific component.
+       EXAMPLES:
+           - user_input: `Create a new configuration for component X with these settings`
+               -> set the component_id and configuration parameters accordingly
+               -> returns the created component configuration if successful.
+       """
 
     client = KeboolaClient.from_state(ctx.session.state)
     endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs'
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
+
+    configuration_payload = {"storage": storage, "parameters": parameters}
+    # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
@@ -405,38 +424,21 @@ async def create_component_configuration(
             data={
                 'name': name,
                 'description': description,
-                'configuration': configuration,
+                'configuration': configuration_payload,
             },
         )
 
-        component = await _get_component_details(client=client, component_id=component_id)
-        new_configuration = ComponentConfigurationResponse(
+        new_configuration = ComponentRootConfiguration(
             **new_raw_configuration,
             component_id=component_id,
-            component=component,
+            storage=new_raw_configuration['configuration'].get('storage'),
+            parameters=new_raw_configuration['configuration'].get('parameters'),
         )
 
         LOG.info(
             f'Created new configuration for component "{component_id}" with configuration id '
             f'"{new_configuration.configuration_id}".'
         )
-
-        # If configuration_row is provided, add it to the configuration
-        if configuration_row is not None:
-            rows_endpoint = (
-                f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/'
-                f'{new_configuration.configuration_id}/rows'
-            )
-            await client.post(
-                rows_endpoint,
-                data={
-                    'configuration': configuration_row,
-                },
-            )
-            LOG.info(
-                f'Added configuration row to configuration "{new_configuration.configuration_id}" '
-                f'for component "{component_id}".'
-            )
 
         return new_configuration
     except Exception as e:
@@ -445,13 +447,13 @@ async def create_component_configuration(
 
 
 async def get_component_configuration_examples(
-    ctx: Context,
-    component_id: Annotated[
-        str,
-        Field(
-            description='The ID of the component to get configuration examples for.',
-        ),
-    ],
+        ctx: Context,
+        component_id: Annotated[
+            str,
+            Field(
+                description='The ID of the component to get configuration examples for.',
+            ),
+        ],
 ) -> Annotated[
     str,
     Field(

@@ -259,12 +259,8 @@ class ComponentRowConfiguration(ComponentConfigurationResponseBase):
     """
 
     version: int = Field(description='The version of the component configuration')
-    table_input_mapping: Optional[dict[str, Any]] = Field(
-        description='The table input mapping of the component configuration. It is present only for components that have table input mapping',
-        default=None,
-    )
-    table_output_mapping: Optional[dict[str, Any]] = Field(
-        description='The table output mapping of the component configuration. It is present only for components that have table output mapping',
+    storage: Optional[dict[str, Any]] = Field(
+        description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined.',
         default=None,
     )
     configuration_parameters: dict[str, Any] = Field(
@@ -285,16 +281,12 @@ class ComponentRootConfiguration(ComponentConfigurationResponseBase):
     """
 
     version: int = Field(description='The version of the component configuration')
-    table_input_mapping: Optional[dict[str, Any]] = Field(
-        description='The table input mapping of the component configuration. It is present only for components that are not row-based and have table input mapping',
+    storage: Optional[dict[str, Any]] = Field(
+        description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined',
         default=None,
     )
-    table_output_mapping: Optional[dict[str, Any]] = Field(
-        description='The table output mapping of the component configuration. It is present only for components that are not row-based and have table output mapping',
-        default=None,
-    )
-    configuration_parameters: dict[str, Any] = Field(
-        description='The user parameters, adhering to the root configuration schema')
+    parameters: dict[str, Any] = Field(
+        description='The component configuration parameters, adhering to the root configuration schema')
 
 
 class ComponentConfigurationOutput(BaseModel):
@@ -305,6 +297,42 @@ class ComponentConfigurationOutput(BaseModel):
         description='The row configurations of the component configuration',
         default=None,
     )
+    component_details: Optional[ComponentDetail] = Field(
+        description='Details of the component including documentation and configuration schemas',
+        default=None,
+    )
+
+    @classmethod
+    def from_component_configuration_response(cls,
+                                              configuration_response: ComponentConfigurationResponse,
+                                              component_details: Optional[ComponentDetail] = None,
+                                              ) -> 'ComponentConfigurationOutput':
+        """
+        Create a ComponentConfigurationOutput instance from a ComponentConfigurationResponse instance.
+        """
+
+        root_configuration = ComponentRootConfiguration(**configuration_response.model_dump(exclude={'configuration'}),
+                                                        parameters=configuration_response.configuration['parameters'],
+                                                        storage=configuration_response.configuration.get('storage'),
+                                                        )
+        row_configurations = []
+        for row in configuration_response.rows or []:
+            if row is None:
+                continue
+
+            row_configuration = ComponentRowConfiguration(**row,
+                                                          component_id=configuration_response.component_id,
+                                                          configuration_parameters=row['configuration']['parameters'],
+                                                          storage=row['configuration'].get('storage'),
+                                                          )
+            row_configurations.append(row_configuration)
+
+        return cls(
+            root_configuration=root_configuration,
+            row_configurations=row_configurations,
+            component_details=component_details,
+
+        )
 
 
 class ComponentConfigurationMetadata(BaseModel):
