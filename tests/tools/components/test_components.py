@@ -6,10 +6,10 @@ from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components import (
-    ComponentConfiguration,
+    ComponentConfigurationResponse,
     ComponentWithConfigurations,
     ReducedComponent,
-    ReducedComponentConfiguration,
+    ComponentConfigurationResponseBase,
     create_sql_transformation,
     get_component_configuration_details,
     retrieve_components_configurations,
@@ -37,7 +37,7 @@ def assert_retrieve_components() -> (
         assert all(isinstance(component.configurations, list) for component in result)
         assert all(
             all(
-                isinstance(config, ReducedComponentConfiguration)
+                isinstance(config, ComponentConfigurationResponseBase)
                 for config in component.configurations
             )
             for component in result
@@ -61,7 +61,7 @@ def assert_retrieve_components() -> (
         assert all(len(component.configurations) == len(configurations) for component in result)
         assert all(
             all(
-                isinstance(config, ReducedComponentConfiguration)
+                isinstance(config, ComponentConfigurationResponseBase)
                 for config in component.configurations
             )
             for component in result
@@ -240,7 +240,7 @@ async def test_get_component_configuration_details(
     keboola_client.get = AsyncMock(return_value=mock_metadata)
 
     result = await get_component_configuration_details('keboola.ex-aws-s3', '123', context)
-    expected = ComponentConfiguration.model_validate(
+    expected = ComponentConfigurationResponse.model_validate(
         {
             **mock_configuration,
             'component_id': mock_component['id'],
@@ -248,7 +248,7 @@ async def test_get_component_configuration_details(
             'metadata': mock_metadata,
         }
     )
-    assert isinstance(result, ComponentConfiguration)
+    assert isinstance(result, ComponentConfigurationResponse)
     assert result.model_dump() == expected.model_dump()
 
     keboola_client.storage_client.configurations.detail.assert_called_once_with(
@@ -314,11 +314,11 @@ async def test_create_transformation_configuration(
         created_table_names=[created_table_name],
     )
 
-    expected_config = ComponentConfiguration.model_validate(
+    expected_config = ComponentConfigurationResponse.model_validate(
         {**configuration, 'component_id': expected_component_id, 'component': component}
     )
 
-    assert isinstance(new_transformation_configuration, ComponentConfiguration)
+    assert isinstance(new_transformation_configuration, ComponentConfigurationResponse)
     assert new_transformation_configuration.model_dump() == expected_config.model_dump()
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(
