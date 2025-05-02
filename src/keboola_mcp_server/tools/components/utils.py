@@ -8,18 +8,20 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
+    ComponentConfigurationMetadata,
+    ComponentConfigurationResponse,
+    ComponentDetail,
     ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
-    ComponentDetail, ReducedComponentDetail, ComponentConfigurationResponse,
-    ComponentConfigurationMetadata,
+    ReducedComponentDetail,
 )
 
 LOG = logging.getLogger(__name__)
 
 
 def _handle_component_types(
-        types: Optional[Union[ComponentType, Sequence[ComponentType]]],
+    types: Optional[Union[ComponentType, Sequence[ComponentType]]],
 ) -> Sequence[ComponentType]:
     """
     Utility function to handle the component types [extractors, writers, applications, all]
@@ -35,7 +37,7 @@ def _handle_component_types(
 
 
 async def _retrieve_components_configurations_by_types(
-        client: KeboolaClient, component_types: Sequence[AllComponentTypes]
+    client: KeboolaClient, component_types: Sequence[AllComponentTypes]
 ) -> list[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by types - used in tools:
@@ -72,12 +74,14 @@ async def _retrieve_components_configurations_by_types(
             ]
             configurations_metadata = [
                 ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
-                for raw_response in raw_configuration_responses]
+                for raw_response in raw_configuration_responses
+            ]
 
             components_with_configurations.append(
                 ComponentWithConfigurations(
                     component=ReducedComponentDetail.from_component_response(
-                        ReducedComponent.model_validate(raw_component)),
+                        ReducedComponent.model_validate(raw_component)
+                    ),
                     configurations=configurations_metadata,
                 )
             )
@@ -94,7 +98,7 @@ async def _retrieve_components_configurations_by_types(
 
 
 async def _retrieve_components_configurations_by_ids(
-        client: KeboolaClient, component_ids: Sequence[str]
+    client: KeboolaClient, component_ids: Sequence[str]
 ) -> list[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by component IDs - used in tools:
@@ -118,13 +122,16 @@ async def _retrieve_components_configurations_by_ids(
             )
             for raw_configuration in raw_configurations
         ]
-        configurations_metadata = [ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
-                                   for raw_response in raw_configuration_responses]
+        configurations_metadata = [
+            ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
+            for raw_response in raw_configuration_responses
+        ]
 
         components_with_configurations.append(
             ComponentWithConfigurations(
                 component=ReducedComponentDetail.from_component_response(
-                    ReducedComponent.model_validate(raw_component)),
+                    ReducedComponent.model_validate(raw_component)
+                ),
                 configurations=configurations_metadata,
             )
         )
@@ -140,10 +147,7 @@ async def _retrieve_components_configurations_by_ids(
     return components_with_configurations
 
 
-async def _get_component_flags(
-        client: KeboolaClient,
-        component_id: str
-) -> list[str]:
+async def _get_component_flags(client: KeboolaClient, component_id: str) -> list[str]:
     """
     Utility function to retrieve the component flags by component ID.
 
@@ -154,17 +158,21 @@ async def _get_component_flags(
     available_components = await client.get('', params={'exclude': 'componentDetails'})
 
     # retrieve component info
-    component_info = next((
-        component for component in available_components.get('components', [])
-        if component['id'] == component_id
-    ), {})
+    component_info = next(
+        (
+            component
+            for component in available_components.get('components', [])
+            if component['id'] == component_id
+        ),
+        {},
+    )
 
     return component_info.get('flags', [])
 
 
 async def _get_component_details(
-        client: KeboolaClient,
-        component_id: str,
+    client: KeboolaClient,
+    component_id: str,
 ) -> ComponentDetail:
     """
     Utility function to retrieve the component details by component ID, used in tools:
@@ -206,7 +214,7 @@ async def _get_component_details(
 
 
 def _get_sql_transformation_id_from_sql_dialect(
-        sql_dialect: str,
+    sql_dialect: str,
 ) -> str:
     """
     Utility function to retrieve the SQL transformation ID from the given SQL dialect.
@@ -275,7 +283,7 @@ class TransformationConfiguration(BaseModel):
 
 
 def _get_transformation_configuration(
-        statements: Sequence[str], transformation_name: str, output_tables: Sequence[str]
+    statements: Sequence[str], transformation_name: str, output_tables: Sequence[str]
 ) -> TransformationConfiguration:
     """
     Utility function to set the transformation configuration from code statements.

@@ -160,6 +160,7 @@ class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
 
 # ### Tool input/output models
 
+
 class ReducedComponentDetail(BaseModel):
     component_id: str = Field(
         description='The ID of the component',
@@ -171,20 +172,32 @@ class ReducedComponentDetail(BaseModel):
         description='The type of the component',
     )
 
-    is_row_based: bool = Field(default=False,
-                               description='Whether the component is row-based (e.g. have configuration rows) or not.')
+    is_row_based: bool = Field(
+        default=False,
+        description='Whether the component is row-based (e.g. have configuration rows) or not.',
+    )
 
-    has_table_input_mapping: bool = Field(default=False,
-                                          description='Whether the component configuration has table input mapping or not.')
-    has_table_output_mapping: bool = Field(default=False,
-                                           description='Whether the component configuration has table output mapping or not.')
-    has_file_input_mapping: bool = Field(default=False,
-                                         description='Whether the component configuration has file input mapping or not.')
-    has_file_output_mapping: bool = Field(default=False,
-                                          description='Whether the component configuration has file output mapping or not.')
+    has_table_input_mapping: bool = Field(
+        default=False,
+        description='Whether the component configuration has table input mapping or not.',
+    )
+    has_table_output_mapping: bool = Field(
+        default=False,
+        description='Whether the component configuration has table output mapping or not.',
+    )
+    has_file_input_mapping: bool = Field(
+        default=False,
+        description='Whether the component configuration has file input mapping or not.',
+    )
+    has_file_output_mapping: bool = Field(
+        default=False,
+        description='Whether the component configuration has file output mapping or not.',
+    )
 
-    has_oauth: bool = Field(default=False,
-                            description='Whether the component configuration requires OAuth authorization or not.')
+    has_oauth: bool = Field(
+        default=False,
+        description='Whether the component configuration requires OAuth authorization or not.',
+    )
 
     @classmethod
     def from_component_response(cls, component: ReducedComponent) -> 'ReducedComponentDetail':
@@ -208,7 +221,7 @@ class ReducedComponentDetail(BaseModel):
             has_table_output_mapping=has_table_output_mapping,
             has_file_input_mapping=has_file_input_mapping,
             has_file_output_mapping=has_file_output_mapping,
-            has_oauth=has_oauth
+            has_oauth=has_oauth,
         )
 
 
@@ -249,7 +262,7 @@ class ComponentDetail(ReducedComponentDetail):
             documentation=component.documentation,
             root_configuration_schema=component.configuration_schema,
             row_configuration_schema=component.configuration_row_schema,
-            **core_details.model_dump()
+            **core_details.model_dump(),
         )
 
 
@@ -264,7 +277,8 @@ class ComponentRowConfiguration(ComponentConfigurationResponseBase):
         default=None,
     )
     parameters: dict[str, Any] = Field(
-        description='The user parameters, adhering to the row configuration schema')
+        description='The user parameters, adhering to the row configuration schema'
+    )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
         default=[],
@@ -286,7 +300,8 @@ class ComponentRootConfiguration(ComponentConfigurationResponseBase):
         default=None,
     )
     parameters: dict[str, Any] = Field(
-        description='The component configuration parameters, adhering to the root configuration schema')
+        description='The component configuration parameters, adhering to the root configuration schema'
+    )
 
 
 class ComponentConfigurationOutput(BaseModel):
@@ -303,35 +318,37 @@ class ComponentConfigurationOutput(BaseModel):
     )
 
     @classmethod
-    def from_component_configuration_response(cls,
-                                              configuration_response: ComponentConfigurationResponse,
-                                              component_details: Optional[ComponentDetail] = None,
-                                              ) -> 'ComponentConfigurationOutput':
+    def from_component_configuration_response(
+        cls,
+        configuration_response: ComponentConfigurationResponse,
+        component_details: Optional[ComponentDetail] = None,
+    ) -> 'ComponentConfigurationOutput':
         """
         Create a ComponentConfigurationOutput instance from a ComponentConfigurationResponse instance.
         """
 
-        root_configuration = ComponentRootConfiguration(**configuration_response.model_dump(exclude={'configuration'}),
-                                                        parameters=configuration_response.configuration['parameters'],
-                                                        storage=configuration_response.configuration.get('storage'),
-                                                        )
+        root_configuration = ComponentRootConfiguration(
+            **configuration_response.model_dump(exclude={'configuration'}),
+            parameters=configuration_response.configuration['parameters'],
+            storage=configuration_response.configuration.get('storage'),
+        )
         row_configurations = []
         for row in configuration_response.rows or []:
             if row is None:
                 continue
 
-            row_configuration = ComponentRowConfiguration(**row,
-                                                          component_id=configuration_response.component_id,
-                                                          parameters=row['configuration']['parameters'],
-                                                          storage=row['configuration'].get('storage'),
-                                                          )
+            row_configuration = ComponentRowConfiguration(
+                **row,
+                component_id=configuration_response.component_id,
+                parameters=row['configuration']['parameters'],
+                storage=row['configuration'].get('storage'),
+            )
             row_configurations.append(row_configuration)
 
         return cls(
             root_configuration=root_configuration,
             row_configurations=row_configurations,
             component_details=component_details,
-
         )
 
 
@@ -345,20 +362,21 @@ class ComponentConfigurationMetadata(BaseModel):
     )
 
     @classmethod
-    def from_component_configuration_response(cls,
-                                              configuration: ComponentConfigurationResponse) -> 'ComponentConfigurationMetadata':
+    def from_component_configuration_response(
+        cls, configuration: ComponentConfigurationResponse
+    ) -> 'ComponentConfigurationMetadata':
         """
         Create a ComponentConfigurationMetadata instance from a ComponentConfigurationResponse instance.
         """
         root_configuration: ComponentConfigurationResponseBase = configuration
         row_configurations = None
         if configuration.rows:
-            row_configurations = [ComponentConfigurationResponse.model_validate(row) for row in configuration.rows if
-                                  row is not None]
-        return cls(
-            root_configuration=root_configuration,
-            row_configurations=row_configurations
-        )
+            row_configurations = [
+                ComponentConfigurationResponse.model_validate(row)
+                for row in configuration.rows
+                if row is not None
+            ]
+        return cls(root_configuration=root_configuration, row_configurations=row_configurations)
 
 
 class ComponentWithConfigurations(BaseModel):

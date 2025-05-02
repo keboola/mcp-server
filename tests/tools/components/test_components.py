@@ -7,9 +7,9 @@ from mcp.server.fastmcp import Context
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components import (
     ComponentConfigurationResponse,
+    ComponentConfigurationResponseBase,
     ComponentWithConfigurations,
     ReducedComponent,
-    ComponentConfigurationResponseBase,
     create_sql_transformation,
     get_component_configuration_details,
     retrieve_components_configurations,
