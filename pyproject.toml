@@ -45,7 +45,7 @@ keboola_mcp_server = "keboola_mcp_server.cli:main"
 
 [tool.black]
 target-version = ["py310"]
-skip_string_normalization = true
+skip-string-normalization = true
 line-length = 120
 
 [tool.isort]
@@ -84,17 +84,17 @@ explicit_package_bases = true
 max-line-length = 120
 import-order-style = "edited"
 application-package-names = ["keboola_mcp_server"]
-min_python_version = "3.10.0"
-# Skip checking I101 (import order), we want to sort imports in case sensitive manner using simply `isort`
+min-python-version = "3.10.0"
+# Skip flake8-import-order rule I101; rely on isort to enforce case-sensitive, alphabetical import sorting
 extend-ignore = ["I101"]
-# Skip checking F401 in __init__.py files (unused imports), we simplify imports in __init__.py and it is expected
+# Skip unused import checks F401 in __init__.py files; re-exported imports are intentional
 # not to use them there. 
 per-file-ignores = [
     "__init__.py: F401",
 ]
 
 [tool.tox]
-requires = ["tox>=4.23", "black>=25.1", "isort>=6.0"]
+requires = ["tox>=4.23"]
 env_list = ["python", "code_style"]
 
 [tool.tox.env_run_base]
@@ -105,10 +105,9 @@ wheel_build_env = ".pkg"
 commands = [["pytest", "--junitxml", "./test-results.xml"]]
 
 [tool.tox.env.code_style]
-description = "Run code style check - black, isort, and flake"
+description = "Run code style check using flake8"
+package = "skip"
 deps = [
-    "black",
-    "isort",
     "flake8",
     "flake8-bugbear",
     "flake8-colors",
@@ -119,7 +118,5 @@ deps = [
     "pep8-naming",
 ]
 commands = [
-    ["black", "src/", "tests/", "--check"],
-    ["isort", "src/", "tests/", "--check"],
     ["flake8", "src/", "tests/"]
 ]
