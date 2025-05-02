@@ -20,7 +20,7 @@ def tool_errors(
     recovery_instructions: Optional[Dict[Type[Exception], str]] = None,
 ) -> Callable[[F], F]:
     """
-    Factory for creating decorators that wrap tool functions with error logging and structured exception handling.
+    The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
 
     Args:
         default_recovery (Optional[str]): A fallback recovery instruction for any exception.
