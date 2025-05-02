@@ -6,6 +6,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)
 
@@ -153,6 +154,7 @@ SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds
 SORT_ORDER_VALUES = Literal['asc', 'desc']
 
 
+@tool_errors()
 async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
@@ -237,6 +239,7 @@ async def retrieve_jobs(
     return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
 
 
+@tool_errors()
 async def get_job_detail(
     job_id: Annotated[
         str,
@@ -257,6 +260,7 @@ async def get_job_detail(
     return JobDetail.model_validate(raw_job)
 
 
+@tool_errors()
 async def start_job(
     ctx: Context,
     component_id: Annotated[

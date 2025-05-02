@@ -83,6 +83,7 @@ def test_tool_function_recovery_instructions(
         assert expected_recovery_message in str(excinfo.value)
     assert exception_message in str(excinfo.value)
 
+
 # --- Test Logging ---
 def test_logging_on_tool_exception(caplog, function_with_value_error):
     """Test if logging works correctly with the tool function."""

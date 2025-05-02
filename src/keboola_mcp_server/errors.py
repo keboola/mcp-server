@@ -21,20 +21,22 @@ def tool_errors(
     """
     The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
 
-    :param default_recovery: A fallback recovery instruction to use when no specific instruction 
+    :param default_recovery: A fallback recovery instruction to use when no specific instruction
                              is found for the exception.
     :param recovery_instructions: A dictionary mapping exception types to recovery instructions.
     :return: The decorated function with error-handling logic applied.
     """
 
     def decorator(func: Callable):
-        @wraps(func) 
+        setattr(func, "test", True)
+
+        @wraps(func)
         def wrapped(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
                 logging.exception(f"Failed to run tool {func.__name__}: {e}")
-                
+
                 recovery_msg = default_recovery
                 if recovery_instructions:
                     for exc_type, msg in recovery_instructions.items():
@@ -44,7 +46,7 @@ def tool_errors(
 
                 if not recovery_msg:
                     raise e
-                
+
                 raise ToolException(e, recovery_msg) from e
 
         return cast(F, wrapped)
