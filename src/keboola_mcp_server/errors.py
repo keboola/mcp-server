@@ -31,9 +31,9 @@ def tool_errors(
         setattr(func, "test", True)
 
         @wraps(func)
-        def wrapped(*args, **kwargs):
+        async def wrapped(*args, **kwargs):
             try:
-                return func(*args, **kwargs)
+                return await func(*args, **kwargs)
             except Exception as e:
                 logging.exception(f"Failed to run tool {func.__name__}: {e}")
 
