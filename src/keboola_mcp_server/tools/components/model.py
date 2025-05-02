@@ -329,7 +329,7 @@ class ComponentConfigurationOutput(BaseModel):
 
         root_configuration = ComponentRootConfiguration(
             **configuration_response.model_dump(exclude={'configuration'}),
-            parameters=configuration_response.configuration['parameters'],
+            parameters=configuration_response.configuration.get('parameters', {}),
             storage=configuration_response.configuration.get('storage'),
         )
         row_configurations = []
