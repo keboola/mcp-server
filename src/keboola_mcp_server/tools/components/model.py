@@ -322,7 +322,7 @@ class ComponentConfigurationOutput(BaseModel):
 
             row_configuration = ComponentRowConfiguration(**row,
                                                           component_id=configuration_response.component_id,
-                                                          configuration_parameters=row['configuration']['parameters'],
+                                                          parameters=row['configuration']['parameters'],
                                                           storage=row['configuration'].get('storage'),
                                                           )
             row_configurations.append(row_configuration)

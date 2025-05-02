@@ -65,6 +65,12 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(create_component_row_configuration)
     LOG.info(f'Added tool: {create_component_row_configuration.__name__}.')
 
+    mcp.add_tool(update_component_root_configuration)
+    LOG.info(f'Added tool: {update_component_root_configuration.__name__}.')
+
+    mcp.add_tool(update_component_row_configuration)
+    LOG.info(f'Added tool: {update_component_row_configuration.__name__}.')
+
     mcp.add_tool(get_component_configuration_examples)
     LOG.info(f'Added tool: {get_component_configuration_examples.__name__}.')
 
@@ -520,6 +526,216 @@ async def create_component_row_configuration(ctx: Context,
             data={
                 'name': name,
                 'description': description,
+                'configuration': configuration_payload,
+            },
+        )
+
+        new_configuration = ComponentRowConfiguration(
+            **new_raw_configuration,
+            component_id=component_id,
+            storage=new_raw_configuration['configuration'].get('storage'),
+            parameters=new_raw_configuration['configuration'].get('parameters'),
+        )
+
+        LOG.info(
+            f'Created new configuration for component "{component_id}" with configuration id '
+            f'"{new_configuration.configuration_id}".'
+        )
+
+        return new_configuration
+    except Exception as e:
+        LOG.exception(f'Error when creating new component configuration: {e}')
+        raise e
+
+
+async def update_component_root_configuration(ctx: Context,
+                                              name: Annotated[
+                                                  str,
+                                                  Field(
+                                                      description='A short, descriptive name summarizing the purpose of the component configuration.',
+                                                  ),
+                                              ],
+                                              description: Annotated[
+                                                  str,
+                                                  Field(
+                                                      description=(
+                                                              'The detailed description of the component configuration explaining its purpose and functionality.'
+                                                      ),
+                                                  ),
+                                              ],
+                                              change_description: Annotated[
+                                                  str,
+                                                  Field(
+                                                      description=(
+                                                              'Description of the change made to the component configuration.'
+                                                      ),
+                                                  ),
+                                              ],
+                                              component_id: Annotated[
+                                                  str,
+                                                  Field(
+                                                      description="The ID of the component which you'd like to update",
+                                                  ),
+                                              ],
+                                              configuration_id: Annotated[
+                                                  str,
+                                                  Field(
+                                                      description="The ID of the configuration which you'd like to update.",
+                                                  ),
+                                              ],
+                                              storage: Optional[dict[str, Any]] = Field(
+                                                  description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined',
+                                                  default=None,
+                                              ),
+                                              parameters: dict[str, Any] = Field(
+                                                  description='The component configuration parameters, adhering to the root configuration schema')
+                                              ) -> Annotated[
+    ComponentRootConfiguration,
+    Field(
+        description='Created component root configuration object,',
+    ),
+]:
+    """
+       Updates a specific component configuration using given by component ID, and configuration ID.
+       CONSIDERATIONS:
+           The configuration JSON object must follow the root configuration schema of the specified component. The
+           configuration JSON object should adhere to the component's configuration examples.
+
+       USAGE:
+           - Use when you want to update a root configuration of a specific component.
+       EXAMPLES:
+           - user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
+               -> set the component_id, configuration_id and configuration parameters accordingly.
+               -> set the change_description to the description of the change made to the component configuration.
+               -> returns the created component configuration if successful.
+       """
+
+    client = KeboolaClient.from_state(ctx.session.state)
+    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}'
+
+    LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
+
+    configuration_payload = {"storage": storage, "parameters": parameters}
+    # TODO validate parameters
+    # Try to create the new configuration and return the new object if successful
+    # or log an error and raise an exception if not
+    try:
+        new_raw_configuration = await client.put(
+            endpoint,
+            data={
+                'name': name,
+                'description': description,
+                'changeDescription': change_description,
+                'configuration': configuration_payload,
+            },
+        )
+
+        new_configuration = ComponentRootConfiguration(
+            **new_raw_configuration,
+            component_id=component_id,
+            storage=new_raw_configuration['configuration'].get('storage'),
+            parameters=new_raw_configuration['configuration'].get('parameters'),
+        )
+
+        LOG.info(
+            f'Created new configuration for component "{component_id}" with configuration id '
+            f'"{new_configuration.configuration_id}".'
+        )
+
+        return new_configuration
+    except Exception as e:
+        LOG.exception(f'Error when creating new component configuration: {e}')
+        raise e
+
+
+async def update_component_row_configuration(ctx: Context,
+                                             name: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description='A short, descriptive name summarizing the purpose of the component configuration.',
+                                                 ),
+                                             ],
+                                             description: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description=(
+                                                             'The detailed description of the component configuration explaining its purpose and functionality.'
+                                                     ),
+                                                 ),
+                                             ],
+                                             change_description: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description=(
+                                                             'Description of the change made to the component configuration.'
+                                                     ),
+                                                 ),
+                                             ],
+                                             component_id: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description="The ID of the component which you'd like to update",
+                                                 ),
+                                             ],
+                                             configuration_id: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description="The ID of the configuration which you'd like to update.",
+                                                 ),
+                                             ],
+                                             configuration_row_id: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description="The ID of the configuration row which you'd like to update.",
+                                                 ),
+                                             ],
+                                             storage: Optional[dict[str, Any]] = Field(
+                                                 description='The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined',
+                                                 default=None,
+                                             ),
+                                             parameters: dict[str, Any] = Field(
+                                                 description='The component row configuration parameters, adhering to the row configuration schema')
+                                             ) -> Annotated[
+    ComponentRowConfiguration,
+    Field(
+        description='Created component row configuration object,',
+    ),
+]:
+    """
+       Updates a specific component configuration row in the specified configuration_id, using the specified name,
+       component ID, configuration JSON, and description.
+
+       CONSIDERATIONS:
+           The configuration JSON object must follow the row configuration schema of the specified component. The
+           configuration JSON object should adhere to the component's configuration examples.
+
+       USAGE:
+           - Use when you want to update a row configuration for a specific component and configuration.
+       EXAMPLES:
+           - user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
+               -> set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
+               -> returns the created component configuration if successful.
+       """
+
+    client = KeboolaClient.from_state(ctx.session.state)
+    endpoint = (f'branch/{client.storage_client._branch_id}'
+                f'/components/{component_id}/configs/{configuration_id}/rows/{configuration_row_id}')
+
+    LOG.info(
+        f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
+        f'and row id {configuration_row_id}.')
+
+    configuration_payload = {"storage": storage, "parameters": parameters}
+    # TODO validate parameters
+    # Try to create the new configuration and return the new object if successful
+    # or log an error and raise an exception if not
+    try:
+        new_raw_configuration = await client.put(
+            endpoint,
+            data={
+                'name': name,
+                'description': description,
+                'changeDescription': change_description,
                 'configuration': configuration_payload,
             },
         )

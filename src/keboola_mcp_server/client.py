@@ -133,7 +133,7 @@ class KeboolaClient:
             response = await client.put(
                 f'{self.base_storage_api_url}/v2/storage/{endpoint}',
                 headers=self.headers,
-                data=data if data is not None else {},
+                json=data if data is not None else {},
             )
             response.raise_for_status()
             return cast(dict[str, Any], response.json())
