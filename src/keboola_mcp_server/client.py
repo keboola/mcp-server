@@ -319,6 +319,24 @@ class DocsQuestionResponse(BaseModel):
     )
 
 
+class SuggestedComponent(BaseModel):
+    """The AI service response to a /docs/suggest-component request."""
+
+    component_id: str = Field(
+        description='Text of the answer to a component suggestion query.', alias='componentId'
+    )
+    score: float = Field(description='Score of the component suggestion query.')
+    source: str = Field(description='Source of the component suggestion result.')
+
+
+class ComponentSuggestionResponse(BaseModel):
+    """The AI service response to a /suggest/component request."""
+
+    components: list[SuggestedComponent] = Field(
+        description='List of suggested components.', default_factory=list
+    )
+
+
 class AIServiceClient(Endpoint):
     """Class handling endpoints for interacting with the Keboola AI Service."""
 
@@ -351,3 +369,17 @@ class AIServiceClient(Endpoint):
         )
 
         return DocsQuestionResponse.model_validate(response)
+
+    def suggest_component(self, query: str) -> ComponentSuggestionResponse:
+        """
+        Provides list of component suggestions based on natural language query.
+        :param query: The query to answer.
+        """
+        url = f'{self.root_url.rstrip("/")}/suggest/component'
+        response = self._post(
+            url,
+            json={'prompt': query},
+            headers={'Accept': 'application/json'},
+        )
+
+        return ComponentSuggestionResponse.model_validate(response)

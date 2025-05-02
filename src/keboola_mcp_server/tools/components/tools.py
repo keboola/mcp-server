@@ -4,7 +4,7 @@ from typing import Annotated, Any, Optional, Sequence
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
@@ -76,6 +76,9 @@ def add_component_tools(mcp: FastMCP) -> None:
 
     mcp.add_tool(get_component_configuration_examples)
     LOG.info(f'Added tool: {get_component_configuration_examples.__name__}.')
+
+    mcp.add_tool(find_component_id)
+    LOG.info(f'Added tool: {find_component_id.__name__}.')
 
     LOG.info('Component tools initialized.')
 
@@ -192,7 +195,7 @@ async def get_component_detail(
         ,etc. Especially in situation when the users asks to create or update a component configuration. This tool is mainly for internal use by the agent.
     EXAMPLES:
         - user_input: `Create a generic extractor configuration for x`
-            -> Set the component_id if you know it or find the component_id by component lookup or docs use tool and set it
+            -> Set the component_id if you know it or find the component_id by find_component_id or docs use tool and set it
             -> returns the details of the component/transformation configuration pair
     """
     client = KeboolaClient.from_state(ctx.session.state)
@@ -403,7 +406,7 @@ async def create_component_root_configuration(
         default=None,
     ),
     parameters: dict[str, Any] = Field(
-        description='The component configuration parameters, adhering to the root configuration schema'
+        description='The component configuration parameters, adhering to the root_configuration_schema'
     ),
 ) -> Annotated[
     ComponentRootConfiguration,
@@ -414,8 +417,10 @@ async def create_component_root_configuration(
     """
     Creates a component configuration using the specified name, component ID, configuration JSON, and description.
     CONSIDERATIONS:
-        The configuration JSON object must follow the root configuration schema of the specified component. The
-        configuration JSON object should adhere to the component's configuration examples.
+        The configuration JSON object must follow the root_configuration_schema of the specified component.
+        Make sure the configuration parameters always adhere to the root_configuration_schema,
+        which is available via the component_detail tool.
+        The configuration JSON object should adhere to the component's configuration examples if found.
 
     USAGE:
         - Use when you want to create a new root configuration for a specific component.
@@ -495,7 +500,7 @@ async def create_component_row_configuration(
         default=None,
     ),
     parameters: dict[str, Any] = Field(
-        description='The component row configuration parameters, adhering to the row configuration schema'
+        description='The component row configuration parameters, adhering to the row_configuration_schema'
     ),
 ) -> Annotated[
     ComponentRowConfiguration,
@@ -507,8 +512,10 @@ async def create_component_row_configuration(
     Creates a component configuration row in the specified configuration_id, using the specified name, component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-        The configuration JSON object must follow the row configuration schema of the specified component. The
-        configuration JSON object should adhere to the component's configuration examples.
+        The configuration JSON object must follow the row_configuration_schema of the specified component.
+        Make sure the configuration parameters always adhere to the row_configuration_schema,
+        which is available via the component_detail tool.
+        The configuration JSON object should adhere to the component's configuration examples if found.
 
     USAGE:
         - Use when you want to create a new root configuration for a specific component.
@@ -597,7 +604,7 @@ async def update_component_root_configuration(
         default=None,
     ),
     parameters: dict[str, Any] = Field(
-        description='The component configuration parameters, adhering to the root configuration schema'
+        description='The component configuration parameters, adhering to the root_configuration_schema schema'
     ),
 ) -> Annotated[
     ComponentRootConfiguration,
@@ -608,8 +615,10 @@ async def update_component_root_configuration(
     """
     Updates a specific component configuration using given by component ID, and configuration ID.
     CONSIDERATIONS:
-        The configuration JSON object must follow the root configuration schema of the specified component. The
-        configuration JSON object should adhere to the component's configuration examples.
+        The configuration JSON object must follow the root_configuration_schema of the specified component.
+        Make sure the configuration parameters always adhere to the root_configuration_schema,
+        which is available via the component_detail tool.
+        The configuration JSON object should adhere to the component's configuration examples if found
 
     USAGE:
         - Use when you want to update a root configuration of a specific component.
@@ -705,7 +714,7 @@ async def update_component_row_configuration(
         default=None,
     ),
     parameters: dict[str, Any] = Field(
-        description='The component row configuration parameters, adhering to the row configuration schema'
+        description='The component row configuration parameters, adhering to the row_configuration_schema'
     ),
 ) -> Annotated[
     ComponentRowConfiguration,
@@ -718,8 +727,9 @@ async def update_component_row_configuration(
     component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-        The configuration JSON object must follow the row configuration schema of the specified component. The
-        configuration JSON object should adhere to the component's configuration examples.
+        The configuration JSON object must follow the row_configuration_schema of the specified component.
+        Make sure the configuration parameters always adhere to the row_configuration_schema,
+        which is available via the component_detail tool.
 
     USAGE:
         - Use when you want to update a row configuration for a specific component and configuration.
@@ -839,6 +849,28 @@ async def get_component_configuration_examples(
         markdown += "\n"
 
     return markdown
+
+
+async def find_component_id(
+    ctx: Context,
+    query: Annotated[
+        str,
+        Field(
+            description='Natural language query to find the requested component.',
+        ),
+    ],
+) -> list[SuggestedComponent]:
+    """
+    Returns list of component IDs that match the given query.
+    USAGE:
+        - Use when you want to find the component for a specific purpose.
+    EXAMPLES:
+        - user_input: `I am looking for a salesforce extractor component`
+            -> returns a list of component IDs that match the query, ordered by relevance/best match.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    suggestion_response = client.ai_service_client.suggest_component(query)
+    return suggestion_response.components
 
 
 ############################## End of component tools #########################################
