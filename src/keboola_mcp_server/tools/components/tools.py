@@ -9,6 +9,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationResponse,
     ComponentType,
     ComponentWithConfigurations, ComponentConfigurationOutput, ComponentRootConfiguration, ComponentDetail,
+    ComponentRowConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
     _get_component_details,
@@ -60,6 +61,9 @@ def add_component_tools(mcp: FastMCP) -> None:
 
     mcp.add_tool(create_component_root_configuration)
     LOG.info(f'Added tool: {create_component_root_configuration.__name__}.')
+
+    mcp.add_tool(create_component_row_configuration)
+    LOG.info(f'Added tool: {create_component_row_configuration.__name__}.')
 
     mcp.add_tool(get_component_configuration_examples)
     LOG.info(f'Added tool: {get_component_configuration_examples.__name__}.')
@@ -396,7 +400,6 @@ async def create_component_root_configuration(ctx: Context,
 ]:
     """
        Creates a component configuration using the specified name, component ID, configuration JSON, and description.
-       Optionally adds a configuration row if provided.
        CONSIDERATIONS:
            The configuration JSON object must follow the root configuration schema of the specified component. The
            configuration JSON object should adhere to the component's configuration examples.
@@ -429,6 +432,99 @@ async def create_component_root_configuration(ctx: Context,
         )
 
         new_configuration = ComponentRootConfiguration(
+            **new_raw_configuration,
+            component_id=component_id,
+            storage=new_raw_configuration['configuration'].get('storage'),
+            parameters=new_raw_configuration['configuration'].get('parameters'),
+        )
+
+        LOG.info(
+            f'Created new configuration for component "{component_id}" with configuration id '
+            f'"{new_configuration.configuration_id}".'
+        )
+
+        return new_configuration
+    except Exception as e:
+        LOG.exception(f'Error when creating new component configuration: {e}')
+        raise e
+
+
+async def create_component_row_configuration(ctx: Context,
+                                             name: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description='A short, descriptive name summarizing the purpose of the component configuration.',
+                                                 ),
+                                             ],
+                                             description: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description=(
+                                                             'The detailed description of the component configuration explaining its purpose and functionality.'
+                                                     ),
+                                                 ),
+                                             ],
+                                             component_id: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description='The ID of the component for which to create the configuration.',
+                                                 ),
+                                             ],
+                                             configuration_id: Annotated[
+                                                 str,
+                                                 Field(
+                                                     description='The ID of the configuration for which to create the configuration row.',
+                                                 ),
+                                             ],
+                                             storage: Optional[dict[str, Any]] = Field(
+                                                 description='The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined',
+                                                 default=None,
+                                             ),
+                                             parameters: dict[str, Any] = Field(
+                                                 description='The component row configuration parameters, adhering to the row configuration schema')
+                                             ) -> Annotated[
+    ComponentRowConfiguration,
+    Field(
+        description='Created component row configuration object,',
+    ),
+]:
+    """
+       Creates a component configuration row in the specified configuration_id, using the specified name, component ID, configuration JSON, and description.
+
+       CONSIDERATIONS:
+           The configuration JSON object must follow the row configuration schema of the specified component. The
+           configuration JSON object should adhere to the component's configuration examples.
+
+       USAGE:
+           - Use when you want to create a new root configuration for a specific component.
+       EXAMPLES:
+           - user_input: `Create a new configuration for component X with these settings`
+               -> set the component_id and configuration parameters accordingly
+               -> returns the created component configuration if successful.
+       """
+
+    client = KeboolaClient.from_state(ctx.session.state)
+    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/rows'
+
+    LOG.info(
+        f'Creating new configuration row: {name} for component: {component_id} '
+        f'and configuration {configuration_id}.')
+
+    configuration_payload = {"storage": storage, "parameters": parameters}
+    # TODO validate parameters
+    # Try to create the new configuration and return the new object if successful
+    # or log an error and raise an exception if not
+    try:
+        new_raw_configuration = await client.post(
+            endpoint,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': configuration_payload,
+            },
+        )
+
+        new_configuration = ComponentRowConfiguration(
             **new_raw_configuration,
             component_id=component_id,
             storage=new_raw_configuration['configuration'].get('storage'),
