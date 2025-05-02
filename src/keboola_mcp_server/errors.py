@@ -9,10 +9,8 @@ F = TypeVar("F", bound=Callable[..., Any])
 class ToolException(Exception):
     """Custom tool exception class that wraps tool execution errors."""
 
-    def __init__(self, original_exception: Exception, recovery_instruction: Optional[str] = None):
-        self.original_exception = original_exception
-        self.recovery_instruction = recovery_instruction
-        super().__init__(f"{str(original_exception)} | Recovery: {recovery_instruction or 'N/A'}")
+    def __init__(self, original_exception: Exception, recovery_instruction: str):
+        super().__init__(f"{str(original_exception)} | Recovery: {recovery_instruction}")
 
 
 def tool_errors(
