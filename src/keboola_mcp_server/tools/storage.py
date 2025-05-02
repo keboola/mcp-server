@@ -138,73 +138,67 @@ class TableDetail(BaseModel):
         return values
 
 
-class UpdateBucketDescriptionResponse(BaseModel):
+class BaseUpdateDescriptionResponse(BaseModel):
     success: bool = True
-    description: str = Field(description='The updated description value')
-    timestamp: str = Field(description='When the description was updated')
+    description: str
+    timestamp: str
+
+    @classmethod
+    def _extract_data(cls, raw_input) -> dict:
+        raise NotImplementedError("Subclasses must implement _extract_data")
 
     @model_validator(mode='before')
-    def extract_from_response(cls, values):
-        if isinstance(values, list) and values:
-            data = values[0]  # the response returns a list - elements for each update
+    def extract(cls, values):
+        try:
+            extracted = cls._extract_data(values)
             return {
                 'success': True,
-                'description': data.get('value'),
-                'timestamp': data.get('timestamp'),
+                'description': extracted['value'],
+                'timestamp': extracted['timestamp'],
             }
-        else:
-            raise ValueError(
-                'Expected input data in UpdateBucketDescriptionResponse to be non-empty list.'
-            )
+        except Exception as e:
+            raise ValueError(f"{cls.__name__} failed to extract metadata: {e}")
 
 
-class UpdateTableDescriptionResponse(BaseModel):
-    success: bool = True
+class UpdateBucketDescriptionResponse(BaseUpdateDescriptionResponse):
+    description: str = Field(description='The updated bucket description value')
+    timestamp: str = Field(description='When the description was updated')
+
+    @classmethod
+    def _extract_data(cls, raw_input):
+        if isinstance(raw_input, list) and raw_input:
+            return raw_input[0]
+        raise ValueError("Expected non-empty list as input.")
+
+
+class UpdateTableDescriptionResponse(BaseUpdateDescriptionResponse):
     description: str = Field(description='The updated table description value')
     timestamp: str = Field(description='When the description was updated')
 
-    @model_validator(mode='before')
-    def extract_metadata(cls, values):
-        metadata = values.get('metadata', [])
+    @classmethod
+    def _extract_data(cls, raw_input):
+        metadata = raw_input.get('metadata', [])
         if isinstance(metadata, list) and metadata:
-            entry = metadata[0]
-            return {
-                'success': True,
-                'description': entry.get('value'),
-                'timestamp': entry.get('timestamp'),
-            }
-        else:
-            raise ValueError(
-                'Expected input data in UpdateTableDescriptionResponse to have non-empty list in "metadata" field.'
-            )
+            return metadata[0]
+        raise ValueError('Expected "metadata" field to be a non-empty list.')
 
 
-class UpdateColumnDescriptionResponse(BaseModel):
-    success: bool = True
+class UpdateColumnDescriptionResponse(BaseUpdateDescriptionResponse):
     description: str = Field(description='The updated column description value')
     timestamp: str = Field(description='When the description was updated')
 
-    @model_validator(mode='before')
-    def extract_metadata(cls, values):
-        metadata = values.get('metadata', [])
+    @classmethod
+    def _extract_data(cls, raw_input):
+        metadata = raw_input.get('metadata', [])
         if isinstance(metadata, list) and metadata:
-            entry = metadata[0]
-            return {
-                'success': True,
-                'description': entry.get('value'),
-                'timestamp': entry.get('timestamp'),
-            }
-        else:
-            raise ValueError(
-                'Expected input data in UpdateColumnDescriptionResponse to have non-empty list in "metadata" field.'
-            )
+            return metadata[0]
+        raise ValueError('Expected "metadata" field to be a non-empty list.')
 
 
 async def get_bucket_detail(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> BucketDetail:
-    # """Gets detailed information about a specific bucket."""
-    """Gets detailed information about a specific bla bla bla."""
+    """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
     raw_bucket = cast(dict[str, Any], client.storage_client.buckets.detail(bucket_id))
@@ -318,7 +312,7 @@ async def update_column_description(
     data = {
         'provider': 'user',
         'columnsMetadata': {
-            f'{column_name}/0': [  # TODO: Understand what that index is
+            f'{column_name}/0': [  # TODO: Understand what this index is doing
                 {
                     'key': MetadataField.DESCRIPTION.value,
                     'value': description,
@@ -329,5 +323,5 @@ async def update_column_description(
     }
 
     response = await client.post(endpoint=metadata_endpoint, data=data)
-
+    print(f"Response: {response}")
     return UpdateColumnDescriptionResponse.model_validate(response)

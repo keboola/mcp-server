@@ -29,6 +29,7 @@ class TestServer:
             RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
             'start_job',
             'update_bucket_description',
+            'update_column_description',
             'update_table_description',
         ]
 
