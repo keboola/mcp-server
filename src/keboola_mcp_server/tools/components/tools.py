@@ -108,14 +108,14 @@ async def retrieve_components_configurations(
         - Use when you want to see components configurations in the project for given component_types.
         - Use when you want to see components configurations in the project for given component_ids.
     EXAMPLES:
-        - user_input: `give me all components`
+        - user_input: `give me all components (in the project)`
             -> returns all components configurations in the project
-        - user_input: `list me all extractor components`
+        - user_input: `list me all extractor components (in the project)`
             -> set types to ["extractor"]
             -> returns all extractor components configurations in the project
         - user_input: `give me configurations for following component/s` | `give me configurations for this component`
             -> set component_ids to list of identifiers accordingly if you know them
-            -> returns all configurations for the given components
+            -> returns all configurations for the given components in the project
         - user_input: `give me configurations for 'specified-id'`
             -> set component_ids to ['specified-id']
             -> returns the configurations of the component with ID 'specified-id'
