@@ -52,7 +52,7 @@ def function_with_value_error():
             "function_with_value_error",
             None,
             {},
-            "No recovery instructions available.",
+            None,
             "Simulated ValueError",
         ),
     ],
@@ -74,13 +74,14 @@ def test_tool_function_recovery_instructions(
         default_recovery=default_recovery, recovery_instructions=recovery_instructions
     )(tool_func)
 
-    with pytest.raises(ToolException) as excinfo:
-        decorated_func()
-
-    assert isinstance(excinfo.value, ToolException)
+    if expected_recovery_message is None:
+        with pytest.raises(ValueError) as excinfo:
+            decorated_func()
+    else:
+        with pytest.raises(ToolException) as excinfo:
+            decorated_func()
+        assert expected_recovery_message in str(excinfo.value)
     assert exception_message in str(excinfo.value)
-    assert expected_recovery_message in str(excinfo.value.recovery_instruction)
-
 
 # --- Test Logging ---
 def test_logging_on_tool_exception(caplog, function_with_value_error):

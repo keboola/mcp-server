@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Callable, Dict, Optional, Type, TypeVar, cast
+from functools import wraps
+from typing import Any, Callable, Optional, Type, TypeVar, cast
 
 LOG = logging.getLogger(__name__)
 
@@ -15,26 +16,26 @@ class ToolException(Exception):
 
 def tool_errors(
     default_recovery: Optional[str] = None,
-    recovery_instructions: Optional[Dict[Type[Exception], str]] = None,
+    recovery_instructions: Optional[dict[Type[Exception], str]] = None,
 ) -> Callable[[F], F]:
     """
     The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
 
-    Args:
-        default_recovery (Optional[str]): A fallback recovery instruction for any exception.
-        recovery_instructions (Optional[Dict[Type[Exception], str]]): Specific instructions per exception type.
-
-    Returns:
-        Callable: Decorated function with error handling.
+    :param default_recovery: A fallback recovery instruction to use when no specific instruction 
+                             is found for the exception.
+    :param recovery_instructions: A dictionary mapping exception types to recovery instructions.
+    :return: The decorated function with error-handling logic applied.
     """
 
     def decorator(func: Callable):
+        @wraps(func) 
         def wrapped(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
+                logging.exception(f"Failed to run tool {func.__name__}: {e}")
+                
                 recovery_msg = default_recovery
-
                 if recovery_instructions:
                     for exc_type, msg in recovery_instructions.items():
                         if isinstance(e, exc_type):
@@ -42,9 +43,8 @@ def tool_errors(
                             break
 
                 if not recovery_msg:
-                    recovery_msg = "No recovery instructions available."
-
-                logging.exception(f"Failed to run tool {func.__name__}: {e}")
+                    raise e
+                
                 raise ToolException(e, recovery_msg) from e
 
         return cast(F, wrapped)
