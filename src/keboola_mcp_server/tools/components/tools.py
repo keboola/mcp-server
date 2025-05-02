@@ -331,4 +331,14 @@ async def create_sql_transformation(
         raise e
 
 
+async def update_transformation_configuration(ctx: Context,
+    component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
+    configuration_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation configuration you want details '
+            'about',
+        ),
+    ]
+):
+    raise NotImplementedError('Update transformation configuration is not implemented yet.')
+    
+
 ############################## End of component tools #########################################
