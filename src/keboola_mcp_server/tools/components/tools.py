@@ -335,10 +335,29 @@ async def update_transformation_configuration(ctx: Context,
     component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
     configuration_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation configuration you want details '
             'about',
+        )],
+    configuration: Annotated[
+        dict,
+        Field(
+            description='The updated SQL transformation configuration.',
         ),
-    ]
-):
+    ],
+) -> Annotated[
+    ComponentConfiguration,
+    Field(
+        description='Updated SQL transformation configuration.',
+    ),
+]:
+    """
+    Updates an existing SQL transformation configuration.
+    USAGE:
+        - Use when you want to update an existing SQL transformation configuration.
+    EXAMPLES:
+        - user_input: `Can you update the SQL transformation configuration?`
+            -> set the component_id and configuration_id to the specific component/transformation ID and configuration ID
+            if you know it
+            -> returns the updated SQL transformation configuration if successful.
+    """
     raise NotImplementedError('Update transformation configuration is not implemented yet.')
-    
 
 ############################## End of component tools #########################################
