@@ -18,7 +18,7 @@ from keboola_mcp_server.tools.components import (
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationMetadata,
     ComponentConfigurationOutput,
-    ReducedComponentDetail
+    ReducedComponentDetail,
 )
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
@@ -238,21 +238,21 @@ async def test_get_component_configuration_details(
     configuration_id = '123'
 
     # Prepare mock configuration
-    mock_configuration.update({
-        'id': configuration_id,
-        'rows': None,
-        'configuration': {
-            'parameters': {'accessKeyId': 'test'},
-            'storage': {'input': {'tables': []}}
+    mock_configuration.update(
+        {
+            'id': configuration_id,
+            'rows': None,
+            'configuration': {
+                'parameters': {'accessKeyId': 'test'},
+                'storage': {'input': {'tables': []}},
+            },
         }
-    })
+    )
 
     # Prepare mock component
-    mock_component.update({
-        'id': component_id,
-        'flags': ['genericDockerUI-tableInput'],
-        'type': 'extractor'
-    })
+    mock_component.update(
+        {'id': component_id, 'flags': ['genericDockerUI-tableInput'], 'type': 'extractor'}
+    )
 
     # Setup Storage API mocks
     keboola_client.storage_client = MagicMock()
@@ -292,9 +292,7 @@ async def test_get_component_configuration_details(
     keboola_client.storage_client.configurations.detail.assert_called_once_with(
         component_id, configuration_id
     )
-    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(
-        component_id
-    )
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id)
 
 
 @pytest.mark.parametrize(
