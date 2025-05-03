@@ -14,10 +14,15 @@ class TestServer:
         server = create_server()
         tools = await server.list_tools()
         assert sorted(t.name for t in tools) == [
+            'create_component_root_configuration',
+            'create_component_row_configuration',
             'create_sql_transformation',
             'docs_query',
+            'find_component_id',
             'get_bucket_detail',
             GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
+            'get_component_configuration_examples',
+            'get_component_detail',
             'get_job_detail',
             'get_sql_dialect',
             'get_table_detail',
@@ -29,6 +34,8 @@ class TestServer:
             RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
             'start_job',
             'update_bucket_description',
+            'update_component_root_configuration',
+            'update_component_row_configuration',
             'update_table_description',
         ]
 
