@@ -84,7 +84,7 @@ extend-ignore = ["E203", "W503", "I101"]
 
 [tool.tox]
 requires = ["tox>=4.23"]
-env_list = ["python", "codestyle"]
+env_list = ["python", "env_flake8"]
 
 [tool.tox.env_run_base]
 description = "Run tests"
@@ -93,7 +93,7 @@ package = "wheel"
 wheel_build_env = ".pkg"
 commands = [["pytest", "--junitxml", "./test-results.xml"]]
 
-[tool.tox.env.codestyle]
+[tool.tox.env.env_flake8]
 description = "Run code style check using flake8"
 extras = ["codestyle"]
 package = "skip"
