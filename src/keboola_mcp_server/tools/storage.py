@@ -174,7 +174,7 @@ async def get_bucket_detail(
     """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
-    raw_bucket = cast(dict[str, Any], client.storage_client.buckets.detail(bucket_id))
+    raw_bucket = cast(dict[str, Any], client.storage_client_sync.buckets.detail(bucket_id))
 
     return BucketDetail(**raw_bucket)
 
@@ -183,7 +183,7 @@ async def retrieve_buckets(ctx: Context) -> list[BucketDetail]:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
-    raw_bucket_data = client.storage_client.buckets.list()
+    raw_bucket_data = client.storage_client_sync.buckets.list()
 
     return [BucketDetail(**raw_bucket) for raw_bucket in raw_bucket_data]
 
@@ -195,7 +195,7 @@ async def get_table_detail(
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
 
-    raw_table = cast(Mapping[str, Any], client.storage_client.tables.detail(table_id))
+    raw_table = cast(Mapping[str, Any], client.storage_client_sync.tables.detail(table_id))
     column_info = [
         TableColumnInfo(name=col, quoted_name=await workspace_manager.get_quoted_name(col))
         for col in raw_table.get('columns', [])
@@ -222,7 +222,7 @@ async def retrieve_bucket_tables(
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
     raw_tables = cast(
         list[Mapping[str, Any]],
-        client.storage_client.buckets.list_tables(bucket_id, include=['metadata']),
+        client.storage_client_sync.buckets.list_tables(bucket_id, include=['metadata']),
     )
     return [TableDetail(**raw_table) for raw_table in raw_tables]
 
@@ -243,7 +243,7 @@ async def update_bucket_description(
         'provider': 'user',
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
-    response = await client.post(endpoint=metadata_endpoint, data=data)
+    response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
 
     return UpdateBucketDescriptionResponse.model_validate(response)
 
@@ -264,6 +264,6 @@ async def update_table_description(
         'provider': 'user',
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
-    response = await client.post(endpoint=metadata_endpoint, data=data)
+    response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
 
     return UpdateTableDescriptionResponse.model_validate(response)

@@ -45,7 +45,7 @@ async def _retrieve_components_configurations_by_types(
     :return: a list of items, each containing a component and its associated configurations
     """
 
-    endpoint = f'branch/{client.storage_client._branch_id}/components'
+    endpoint = f'branch/{client.storage_client_sync._branch_id}/components'
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
     raw_components_with_configurations = []
@@ -56,7 +56,7 @@ async def _retrieve_components_configurations_by_types(
             'componentType': type,
         }
         raw_components_with_configurations_by_type = cast(
-            list[dict[str, Any]], await client.get(endpoint, params=params)
+            list[dict[str, Any]], await client.storage_client.get(endpoint, params=params)
         )
         # extend the list with the raw components with configurations
         raw_components_with_configurations.extend(raw_components_with_configurations_by_type)
@@ -96,10 +96,10 @@ async def _retrieve_components_configurations_by_ids(
     components_with_configurations = []
     for component_id in component_ids:
         # retrieve configurations for component ids
-        raw_configurations = client.storage_client.configurations.list(component_id)
+        raw_configurations = client.storage_client_sync.configurations.list(component_id)
         # retrieve component details
-        endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}'
-        raw_component = await client.get(endpoint)
+        endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}'
+        raw_component = await client.storage_client.get(endpoint)
         # build component configurations list grouped by components
         components_with_configurations.append(
             ComponentWithConfigurations(
@@ -149,8 +149,8 @@ async def _get_component_details(
                 f'Falling back to Storage API.'
             )
 
-            endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}'
-            raw_component = await client.get(endpoint)
+            endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}'
+            raw_component = await client.storage_client.get(endpoint)
             LOG.info(f'Retrieved component details for component {component_id} from Storage API.')
             return Component.model_validate(raw_component)
         else:

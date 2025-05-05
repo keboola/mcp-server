@@ -57,6 +57,7 @@ line-length = 120
 profile = "black"
 line_length = 120
 multi_line_output = 3
+use_parentheses = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keboola_mcp_server"]

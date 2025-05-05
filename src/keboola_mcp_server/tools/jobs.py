@@ -132,7 +132,7 @@ class JobDetail(JobListItem):
     @classmethod
     def validate_result_field(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
         # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
-        # Why? Because result is expected to be an Object, but create job endpoint sends [], perhaps it means
+        # Why? Because the result is expected to be an Object, but create job endpoint sends [], perhaps it means
         # "empty". This avoids type errors.
         if not isinstance(current_value, dict):
             if not current_value:
@@ -153,21 +153,21 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
-        JOB_STATUS,
+        JOB_STATUS | None,
         Field(
             Optional[JOB_STATUS],
             description='The optional status of the jobs to filter by, if None then default all.',
         ),
     ] = None,
     component_id: Annotated[
-        str,
+        str | None,
         Field(
             Optional[str],
             description='The optional ID of the component whose jobs you want to list, default = None.',
         ),
     ] = None,
     config_id: Annotated[
-        str,
+        str | None,
         Field(
             Optional[str],
             description='The optional ID of the component configuration whose jobs you want to list, default = None.',
@@ -196,7 +196,7 @@ async def retrieve_jobs(
     list[JobListItem],
     Field(
         list[JobListItem],
-        description=('The retrieved list of jobs list items. If empty then no jobs were found.'),
+        description='The retrieved list of jobs list items. If empty then no jobs were found.',
     ),
 ]:
     """
@@ -217,7 +217,7 @@ async def retrieve_jobs(
     client = KeboolaClient.from_state(ctx.session.state)
     _status = [status] if status else None
 
-    raw_jobs = client.jobs_queue.search_jobs_by(
+    raw_jobs = await client.jobs_queue_client.search_jobs_by(
         component_id=component_id,
         config_id=config_id,
         limit=limit,
@@ -238,14 +238,14 @@ async def get_job_detail(
     ctx: Context,
 ) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
     """
-    Retrieve a detailed information about a specific job, identified by the job_id, including its status, parameters,
+    Retrieve detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.
     EXAMPLES:
         - if job_id = "123", then the details of the job with id "123" will be retrieved.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
-    raw_job = client.jobs_queue.detail(job_id)
+    raw_job = await client.jobs_queue_client.get_job_detail(job_id)
     LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
     return JobDetail.model_validate(raw_job)
 
@@ -264,7 +264,9 @@ async def start_job(
     client = KeboolaClient.from_state(ctx.session.state)
 
     try:
-        raw_job = client.jobs_queue.create_job(component_id=component_id, configuration_id=configuration_id)
+        raw_job = await client.jobs_queue_client.create_job(
+            component_id=component_id, configuration_id=configuration_id
+        )
         job = JobDetail.model_validate(raw_job)
         LOG.info(
             f'Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}.'

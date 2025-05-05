@@ -36,6 +36,6 @@ async def docs_query(
     Answers a question using the Keboola documentation as a source.
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    answer = client.ai_service_client.docs_question(query)
+    answer = await client.ai_service_client.docs_question(query)
 
     return DocsAnswer(text=answer.text, source_urls=answer.source_urls)
