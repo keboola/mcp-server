@@ -331,9 +331,17 @@ async def create_sql_transformation(
         raise e
 
 
-async def update_transformation_configuration(ctx: Context,
-    transformation_id: Annotated[str, Field(description='Unique identifier of the Keboola transformation')],
-    configuration_id: Annotated[str, Field(description='Unique identifier of the Keboola transformation configuration you want to update')],
+async def update_transformation_configuration(
+    ctx: Context,
+    transformation_id: Annotated[
+        str, Field(description='Unique identifier of the Keboola transformation')
+    ],
+    configuration_id: Annotated[
+        str,
+        Field(
+            description='Unique identifier of the Keboola transformation configuration you want to update'
+        ),
+    ],
     configuration: Annotated[
         dict[str, Any],
         Field(
@@ -366,7 +374,9 @@ async def update_transformation_configuration(ctx: Context,
     """
     client = KeboolaClient.from_state(ctx.session.state)
     try:
-        LOG.info(f"Updating transformation: {transformation_id} with configuration: {configuration_id}.")
+        LOG.info(
+            f"Updating transformation: {transformation_id} with configuration: {configuration_id}."
+        )
         updated_raw_configuration = await client.storage_client.update_component_configuration(
             component_id=transformation_id,
             configuration_id=configuration_id,
@@ -389,5 +399,6 @@ async def update_transformation_configuration(ctx: Context,
             f'Error when updating transformation {transformation_id} with configuration {configuration_id}: {e}'
         )
         raise e
+
 
 ############################## End of component tools #########################################
