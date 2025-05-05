@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write # Needed to push to Docker Hub
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -41,7 +41,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.SERVICE_IMAGE_NAME }}
+          images: |
+            ${{ env.SERVICE_IMAGE_NAME }}
+            ${{ env.GCP_REGISTRY }}/${{ env.GCP_REPOSITORY }}/${{ env.GCP_IMAGE_NAME }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -50,17 +52,75 @@ jobs:
             type=raw,value=production-{{sha}},enable={{is_default_branch}}
             type=raw,value=canary-orion-{{sha}},enable={{is_default_branch}}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile # Explicitly specify the Dockerfile path
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Determine tags to push
+        id: determine_tags
+        # Make GCP_REGISTRY available to the script
+        env:
+          GCP_REGISTRY: ${{ env.GCP_REGISTRY }}
+        shell: bash
+        run: |
+          ALLOWED_TAGS_LIST=()
+          echo "Evaluating tags: ${{ steps.meta.outputs.tags }}"
+          echo "Event: ${{ github.event_name }}, Ref: ${{ github.ref }}"
+
+          # Read all tags into a variable, preserving newlines
+          ALL_TAGS="${{ steps.meta.outputs.tags }}"
+
+          # Iterate over each tag line
+          while IFS= read -r current_tag; do
+            # Skip empty lines
+            [[ -z "$current_tag" ]] && continue
+
+            echo "Processing tag: [$current_tag]"
+            # Only consider GAR tags for pushing
+            if [[ "$current_tag" == ${GCP_REGISTRY}* ]]; then
+                tag_suffix=$(echo "$current_tag" | cut -d':' -f2)
+                echo "  Type: GAR, Suffix: $tag_suffix"
+                should_add=false
+                # Conditional logic for GAR tags
+                if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+                  if [[ "$tag_suffix" == production-* ]] || [[ "$tag_suffix" == canary-orion-* ]]; then
+                    should_add=true
+                    echo "  Adding (Main branch - prod/canary GAR)"
+                  else
+                     echo "  Skipping (Main branch - non-prod/canary GAR)"
+                  fi
+                elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                  if [[ "$tag_suffix" != production-* ]] && [[ "$tag_suffix" != canary-orion-* ]]; then
+                     should_add=true
+                     echo "  Adding (PR - non-prod/canary GAR)"
+                  else
+                      echo "  Skipping (PR - prod/canary GAR)"
+                  fi
+                else
+                    echo "  Skipping (Unknown event/ref condition)"
+                fi
+
+                if [[ "$should_add" == true ]]; then
+                  ALLOWED_TAGS_LIST+=("$current_tag")
+                fi
+            else
+                echo "  Type: Non-GAR - Skipping"
+            fi
+          done <<< "$ALL_TAGS" # Feed the tags using a Here String
+
+          echo "Final list count: ${#ALLOWED_TAGS_LIST[@]}"
+
+          # Join the array elements with a comma and set output
+          if [[ ${#ALLOWED_TAGS_LIST[@]} -gt 0 ]]; then
+            printf -v ALLOWED_TAGS_CSV '%s,' "${ALLOWED_TAGS_LIST[@]}"
+            FINAL_TAGS="${ALLOWED_TAGS_CSV%,}" # Remove trailing comma
+            echo "Final tags for output: [$FINAL_TAGS]"
+            echo "tags=$FINAL_TAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "No tags determined to be pushed. Setting output to empty."
+            echo "tags=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # DEBUG: Print the determined tags
+      - name: Debug Print Tags Output
+        run: |
+          echo "Determined tags output: ${{ steps.determine_tags.outputs.tags }}"
 
       - id: 'authGcp'
         name: Authenticate to GCP
@@ -71,28 +131,24 @@ jobs:
           workload_identity_provider: ${{ env.GCP_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - name: Tag and push docker image to Google GAR
+      - name: Login to GAR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.GCP_REGISTRY }}
           username: oauth2accesstoken
           password: ${{ steps.authGcp.outputs.access_token }}
 
-      - name: Push image to GCP GAR
-        shell: bash
-        run: |
-          echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r image_tag; do
-            # image_tag is like "keboola/mcp-server:tag-suffix"
-            # Extract the tag suffix (e.g., "production-sha123")
-            tag_suffix=$(echo "$image_tag" | cut -d':' -f2)
-            # Construct the full GAR image name
-            full_gar_image="$GCP_REGISTRY/$GCP_REPOSITORY/$GCP_IMAGE_NAME:$tag_suffix"
-            echo "Pushing $full_gar_image"
-            # Tag the locally built image (already tagged by build-push) with the GAR name
-            docker tag "$image_tag" "$full_gar_image"
-            # Push the GAR-tagged image
-            docker push "$full_gar_image"
-          done
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile # Explicitly specify the Dockerfile path
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.determine_tags.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Trigger image tag update
         if: github.ref == 'refs/heads/main'
@@ -105,6 +161,6 @@ jobs:
       - name: Save Docker image info
         if: github.event_name != 'pull_request'
         run: |
-          echo "Docker Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}" > docker-image-info.md
+          echo "Docker Image: ${{ env.GCP_REGISTRY }}/${{ env.GCP_IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}" > docker-image-info.md
           echo "Tags: ${{ steps.meta.outputs.tags }}" >> docker-image-info.md
           echo "Labels: ${{ steps.meta.outputs.labels }}" >> docker-image-info.md
