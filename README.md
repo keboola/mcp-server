@@ -149,12 +149,10 @@ docker run -it \
         "--rm",
         "-i",
         "keboola/mcp-server:latest",
-        "--api-url", "https://connection.YOUR_REGION.keboola.com"
-      ],
-      "env": {
+        "--api-url", "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
         "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
-      }
+      ]
     }
   }
 }
