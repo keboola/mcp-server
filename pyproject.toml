@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "0.14.0"
+version = "0.15.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -95,7 +95,15 @@ commands = [["pytest", "--junitxml", "./test-results.xml"]]
 
 [tool.tox.env.env_flake8]
 description = "Run code style check using flake8"
-extras = ["codestyle"]
 package = "skip"
-allowlist_externals = ["flake8"]
+deps = [
+    "flake8 ~= 7.2",
+    "Flake8-pyproject ~= 1.2",
+    "flake8-bugbear ~= 24.12",
+    "flake8-colors ~= 0.1",
+    "flake8-isort ~= 6.1",
+    "flake8-quotes ~= 3.4",
+    "flake8-typing-imports ~= 1.16",
+    "pep8-naming ~= 0.14",
+]
 commands = [["flake8", "src/", "tests/"]]
