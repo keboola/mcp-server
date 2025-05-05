@@ -30,6 +30,7 @@ class TestServer:
             'start_job',
             'update_bucket_description',
             'update_table_description',
+            'update_transformation_configuration',
         ]
 
     @pytest.mark.asyncio

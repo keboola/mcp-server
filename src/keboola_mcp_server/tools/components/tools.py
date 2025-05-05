@@ -56,6 +56,9 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(create_sql_transformation)
     LOG.info(f'Added tool: {create_sql_transformation.__name__}.')
 
+    mcp.add_tool(update_transformation_configuration)
+    LOG.info(f'Added tool: {update_transformation_configuration.__name__}.')
+
     LOG.info('Component tools initialized.')
 
 
