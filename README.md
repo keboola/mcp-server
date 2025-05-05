@@ -27,6 +27,7 @@ source .venv/bin/activate
 pip3 install keboola_mcp_server
 ```
 
+
 ### Installing via Smithery
 
 To install Keboola MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/keboola-mcp-server):
@@ -49,9 +50,8 @@ To use this server with Claude Desktop, follow these steps:
 {
   "mcpServers": {
     "keboola": {
-      "command": "/path/to/keboola-mcp-server/.venv/bin/python",
+      "command": "uvx",
       "args": [
-        "-m",
         "keboola_mcp_server",
         "--api-url",
         "https://connection.YOUR_REGION.keboola.com"
@@ -117,9 +117,8 @@ To use this server with Cursor AI, you have two options for configuring the tran
 {
   "mcpServers": {
     "keboola": {
-      "command": "/path/to/keboola-mcp-server/.venv/bin/python",
+      "command": "uvx",
       "args": [
-        "-m",
         "keboola_mcp_server",
         "--transport",
         "stdio",
@@ -190,11 +189,31 @@ This will give your MCP server instance permissions to access your BigQuery work
 
 The server provides the following tools for interacting with Keboola Connection:
 
-- List buckets and tables
-- Get bucket and table information
-- Preview table data
-- Export table data to CSV
-- List components and configurations
+### Storage Tools
+- `retrieve_buckets` - List all buckets in your Keboola project
+- `get_bucket_detail` - Get detailed information about a specific bucket
+- `retrieve_bucket_tables` - List all tables in a specific bucket
+- `get_table_detail` - Get detailed information about a specific table
+- `update_bucket_description` - Update the description of a bucket
+- `update_table_description` - Update the description of a table
+
+### SQL Tools
+- `query_table` - Execute SQL queries on tables in your workspace
+- `get_sql_dialect` - Get the SQL dialect used in your workspace (Snowflake or BigQuery)
+
+### Component Tools
+- `retrieve_components` - List available components and their configurations
+- `retrieve_transformations` - List transformation configurations
+- `get_component_details` - Get detailed information about a specific component
+- `create_sql_transformation` - Create a new SQL transformation configuration
+
+### Job Tools
+- `retrieve_jobs` - List jobs in your project
+- `get_job_detail` - Get detailed information about a specific job
+- `start_job` - Start a new job for a component configuration
+
+### Documentation Tools
+- `docs_query` - Query documentation and help information
 
 ## Development
 
