@@ -252,7 +252,7 @@ async def get_job_detail(
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
-    raw_job = client.jobs_queue_client.detail(job_id)
+    raw_job = client.jobs_queue_client.get_job_detail(job_id)
     LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
     return JobDetail.model_validate(raw_job)
 

@@ -295,7 +295,7 @@ class JobsQueueClient(KeboolaServiceClient):
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
 
-    async def detail(self, job_id: str) -> dict[str, Any]:
+    async def get_job_detail(self, job_id: str) -> dict[str, Any]:
         """
         Retrieves information about a given job.
 

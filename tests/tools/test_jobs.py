@@ -142,7 +142,7 @@ async def test_get_job_detail(
     """Tests get_job_detail tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue_client.detail = mocker.MagicMock(return_value=mock_job)
+    keboola_client.jobs_queue_client.get_job_detail = mocker.MagicMock(return_value=mock_job)
 
     result = await get_job_detail('123', context)
 
@@ -171,7 +171,7 @@ async def test_get_job_detail(
     # table_id is not present in the mock_job, should be None
     assert result.table_id is None
 
-    keboola_client.jobs_queue_client.detail.assert_called_once_with('123')
+    keboola_client.jobs_queue_client.get_job_detail.assert_called_once_with('123')
 
 
 @pytest.mark.asyncio
