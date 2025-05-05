@@ -137,6 +137,27 @@ docker run -it \
 }
 ```
 
+### Claude Desktop Configuration (with Docker)
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e", "KBC_STORAGE_TOKEN=your-keboola-storage-token",
+        "-e", "KBC_WORKSPACE_SCHEMA=your-workspace-schema",
+        "keboola/mcp-server:latest",
+        "--api-url", "https://connection.YOUR_REGION.keboola.com"
+      ]
+    }
+  }
+}
+```
+
 ### Cursor Integration
 
 1. Open Settings → Features → MCP Servers
