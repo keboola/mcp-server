@@ -86,8 +86,8 @@ uvx --from keboola-mcp-server keboola-mcp  --api-url https://connection.YOUR_REG
 docker pull keboola/mcp-server:latest
 
 docker run -it \
-  -e KBC_STORAGE_TOKEN="your-token" \
-  -e KBC_WORKSPACE_SCHEMA="your-schema" \
+  -e KBC_STORAGE_TOKEN="your_token" \
+  -e KBC_WORKSPACE_SCHEMA="your_schema" \
   keboola/mcp-server:latest \
   --api-url https://connection.YOUR_REGION.keboola.com
 ```
@@ -129,8 +129,8 @@ docker run -it \
         "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
-        "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
-        "KBC_WORKSPACE_SCHEMA": "your-workspace-schema"
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
       }
     }
   }
@@ -148,11 +148,13 @@ docker run -it \
         "run",
         "--rm",
         "-i",
-        "-e", "KBC_STORAGE_TOKEN=your-keboola-storage-token",
-        "-e", "KBC_WORKSPACE_SCHEMA=your-workspace-schema",
         "keboola/mcp-server:latest",
         "--api-url", "https://connection.YOUR_REGION.keboola.com"
-      ]
+      ],
+      "env": {
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+      }
     }
   }
 }
