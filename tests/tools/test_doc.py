@@ -1,7 +1,6 @@
-from unittest.mock import MagicMock
-
 import pytest
 from mcp.server.fastmcp import Context
+from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import DocsQuestionResponse, KeboolaClient
 from keboola_mcp_server.tools.doc import DocsAnswer, docs_query
@@ -17,11 +16,17 @@ def mock_docs_response() -> DocsQuestionResponse:
 
 
 @pytest.mark.asyncio
-async def test_docs_query(mcp_context_client: Context, mock_docs_response: DocsQuestionResponse):
+async def test_docs_query(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    mock_docs_response: DocsQuestionResponse,
+):
     """Tests docs_query tool with a mocked AI service client response."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.ai_service_client.docs_question = MagicMock(return_value=mock_docs_response)
+    keboola_client.ai_service_client.docs_question = mocker.AsyncMock(
+        return_value=mock_docs_response
+    )
 
     query = 'How do I create a transformation?'
     result = await docs_query(context, query)
