@@ -8,6 +8,7 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -175,6 +176,7 @@ class UpdateTableDescriptionResponse(BaseModel):
             )
 
 
+@tool_errors()
 async def get_bucket_detail(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> BucketDetail:
@@ -186,6 +188,7 @@ async def get_bucket_detail(
     return BucketDetail(**raw_bucket)
 
 
+@tool_errors()
 async def retrieve_buckets(ctx: Context) -> list[BucketDetail]:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
@@ -195,6 +198,7 @@ async def retrieve_buckets(ctx: Context) -> list[BucketDetail]:
     return [BucketDetail(**raw_bucket) for raw_bucket in raw_bucket_data]
 
 
+@tool_errors()
 async def get_table_detail(
     table_id: Annotated[str, Field(description='Unique ID of the table.')], ctx: Context
 ) -> TableDetail:
@@ -219,6 +223,7 @@ async def get_table_detail(
     )
 
 
+@tool_errors()
 async def retrieve_bucket_tables(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> list[TableDetail]:
@@ -234,6 +239,7 @@ async def retrieve_bucket_tables(
     return [TableDetail(**raw_table) for raw_table in raw_tables]
 
 
+@tool_errors()
 async def update_bucket_description(
     bucket_id: Annotated[str, Field(description='The ID of the bucket to update.')],
     description: Annotated[str, Field(description='The new description for the bucket.')],
@@ -255,6 +261,7 @@ async def update_bucket_description(
     return UpdateBucketDescriptionResponse.model_validate(response)
 
 
+@tool_errors()
 async def update_table_description(
     table_id: Annotated[str, Field(description='The ID of the table to update.')],
     description: Annotated[str, Field(description='The new description for the table.')],
