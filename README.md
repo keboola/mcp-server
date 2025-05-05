@@ -1,50 +1,120 @@
+<p align="center">
+  <img src="https://cdn.prod.website-files.com/5e21dc6f4c5acf29c35bb32c/5e21e66410e34945f7f25add_Keboola_logo.svg"  alt="Keboola Logo" align="right">
+</p>
+
 # Keboola MCP Server
 
-[![CI](https://github.com/keboola/keboola-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/keboola/keboola-mcp-server/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/keboola/keboola-mcp-server/branch/main/graph/badge.svg)](https://codecov.io/gh/keboola/keboola-mcp-server)
-<a href="https://glama.ai/mcp/servers/72mwt1x862"><img width="380" height="200" src="https://glama.ai/mcp/servers/72mwt1x862/badge" alt="Keboola Explorer Server MCP server" /></a>
-[![smithery badge](https://smithery.ai/badge/keboola-mcp-server)](https://smithery.ai/server/keboola-mcp-server)
+[![PyPI version](https://badge.fury.io/py/keboola-mcp-server.svg)](https://badge.fury.io/py/keboola-mcp-server)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/keboola-mcp-server)](https://pypi.org/project/keboola-mcp-server/)
+[![Tests](https://github.com/keboola/keboola-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/keboola/keboola-mcp-server/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![MCP Version](https://img.shields.io/badge/MCP-0.2-blue)
+![Docker Image](https://img.shields.io/docker/image-size/keboola/mcp-server)
 
-A Model Context Protocol (MCP) server for interacting with Keboola Connection. This server provides tools for listing and accessing data from Keboola Storage API.
+Keboola MCP transforms complex data operations into simple conversations. It lets **users** and AI agents like **Claude**, **Cursor**, **Windsurf**, or **VS Code** create, update, maintain and operate rich data-driven workflows and analysis without even knowing. Using natural language.
 
-## Requirements
+> This is where data engineering becomes "let me just write one last prompt" type of job.
+
+## 💡 Example Usage
+
+Ask your AI assistant to:
+
+- 📊 **Exploration** - "What sales data do we have in Keboola? Show me the main tables and their origins, trustworthiness."
+- 🔍 **Analysis** - "Analyze our customer retention - which segments had the highest churn last quarter?"
+- 🧮 **Calculations** - "Calculate our monthly recurring revenue by product category, showing growth trends year-over-year."
+- 🔄 **Data Processing** - "Create a transformation that cleans our CRM data - remove duplicates and orphaned records, consolidate addresses, and join it with our project delivery metrics."
+- 📈 **Visual Reporting** - "Build a weekly sales dashboard with comparisons to previous periods and regional breakdowns."
+- 🤝 **Data Integration** - "Connect Woocomerce data to our I_CUSTOMERS database and create unified customer profiles."
+- 🚀 **Workflow Automation** - "Schedule our marketing data pipeline to run daily at 6am and send an email when it completes."
+- 📝 **Documentation & Governance** - "Document all tables in our GENERAL_LEDGER_FLOW with their purposes, update frequencies, and data owners."
+
+## Give It a Shot
+Sign-up to [Keboola Playground](https://chat.canary-orion.keboola.dev/).
+> If you wanna use it with existing Keboola project, we keep this invite only so far, feel free to reach out through [GitHub Issues](https://github.com/keboola/mcp-server/issues)!
+
+
+## ✅ Compatibility
+
+| Environment | Support Status |
+|-------------|---------------|
+| **Data Backends** | |
+| Snowflake | ✅ Fully supported |
+| BigQuery | ✅ Fully supported |
+| **Data integrations** | 700+ |
+| **SQL** | SQL fully supported |
+| **Python** | In development |
+| **dbt** | In development |
+| **Operating Systems** | |
+| macOS | ✅ Fully supported |
+| Linux | ✅ Fully supported |
+| Windows | ✅ Fully supported |
+| **AI Assistants** | |
+| Claude (Desktop & Web) | ✅ Fully supported |
+| Cursor | ✅ Fully supported |
+| Perplexity | ✅ Fully supported |
+| Custom Agents | ✅ Via MCP standard |
+
+---
+
+## 🚀 Quick Start Guide
+
+### 1. Prerequisites
 
 - Python 3.10 or newer
-- Keboola Storage API token
-- Snowflake or BigQuery Read Only Workspace
+- A Keboola account with Storage API token
+- (Optional) A Keboola workspace with Snowflake or BigQuery
 
-## Installation
+### 2. Installation Options
 
-### Installing via Pip
-
-First, create a virtual environment and then install 
-the [keboola_mcp_server](https://pypi.org/project/keboola-mcp-server/) package:
+#### Option A: Using pip (Recommended)
 
 ```bash
+# Setup virtual environment
 python3 -m venv --upgrade-deps .venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-pip3 install keboola_mcp_server
+# Install the MCP server
+pip install keboola_mcp_server
+
+# Start the server
+uvx --from keboola-mcp-server keboola-mcp  --api-url https://connection.YOUR_REGION.keboola.com
 ```
 
-
-### Installing via Smithery
-
-To install Keboola MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/keboola-mcp-server):
+#### Option B: Using Docker
 
 ```bash
-npx -y @smithery/cli install keboola-mcp-server --client claude
+docker pull keboola/mcp-server:latest
+
+docker run -it \
+  -e KBC_STORAGE_TOKEN="your-token" \
+  -e KBC_WORKSPACE_SCHEMA="your-schema" \
+  keboola/mcp-server:latest \
+  --api-url https://connection.YOUR_REGION.keboola.com
 ```
 
-## Claude Desktop Setup
+> Replace `YOUR_REGION` with your Keboola deployment region.
+> | Region | URL |
+> |--------|-----|
+> |AWS North America|`https://connection.keboola.com`|
+> |AWS Europe|`https://connection.eu-central-1.keboola.com`|
+> |Google Cloud EU|`https://connection.europe-west3.gcp.keboola.com`|
+> |Google Cloud US (Pay As You Go)|``https://connection.us-east4.gcp.keboola.com`|
+> |Azure EU (Pay As You Go)|`https://connection.north-europe.azure.keboola.com`|
 
-To use this server with Claude Desktop, follow these steps:
 
-1. Create or edit the Claude Desktop configuration file:
-   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+### 3. Required Environment Variables
 
-2. Add the following configuration (adjust paths according to your setup):
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `KBC_STORAGE_TOKEN` | Yes | Your Keboola Storage API token |
+| `KBC_WORKSPACE_SCHEMA` | For queries | Your Keboola workspace schema name |
+| `GOOGLE_APPLICATION_CREDENTIALS` | For BigQuery | Path to Google credentials JSON file |
+
+---
+
+## 💻 AI Assistant Integration
+
+### Claude Desktop Configuration
 
 ```json
 {
@@ -52,7 +122,9 @@ To use this server with Claude Desktop, follow these steps:
     "keboola": {
       "command": "uvx",
       "args": [
+        "--from",
         "keboola_mcp_server",
+        "keboola-mcp",
         "--api-url",
         "https://connection.YOUR_REGION.keboola.com"
       ],
@@ -65,177 +137,150 @@ To use this server with Claude Desktop, follow these steps:
 }
 ```
 
-Replace:
-- `/path/to/keboola-mcp-server` with your actual path to the cloned repository
-- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
-- `your-keboola-storage-token` with your Keboola Storage API token
-- `your-workspace-schema` with your Snowflake schema or BigQuery dataset of your workspace
+### Cursor Integration
 
-> Note: If you are using a specific version of Python (e.g. 3.11 due to some package compatibility issues), 
-> you'll need to update the `command` into using that specific version, e.g. `/path/to/keboola-mcp-server/.venv/bin/python3.11`
+1. Open Settings → Features → MCP Servers
+2. Click "+ Add new global MCP server"
+3. Fill in the configuration details similar to the Claude example above
 
-> Note: The Workspace can be created in your Keboola project. It is the same project where you got 
-> your Storage Token. The workspace will provide all the necessary connection parameters including the schema or dataset name.
+### Integration with Other Platforms
 
-3. After updating the configuration:
-   - Completely quit Claude Desktop (don't just close the window)
-   - Restart Claude Desktop
-   - Look for the hammer icon in the bottom right corner, indicating the server is connected
+The Keboola MCP Server can be integrated with nearly any platform that supports the MCP protocol or HTTP/SSE:
 
-### Troubleshooting
+#### 🤖 Agent Frameworks
+- **[CrewAI](https://github.com/joaomdmoura/crewAI)**: Add Keboola as a custom tool provider to your agent crew
+- **[AutoGen](https://github.com/microsoft/autogen)**: Register Keboola tools with AutoGen's `AssistantAgent`
+- **[LangChain](https://python.langchain.com/)**: Use Keboola as a tool provider in your LangChain applications
 
-If you encounter connection issues:
-1. Check the logs in Claude Desktop for any error messages
-2. Verify your Keboola Storage API token is correct
-3. Ensure all paths in the configuration are absolute paths
-4. Confirm the virtual environment is properly activated and all dependencies are installed
+#### 🔄 Automation Platforms
+- **[Zapier](https://zapier.com/)**: Connect via webhooks to trigger Keboola jobs based on events
+- **[n8n](https://n8n.io/)**: Use HTTP nodes to query data or trigger transformations
+- **[Make](https://www.make.com/)**: Create scenarios that leverage Keboola data operations
 
-## Cursor AI Setup
+#### 🧠 AI Applications
+- **[Perplexity](https://www.perplexity.ai/)**: Connect via MCP for data-backed answers
+- **[Discord Bots](https://discord.com/developers/docs/intro)**: Create data-aware bots that query your Keboola project
+- **Custom Apps**: Use Keboola for data operations in your web/mobile applications
 
-To use this server with Cursor AI, you have two options for configuring the transport method: Server-Sent Events (SSE) or Standard I/O (stdio).
+**Integration Method**: All platforms connect to Keboola MCP Server via HTTP + Server-Sent Events (SSE) or stdio, making integration seamless regardless of programming language or environment.
 
-1. Create or edit the Cursor AI configuration file:
-   - Location: `~/.cursor/mcp.json`
+---
 
-2. Add one of the following configurations (or all) based on your preferred transport method:
+## 🧰 Supported Tools
+LLMs, agents and users can combine all these tools to help you achieve your goals.
+| Category | Tool | Description |
+|----------|------|-------------|
+| **Storage** | `retrieve_buckets` | Lists all storage buckets in your Keboola project with their IDs, names, and metadata |
+| | `get_bucket_detail` | Retrieves comprehensive information about a specific bucket including tables, permissions, and statistics |
+| | `retrieve_bucket_tables` | Returns all tables within a specific bucket along with their row counts and last update times |
+| | `get_table_detail` | Provides detailed schema information, column types, primary keys, and database identifiers for SQL queries |
+| | `update_bucket_description` | Adds or modifies the description for a bucket to improve documentation and governance |
+| | `update_table_description` | Sets or updates the description text for tables to document their purpose and structure |
+| **SQL** | `query_table` | Executes custom SQL queries against tables in your workspace and returns formatted results |
+| | `get_sql_dialect` | Identifies whether your workspace uses Snowflake or BigQuery SQL dialect for proper query syntax |
+| **Component** | `retrieve_components` | Lists all available extractors, writers, and applications with their configurations |
+| | `retrieve_transformations` | Returns all transformation configurations available in your project organized by type |
+| | `get_component_details` | Provides detailed configuration information and parameters for a specific component |
+| | `create_sql_transformation` | Creates a new SQL transformation with custom queries, scheduling, and input/output mapping |
+| | `create_component_configuration` | Creates a new component configuration, allowing to extract and write data |
+| **Job** | `retrieve_jobs` | Lists and filters jobs by status, component, configuration ID with support for pagination |
+| | `get_job_detail` | Returns comprehensive details about a specific job including logs, performance metrics, and results |
+| | `start_job` | Triggers a component or transformation job to run with specified parameters and configurations |
+| **Documentation** | `docs_query` | Searches and retrieves relevant Keboola documentation based on natural language queries |
 
-### Option 1: Using Server-Sent Events (SSE)
+---
 
-```json
-{
-  "mcpServers": {
-    "keboola": {
-      "url": "http://localhost:8000/sse?storage_token=YOUR-KEBOOLA-STORAGE-TOKEN&workspace_schema=YOUR-WORKSPACE-SCHEMA"
-    }
-  }
-}
-```
+## 🛠️ Troubleshooting & Debugging
 
-### Option 2a: Using Standard I/O (stdio)
+### Common Issues
 
-```json
-{
-  "mcpServers": {
-    "keboola": {
-      "command": "uvx",
-      "args": [
-        "keboola_mcp_server",
-        "--transport",
-        "stdio",
-         "--api-url",
-         "https://connection.YOUR_REGION.keboola.com"
-      ],
-      "env": {
-        "KBC_STORAGE_TOKEN": "your-keboola-storage-token", 
-        "KBC_WORKSPACE_SCHEMA": "your-workspace-schema"         
-      }
-    }
-  }
-}
-```
+| Issue | Solution |
+|-------|----------|
+| **Authentication Errors**, **Token Not Found** | Verify your `KBC_STORAGE_TOKEN` environment variable is set with a valid token |
+| **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct and accessible |
+| **Connection Timeout** | Check network connectivity to your Keboola region |
+| **Missing Tables** | Ensure your token has access to the required buckets |
+| **SQL Query Errors** | Verify SQL dialect matches your backend (Snowflake/BigQuery) |
 
-### Option 2b: Using WSL Standard I/O (wsl stdio)
-When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this.
 
-```json
-{
-  "mcpServers": {
-    "keboola": {
-      "command": "wsl.exe",
-      "args": [
-        "bash",
-        "-c",
-        "'source /wsl_path/to/keboola-mcp-server/.env",
-        "&&",
-        "/wsl_path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
-      ]
-    }
-  }
-}
-```
-- where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
-```shell
-export KBC_STORAGE_TOKEN="your-keboola-storage-token"
-export KBC_WORKSPACE_SCHEMA="your-workspace-schema"
-```
-
-Replace:
-- `/path/to/keboola-mcp-server` with your actual path to the cloned repository
-- `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
-- `your-keboola-storage-token` with your Keboola Storage API token
-- `your-workspace-schema` with your Snowflake schema or BigQuery dataset of your workspace
-
-After updating the configuration:
-1. Restart Cursor AI
-2. If you use the `sse` transport make sure to start your MCP server. You can do so by running this in the activated
-   virtual environment where you built the server:
-   ```
-   /path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server --transport sse --api-url https://connection.YOUR_REGION.keboola.com
-   ```
-3. Cursor AI should be automatically detect your MCP server and enable it.
-
-## BigQuery support
-
-If your Keboola project uses BigQuery backend you will need to set `GOOGLE_APPLICATION_CREDENTIALS` environment variable
-in addition to `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA`.
-
-1. Go to your Keboola BigQuery workspace and display its credentials (click `Connect` button).
-2. Download the credentials file to your local disk. It is a plain JSON file.
-3. Set the full path of the downloaded JSON credentials file to `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
-
-This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud.
-
-## Available Tools
-
-The server provides the following tools for interacting with Keboola Connection:
-
-### Storage Tools
-- `retrieve_buckets` - List all buckets in your Keboola project
-- `get_bucket_detail` - Get detailed information about a specific bucket
-- `retrieve_bucket_tables` - List all tables in a specific bucket
-- `get_table_detail` - Get detailed information about a specific table
-- `update_bucket_description` - Update the description of a bucket
-- `update_table_description` - Update the description of a table
-
-### SQL Tools
-- `query_table` - Execute SQL queries on tables in your workspace
-- `get_sql_dialect` - Get the SQL dialect used in your workspace (Snowflake or BigQuery)
-
-### Component Tools
-- `retrieve_components` - List available components and their configurations
-- `retrieve_transformations` - List transformation configurations
-- `get_component_details` - Get detailed information about a specific component
-- `create_sql_transformation` - Create a new SQL transformation configuration
-
-### Job Tools
-- `retrieve_jobs` - List jobs in your project
-- `get_job_detail` - Get detailed information about a specific job
-- `start_job` - Start a new job for a component configuration
-
-### Documentation Tools
-- `docs_query` - Query documentation and help information
-
-## Development
-
-Run tests:
+### Debugging Tools
 
 ```bash
+# Set your Keboola token (required)
+export KBC_STORAGE_TOKEN=your_token_here
+
+# Run with debug logging
+uvx --from keboola-mcp-server keboola-mcp --api-url https://connection.YOUR_REGION.keboola.com --log-level DEBUG
+
+# Use MCP Inspector to test
+npx @modelcontextprotocol/inspector uvx --from keboola-mcp-server keboola-mcp
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `KBC_STORAGE_TOKEN` | Yes | Your Keboola Storage API token |
+| `KBC_WORKSPACE_SCHEMA` | For queries | Your Keboola workspace schema name |
+| `GOOGLE_APPLICATION_CREDENTIALS` | For BigQuery | Path to Google credentials JSON file |
+
+---
+## 🧪 Development & Contribution
+
+```bash
+# Clone repository
+git clone https://github.com/keboola/keboola-mcp-server.git
+cd keboola-mcp-server
+
+# Setup development environment
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+# Run tests
 pytest
-```
 
-Format code:
+# Format code
+black . && isort .
 
-```bash
-black .
-isort .
-```
-
-Type checking:
-
-```bash
+# Type check
 mypy .
 ```
 
-## License
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed development guidelines.
 
-MIT License - see LICENSE file for details.
+---
+
+# Keboola Core
+A high level overview of what capabilities are exposed via the MCP Server from the underlying Keboola Core.
+<p align="center">
+  <img src="https://help.keboola.com/overview/project-structure1.png" alt="Platform Overview">
+</p>
+
+# Claude Integration
+A few screenshots from Claude using Keboola MCP Server.
+<p align="center">
+  <img src="assets/keboola_animation_medium_delay.gif" alt="Claude Integration">
+</p>
+
+## 📄 License
+
+[MIT License](./LICENSE) — See the LICENSE file for details.
+
+---
+
+## 🔗 Stay in Touch
+
+  <a href="https://www.linkedin.com/company/keboola">LinkedIn</a> •
+  <a href="https://x.com/keboola">X</a> •
+  <a href="https://changelog.keboola.com/">Changelog</a>
+
+
+---
+
+## 🧭 Want to Go Further?
+
+- 📘 [User Docs](https://docs.keboola.com/)
+- 📘 [developer Docs](https://developers.keboola.com/)
+- 🌐 [Keboola Platform](https://www.keboola.com)
+- 🛠 [Keboola Playground](https://chat.canary-orion.keboola.dev/)
