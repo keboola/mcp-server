@@ -97,5 +97,5 @@ commands = [["pytest", "--junitxml", "./test-results.xml"]]
 description = "Run code style check using flake8"
 extras = ["codestyle"]
 package = "skip"
-commands = [["flake8", "src/", "tests/"]]
 allowlist_externals = ["flake8"]
+commands = [["flake8", "src/", "tests/"]]

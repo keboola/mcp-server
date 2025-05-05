@@ -33,7 +33,7 @@ jobs:
           pip install -e ".[dev]"
 
       # Runs tests with coverage and generates coverage.xml file and test-results.xml file
-      # and checks isort & black & flake8 code-style formatting
+      # and checks flake8 code-style formatting that is compatible with isort & black
       # see setup in pyproject.toml
       - name: Run tox
         run: |
