@@ -86,6 +86,7 @@ async def test_tool_function_recovery_instructions(
 
 
 # --- Test Logging ---
+@pytest.mark.asyncio
 async def test_logging_on_tool_exception(caplog, function_with_value_error):
     """Test if logging works correctly with the tool function."""
     decorated_func = tool_errors(default_recovery="General recovery message.")(

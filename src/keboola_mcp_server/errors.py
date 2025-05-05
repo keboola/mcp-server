@@ -28,7 +28,6 @@ def tool_errors(
     """
 
     def decorator(func: Callable):
-        # setattr(func, "test", True)
 
         @wraps(func)
         async def wrapped(*args, **kwargs):
