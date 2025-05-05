@@ -27,6 +27,7 @@ codestyle = [
     "flake8-bugbear ~= 24.12",
     "flake8-colors ~= 0.1",
     "flake8-import-order ~= 0.18",
+    "flake8-isort ~= 6.1",
     "flake8-quotes ~= 3.4",
     "flake8-typing-imports ~= 1.16",
     "pep8-naming ~= 0.14",
@@ -73,6 +74,7 @@ import-order-style = "edited"
 application-package-names = ["keboola_mcp_server"]
 min-python-version = "3.10.0"
 # Skip flake8-import-order rule I101; rely on isort to enforce case-sensitive, alphabetical import sorting
+# Instead we use I001 check import rule from flake8-isort sub package
 extend-ignore = ["I101"]
 # Skip unused import checks F401 in __init__.py files; re-exported imports are intentional
 # not to use them there. 
