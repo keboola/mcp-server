@@ -323,7 +323,7 @@ class JobsQueueClient(KeboolaServiceClient):
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
 
-    async def detail(self, job_id: str) -> dict[str, Any]:
+    async def get_job_detail(self, job_id: str) -> dict[str, Any]:
         """
         Retrieves information about a given job.
 
@@ -364,6 +364,7 @@ class JobsQueueClient(KeboolaServiceClient):
             'sortBy': sort_by,
             'sortOrder': sort_order,
         }
+        params = {k: v for k, v in params.items() if v is not None}
         return await self._search(params=params)
 
     async def create_job(
