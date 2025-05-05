@@ -11,7 +11,7 @@ def function_with_value_error():
     """A function that raises ValueError."""
 
     async def func():
-        raise ValueError("Simulated ValueError")
+        raise ValueError('Simulated ValueError')
 
     return func
 
@@ -22,39 +22,39 @@ def function_with_value_error():
 # --- Test tool_errors ---
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "function_fixture, default_recovery, recovery_instructions, expected_recovery_message, exception_message",
+    'function_fixture, default_recovery, recovery_instructions, expected_recovery_message, exception_message',
     [
         # Case with both default_recovery and recovery_instructions specified
         (
-            "function_with_value_error",
-            "General recovery message.",
-            {ValueError: "Check that data has valid types."},
-            "Check that data has valid types.",
-            "Simulated ValueError",
+            'function_with_value_error',
+            'General recovery message.',
+            {ValueError: 'Check that data has valid types.'},
+            'Check that data has valid types.',
+            'Simulated ValueError',
         ),
         # Case where only default_recovery is provided
         (
-            "function_with_value_error",
-            "General recovery message.",
+            'function_with_value_error',
+            'General recovery message.',
             {},
-            "General recovery message.",
-            "Simulated ValueError",
+            'General recovery message.',
+            'Simulated ValueError',
         ),
         # Case with only recovery_instructions provided
         (
-            "function_with_value_error",
+            'function_with_value_error',
             None,
-            {ValueError: "Check that data has valid types."},
-            "Check that data has valid types.",
-            "Simulated ValueError",
+            {ValueError: 'Check that data has valid types.'},
+            'Check that data has valid types.',
+            'Simulated ValueError',
         ),
         # Case with no recovery instructions provided
         (
-            "function_with_value_error",
+            'function_with_value_error',
             None,
             {},
             None,
-            "Simulated ValueError",
+            'Simulated ValueError',
         ),
     ],
 )
@@ -89,7 +89,7 @@ async def test_tool_function_recovery_instructions(
 @pytest.mark.asyncio
 async def test_logging_on_tool_exception(caplog, function_with_value_error):
     """Test if logging works correctly with the tool function."""
-    decorated_func = tool_errors(default_recovery="General recovery message.")(
+    decorated_func = tool_errors(default_recovery='General recovery message.')(
         function_with_value_error
     )
 
@@ -100,6 +100,6 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error):
             pass
 
     # Capture and assert the correct logging output
-    assert "failed to run tool" in caplog.text.lower()
-    assert "simulated valueerror" in caplog.text.lower()
-    assert "raise valueerror" in caplog.text.lower()
+    assert 'failed to run tool' in caplog.text.lower()
+    assert 'simulated valueerror' in caplog.text.lower()
+    assert 'raise valueerror' in caplog.text.lower()

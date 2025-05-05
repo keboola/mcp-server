@@ -4,14 +4,14 @@ from typing import Any, Callable, Optional, Type, TypeVar, cast
 
 LOG = logging.getLogger(__name__)
 
-F = TypeVar("F", bound=Callable[..., Any])
+F = TypeVar('F', bound=Callable[..., Any])
 
 
 class ToolException(Exception):
     """Custom tool exception class that wraps tool execution errors."""
 
     def __init__(self, original_exception: Exception, recovery_instruction: str):
-        super().__init__(f"{str(original_exception)} | Recovery: {recovery_instruction}")
+        super().__init__(f'{str(original_exception)} | Recovery: {recovery_instruction}')
 
 
 def tool_errors(
@@ -34,7 +34,7 @@ def tool_errors(
             try:
                 return await func(*args, **kwargs)
             except Exception as e:
-                logging.exception(f"Failed to run tool {func.__name__}: {e}")
+                logging.exception(f'Failed to run tool {func.__name__}: {e}')
 
                 recovery_msg = default_recovery
                 if recovery_instructions:
