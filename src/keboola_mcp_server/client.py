@@ -336,6 +336,7 @@ class JobsQueueClient(KeboolaServiceClient):
             'sortBy': sort_by,
             'sortOrder': sort_order,
         }
+        params = {k: v for k, v in params.items() if v is not None}
         return await self._search(params=params)
 
     async def create_job(

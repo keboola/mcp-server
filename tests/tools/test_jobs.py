@@ -83,7 +83,7 @@ async def test_retrieve_jobs(
     """Tests retrieve_jobs tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue_client.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
+    keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
     result = await retrieve_jobs(context)
 
@@ -142,7 +142,7 @@ async def test_get_job_detail(
     """Tests get_job_detail tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue_client.get_job_detail = mocker.MagicMock(return_value=mock_job)
+    keboola_client.jobs_queue_client.get_job_detail = mocker.AsyncMock(return_value=mock_job)
 
     result = await get_job_detail('123', context)
 
@@ -184,7 +184,7 @@ async def retrieve_jobs_with_component_and_config_id(
     """
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue_client.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
+    keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
     result = await retrieve_jobs(
         ctx=context, component_id='keboola.ex-aws-s3', config_id='config-123'
@@ -216,7 +216,7 @@ async def retrieve_jobs_with_component_id_without_config_id(
     It will return all jobs for the given component_id."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue_client.search_jobs_by = mocker.MagicMock(return_value=mock_jobs)
+    keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
     result = await retrieve_jobs(ctx=context, component_id='keboola.ex-aws-s3')
 
@@ -252,7 +252,7 @@ async def test_start_job(
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_job['result'] = []  # simulate empty list as returned by create job endpoint
     mock_job['status'] = 'created'  # simulate created status as returned by create job endpoint
-    keboola_client.jobs_queue_client.create_job = mocker.MagicMock(return_value=mock_job)
+    keboola_client.jobs_queue_client.create_job = mocker.AsyncMock(return_value=mock_job)
 
     component_id = mock_job['component']
     configuration_id = mock_job['config']
@@ -281,7 +281,7 @@ async def test_start_job_fail(
     """Tests start_job tool when job creation fails."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
-    keboola_client.jobs_queue_client.create_job = mocker.MagicMock(
+    keboola_client.jobs_queue_client.create_job = mocker.AsyncMock(
         side_effect=HTTPError('Job creation failed')
     )
 
