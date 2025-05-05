@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Sequence
+from typing import Annotated, Any, Sequence
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
@@ -332,32 +332,62 @@ async def create_sql_transformation(
 
 
 async def update_transformation_configuration(ctx: Context,
-    component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
-    configuration_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation configuration you want details '
-            'about',
-        )],
+    transformation_id: Annotated[str, Field(description='Unique identifier of the Keboola transformation')],
+    configuration_id: Annotated[str, Field(description='Unique identifier of the Keboola transformation configuration you want to update')],
     configuration: Annotated[
-        dict,
+        dict[str, Any],
         Field(
-            description='The updated SQL transformation configuration.',
+            description='Updated transformation configuration containing both updated and unchanged settings.',
+        ),
+    ],
+    modification_description: Annotated[
+        str,
+        Field(
+            description='Detailed description of the modification to the transformation configuration.',
         ),
     ],
 ) -> Annotated[
     ComponentConfiguration,
     Field(
-        description='Updated SQL transformation configuration.',
+        description='Updated transformation configuration.',
     ),
 ]:
     """
-    Updates an existing SQL transformation configuration.
+    Updates an existing transformation configuration.
     USAGE:
-        - Use when you want to update an existing SQL transformation configuration.
+        - Use when you want to update an existing transformation configuration.
+    CONSIDERATIONS:
+        - The configuration JSON data must follow the current Keboola transformation configuration schema.
     EXAMPLES:
-        - user_input: `Can you update the SQL transformation configuration?`
-            -> set the component_id and configuration_id to the specific component/transformation ID and configuration ID
-            if you know it
-            -> returns the updated SQL transformation configuration if successful.
+        - user_input: `Can you update this transformation configuration that [USER INTENT]?`
+            -> set the transformation_id and configuration_id and updated configuration parameters accordingly to the
+            [USER INTENT]
+            -> returns the updated transformation configuration if successful.
     """
-    raise NotImplementedError('Update transformation configuration is not implemented yet.')
+    client = KeboolaClient.from_state(ctx.session.state)
+    try:
+        LOG.info(f"Updating transformation: {transformation_id} with configuration: {configuration_id}.")
+        updated_raw_configuration = await client.storage_client.update_component_configuration(
+            component_id=transformation_id,
+            configuration_id=configuration_id,
+            configuration=configuration,
+            change_description=modification_description,
+        )
+        transformation = await _get_component_details(client=client, component_id=transformation_id)
+        updated_transformation_configuration = ComponentConfiguration(
+            **updated_raw_configuration,
+            component_id=transformation_id,
+            component=transformation,
+        )
+        LOG.info(
+            f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
+            f'component: {transformation_id}.'
+        )
+        return updated_transformation_configuration
+    except Exception as e:
+        LOG.exception(
+            f'Error when updating transformation {transformation_id} with configuration {configuration_id}: {e}'
+        )
+        raise e
 
 ############################## End of component tools #########################################
