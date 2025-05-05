@@ -24,24 +24,23 @@ codestyle = [
     "black ~= 25.1",
     "isort ~= 6.0",
     "flake8 ~= 7.2",
+    "Flake8-pyproject ~= 1.2",
     "flake8-bugbear ~= 24.12",
     "flake8-colors ~= 0.1",
-    "flake8-import-order ~= 0.18",
     "flake8-isort ~= 6.1",
     "flake8-quotes ~= 3.4",
     "flake8-typing-imports ~= 1.16",
     "pep8-naming ~= 0.14",
 ]
 tests = [
-    "keboola-mcp-server[codestyle]",
     "pytest ~= 8.3",
     "pytest-asyncio ~= 0.25",
     "pytest-cov ~= 6.0",
     "pytest-mock ~= 3.14",
-    "tox ~= 4.23",
+    
 ]
 dev = [
-    "keboola-mcp-server[codestyle,tests]",
+    "tox ~= 4.23",
     "build ~= 1.2",
     "wheel~=0.45",
 ]
@@ -73,14 +72,14 @@ max-line-length = 120
 import-order-style = "edited"
 application-package-names = ["keboola_mcp_server"]
 min-python-version = "3.10.0"
-# Skip flake8-import-order rule I101; rely on isort to enforce case-sensitive, alphabetical import sorting
-# Instead we use I001 check import rule from flake8-isort sub package
-extend-ignore = ["I101"]
-# Skip unused import checks F401 in __init__.py files; re-exported imports are intentional
-# not to use them there. 
+# Skip unused import checks F401 in __init__.py files; re-exported imports are intentional. 
 per-file-ignores = [
     "__init__.py: F401",
 ]
+# For Compatibility with black we skip: E203 whitespace before ':', W503 checks line break before binary operator
+# For Compatibility with isort we skip: I101 Imported names are in the wrong order since we follow isort format using
+# alphabetical case-sensitive sort A, B, a, b 
+extend-ignore = ["E203", "W503", "I101"] 
 
 [tool.tox]
 requires = ["tox>=4.23"]
