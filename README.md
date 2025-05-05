@@ -98,7 +98,7 @@ docker run -it \
 > |AWS North America|`https://connection.keboola.com`|
 > |AWS Europe|`https://connection.eu-central-1.keboola.com`|
 > |Google Cloud EU|`https://connection.europe-west3.gcp.keboola.com`|
-> |Google Cloud US (Pay As You Go)|``https://connection.us-east4.gcp.keboola.com`|
+> |Google Cloud US (Pay As You Go)|`https://connection.us-east4.gcp.keboola.com`|
 > |Azure EU (Pay As You Go)|`https://connection.north-europe.azure.keboola.com`|
 
 
