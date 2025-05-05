@@ -7,13 +7,7 @@ from httpx import HTTPError
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.jobs import (
-    JobDetail,
-    JobListItem,
-    get_job_detail,
-    retrieve_jobs,
-    start_job,
-)
+from keboola_mcp_server.tools.jobs import JobDetail, JobListItem, get_job_detail, retrieve_jobs, start_job
 
 
 @pytest.fixture

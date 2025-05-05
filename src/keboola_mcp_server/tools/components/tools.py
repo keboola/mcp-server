@@ -5,11 +5,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.components.model import (
-    ComponentConfiguration,
-    ComponentType,
-    ComponentWithConfigurations,
-)
+from keboola_mcp_server.tools.components.model import ComponentConfiguration, ComponentType, ComponentWithConfigurations
 from keboola_mcp_server.tools.components.utils import (
     _get_component_details,
     _get_sql_transformation_id_from_sql_dialect,
