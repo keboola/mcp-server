@@ -2,6 +2,9 @@ name: Build and Push Docker Image
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -33,21 +36,31 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        id: buildx # Assign an id to refer to outputs
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.SERVICE_IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,format=long
+            type=raw,value=dev-{{sha}},enable=${{ github.event_name == 'pull_request' }}
+            type=raw,value=production-{{sha}},enable={{is_default_branch}}
+            type=raw,value=canary-orion-{{sha}},enable={{is_default_branch}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile # Explicitly specify the Dockerfile path
-          tags: |
-            ${{ env.SERVICE_IMAGE_NAME }}:production-${{ github.sha }}
-            ${{ env.SERVICE_IMAGE_NAME }}:canary-orion-${{ github.sha }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
-          builder: ${{ steps.buildx.outputs.name }}
 
       - id: 'authGcp'
         name: Authenticate to GCP
@@ -68,10 +81,18 @@ jobs:
       - name: Push image to GCP GAR
         shell: bash
         run: |
-          docker tag $SERVICE_IMAGE_NAME:production-${{ github.sha }} $GCP_REGISTRY/$GCP_REPOSITORY/$GCP_IMAGE_NAME:production-${{ github.sha }}
-          docker tag $SERVICE_IMAGE_NAME:canary-orion-${{ github.sha }} $GCP_REGISTRY/$GCP_REPOSITORY/$GCP_IMAGE_NAME:canary-orion-${{ github.sha }}
-          docker push $GCP_REGISTRY/$GCP_REPOSITORY/$GCP_IMAGE_NAME:production-${{ github.sha }}
-          docker push $GCP_REGISTRY/$GCP_REPOSITORY/$GCP_IMAGE_NAME:canary-orion-${{ github.sha }}
+          echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r image_tag; do
+            # image_tag is like "keboola/mcp-server:tag-suffix"
+            # Extract the tag suffix (e.g., "production-sha123")
+            tag_suffix=$(echo "$image_tag" | cut -d':' -f2)
+            # Construct the full GAR image name
+            full_gar_image="$GCP_REGISTRY/$GCP_REPOSITORY/$GCP_IMAGE_NAME:$tag_suffix"
+            echo "Pushing $full_gar_image"
+            # Tag the locally built image (already tagged by build-push) with the GAR name
+            docker tag "$image_tag" "$full_gar_image"
+            # Push the GAR-tagged image
+            docker push "$full_gar_image"
+          done
 
       - name: Trigger image tag update
         if: github.ref == 'refs/heads/main'
@@ -80,3 +101,10 @@ jobs:
           helm-chart: "mcp-server"
           image-tag: canary-orion-${{ github.sha }}
           github-app-private-key: ${{ secrets.GITOPS_KBC_STACKS_TRIGGER_APP_PVK }}
+
+      - name: Save Docker image info
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "Docker Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}" > docker-image-info.md
+          echo "Tags: ${{ steps.meta.outputs.tags }}" >> docker-image-info.md
+          echo "Labels: ${{ steps.meta.outputs.labels }}" >> docker-image-info.md
