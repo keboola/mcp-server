@@ -10,7 +10,7 @@ from keboola_mcp_server.errors import ToolException, tool_errors
 def function_with_value_error():
     """A function that raises ValueError."""
 
-    def func():
+    async def func():
         raise ValueError("Simulated ValueError")
 
     return func
@@ -20,6 +20,7 @@ def function_with_value_error():
 
 
 # --- Test tool_errors ---
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "function_fixture, default_recovery, recovery_instructions, expected_recovery_message, exception_message",
     [
@@ -57,7 +58,7 @@ def function_with_value_error():
         ),
     ],
 )
-def test_tool_function_recovery_instructions(
+async def test_tool_function_recovery_instructions(
     function_fixture,
     default_recovery,
     recovery_instructions,
@@ -76,16 +77,16 @@ def test_tool_function_recovery_instructions(
 
     if expected_recovery_message is None:
         with pytest.raises(ValueError) as excinfo:
-            decorated_func()
+            await decorated_func()
     else:
         with pytest.raises(ToolException) as excinfo:
-            decorated_func()
+            await decorated_func()
         assert expected_recovery_message in str(excinfo.value)
     assert exception_message in str(excinfo.value)
 
 
 # --- Test Logging ---
-def test_logging_on_tool_exception(caplog, function_with_value_error):
+async def test_logging_on_tool_exception(caplog, function_with_value_error):
     """Test if logging works correctly with the tool function."""
     decorated_func = tool_errors(default_recovery="General recovery message.")(
         function_with_value_error
@@ -93,7 +94,7 @@ def test_logging_on_tool_exception(caplog, function_with_value_error):
 
     with caplog.at_level(logging.ERROR):
         try:
-            decorated_func()
+            await decorated_func()
         except ToolException:
             pass
 
