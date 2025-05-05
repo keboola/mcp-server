@@ -262,8 +262,18 @@ class KeboolaServiceClient:
 
 class AsyncStorageClient(KeboolaServiceClient):
 
+    def __init__(self, raw_client: RawKeboolaClient, branch_id: str = 'default') -> None:
+        """
+        Creates an AsyncStorageClient from a RawKeboolaClient and a branch id.
+
+        :param raw_client: The raw client to use
+        :param branch_id: The id of the branch
+        """
+        super().__init__(raw_client=raw_client)
+        self.branch_id = branch_id
+
     @classmethod
-    def create(cls, root_url: str, token: str, version: str = 'v2') -> 'AsyncStorageClient':
+    def create(cls, root_url: str, token: str, version: str = 'v2', branch_id: str = 'default') -> 'AsyncStorageClient':
         """
         Creates an AsyncStorageClient from a Keboola Storage API token.
 
@@ -275,8 +285,26 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cls(
             raw_client=RawKeboolaClient(
                 base_api_url=f'{root_url}/{version}/storage', api_token=token
-            )
+            ),
+            branch_id=branch_id
         )
+
+    async def update_component_configuration(self, component_id: str, configuration_id: str, configuration: dict[str, Any], change_description: str) -> dict[str, Any]:
+        """
+        Updates a component configuration.
+
+        :param component_id: The id of the component
+        :param configuration_id: The id of the configuration
+        :param configuration: The updated configuration dictionary
+        :param change_description: The description of the modification to the configuration
+        :return: The response from the API call - updated configuration or raise an error
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        payload = {
+            'configuration': configuration,
+            'changeDescription': change_description,
+        }
+        return await self.raw_client.put(endpoint=endpoint, data=payload)
 
 
 class JobsQueueClient(KeboolaServiceClient):
