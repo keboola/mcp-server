@@ -1,6 +1,7 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
 import logging
+from datetime import datetime
 from typing import Annotated, Any, Mapping, Optional, cast
 
 from mcp.server.fastmcp import Context
@@ -140,7 +141,7 @@ class TableDetail(BaseModel):
 
 class UpdateDescriptionResponse(BaseModel):
     description: str = Field(..., description="The updated description value.", alias='value')
-    timestamp: str = Field(..., description="When the description was updated.")
+    timestamp: datetime = Field(..., description="The timestamp of the description update.")
     success: bool = Field(default=True, description="Indicates if the update succeeded.")
 
 
