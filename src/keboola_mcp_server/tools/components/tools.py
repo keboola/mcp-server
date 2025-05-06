@@ -48,8 +48,8 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(create_sql_transformation)
     LOG.info(f'Added tool: {create_sql_transformation.__name__}.')
 
-    mcp.add_tool(update_transformation_configuration)
-    LOG.info(f'Added tool: {update_transformation_configuration.__name__}.')
+    mcp.add_tool(update_sql_transformation_configuration)
+    LOG.info(f'Added tool: {update_sql_transformation_configuration.__name__}.')
 
     LOG.info('Component tools initialized.')
 
@@ -325,27 +325,39 @@ async def create_sql_transformation(
         raise e
 
 
-async def update_transformation_configuration(
+async def update_sql_transformation_configuration(
     ctx: Context,
-    transformation_id: Annotated[str, Field(description='Unique identifier of the Keboola transformation')],
     configuration_id: Annotated[
         str,
         Field(description='Unique identifier of the Keboola transformation configuration you want to update'),
     ],
-    modification_description: Annotated[
+    change_description: Annotated[
         str,
         Field(
-            description='Detailed description of the modification to the transformation configuration.',
+            description='Detailed description of the new changes to the transformation configuration.',
         ),
     ],
-    configuration: Annotated[
+    updated_configuration: Annotated[
         dict[str, Any],
         Field(
             description=(
-                'Updated transformation configuration JSON object containing both modified and unchanged settings.'
-            ),
+                'Updated transformation configuration JSON object containing both updated settings applied and all '
+                'existing settings preserved.'),
         ),
     ],
+    updated_description: Annotated[
+        str,
+        Field(
+            description='Updated previous description incorporating the new changes of the transformation '
+            'configuration. Default is empty string.',
+        ),
+    ] = str(),
+    is_disabled: Annotated[
+        bool,
+        Field(
+            description='Whether to disable the transformation configuration. Default is False.',
+        ),
+    ] = False,
 ) -> Annotated[
     ComponentConfiguration,
     Field(
@@ -353,38 +365,48 @@ async def update_transformation_configuration(
     ),
 ]:
     """
-    Updates an existing transformation configuration.
+    Updates an existing SQL transformation configuration, optionally updating the description and disabling the
+    configuration.
+
     CONSIDERATIONS:
-        - The configuration JSON data must follow the current Keboola transformation configuration schema.
+    - The configuration JSON data must follow the current Keboola transformation configuration schema.
+
     EXAMPLES:
-        - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
-            -> set the transformation_id and configuration_id accordingly and update configuration parameters based on
-            the [USER INTENT]
-            -> returns the updated transformation configuration if successful.
+    - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
+        - set the transformation_id and configuration_id accordingly and update configuration parameters based on
+        the [USER INTENT]
+        - returns the updated transformation configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
+    LOG.info(f'SQL transformation ID: {sql_transformation_id}')
+
     try:
-        LOG.info(f'Updating transformation: {transformation_id} with configuration: {configuration_id}.')
+        LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
         updated_raw_configuration = await client.storage_client.update_component_configuration(
-            component_id=transformation_id,
+            component_id=sql_transformation_id,
             configuration_id=configuration_id,
-            configuration=configuration,
-            change_description=modification_description,
+            configuration=updated_configuration,
+            change_description=change_description,
+            updated_description=updated_description if updated_description else None,
+            is_disabled=is_disabled,
         )
-        transformation = await _get_component_details(client=client, component_id=transformation_id)
+
+        transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
         updated_transformation_configuration = ComponentConfiguration(
             **updated_raw_configuration,
-            component_id=transformation_id,
+            component_id=transformation.component_id,
             component=transformation,
         )
+
         LOG.info(
             f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
-            f'component: {transformation_id}.'
+            f'component: {updated_transformation_configuration.component_id}.'
         )
         return updated_transformation_configuration
     except Exception as e:
         LOG.exception(
-            f'Error when updating transformation {transformation_id} with configuration {configuration_id}: {e}'
+            f'Error when updating transformation {sql_transformation_id} with configuration {configuration_id}: {e}'
         )
         raise e
 

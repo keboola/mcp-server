@@ -14,5 +14,5 @@ from keboola_mcp_server.tools.components.tools import (
     get_component_configuration_details,
     retrieve_components_configurations,
     retrieve_transformations_configurations,
-    update_transformation_configuration,
+    update_sql_transformation_configuration,
 )
