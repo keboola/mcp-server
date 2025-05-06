@@ -1,0 +1,70 @@
+name: Trigger image tag update
+description: "Trigger image tag update workflow"
+inputs:
+  helm-chart:
+    description: "The Helm chart to update"
+    required: true
+  image-tag:
+    description: "The image tag to update to"
+    required: true
+  automerge:
+    description: "Automatically merge PRs"
+    required: false
+    default: "true"
+  dry-run:
+    description: "Do a dry run"
+    required: false
+    default: "false"
+  commit-sha:
+    description: "Enable to commit pipeline's SHA to tag.yaml"
+    required: false
+    default: "true"
+  github-app-private-key:
+    description: 'The "Keboola - kbc-stacks trigger" GitHub App private key'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate a token
+      id: app-token
+      uses: actions/create-github-app-token@v1.11.0
+      with:
+        app-id: "1032801"
+        private-key: ${{ inputs.github-app-private-key }}
+        owner: ${{ github.repository_owner }}
+        repositories: "kbc-stacks"
+    - name: Trigger image tag update
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        unset GITHUB_TOKEN
+
+        # Create metadata JSON with source information
+        METADATA=$(cat <<EOF
+        {
+          "source": {
+            "repository": "$GITHUB_REPOSITORY",
+            "repository_url": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY",
+            "sha": "$GITHUB_SHA",
+            "actor": "$GITHUB_ACTOR",
+            "workflow_url": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID",
+            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+        }
+        EOF
+        )
+
+        # Encode metadata to base64
+        ENCODED_METADATA=$(echo "$METADATA" | base64 -w 0)
+
+        gh workflow run update-image-tag.yaml \
+        -R keboola/kbc-stacks \
+        -r main \
+        -f helm-chart=${{ inputs.helm-chart }} \
+        -f image-tag=${{ inputs.image-tag }} \
+        -f automerge=${{ inputs.automerge }} \
+        -f dry-run=${{ inputs.dry-run }} \
+        -f commit-sha=${{ inputs.commit-sha }} \
+        -f metadata="$ENCODED_METADATA"
