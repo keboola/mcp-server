@@ -323,16 +323,16 @@ async def update_transformation_configuration(
         str,
         Field(description='Unique identifier of the Keboola transformation configuration you want to update'),
     ],
-    configuration: Annotated[
-        dict[str, Any],
-        Field(
-            description='Updated transformation configuration containing both updated and unchanged settings.',
-        ),
-    ],
     modification_description: Annotated[
         str,
         Field(
             description='Detailed description of the modification to the transformation configuration.',
+        ),
+    ],
+    configuration: Annotated[
+        dict[str, Any],
+        Field(
+            description='Updated transformation configuration JSON object containing both modified and unchanged settings.',
         ),
     ],
 ) -> Annotated[
