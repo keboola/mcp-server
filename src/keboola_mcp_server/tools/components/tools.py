@@ -343,14 +343,12 @@ async def update_transformation_configuration(
 ]:
     """
     Updates an existing transformation configuration.
-    USAGE:
-        - Use when you want to update an existing transformation configuration.
     CONSIDERATIONS:
         - The configuration JSON data must follow the current Keboola transformation configuration schema.
     EXAMPLES:
-        - user_input: `Can you update this transformation configuration that [USER INTENT]?`
-            -> set the transformation_id and configuration_id and updated configuration parameters accordingly to the
-            [USER INTENT]
+        - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
+            -> set the transformation_id and configuration_id accordingly and update configuration parameters based on
+            the [USER INTENT]
             -> returns the updated transformation configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
