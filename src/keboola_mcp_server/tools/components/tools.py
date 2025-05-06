@@ -332,7 +332,9 @@ async def update_transformation_configuration(
     configuration: Annotated[
         dict[str, Any],
         Field(
-            description='Updated transformation configuration JSON object containing both modified and unchanged settings.',
+            description=(
+                'Updated transformation configuration JSON object containing both modified and unchanged settings.'
+            ),
         ),
     ],
 ) -> Annotated[

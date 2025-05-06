@@ -398,5 +398,4 @@ async def test_update_transformation_configuration(
         configuration_id=mock_configuration['id'],
         change_description=new_config_description,
         configuration=new_config,
-
     )
