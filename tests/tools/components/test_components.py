@@ -14,6 +14,7 @@ from keboola_mcp_server.tools.components import (
     get_component_configuration_details,
     retrieve_components_configurations,
     retrieve_transformations_configurations,
+    update_transformation_configuration,
 )
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
@@ -359,3 +360,42 @@ async def test_create_transformation_configuration_fail(
             'test_description',
             ['SELECT * FROM test'],
         )
+
+
+@pytest.mark.asyncio
+async def test_update_transformation_configuration(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """Test update_transformation_configuration tool."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    new_config = {'foo': 'foo'}
+    new_config_description = 'foo fooo'
+    mock_configuration['configuration'] = new_config
+    keboola_client.storage_client.update_component_configuration = mocker.AsyncMock(return_value=mock_configuration)
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.MagicMock(return_value=mock_component)
+
+    updated_configuration = await update_transformation_configuration(
+        context,
+        mock_component['id'],
+        mock_configuration['id'],
+        new_config,
+        new_config_description,
+    )
+
+    assert isinstance(updated_configuration, ComponentConfiguration)
+    assert updated_configuration.configuration == new_config
+    assert updated_configuration.component_id == mock_component['id']
+    assert updated_configuration.configuration_id == mock_configuration['id']
+
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(mock_component['id'])
+    keboola_client.storage_client.update_component_configuration.assert_called_once_with(
+        component_id=mock_component['id'],
+        configuration_id=mock_configuration['id'],
+        configuration=new_config,
+        change_description=new_config_description,
+    )
