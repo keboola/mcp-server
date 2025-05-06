@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
-      - main
+      - master
   push:
     branches:
-      - main
+      - master
 
 env:
   SERVICE_IMAGE_NAME: "keboola/mcp-server"
@@ -59,7 +59,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trigger image tag update
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/master'
         uses: keboola/kbc-stacks/.github/actions/trigger-image-tag-update@main
         with:
           helm-chart: "mcp-server"
