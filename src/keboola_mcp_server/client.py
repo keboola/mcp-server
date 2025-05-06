@@ -291,6 +291,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         configuration_id: str,
         configuration: dict[str, Any],
         change_description: str,
+        updated_description: Optional[str] = None,
+        is_disabled: bool = False,
     ) -> dict[str, Any]:
         """
         Updates a component configuration.
@@ -302,10 +304,17 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: The response from the API call - updated configuration or raise an error
         """
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        
         payload = {
             'configuration': configuration,
             'changeDescription': change_description,
         }
+        if updated_description:
+            payload['description'] = updated_description
+
+        if is_disabled:
+            payload['isDisabled'] = is_disabled
+
         return await self.raw_client.put(endpoint=endpoint, data=payload)
 
 
