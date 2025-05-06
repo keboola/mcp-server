@@ -102,7 +102,7 @@ class ToolDocumentationGenerator:
                 anchor = self._generate_anchor(tool.name)
                 f.write(f'<a name="{anchor}"></a>\n')
                 f.write(f'## {tool.name}\n')
-                f.write(f'**Description**: {tool.description}\n\n')
+                f.write(f'**Description**:\n\n{tool.description}\n\n')
                 self._write_json_schema(f, tool)
                 f.write('\n---\n')
 

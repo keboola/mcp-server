@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, List, Sequence
+from typing import Annotated, Sequence
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
@@ -86,21 +86,23 @@ async def retrieve_components_configurations(
     Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
     If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
     component_types.
+
     USAGE:
-        - Use when you want to see components configurations in the project for given component_types.
-        - Use when you want to see components configurations in the project for given component_ids.
+    - Use when you want to see components configurations in the project for given component_types.
+    - Use when you want to see components configurations in the project for given component_ids.
+
     EXAMPLES:
-        - user_input: `give me all components`
-            -> returns all components configurations in the project
-        - user_input: `list me all extractor components`
-            -> set types to ["extractor"]
-            -> returns all extractor components configurations in the project
-        - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-            -> set component_ids to list of identifiers accordingly if you know them
-            -> returns all configurations for the given components
-        - user_input: `give me configurations for 'specified-id'`
-            -> set component_ids to ['specified-id']
-            -> returns the configurations of the component with ID 'specified-id'
+    - user_input: `give me all components`
+        - returns all components configurations in the project
+    - user_input: `list me all extractor components`
+        - set types to ["extractor"]
+        - returns all extractor components configurations in the project
+    - user_input: `give me configurations for following component/s` | `give me configurations for this component`
+        - set component_ids to list of identifiers accordingly if you know them
+        - returns all configurations for the given components
+    - user_input: `give me configurations for 'specified-id'`
+        - set component_ids to ['specified-id']
+        - returns the configurations of the component with ID 'specified-id'
     """
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
     if not component_ids:
@@ -129,19 +131,21 @@ async def retrieve_transformations_configurations(
 ]:
     """
     Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
+
     USAGE:
-        - Use when you want to see transformation configurations in the project for given transformation_ids.
-        - Use when you want to retrieve all transformation configurations, then set transformation_ids to an empty list.
+    - Use when you want to see transformation configurations in the project for given transformation_ids.
+    - Use when you want to retrieve all transformation configurations, then set transformation_ids to an empty list.
+
     EXAMPLES:
-        - user_input: `give me all transformations`
-            -> returns all transformation configurations in the project
-        - user_input: `give me configurations for following transformation/s` | `give me configurations for
-        this transformation`
-            -> set transformation_ids to list of identifiers accordingly if you know the IDs
-            -> returns all transformation configurations for the given transformations IDs
-        - user_input: `list me transformations for this transformation component 'specified-id'`
-            -> set transformation_ids to ['specified-id']
-            -> returns the transformation configurations with ID 'specified-id'
+    - user_input: `give me all transformations`
+        - returns all transformation configurations in the project
+    - user_input: `give me configurations for following transformation/s` | `give me configurations for
+      this transformation`
+        - set transformation_ids to list of identifiers accordingly if you know the IDs
+        - returns all transformation configurations for the given transformations IDs
+    - user_input: `list me transformations for this transformation component 'specified-id'`
+        - set transformation_ids to ['specified-id']
+        - returns the transformation configurations with ID 'specified-id'
     """
     # If no transformation IDs are provided, retrieve transformations configurations by transformation type
     if not transformation_ids:
@@ -174,13 +178,15 @@ async def get_component_configuration_details(
     """
     Gets detailed information about a specific Keboola component configuration given component/transformation ID and
     configuration ID.
+
     USAGE:
-        - Use when you want to see the details of a specific component/transformation configuration.
+    - Use when you want to see the details of a specific component/transformation configuration.
+
     EXAMPLES:
-        - user_input: `give me details about this configuration`
-            -> set component_id and configuration_id to the specific component/transformation ID and configuration ID
-            if you know it
-            -> returns the details of the component/transformation configuration pair
+    - user_input: `give me details about this configuration`
+        - set component_id and configuration_id to the specific component/transformation ID and configuration ID
+          if you know it
+        - returns the details of the component/transformation configuration pair
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -260,24 +266,27 @@ async def create_sql_transformation(
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
     description, and optionally a list of created table names if and only if they are generated within the SQL
     statements.
+
     CONSIDERATIONS:
-        - The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
-        appropriate tool.
-        - When referring to the input tables within the SQL query, use fully qualified table names, which can be
-          retrieved using appropriate tools.
-        - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
-          fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
-        - Unless otherwise specified by user, transformation name and description are generated based on the sql query
-          and user intent.
+    - The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
+      appropriate tool.
+    - When referring to the input tables within the SQL query, use fully qualified table names, which can be
+      retrieved using appropriate tools.
+    - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
+      fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
+    - Unless otherwise specified by user, transformation name and description are generated based on the sql query
+      and user intent.
+
     USAGE:
-        - Use when you want to create a new SQL transformation.
+    - Use when you want to create a new SQL transformation.
+
     EXAMPLES:
-        - user_input: `Can you save me the SQL query you generated as a new transformation?`
-            -> set the sql_statements to the query, and set other parameters accordingly.
-            -> returns the created SQL transformation configuration if successful.
-        - user_input: `Generate me an SQL transformation which [USER INTENT]`
-            -> set the sql_statements to the query based on the [USER INTENT], and set other parameters accordingly.
-            -> returns the created SQL transformation configuration if successful.
+    - user_input: `Can you save me the SQL query you generated as a new transformation?`
+        - set the sql_statements to the query, and set other parameters accordingly.
+        - returns the created SQL transformation configuration if successful.
+    - user_input: `Generate me an SQL transformation which [USER INTENT]`
+        - set the sql_statements to the query based on the [USER INTENT], and set other parameters accordingly.
+        - returns the created SQL transformation configuration if successful.
     """
 
     # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
