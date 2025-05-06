@@ -30,9 +30,7 @@ class DocsAnswer(BaseModel):
 
 async def docs_query(
     ctx: Context,
-    query: Annotated[
-        str, Field(description='Natural language query to search for in the documentation.')
-    ],
+    query: Annotated[str, Field(description='Natural language query to search for in the documentation.')],
 ) -> Annotated[DocsAnswer, Field(description='The retrieved documentation.')]:
     """
     Answers a question using the Keboola documentation as a source.

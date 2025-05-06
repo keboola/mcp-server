@@ -64,7 +64,7 @@ class TestConfig:
         config = Config(storage_token='foo')
         assert str(config) == (
             'Config('
-            'storage_token=\'****\', '
-            'storage_api_url=\'https://connection.keboola.com\', '
+            "storage_token='****', "
+            "storage_api_url='https://connection.keboola.com', "
             'workspace_schema=None)'
         )
