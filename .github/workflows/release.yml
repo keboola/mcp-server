@@ -60,7 +60,7 @@ jobs:
 
       - name: Trigger image tag update
         if: github.ref == 'refs/heads/main'
-        uses: ./.github/actions/trigger-image-tag-update@main
+        uses: ./.github/actions/trigger-image-tag-update
         with:
           helm-chart: "mcp-server"
           image-tag: canary-orion-${{ github.sha }}
