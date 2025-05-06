@@ -8,6 +8,7 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -35,10 +36,7 @@ def extract_description(values: dict[str, Any]) -> Optional[str]:
             (
                 value
                 for item in metadata
-                if (
-                    item.get('key') == MetadataField.DESCRIPTION.value
-                    and (value := item.get('value'))
-                )
+                if (item.get('key') == MetadataField.DESCRIPTION.value and (value := item.get('value')))
             ),
             None,
         )
@@ -48,9 +46,7 @@ class BucketDetail(BaseModel):
     id: str = Field(description='Unique identifier for the bucket')
     name: str = Field(description='Name of the bucket')
     description: Optional[str] = Field(None, description='Description of the bucket')
-    stage: Optional[str] = Field(
-        None, description='Stage of the bucket (in for input stage, out for output stage)'
-    )
+    stage: Optional[str] = Field(None, description='Stage of the bucket (in for input stage, out for output stage)')
     created: str = Field(description='Creation timestamp of the bucket')
     data_size_bytes: Optional[int] = Field(
         None,
@@ -121,9 +117,7 @@ class TableDetail(BaseModel):
     fully_qualified_name: Optional[str] = Field(
         None,
         description='Fully qualified name of the table.',
-        validation_alias=AliasChoices(
-            'fullyQualifiedName', 'fully_qualified_name', 'fully-qualified-name'
-        ),
+        validation_alias=AliasChoices('fullyQualifiedName', 'fully_qualified_name', 'fully-qualified-name'),
         serialization_alias='fullyQualifiedName',
     )
 
@@ -140,6 +134,7 @@ class UpdateBucketDescriptionResponse(BaseModel):
     timestamp: str = Field(description='When the description was updated')
 
     @model_validator(mode='before')
+    @classmethod
     def extract_from_response(cls, values):
         if isinstance(values, list) and values:
             data = values[0]  # the response returns a list - elements for each update
@@ -149,9 +144,7 @@ class UpdateBucketDescriptionResponse(BaseModel):
                 'timestamp': data.get('timestamp'),
             }
         else:
-            raise ValueError(
-                'Expected input data in UpdateBucketDescriptionResponse to be non-empty list.'
-            )
+            raise ValueError('Expected input data in UpdateBucketDescriptionResponse to be non-empty list.')
 
 
 class UpdateTableDescriptionResponse(BaseModel):
@@ -160,6 +153,7 @@ class UpdateTableDescriptionResponse(BaseModel):
     timestamp: str = Field(description='When the description was updated')
 
     @model_validator(mode='before')
+    @classmethod
     def extract_metadata(cls, values):
         metadata = values.get('metadata', [])
         if isinstance(metadata, list) and metadata:
@@ -175,26 +169,29 @@ class UpdateTableDescriptionResponse(BaseModel):
             )
 
 
+@tool_errors()
 async def get_bucket_detail(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> BucketDetail:
     """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
-    raw_bucket = cast(dict[str, Any], client.storage_client.buckets.detail(bucket_id))
+    raw_bucket = cast(dict[str, Any], client.storage_client_sync.buckets.detail(bucket_id))
 
     return BucketDetail(**raw_bucket)
 
 
+@tool_errors()
 async def retrieve_buckets(ctx: Context) -> list[BucketDetail]:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
-    raw_bucket_data = client.storage_client.buckets.list()
+    raw_bucket_data = client.storage_client_sync.buckets.list()
 
     return [BucketDetail(**raw_bucket) for raw_bucket in raw_bucket_data]
 
 
+@tool_errors()
 async def get_table_detail(
     table_id: Annotated[str, Field(description='Unique ID of the table.')], ctx: Context
 ) -> TableDetail:
@@ -202,7 +199,7 @@ async def get_table_detail(
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
 
-    raw_table = cast(Mapping[str, Any], client.storage_client.tables.detail(table_id))
+    raw_table = cast(Mapping[str, Any], client.storage_client_sync.tables.detail(table_id))
     column_info = [
         TableColumnInfo(name=col, quoted_name=await workspace_manager.get_quoted_name(col))
         for col in raw_table.get('columns', [])
@@ -219,6 +216,7 @@ async def get_table_detail(
     )
 
 
+@tool_errors()
 async def retrieve_bucket_tables(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> list[TableDetail]:
@@ -229,11 +227,12 @@ async def retrieve_bucket_tables(
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
     raw_tables = cast(
         list[Mapping[str, Any]],
-        client.storage_client.buckets.list_tables(bucket_id, include=['metadata']),
+        client.storage_client_sync.buckets.list_tables(bucket_id, include=['metadata']),
     )
     return [TableDetail(**raw_table) for raw_table in raw_tables]
 
 
+@tool_errors()
 async def update_bucket_description(
     bucket_id: Annotated[str, Field(description='The ID of the bucket to update.')],
     description: Annotated[str, Field(description='The new description for the bucket.')],
@@ -250,11 +249,12 @@ async def update_bucket_description(
         'provider': 'user',
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
-    response = await client.post(endpoint=metadata_endpoint, data=data)
+    response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
 
     return UpdateBucketDescriptionResponse.model_validate(response)
 
 
+@tool_errors()
 async def update_table_description(
     table_id: Annotated[str, Field(description='The ID of the table to update.')],
     description: Annotated[str, Field(description='The new description for the table.')],
@@ -271,6 +271,6 @@ async def update_table_description(
         'provider': 'user',
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
-    response = await client.post(endpoint=metadata_endpoint, data=data)
+    response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
 
     return UpdateTableDescriptionResponse.model_validate(response)

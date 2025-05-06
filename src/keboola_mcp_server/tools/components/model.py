@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -36,8 +36,8 @@ class ReducedComponent(BaseModel):
 
 class ReducedComponentConfiguration(BaseModel):
     """
-    A Reduced Component Configuration containing the Keboola Component ID and the reduced information about configuration
-    used in a list.
+    A Reduced Component Configuration containing the Keboola Component ID and the reduced information about
+    configuration used in a list.
     """
 
     component_id: str = Field(
@@ -123,17 +123,13 @@ class Component(ReducedComponent):
     configuration_schema: Optional[dict[str, Any]] = Field(
         default=None,
         description='The configuration schema for the component.',
-        validation_alias=AliasChoices(
-            'configurationSchema', 'configuration_schema', 'configuration-schema'
-        ),
+        validation_alias=AliasChoices('configurationSchema', 'configuration_schema', 'configuration-schema'),
         serialization_alias='configurationSchema',
     )
     configuration_row_schema: Optional[dict[str, Any]] = Field(
         default=None,
         description='The configuration row schema of the component.',
-        validation_alias=AliasChoices(
-            'configurationRowSchema', 'configuration_row_schema', 'configuration-row-schema'
-        ),
+        validation_alias=AliasChoices('configurationRowSchema', 'configuration_row_schema', 'configuration-row-schema'),
         serialization_alias='configurationRowSchema',
     )
 
@@ -145,9 +141,7 @@ class ComponentConfiguration(ReducedComponentConfiguration):
 
     version: int = Field(description='The version of the component configuration')
     configuration: dict[str, Any] = Field(description='The configuration of the component')
-    rows: Optional[list[dict[str, Any]]] = Field(
-        description='The rows of the component configuration', default=None
-    )
+    rows: Optional[list[dict[str, Any]]] = Field(description='The rows of the component configuration', default=None)
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
         default=[],

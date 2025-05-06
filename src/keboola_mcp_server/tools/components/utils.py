@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Union, cast, get_args
+from typing import Any, Optional, Sequence, Union, cast, get_args
 
 import requests
 from pydantic import BaseModel, Field
@@ -45,7 +45,7 @@ async def _retrieve_components_configurations_by_types(
     :return: a list of items, each containing a component and its associated configurations
     """
 
-    endpoint = f'branch/{client.storage_client._branch_id}/components'
+    endpoint = f'branch/{client.storage_client_sync._branch_id}/components'
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
     raw_components_with_configurations = []
@@ -56,7 +56,7 @@ async def _retrieve_components_configurations_by_types(
             'componentType': type,
         }
         raw_components_with_configurations_by_type = cast(
-            list[dict[str, Any]], await client.get(endpoint, params=params)
+            list[dict[str, Any]], await client.storage_client.get(endpoint, params=params)
         )
         # extend the list with the raw components with configurations
         raw_components_with_configurations.extend(raw_components_with_configurations_by_type)
@@ -66,9 +66,7 @@ async def _retrieve_components_configurations_by_types(
         ComponentWithConfigurations(
             component=ReducedComponent.model_validate(raw_component),
             configurations=[
-                ReducedComponentConfiguration.model_validate(
-                    {**raw_configuration, 'component_id': raw_component['id']}
-                )
+                ReducedComponentConfiguration.model_validate({**raw_configuration, 'component_id': raw_component['id']})
                 for raw_configuration in raw_component.get('configurations', [])
             ],
         )
@@ -76,9 +74,7 @@ async def _retrieve_components_configurations_by_types(
     ]
 
     # perform logging
-    total_configurations = sum(
-        len(component.configurations) for component in components_with_configurations
-    )
+    total_configurations = sum(len(component.configurations) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
         f'for types {component_types}.'
@@ -100,10 +96,10 @@ async def _retrieve_components_configurations_by_ids(
     components_with_configurations = []
     for component_id in component_ids:
         # retrieve configurations for component ids
-        raw_configurations = client.storage_client.configurations.list(component_id)
+        raw_configurations = client.storage_client_sync.configurations.list(component_id)
         # retrieve component details
-        endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}'
-        raw_component = await client.get(endpoint)
+        endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}'
+        raw_component = await client.storage_client.get(endpoint)
         # build component configurations list grouped by components
         components_with_configurations.append(
             ComponentWithConfigurations(
@@ -118,9 +114,7 @@ async def _retrieve_components_configurations_by_ids(
         )
 
     # perform logging
-    total_configurations = sum(
-        len(component.configurations) for component in components_with_configurations
-    )
+    total_configurations = sum(len(component.configurations) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
         f'for ids {component_ids}.'
@@ -146,9 +140,7 @@ async def _get_component_details(
     """
     try:
         raw_component = client.ai_service_client.get_component_detail(component_id)
-        LOG.info(
-            f'Retrieved component details for component {component_id} from AI service catalog.'
-        )
+        LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
         return Component.model_validate(raw_component)
     except requests.HTTPError as e:
         if e.response.status_code == 404:
@@ -157,8 +149,8 @@ async def _get_component_details(
                 f'Falling back to Storage API.'
             )
 
-            endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}'
-            raw_component = await client.get(endpoint)
+            endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}'
+            raw_component = await client.storage_client.get(endpoint)
             LOG.info(f'Retrieved component details for component {component_id} from Storage API.')
             return Component.model_validate(raw_component)
         else:
@@ -215,21 +207,13 @@ class TransformationConfiguration(BaseModel):
             class Table(BaseModel):
                 """The table used in the transformation"""
 
-                destination: Optional[str] = Field(
-                    description='The destination table name', default=None
-                )
+                destination: Optional[str] = Field(description='The destination table name', default=None)
                 source: Optional[str] = Field(description='The source table name', default=None)
 
-            tables: list[Table] = Field(
-                description='The tables used in the transformation', default=[]
-            )
+            tables: list[Table] = Field(description='The tables used in the transformation', default=[])
 
-        input: Destination = Field(
-            description='The input tables for the transformation', default=Destination()
-        )
-        output: Destination = Field(
-            description='The output tables for the transformation', default=Destination()
-        )
+        input: Destination = Field(description='The input tables for the transformation', default=Destination())
+        output: Destination = Field(description='The output tables for the transformation', default=Destination())
 
     parameters: Parameters = Field(description='The parameters for the transformation')
     storage: Storage = Field(description='The storage configuration for the transformation')
@@ -252,12 +236,8 @@ def _get_transformation_configuration(
     parameters = TransformationConfiguration.Parameters(
         blocks=[
             TransformationConfiguration.Parameters.Block(
-                name=f'Block 0',
-                codes=[
-                    TransformationConfiguration.Parameters.Block.Code(
-                        name=f'Code 0', script=list(statements)
-                    )
-                ],
+                name='Block 0',
+                codes=[TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=list(statements))],
             )
         ]
     )

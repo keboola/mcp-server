@@ -5,6 +5,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)
 
@@ -28,16 +29,15 @@ class DocsAnswer(BaseModel):
     source_urls: list[str] = Field(description='List of URLs to the sources of the answer.')
 
 
+@tool_errors()
 async def docs_query(
     ctx: Context,
-    query: Annotated[
-        str, Field(description='Natural language query to search for in the documentation.')
-    ],
+    query: Annotated[str, Field(description='Natural language query to search for in the documentation.')],
 ) -> Annotated[DocsAnswer, Field(description='The retrieved documentation.')]:
     """
     Answers a question using the Keboola documentation as a source.
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    answer = client.ai_service_client.docs_question(query)
+    answer = await client.ai_service_client.docs_question(query)
 
     return DocsAnswer(text=answer.text, source_urls=answer.source_urls)
