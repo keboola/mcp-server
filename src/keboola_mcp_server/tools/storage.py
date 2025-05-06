@@ -35,10 +35,7 @@ def extract_description(values: dict[str, Any]) -> Optional[str]:
             (
                 value
                 for item in metadata
-                if (
-                    item.get('key') == MetadataField.DESCRIPTION.value
-                    and (value := item.get('value'))
-                )
+                if (item.get('key') == MetadataField.DESCRIPTION.value and (value := item.get('value')))
             ),
             None,
         )
@@ -48,9 +45,7 @@ class BucketDetail(BaseModel):
     id: str = Field(description='Unique identifier for the bucket')
     name: str = Field(description='Name of the bucket')
     description: Optional[str] = Field(None, description='Description of the bucket')
-    stage: Optional[str] = Field(
-        None, description='Stage of the bucket (in for input stage, out for output stage)'
-    )
+    stage: Optional[str] = Field(None, description='Stage of the bucket (in for input stage, out for output stage)')
     created: str = Field(description='Creation timestamp of the bucket')
     data_size_bytes: Optional[int] = Field(
         None,
@@ -121,9 +116,7 @@ class TableDetail(BaseModel):
     fully_qualified_name: Optional[str] = Field(
         None,
         description='Fully qualified name of the table.',
-        validation_alias=AliasChoices(
-            'fullyQualifiedName', 'fully_qualified_name', 'fully-qualified-name'
-        ),
+        validation_alias=AliasChoices('fullyQualifiedName', 'fully_qualified_name', 'fully-qualified-name'),
         serialization_alias='fullyQualifiedName',
     )
 
@@ -140,6 +133,7 @@ class UpdateBucketDescriptionResponse(BaseModel):
     timestamp: str = Field(description='When the description was updated')
 
     @model_validator(mode='before')
+    @classmethod
     def extract_from_response(cls, values):
         if isinstance(values, list) and values:
             data = values[0]  # the response returns a list - elements for each update
@@ -149,9 +143,7 @@ class UpdateBucketDescriptionResponse(BaseModel):
                 'timestamp': data.get('timestamp'),
             }
         else:
-            raise ValueError(
-                'Expected input data in UpdateBucketDescriptionResponse to be non-empty list.'
-            )
+            raise ValueError('Expected input data in UpdateBucketDescriptionResponse to be non-empty list.')
 
 
 class UpdateTableDescriptionResponse(BaseModel):
@@ -160,6 +152,7 @@ class UpdateTableDescriptionResponse(BaseModel):
     timestamp: str = Field(description='When the description was updated')
 
     @model_validator(mode='before')
+    @classmethod
     def extract_metadata(cls, values):
         metadata = values.get('metadata', [])
         if isinstance(metadata, list) and metadata:

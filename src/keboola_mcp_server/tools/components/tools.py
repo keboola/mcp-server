@@ -5,11 +5,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.components.model import (
-    ComponentConfiguration,
-    ComponentType,
-    ComponentWithConfigurations,
-)
+from keboola_mcp_server.tools.components.model import ComponentConfiguration, ComponentType, ComponentWithConfigurations
 from keboola_mcp_server.tools.components.utils import (
     _get_component_details,
     _get_sql_transformation_id_from_sql_dialect,
@@ -23,7 +19,7 @@ from keboola_mcp_server.tools.sql import get_sql_dialect
 LOG = logging.getLogger(__name__)
 
 
-############################## Add component tools to the MCP server #########################################
+# Add component tools to the MCP server #########################################
 
 # Regarding the conventional naming of entity models for components and their associated configurations,
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
@@ -37,14 +33,10 @@ GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = 'get_component_details'
 def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
 
-    mcp.add_tool(
-        get_component_configuration_details, name=GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME
-    )
+    mcp.add_tool(get_component_configuration_details, name=GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME)
     LOG.info(f'Added tool: {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME}.')
 
-    mcp.add_tool(
-        retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME
-    )
+    mcp.add_tool(retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME)
     LOG.info(f'Added tool: {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME}.')
 
     mcp.add_tool(
@@ -62,7 +54,7 @@ def add_component_tools(mcp: FastMCP) -> None:
     LOG.info('Component tools initialized.')
 
 
-############################## read tools #########################################
+# tools #########################################
 
 
 async def retrieve_components_configurations(
@@ -157,9 +149,7 @@ async def retrieve_transformations_configurations(
 
 
 async def get_component_configuration_details(
-    component_id: Annotated[
-        str, Field(description='Unique identifier of the Keboola component/transformation')
-    ],
+    component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
     configuration_id: Annotated[
         str,
         Field(
@@ -191,24 +181,20 @@ async def get_component_configuration_details(
     # Get Component Details
     component = await _get_component_details(client=client, component_id=component_id)
     # Get Configuration Details
-    raw_configuration = client.storage_client_sync.configurations.detail(
-        component_id, configuration_id
-    )
-    LOG.info(
-        f'Retrieved configuration details for {component_id} component with configuration {configuration_id}.'
-    )
+    raw_configuration = client.storage_client_sync.configurations.detail(component_id, configuration_id)
+    LOG.info(f'Retrieved configuration details for {component_id} component with configuration {configuration_id}.')
 
     # Get Configuration Metadata if exists
-    endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+    endpoint = (
+        f'branch/{client.storage_client_sync._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+    )
     r_metadata = await client.storage_client.get(endpoint)
     if r_metadata:
         LOG.info(
             f'Retrieved configuration metadata for {component_id} component with configuration {configuration_id}.'
         )
     else:
-        LOG.info(
-            f'No metadata found for {component_id} component with configuration {configuration_id}.'
-        )
+        LOG.info(f'No metadata found for {component_id} component with configuration {configuration_id}.')
     # Create Component Configuration Detail Object
     return ComponentConfiguration.model_validate(
         {
@@ -298,13 +284,9 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = (
-        f'branch/{client.storage_client_sync._branch_id}/components/{transformation_id}/configs'
-    )
+    endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{transformation_id}/configs'
 
-    LOG.info(
-        f'Creating new transformation configuration: {name} for component: {transformation_id}.'
-    )
+    LOG.info(f'Creating new transformation configuration: {name} for component: {transformation_id}.')
     # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
@@ -336,14 +318,10 @@ async def create_sql_transformation(
 
 async def update_transformation_configuration(
     ctx: Context,
-    transformation_id: Annotated[
-        str, Field(description='Unique identifier of the Keboola transformation')
-    ],
+    transformation_id: Annotated[str, Field(description='Unique identifier of the Keboola transformation')],
     configuration_id: Annotated[
         str,
-        Field(
-            description='Unique identifier of the Keboola transformation configuration you want to update'
-        ),
+        Field(description='Unique identifier of the Keboola transformation configuration you want to update'),
     ],
     configuration: Annotated[
         dict[str, Any],
@@ -377,9 +355,7 @@ async def update_transformation_configuration(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     try:
-        LOG.info(
-            f"Updating transformation: {transformation_id} with configuration: {configuration_id}."
-        )
+        LOG.info(f'Updating transformation: {transformation_id} with configuration: {configuration_id}.')
         updated_raw_configuration = await client.storage_client.update_component_configuration(
             component_id=transformation_id,
             configuration_id=configuration_id,
@@ -404,4 +380,4 @@ async def update_transformation_configuration(
         raise e
 
 
-############################## End of component tools #########################################
+# End of component tools #########################################

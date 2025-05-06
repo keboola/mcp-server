@@ -57,8 +57,8 @@ To use this server with Claude Desktop, follow these steps:
         "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
-        "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
-        "KBC_WORKSPACE_SCHEMA": "your-workspace-schema"
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
       }
     }
   }
@@ -68,8 +68,8 @@ To use this server with Claude Desktop, follow these steps:
 Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
-- `your-keboola-storage-token` with your Keboola Storage API token
-- `your-workspace-schema` with your Snowflake schema or BigQuery dataset of your workspace
+- `your_keboola_storage_token` with your Keboola Storage API token
+- `your_workspace_schema` with your Snowflake schema or BigQuery dataset of your workspace
 
 > Note: If you are using a specific version of Python (e.g. 3.11 due to some package compatibility issues), 
 > you'll need to update the `command` into using that specific version, e.g. `/path/to/keboola-mcp-server/.venv/bin/python3.11`
@@ -105,7 +105,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 {
   "mcpServers": {
     "keboola": {
-      "url": "http://localhost:8000/sse?storage_token=YOUR-KEBOOLA-STORAGE-TOKEN&workspace_schema=YOUR-WORKSPACE-SCHEMA"
+      "url": "http://localhost:8000/sse?storage_token=YOUR_KEBOOLA_STORAGE_TOKEN&workspace_schema=YOUR_WORKSPACE_SCHEMA"
     }
   }
 }
@@ -126,8 +126,8 @@ To use this server with Cursor AI, you have two options for configuring the tran
          "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
-        "KBC_STORAGE_TOKEN": "your-keboola-storage-token", 
-        "KBC_WORKSPACE_SCHEMA": "your-workspace-schema"         
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token", 
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"         
       }
     }
   }
@@ -155,15 +155,15 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 ```
 - where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
 ```shell
-export KBC_STORAGE_TOKEN="your-keboola-storage-token"
-export KBC_WORKSPACE_SCHEMA="your-workspace-schema"
+export KBC_STORAGE_TOKEN="your_keboola_storage_token"
+export KBC_WORKSPACE_SCHEMA="your_workspace_schema"
 ```
 
 Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
-- `your-keboola-storage-token` with your Keboola Storage API token
-- `your-workspace-schema` with your Snowflake schema or BigQuery dataset of your workspace
+- `your_keboola_storage_token` with your Keboola Storage API token
+- `your_workspace_schema` with your Snowflake schema or BigQuery dataset of your workspace
 
 After updating the configuration:
 1. Restart Cursor AI
