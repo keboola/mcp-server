@@ -1,7 +1,7 @@
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 import pytest
-from dateutil.parser import isoparse
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
