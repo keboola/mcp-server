@@ -73,7 +73,7 @@ class BucketDetail(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def set_table_count(cls, values):
+    def set_table_count(cls, values: dict[str, Any]) -> dict[str, Any]:
         if isinstance(values.get('tables'), list):
             values['tables_count'] = len(values['tables'])
         else:
@@ -82,7 +82,7 @@ class BucketDetail(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def set_description(cls, values):
+    def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
         values['description'] = extract_description(values)
         return values
 
@@ -134,7 +134,7 @@ class TableDetail(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def set_description(cls, values):
+    def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
         values['description'] = extract_description(values)
         return values
 
