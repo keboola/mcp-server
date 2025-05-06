@@ -264,7 +264,11 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param branch_id: The id of the branch
         """
         super().__init__(raw_client=raw_client)
-        self.branch_id = branch_id
+        self._branch_id: str = branch_id
+
+    @property
+    def branch_id(self) -> str:
+        return self._branch_id  
 
     @classmethod
     def create(cls, root_url: str, token: str, version: str = 'v2', branch_id: str = 'default') -> 'AsyncStorageClient':
