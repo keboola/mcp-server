@@ -93,7 +93,7 @@ package = "wheel"
 wheel_build_env = ".pkg"
 commands = [["pytest", "--junitxml", "./test-results.xml"]]
 
-[tool.tox.env.env_flake8]
+[tool.tox.env.flake8]
 description = "Run code style check using flake8"
 package = "skip"
 deps = [
