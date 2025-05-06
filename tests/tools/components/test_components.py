@@ -42,10 +42,7 @@ def assert_retrieve_components() -> (
         assert all(isinstance(component.component, ReducedComponentDetail) for component in result)
         assert all(isinstance(component.configurations, list) for component in result)
         assert all(
-            all(
-                isinstance(config, ComponentConfigurationMetadata)
-                for config in component.configurations
-            )
+            all(isinstance(config, ComponentConfigurationMetadata) for config in component.configurations)
             for component in result
         )
         # assert component list details
@@ -247,9 +244,7 @@ async def test_get_component_configuration_details(
     )
 
     # Prepare mock component
-    mock_component.update(
-        {'id': component_id, 'flags': ['genericDockerUI-tableInput'], 'type': 'extractor'}
-    )
+    mock_component.update({'id': component_id, 'flags': ['genericDockerUI-tableInput'], 'type': 'extractor'})
 
     # Setup Storage API mocks
     keboola_client.storage_client = MagicMock()
@@ -286,9 +281,7 @@ async def test_get_component_configuration_details(
     assert result.root_configuration.parameters == mock_configuration['configuration']['parameters']
 
     # Verify mock was called correctly
-    keboola_client.storage_client.configurations.detail.assert_called_once_with(
-        component_id, configuration_id
-    )
+    keboola_client.storage_client.configurations.detail.assert_called_once_with(component_id, configuration_id)
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id)
 
 

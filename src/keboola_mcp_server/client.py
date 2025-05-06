@@ -406,9 +406,7 @@ class DocsQuestionResponse(BaseModel):
 class SuggestedComponent(BaseModel):
     """The AI service response to a /docs/suggest-component request."""
 
-    component_id: str = Field(
-        description='Text of the answer to a component suggestion query.', alias='componentId'
-    )
+    component_id: str = Field(description='Text of the answer to a component suggestion query.', alias='componentId')
     score: float = Field(description='Score of the component suggestion query.')
     source: str = Field(description='Source of the component suggestion result.')
 
@@ -416,9 +414,7 @@ class SuggestedComponent(BaseModel):
 class ComponentSuggestionResponse(BaseModel):
     """The AI service response to a /suggest/component request."""
 
-    components: list[SuggestedComponent] = Field(
-        description='List of suggested components.', default_factory=list
-    )
+    components: list[SuggestedComponent] = Field(description='List of suggested components.', default_factory=list)
 
 
 class AIServiceClient(Endpoint):

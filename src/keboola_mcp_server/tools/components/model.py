@@ -270,9 +270,7 @@ class ComponentRowConfiguration(ComponentConfigurationResponseBase):
         description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined.',
         default=None,
     )
-    parameters: dict[str, Any] = Field(
-        description='The user parameters, adhering to the row configuration schema'
-    )
+    parameters: dict[str, Any] = Field(description='The user parameters, adhering to the row configuration schema')
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
         default=[],
@@ -366,9 +364,7 @@ class ComponentConfigurationMetadata(BaseModel):
         row_configurations = None
         if configuration.rows:
             row_configurations = [
-                ComponentConfigurationResponse.model_validate(row)
-                for row in configuration.rows
-                if row is not None
+                ComponentConfigurationResponse.model_validate(row) for row in configuration.rows if row is not None
             ]
         return cls(root_configuration=root_configuration, row_configurations=row_configurations)
 

@@ -116,9 +116,7 @@ async def _retrieve_components_configurations_by_ids(
         raw_component = await client.storage_client.get(endpoint)
         # build component configurations list grouped by components
         raw_configuration_responses = [
-            ComponentConfigurationResponse.model_validate(
-                {**raw_configuration, 'component_id': raw_component['id']}
-            )
+            ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
             for raw_configuration in raw_configurations
         ]
         configurations_metadata = [
@@ -156,11 +154,7 @@ async def _get_component_flags(client: KeboolaClient, component_id: str) -> list
 
     # retrieve component info
     component_info = next(
-        (
-            component
-            for component in available_components.get('components', [])
-            if component['id'] == component_id
-        ),
+        (component for component in available_components.get('components', []) if component['id'] == component_id),
         {},
     )
 
@@ -186,9 +180,7 @@ async def _get_component_details(
     component_info: Component
     try:
         raw_component = client.ai_service_client.get_component_detail(component_id)
-        LOG.info(
-            f'Retrieved component details for component {component_id} from AI service catalog.'
-        )
+        LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
         component_info = Component.model_validate(raw_component)
         component_info.flags = await _get_component_flags(client, component_id)
         # get component flags

@@ -179,9 +179,7 @@ async def retrieve_transformations_configurations(
 
 async def get_component_detail(
     ctx: Context,
-    component_id: Annotated[
-        str, Field(description='Unique identifier of the Keboola component/transformation')
-    ],
+    component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
 ) -> Annotated[
     ComponentDetail,
     Field(
@@ -203,9 +201,7 @@ async def get_component_detail(
 
 
 async def get_component_configuration_details(
-    component_id: Annotated[
-        str, Field(description='Unique identifier of the Keboola component/transformation')
-    ],
+    component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
     configuration_id: Annotated[
         str,
         Field(
@@ -262,9 +258,7 @@ async def get_component_configuration_details(
         }
     )
     # Create Component Configuration Output Object
-    return ComponentConfigurationOutput.from_component_configuration_response(
-        configuration_response, component
-    )
+    return ComponentConfigurationOutput.from_component_configuration_response(configuration_response, component)
 
 
 async def create_sql_transformation(
@@ -633,9 +627,7 @@ async def update_component_root_configuration(
     client = KeboolaClient.from_state(ctx.session.state)
     endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}'
 
-    LOG.info(
-        f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.'
-    )
+    LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
     configuration_payload = {"storage": storage, "parameters": parameters}
     # TODO validate parameters
@@ -811,11 +803,7 @@ async def get_component_configuration_examples(
     from pathlib import Path
 
     # Construct the path to the JSONL file TODO: fix the path somehow
-    jsonl_path = (
-        Path(__file__).parent.parent.parent
-        / "json-schemas/output"
-        / f"sample_data_{component_id}.jsonl"
-    )
+    jsonl_path = Path(__file__).parent.parent.parent / "json-schemas/output" / f"sample_data_{component_id}.jsonl"
 
     if not jsonl_path.exists():
         return f"No configuration examples found for component {component_id}"
