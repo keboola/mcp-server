@@ -155,21 +155,21 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
-        JOB_STATUS | None,
+        JOB_STATUS,
         Field(
             Optional[JOB_STATUS],
             description='The optional status of the jobs to filter by, if None then default all.',
         ),
     ] = None,
     component_id: Annotated[
-        str | None,
+        str,
         Field(
             Optional[str],
             description='The optional ID of the component whose jobs you want to list, default = None.',
         ),
     ] = None,
     config_id: Annotated[
-        str | None,
+        str,
         Field(
             Optional[str],
             description='The optional ID of the component configuration whose jobs you want to list, default = None.',
