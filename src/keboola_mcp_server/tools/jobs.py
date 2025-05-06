@@ -155,21 +155,21 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
-        JOB_STATUS | None,
+        JOB_STATUS,
         Field(
             Optional[JOB_STATUS],
             description='The optional status of the jobs to filter by, if None then default all.',
         ),
     ] = None,
     component_id: Annotated[
-        str | None,
+        str,
         Field(
             Optional[str],
             description='The optional ID of the component whose jobs you want to list, default = None.',
         ),
     ] = None,
     config_id: Annotated[
-        str | None,
+        str,
         Field(
             Optional[str],
             description='The optional ID of the component configuration whose jobs you want to list, default = None.',
@@ -202,19 +202,21 @@ async def retrieve_jobs(
     ),
 ]:
     """
-    Retrieve all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
+    Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
     filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
+
     USAGE:
-        Use when you want to list jobs for given component_id and optionally for given config_id.
-        Use when you want to list all jobs in the project or filter them by status.
+    - Use when you want to list jobs for a given component_id and optionally for given config_id.
+    - Use when you want to list all jobs in the project or filter them by status.
+
     EXAMPLES:
-        - if status = "error", only jobs with status "error" will be listed.
-        - if status = None, then all jobs with arbitrary status will be listed.
-        - if component_id = "123" and config_id = "456", then the jobs for the component with id "123" and configuration
-          with id "456" will be listed.
-        - if limit = 100 and offset = 0, the first 100 jobs will be listed.
-        - if limit = 100 and offset = 100, the second 100 jobs will be listed.
-        - if sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
+    - If status = "error", only jobs with status "error" will be listed.
+    - If status = None, then all jobs with arbitrary status will be listed.
+    - If component_id = "123" and config_id = "456", then the jobs for the component with id "123" and configuration
+      with id "456" will be listed.
+    - If limit = 100 and offset = 0, the first 100 jobs will be listed.
+    - If limit = 100 and offset = 100, the second 100 jobs will be listed.
+    - If sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     _status = [status] if status else None
@@ -241,10 +243,11 @@ async def get_job_detail(
     ctx: Context,
 ) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
     """
-    Retrieve detailed information about a specific job, identified by the job_id, including its status, parameters,
+    Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.
+
     EXAMPLES:
-        - if job_id = "123", then the details of the job with id "123" will be retrieved.
+    - If job_id = "123", then the details of the job with id "123" will be retrieved.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
