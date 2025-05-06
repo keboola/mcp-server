@@ -141,7 +141,7 @@ class RawKeboolaClient:
             response = await client.put(
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
-                data=data or {},
+                json=data or {},
             )
             response.raise_for_status()
             return cast(dict[str, Any], response.json())
@@ -306,7 +306,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             'configuration': configuration,
             'changeDescription': change_description,
         }
-        return await self.raw_client.put(endpoint=endpoint, data=payload)
+        return await self.raw_client.put(endpoint=endpoint, json=payload)
 
 
 class JobsQueueClient(KeboolaServiceClient):
