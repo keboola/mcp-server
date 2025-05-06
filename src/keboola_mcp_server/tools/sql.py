@@ -12,6 +12,7 @@ from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)
 
@@ -37,8 +38,7 @@ class TableFqn:
     def identifier(self) -> str:
         """Returns the properly quoted database identifier."""
         return '.'.join(
-            f'{self.quote_char}{n}{self.quote_char}'
-            for n in [self.db_name, self.schema_name, self.table_name]
+            f'{self.quote_char}{n}{self.quote_char}' for n in [self.db_name, self.schema_name, self.table_name]
         )
 
     def __repr__(self):
@@ -64,9 +64,7 @@ class SqlSelectData:
 class QueryResult:
     status: QueryStatus = Field(description='Status of running the SQL query.')
     data: SqlSelectData | None = Field(None, description='Data selected by the SQL SELECT query.')
-    message: str | None = Field(
-        None, description='Either an error message or the information from non-SELECT queries.'
-    )
+    message: str | None = Field(None, description='Either an error message or the information from non-SELECT queries.')
 
     @property
     def is_ok(self) -> bool:
@@ -140,7 +138,7 @@ class _SnowflakeWorkspace(_Workspace):
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
         else:
-            sql = f'select CURRENT_DATABASE() as "current_database";'
+            sql = 'select CURRENT_DATABASE() as "current_database";'
             result = await self.execute_query(sql)
             if result.is_ok and result.data and result.data.rows:
                 row = result.data.rows[0]
@@ -202,7 +200,7 @@ class _BigQueryWorkspace(_Workspace):
             table_name = table['name']
 
         if schema_name and table_name:
-            fqn = TableFqn(self._project_id, schema_name, table_name, quote_char="`")
+            fqn = TableFqn(self._project_id, schema_name, table_name, quote_char='`')
             return fqn
         else:
             return None
@@ -221,17 +219,9 @@ class _BigQueryWorkspace(_Workspace):
                 assert isinstance(bq_row, Row)
                 for k in bq_row.keys():
                     columns[k] = None
-                data.append(
-                    {
-                        field: value
-                        for field, value in bq_row.items()
-                        if field not in self._BQ_FIELDS
-                    }
-                )
+                data.append({field: value for field, value in bq_row.items() if field not in self._BQ_FIELDS})
 
-            result = QueryResult(
-                status='ok', data=SqlSelectData(columns=list(columns.keys()), rows=data)
-            )
+            result = QueryResult(status='ok', data=SqlSelectData(columns=list(columns.keys()), rows=data))
 
         except BadRequest as e:
             LOG.exception(f'Failed to run query: {sql_query}')
@@ -266,9 +256,7 @@ class WorkspaceManager:
             schema = wsp_info.get('connection', {}).get('schema')
             if _id and backend and schema and schema == self._workspace_schema:
                 if backend == 'snowflake':
-                    self._workspace = _SnowflakeWorkspace(
-                        workspace_id=_id, schema=schema, client=self._client
-                    )
+                    self._workspace = _SnowflakeWorkspace(workspace_id=_id, schema=schema, client=self._client)
                     return self._workspace
 
                 elif backend == 'bigquery':
@@ -281,14 +269,10 @@ class WorkspaceManager:
                         )
                         return self._workspace
                     else:
-                        raise ValueError(
-                            f'No credentials or no project ID in workspace: {self._workspace_schema}'
-                        )
+                        raise ValueError(f'No credentials or no project ID in workspace: {self._workspace_schema}')
 
                 else:
-                    raise ValueError(
-                        f'Unexpected backend type "{backend}" in workspace: {self._workspace_schema}'
-                    )
+                    raise ValueError(f'Unexpected backend type "{backend}" in workspace: {self._workspace_schema}')
 
         raise ValueError(f'No Keboola workspace found for user: {self._workspace_schema}')
 
@@ -317,6 +301,7 @@ class WorkspaceManager:
         return workspace.get_sql_dialect()
 
 
+@tool_errors()
 async def get_sql_dialect(
     ctx: Context,
 ) -> Annotated[str, Field(description='The SQL dialect of the project database')]:
@@ -324,6 +309,7 @@ async def get_sql_dialect(
     return await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
 
 
+@tool_errors()
 async def query_table(
     sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
     ctx: Context,

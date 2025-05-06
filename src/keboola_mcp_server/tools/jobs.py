@@ -6,11 +6,12 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)
 
 
-################################## Add jobs tools to MCP SERVER ##################################
+# Add jobs tools to MCP SERVER ##################################
 
 
 def add_job_tools(mcp: FastMCP) -> None:
@@ -27,7 +28,7 @@ def add_job_tools(mcp: FastMCP) -> None:
     LOG.info('Job tools initialized.')
 
 
-######################################## Job Base Models ########################################
+# Job Base Models ########################################
 
 JOB_STATUS = Literal[
     'waiting',
@@ -129,9 +130,8 @@ class JobDetail(JobListItem):
     )
 
     @field_validator('result', mode='before')
-    def validate_result_field(
-        cls, current_value: Union[list[Any], dict[str, Any], None]
-    ) -> dict[str, Any]:
+    @classmethod
+    def validate_result_field(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
         # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
         # Why? Because the result is expected to be an Object, but create job endpoint sends [], perhaps it means
         # "empty". This avoids type errors.
@@ -139,20 +139,19 @@ class JobDetail(JobListItem):
             if not current_value:
                 return dict()
             if isinstance(current_value, list):
-                raise ValueError(
-                    f'Field "result" cannot be a list, expecting dictionary, got: {current_value}.'
-                )
+                raise ValueError(f'Field "result" cannot be a list, expecting dictionary, got: {current_value}.')
         return current_value
 
 
-######################################## End of Job Base Models ########################################
+# End of Job Base Models ########################################
 
-######################################## MCP tools ########################################
+# MCP tools ########################################
 
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
 
 
+@tool_errors()
 async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
@@ -178,13 +177,9 @@ async def retrieve_jobs(
     ] = None,
     limit: Annotated[
         int,
-        Field(
-            int, description='The number of jobs to list, default = 100, max = 500.', ge=1, le=500
-        ),
+        Field(int, description='The number of jobs to list, default = 100, max = 500.', ge=1, le=500),
     ] = 100,
-    offset: Annotated[
-        int, Field(int, description='The offset of the jobs to list, default = 0.', ge=0)
-    ] = 0,
+    offset: Annotated[int, Field(int, description='The offset of the jobs to list, default = 0.', ge=0)] = 0,
     sort_by: Annotated[
         SORT_BY_VALUES,
         Field(
@@ -237,6 +232,7 @@ async def retrieve_jobs(
     return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
 
 
+@tool_errors()
 async def get_job_detail(
     job_id: Annotated[
         str,
@@ -257,15 +253,14 @@ async def get_job_detail(
     return JobDetail.model_validate(raw_job)
 
 
+@tool_errors()
 async def start_job(
     ctx: Context,
     component_id: Annotated[
         str,
         Field(description='The ID of the component or transformation for which to start a job.'),
     ],
-    configuration_id: Annotated[
-        str, Field(description='The ID of the configuration for which to start a job.')
-    ],
+    configuration_id: Annotated[str, Field(description='The ID of the configuration for which to start a job.')],
 ) -> Annotated[JobDetail, Field(description='The newly started job details.')]:
     """
     Starts a new job for a given component or transformation.
@@ -283,9 +278,10 @@ async def start_job(
         return job
     except Exception as exception:
         LOG.exception(
-            f'Error when starting a new job for component {component_id} and configuration {configuration_id}: {exception}'
+            f'Error when starting a new job for component {component_id} and configuration {configuration_id}: '
+            f'{exception}'
         )
         raise exception
 
 
-######################################## End of MCP tools ########################################
+# End of MCP tools ########################################

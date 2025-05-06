@@ -169,9 +169,7 @@ async def test_get_bucket_detail(
     keboola_client.storage_client_sync.buckets = mocker.MagicMock()
 
     expected_bucket = next(b for b in mock_buckets if b['id'] == bucket_id)
-    keboola_client.storage_client_sync.buckets.detail = mocker.MagicMock(
-        return_value=expected_bucket
-    )
+    keboola_client.storage_client_sync.buckets.detail = mocker.MagicMock(return_value=expected_bucket)
 
     result = await get_bucket_detail(bucket_id, mcp_context_client)
 
@@ -236,14 +234,10 @@ async def test_get_table_detail(
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client_sync.tables = mocker.MagicMock()
-    keboola_client.storage_client_sync.tables.detail = mocker.MagicMock(
-        return_value=mock_table_data['raw_table_data']
-    )
+    keboola_client.storage_client_sync.tables.detail = mocker.MagicMock(return_value=mock_table_data['raw_table_data'])
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
-    workspace_manager.get_table_fqn = mocker.AsyncMock(
-        return_value=mock_table_data['additional_data']['table_fqn']
-    )
+    workspace_manager.get_table_fqn = mocker.AsyncMock(return_value=mock_table_data['additional_data']['table_fqn'])
     workspace_manager.get_quoted_name.side_effect = lambda name: f'#{name}#'
     result = await get_table_detail(mock_table_data['raw_table_data']['id'], mcp_context_client)
 
@@ -289,9 +283,7 @@ async def test_lretrieve_bucket_tables_in_project(
     keboola_client.storage_client_sync.buckets.list_tables.return_value = sapi_response
     result = await retrieve_bucket_tables('bucket-id', mcp_context_client)
     assert result == expected
-    keboola_client.storage_client_sync.buckets.list_tables.assert_called_once_with(
-        'bucket-id', include=['metadata']
-    )
+    keboola_client.storage_client_sync.buckets.list_tables.assert_called_once_with('bucket-id', include=['metadata'])
 
 
 @pytest.mark.asyncio
@@ -301,9 +293,7 @@ async def test_update_bucket_description_success(
     """Test successful update of bucket description."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(
-        return_value=mock_update_bucket_description_response
-    )
+    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_bucket_description_response)
 
     result = await update_bucket_description(
         bucket_id='in.c-test.bucket-id',
@@ -319,9 +309,7 @@ async def test_update_bucket_description_success(
         endpoint='buckets/in.c-test.bucket-id/metadata',
         data={
             'provider': 'user',
-            'metadata': [
-                {'key': MetadataField.DESCRIPTION.value, 'value': 'Updated bucket description'}
-            ],
+            'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': 'Updated bucket description'}],
         },
     )
 
@@ -334,9 +322,7 @@ async def test_update_table_description_success(
 
     # Mock the Keboola client post method
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(
-        return_value=mock_update_table_description_response
-    )
+    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_table_description_response)
 
     result = await update_table_description(
         table_id='in.c-test.test-table',
@@ -352,9 +338,7 @@ async def test_update_table_description_success(
         endpoint='tables/in.c-test.test-table/metadata',
         data={
             'provider': 'user',
-            'metadata': [
-                {'key': MetadataField.DESCRIPTION.value, 'value': 'Updated table description'}
-            ],
+            'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': 'Updated table description'}],
         },
     )
 
@@ -366,9 +350,7 @@ async def test_update_column_description_success(
     """Test successful update of column description."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(
-        return_value=mock_update_column_description_response
-    )
+    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_column_description_response)
 
     result = await update_column_description(
         table_id='in.c-test.test-table',

@@ -50,9 +50,9 @@ class Config:
             value = getattr(self, f.name)
             if value:
                 if 'token' in f.name or 'password' in f.name:
-                    params.append(f'{f.name}=\'****\'')
+                    params.append(f"{f.name}='****'")
                 else:
-                    params.append(f'{f.name}=\'{value}\'')
+                    params.append(f"{f.name}='{value}'")
             else:
                 params.append(f'{f.name}=None')
         joined_params = ', '.join(params)
