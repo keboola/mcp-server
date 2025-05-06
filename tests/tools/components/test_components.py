@@ -225,7 +225,7 @@ async def test_get_component_configuration_details(
     # Setup mock to return test data
     keboola_client.storage_client_sync.configurations.detail = mocker.MagicMock(return_value=mock_configuration)
     keboola_client.ai_service_client = mocker.MagicMock()
-    keboola_client.ai_service_client.get_component_detail = mocker.MagicMock(return_value=mock_component)
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client_sync.components.detail = mocker.MagicMock(return_value=mock_component)
     keboola_client.storage_client_sync._branch_id = mock_branch_id
     keboola_client.storage_client.get = mocker.AsyncMock(return_value=mock_metadata)
@@ -284,7 +284,7 @@ async def test_create_transformation_configuration(
 
     # Set up the mock for ai_service_client
     keboola_client.ai_service_client = mocker.MagicMock()
-    keboola_client.ai_service_client.get_component_detail = mocker.MagicMock(return_value=component)
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
     keboola_client.storage_client.post = mocker.AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration['name']
@@ -377,14 +377,14 @@ async def test_update_transformation_configuration(
     mock_configuration['configuration'] = new_config
     keboola_client.storage_client.update_component_configuration = mocker.AsyncMock(return_value=mock_configuration)
     keboola_client.ai_service_client = mocker.MagicMock()
-    keboola_client.ai_service_client.get_component_detail = mocker.MagicMock(return_value=mock_component)
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
     updated_configuration = await update_transformation_configuration(
         context,
         mock_component['id'],
         mock_configuration['id'],
-        new_config,
         new_config_description,
+        new_config,
     )
 
     assert isinstance(updated_configuration, ComponentConfiguration)
@@ -396,6 +396,7 @@ async def test_update_transformation_configuration(
     keboola_client.storage_client.update_component_configuration.assert_called_once_with(
         component_id=mock_component['id'],
         configuration_id=mock_configuration['id'],
-        configuration=new_config,
         change_description=new_config_description,
+        configuration=new_config,
+
     )
