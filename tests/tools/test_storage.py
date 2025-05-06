@@ -134,7 +134,7 @@ def mock_update_table_description_response() -> Mapping[str, Any]:
 
 @pytest.fixture
 def mock_update_column_description_response() -> Mapping[str, Any]:
-    """Mock valid response from the Keboola API for table description update."""
+    """Mock valid response from the Keboola API for column description update."""
     return {
         'metadata': [
             {
