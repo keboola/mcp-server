@@ -1,7 +1,7 @@
-from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 import pytest
+from dateutil.parser import isoparse
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
@@ -304,7 +304,7 @@ async def test_update_bucket_description_success(
     assert isinstance(result, UpdateDescriptionResponse)
     assert result.success is True
     assert result.description == 'Updated bucket description'
-    assert result.timestamp == datetime.fromisoformat('2024-01-01T00:00:00Z')
+    assert result.timestamp == isoparse('2024-01-01T00:00:00Z')
     keboola_client.storage_client.post.assert_called_once_with(
         endpoint='buckets/in.c-test.bucket-id/metadata',
         data={
@@ -333,7 +333,7 @@ async def test_update_table_description_success(
     assert isinstance(result, UpdateDescriptionResponse)
     assert result.success is True
     assert result.description == 'Updated table description'
-    assert result.timestamp == datetime.fromisoformat('2024-01-01T00:00:00Z')
+    assert result.timestamp == isoparse('2024-01-01T00:00:00Z')
     keboola_client.storage_client.post.assert_called_once_with(
         endpoint='tables/in.c-test.test-table/metadata',
         data={
@@ -362,7 +362,7 @@ async def test_update_column_description_success(
     assert isinstance(result, UpdateDescriptionResponse)
     assert result.success is True
     assert result.description == 'Updated column description'
-    assert result.timestamp == datetime.fromisoformat('2024-01-01T00:00:00Z')
+    assert result.timestamp == isoparse('2024-01-01T00:00:00Z')
     keboola_client.storage_client.post.assert_called_once_with(
         endpoint='tables/in.c-test.test-table/metadata',
         data={
