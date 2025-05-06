@@ -84,7 +84,7 @@ class ToolDocumentationGenerator:
         """Extracts the first sentence from the given text."""
         if not text:
             return 'No description available.'
-        first_sentence = text.split('.')[0]
+        first_sentence = text.split('.')[0] + '.'
         return first_sentence.strip()
 
     def _generate_anchor(self, text: str) -> str:
