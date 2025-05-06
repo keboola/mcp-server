@@ -306,7 +306,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             'configuration': configuration,
             'changeDescription': change_description,
         }
-        return await self.raw_client.put(endpoint=endpoint, json=payload)
+        return await self.raw_client.put(endpoint=endpoint, data=payload)
 
 
 class JobsQueueClient(KeboolaServiceClient):
