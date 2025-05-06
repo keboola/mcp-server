@@ -304,7 +304,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: The response from the API call - updated configuration or raise an error
         """
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
-        
+
         payload = {
             'configuration': configuration,
             'changeDescription': change_description,

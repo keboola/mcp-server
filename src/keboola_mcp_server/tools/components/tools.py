@@ -342,7 +342,8 @@ async def update_sql_transformation_configuration(
         Field(
             description=(
                 'Updated transformation configuration JSON object containing both updated settings applied and all '
-                'existing settings preserved.'),
+                'existing settings preserved.'
+            ),
         ),
     ],
     updated_description: Annotated[
@@ -351,7 +352,7 @@ async def update_sql_transformation_configuration(
             description='Updated previous description incorporating the new changes of the transformation '
             'configuration. Default is empty string.',
         ),
-    ] = str(),
+    ] = '',
     is_disabled: Annotated[
         bool,
         Field(
