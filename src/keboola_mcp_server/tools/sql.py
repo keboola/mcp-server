@@ -12,6 +12,7 @@ from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)
 
@@ -300,6 +301,7 @@ class WorkspaceManager:
         return workspace.get_sql_dialect()
 
 
+@tool_errors()
 async def get_sql_dialect(
     ctx: Context,
 ) -> Annotated[str, Field(description='The SQL dialect of the project database')]:
@@ -307,6 +309,7 @@ async def get_sql_dialect(
     return await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
 
 
+@tool_errors()
 async def query_table(
     sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
     ctx: Context,

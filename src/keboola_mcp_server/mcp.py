@@ -24,6 +24,7 @@ Issues:
 
 import logging
 import os
+import textwrap
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Any, Callable
 
@@ -35,6 +36,7 @@ from mcp.server import FastMCP, Server
 from mcp.server.lowlevel.server import LifespanResultT
 from mcp.server.models import InitializationOptions
 from mcp.server.sse import SseServerTransport
+from mcp.types import AnyFunction
 
 LOG = logging.getLogger(__name__)
 
@@ -167,3 +169,15 @@ class KeboolaMcpServer(FastMCP):
         )
         server = uvicorn.Server(config)
         await server.serve()
+
+    def add_tool(
+        self,
+        fn: AnyFunction,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        super().add_tool(
+            fn=fn,
+            name=name,
+            description=description or textwrap.dedent(fn.__doc__ or '').strip(),
+        )
