@@ -96,7 +96,7 @@ def mock_update_bucket_description_response() -> Sequence[Mapping[str, Any]]:
             'key': MetadataField.DESCRIPTION.value,
             'value': 'Updated bucket description',
             'provider': 'user',
-            'timestamp': '2025-04-07T17:47:18+0200',
+            'timestamp': '2024-01-01T00:00:00Z',
         }
     ]
 
@@ -111,7 +111,7 @@ def mock_update_table_description_response() -> Mapping[str, Any]:
                 'key': 'KBC.description',
                 'value': 'Updated table description',
                 'provider': 'user',
-                'timestamp': '2025-04-14T12:51:31+0200',
+                'timestamp': '2024-01-01T00:00:00Z',
             }
         ],
         'columnsMetadata': {
@@ -121,7 +121,7 @@ def mock_update_table_description_response() -> Mapping[str, Any]:
                     'key': 'KBC.description',
                     'value': 'Updated column description',
                     'provider': 'user',
-                    'timestamp': '2025-05-05T15:14:22+0200',
+                    'timestamp': '2024-01-01T00:00:00Z',
                 }
             ]
         },
@@ -138,7 +138,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                 'key': 'KBC.description',
                 'value': 'Updated table description',
                 'provider': 'user',
-                'timestamp': '2025-04-14T12:51:31+0200',
+                'timestamp': '2024-01-01T00:00:00Z',
             }
         ],
         'columnsMetadata': {
@@ -148,7 +148,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                     'key': 'KBC.description',
                     'value': 'Updated column description',
                     'provider': 'user',
-                    'timestamp': '2025-05-05T15:14:22+0200',
+                    'timestamp': '2024-01-01T00:00:00Z',
                 }
             ]
         },
@@ -304,7 +304,7 @@ async def test_update_bucket_description_success(
     assert isinstance(result, UpdateDescriptionResponse)
     assert result.success is True
     assert result.description == 'Updated bucket description'
-    assert result.timestamp == datetime.fromisoformat('2025-04-07T17:47:18+0200')
+    assert result.timestamp == datetime.fromisoformat('2024-01-01T00:00:00Z')
     keboola_client.storage_client.post.assert_called_once_with(
         endpoint='buckets/in.c-test.bucket-id/metadata',
         data={
@@ -333,7 +333,7 @@ async def test_update_table_description_success(
     assert isinstance(result, UpdateDescriptionResponse)
     assert result.success is True
     assert result.description == 'Updated table description'
-    assert result.timestamp == datetime.fromisoformat('2025-04-14T12:51:31+0200')
+    assert result.timestamp == datetime.fromisoformat('2024-01-01T00:00:00Z')
     keboola_client.storage_client.post.assert_called_once_with(
         endpoint='tables/in.c-test.test-table/metadata',
         data={
@@ -362,7 +362,7 @@ async def test_update_column_description_success(
     assert isinstance(result, UpdateDescriptionResponse)
     assert result.success is True
     assert result.description == 'Updated column description'
-    assert result.timestamp == datetime.fromisoformat('2025-05-05T15:14:22+0200')
+    assert result.timestamp == datetime.fromisoformat('2024-01-01T00:00:00Z')
     keboola_client.storage_client.post.assert_called_once_with(
         endpoint='tables/in.c-test.test-table/metadata',
         data={
