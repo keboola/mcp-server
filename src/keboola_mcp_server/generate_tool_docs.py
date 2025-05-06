@@ -39,7 +39,7 @@ class ToolCategorizer:
         for category in self.categories:
             if category.matches(tool_name):
                 return category.name
-        return 'Other'
+        return 'Other Tools'
 
 
 class ToolDocumentationGenerator:
@@ -97,7 +97,7 @@ class ToolDocumentationGenerator:
     def _write_tool_details(self, f):
         grouped = self._group_tools()
         for group in sorted(grouped):
-            f.write(f'\n# {group} Tools\n')
+            f.write(f'\n# {group}\n')
             for tool in grouped[group]:
                 anchor = self._generate_anchor(tool.name)
                 f.write(f'<a name="{anchor}"></a>\n')
