@@ -75,18 +75,18 @@ class ToolDocumentationGenerator:
         )
 
     def _write_index(self, f):
-        f.write("## Index\n")
+        f.write('## Index\n')
         tools_by_category = self._group_tools()
         for category in self._categorizer.get_categories():
             if not (tools := tools_by_category[category]):
                 continue
 
-            f.write(f"\n### {category.name}\n")
+            f.write(f'\n### {category.name}\n')
             for tool in sorted(tools, key=attrgetter('name')):
                 anchor = self._generate_anchor(tool.name)
                 first_sentence = self._get_first_sentence(tool.description)
-                f.write(f"- [{tool.name}](#{anchor}): {first_sentence}\n")
-        f.write("\n---\n")
+                f.write(f'- [{tool.name}](#{anchor}): {first_sentence}\n')
+        f.write('\n---\n')
 
     def _get_first_sentence(self, text: str) -> str:
         """Extracts the first sentence from the given text."""
@@ -119,7 +119,7 @@ class ToolDocumentationGenerator:
 
     def _write_json_schema(self, f, tool):
         if hasattr(tool, 'model_json_schema'):
-            f.write(f'\n**Input JSON Schema**:\n')
+            f.write('\n**Input JSON Schema**:\n')
             f.write('```json\n')
             f.write(json.dumps(tool.inputSchema, indent=2))
             f.write('\n```\n')
