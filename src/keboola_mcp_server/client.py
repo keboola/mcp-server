@@ -46,18 +46,14 @@ class KeboolaClient:
         # https://connection.REGION.keboola.com
         # Remove the prefix from the storage API URL https://connection.REGION.keboola.com -> REGION.keboola.com
         # and add the prefix for the queue API https://queue.REGION.keboola.com
-        queue_api_url = (
-            f'{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
-        )
-        ai_service_api_url = f"{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}"
+        queue_api_url = f'{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
+        ai_service_api_url = f'{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
 
         # Initialize clients for individual services
         self.storage_client_sync = SyncStorageClient(storage_api_url, self.token)
         self.storage_client = AsyncStorageClient.create(root_url=storage_api_url, token=self.token)
         self.jobs_queue_client = JobsQueueClient.create(queue_api_url, self.token)
-        self.ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self.token
-        )
+        self.ai_service_client = AIServiceClient.create(root_url=ai_service_api_url, token=self.token)
 
 
 class RawKeboolaClient:
@@ -68,9 +64,7 @@ class RawKeboolaClient:
     and can be used to implement high-level functions in clients for individual services.
     """
 
-    def __init__(
-        self, base_api_url: str, api_token: str, headers: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, base_api_url: str, api_token: str, headers: dict[str, Any] | None = None) -> None:
         self.base_api_url = base_api_url
         self.headers = {
             'X-StorageApi-Token': api_token,
@@ -272,11 +266,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param version: The version of the API to use (default: 'v2')
         :return: A new instance of AsyncStorageClient
         """
-        return cls(
-            raw_client=RawKeboolaClient(
-                base_api_url=f'{root_url}/{version}/storage', api_token=token
-            )
-        )
+        return cls(raw_client=RawKeboolaClient(base_api_url=f'{root_url}/{version}/storage', api_token=token))
 
 
 class JobsQueueClient(KeboolaServiceClient):
