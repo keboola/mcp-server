@@ -105,23 +105,23 @@ def mock_update_bucket_description_response() -> Sequence[Mapping[str, Any]]:
 def mock_update_table_description_response() -> Mapping[str, Any]:
     """Mock valid response from the Keboola API for table description update."""
     return {
-        "metadata": [
+        'metadata': [
             {
-                "id": "1724427984",
-                "key": "KBC.description",
-                "value": "Updated table description",
-                "provider": "user",
-                "timestamp": "2025-04-14T12:51:31+0200",
+                'id': '1724427984',
+                'key': 'KBC.description',
+                'value': 'Updated table description',
+                'provider': 'user',
+                'timestamp': '2025-04-14T12:51:31+0200',
             }
         ],
-        "columnsMetadata": {
-            "text": [
+        'columnsMetadata': {
+            'text': [
                 {
-                    "id": "1725066342",
-                    "key": "KBC.description",
-                    "value": "Updated column description",
-                    "provider": "user",
-                    "timestamp": "2025-05-05T15:14:22+0200",
+                    'id': '1725066342',
+                    'key': 'KBC.description',
+                    'value': 'Updated column description',
+                    'provider': 'user',
+                    'timestamp': '2025-05-05T15:14:22+0200',
                 }
             ]
         },
@@ -132,23 +132,23 @@ def mock_update_table_description_response() -> Mapping[str, Any]:
 def mock_update_column_description_response() -> Mapping[str, Any]:
     """Mock valid response from the Keboola API for table description update."""
     return {
-        "metadata": [
+        'metadata': [
             {
-                "id": "1724427984",
-                "key": "KBC.description",
-                "value": "Updated table description",
-                "provider": "user",
-                "timestamp": "2025-04-14T12:51:31+0200",
+                'id': '1724427984',
+                'key': 'KBC.description',
+                'value': 'Updated table description',
+                'provider': 'user',
+                'timestamp': '2025-04-14T12:51:31+0200',
             }
         ],
-        "columnsMetadata": {
-            "text": [
+        'columnsMetadata': {
+            'text': [
                 {
-                    "id": "1725066342",
-                    "key": "KBC.description",
-                    "value": "Updated column description",
-                    "provider": "user",
-                    "timestamp": "2025-05-05T15:14:22+0200",
+                    'id': '1725066342',
+                    'key': 'KBC.description',
+                    'value': 'Updated column description',
+                    'provider': 'user',
+                    'timestamp': '2025-05-05T15:14:22+0200',
                 }
             ]
         },

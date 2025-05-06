@@ -134,9 +134,9 @@ class TableDetail(BaseModel):
 
 
 class UpdateDescriptionResponse(BaseModel):
-    description: str = Field(..., description="The updated description value.", alias='value')
-    timestamp: datetime = Field(..., description="The timestamp of the description update.")
-    success: bool = Field(default=True, description="Indicates if the update succeeded.")
+    description: str = Field(..., description='The updated description value.', alias='value')
+    timestamp: datetime = Field(..., description='The timestamp of the description update.')
+    success: bool = Field(default=True, description='Indicates if the update succeeded.')
 
 
 @tool_errors()
@@ -220,7 +220,7 @@ async def update_bucket_description(
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
     response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
-    description_entry = next(entry for entry in response if entry.get("key") == MetadataField.DESCRIPTION.value)
+    description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION.value)
 
     return UpdateDescriptionResponse.model_validate(description_entry)
 
@@ -244,7 +244,7 @@ async def update_table_description(
     }
     response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
     description_entry = next(
-        entry for entry in response.get('metadata') if entry.get("key") == MetadataField.DESCRIPTION.value
+        entry for entry in response.get('metadata') if entry.get('key') == MetadataField.DESCRIPTION.value
     )
 
     return UpdateDescriptionResponse.model_validate(description_entry)
@@ -281,7 +281,7 @@ async def update_column_description(
     description_entry = next(
         entry
         for entry in response.get('columnsMetadata').get(column_name)
-        if entry.get("key") == MetadataField.DESCRIPTION.value
+        if entry.get('key') == MetadataField.DESCRIPTION.value
     )
 
     return UpdateDescriptionResponse.model_validate(description_entry)
