@@ -84,7 +84,7 @@ extend-ignore = ["E203", "W503", "I101"]
 
 [tool.tox]
 requires = ["tox>=4.23"]
-env_list = ["python", "env_flake8"]
+env_list = ["python", "flake8"]
 
 [tool.tox.env_run_base]
 description = "Run tests"
