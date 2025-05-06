@@ -149,25 +149,29 @@ class JobDetail(JobListItem):
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
 
+# The Optional is not working with MCP SERVER and when the bot tries to call the tool with appropriate parameters,
+# it raises `Invalid type for parameter 'status' in tool retrieve_jobs`, either bot cannot use the tool or mcp parsing
+# the parameters is not working. So we need to use Annotated[JOB_STATUS, ...] = None instead of
+# Optional[JOB_STATUS] = None despite having type check errors in the code.
 
 async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
-        JOB_STATUS | None,
+        JOB_STATUS,
         Field(
             Optional[JOB_STATUS],
             description='The optional status of the jobs to filter by, if None then default all.',
         ),
     ] = None,
     component_id: Annotated[
-        str | None,
+        str,
         Field(
             Optional[str],
             description='The optional ID of the component whose jobs you want to list, default = None.',
         ),
     ] = None,
     config_id: Annotated[
-        str | None,
+        str,
         Field(
             Optional[str],
             description='The optional ID of the component configuration whose jobs you want to list, default = None.',
