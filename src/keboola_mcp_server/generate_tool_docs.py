@@ -4,6 +4,10 @@ import logging
 import re
 import sys
 from collections import defaultdict
+from operator import attrgetter
+from typing import Iterable, Mapping
+
+from mcp.types import Tool
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.server import create_server
@@ -14,54 +18,55 @@ LOG = logging.getLogger(__name__)
 class ToolCategory:
     """Encapsulates rules for categorizing tools based on their name."""
 
-    def __init__(self, name: str, keywords: list):
+    def __init__(self, name: str, pattern: re.Pattern):
         self.name = name
-        self.keywords = keywords
+        self._pattern = pattern
 
     def matches(self, tool_name: str) -> bool:
         """Checks if the tool name matches any of the categorization rules."""
-        if any(keyword.lower() in tool_name.lower() for keyword in self.keywords):
-            return True
-        return False
+        return self._pattern.search(tool_name) is not None
 
 
 class ToolCategorizer:
     """Handles categorizing tools based on defined rules."""
 
     def __init__(self):
-        self.categories = []
+        self._categories: list[ToolCategory] = []
 
     def add_category(self, category: ToolCategory):
-        self.categories.append(category)
+        self._categories.append(category)
 
-    def categorize_tool(self, tool_name: str) -> str:
+    def get_tool_category(self, tool_name: str) -> ToolCategory:
         """Categorize a tool based on its name."""
-        for category in self.categories:
+        for category in self._categories:
             if category.matches(tool_name):
-                return category.name
-        return 'Other Tools'
+                return category
+        raise ValueError(f'Tool {tool_name} does not match any category.')
+
+    def get_categories(self) -> Iterable[ToolCategory]:
+        yield from self._categories
 
 
 class ToolDocumentationGenerator:
     """Generates documentation for tools."""
 
-    def __init__(self, tools, categorizer, output_path: str = 'TOOLS.md'):
-        self.tools = tools
-        self.categorizer = categorizer
-        self.output_path = output_path
+    def __init__(self, tools: list[Tool], categorizer: ToolCategorizer, output_path: str = 'TOOLS.md'):
+        self._tools = tools
+        self._categorizer = categorizer
+        self._output_path = output_path
 
     def generate(self):
-        with open(self.output_path, 'w') as f:
+        with open(self._output_path, mode='w', encoding='utf-8') as f:
             self._write_header(f)
             self._write_index(f)
             self._write_tool_details(f)
 
-    def _group_tools(self):
-        grouped = defaultdict(list)
-        for tool in self.tools:
-            category = self.categorizer.categorize_tool(tool.name)
-            grouped[category].append(tool)
-        return grouped
+    def _group_tools(self) -> Mapping[ToolCategory, list[Tool]]:
+        tools_by_category: dict[ToolCategory, list[Tool]] = defaultdict(list)
+        for tool in self._tools:
+            category = self._categorizer.get_tool_category(tool.name)
+            tools_by_category[category].append(tool)
+        return tools_by_category
 
     def _write_header(self, f):
         f.write('# Tools Documentation\n')
@@ -71,10 +76,13 @@ class ToolDocumentationGenerator:
 
     def _write_index(self, f):
         f.write("## Index\n")
-        grouped = self._group_tools()
-        for group in sorted(grouped):
-            f.write(f"\n### {group}\n")
-            for tool in grouped[group]:
+        tools_by_category = self._group_tools()
+        for category in self._categorizer.get_categories():
+            if not (tools := tools_by_category[category]):
+                continue
+
+            f.write(f"\n### {category.name}\n")
+            for tool in sorted(tools, key=attrgetter('name')):
                 anchor = self._generate_anchor(tool.name)
                 first_sentence = self._get_first_sentence(tool.description)
                 f.write(f"- [{tool.name}](#{anchor}): {first_sentence}\n")
@@ -95,10 +103,13 @@ class ToolDocumentationGenerator:
         return anchor
 
     def _write_tool_details(self, f):
-        grouped = self._group_tools()
-        for group in sorted(grouped):
-            f.write(f'\n# {group}\n')
-            for tool in grouped[group]:
+        tools_by_category = self._group_tools()
+        for category in self._categorizer.get_categories():
+            if not (tools := tools_by_category[category]):
+                continue
+
+            f.write(f'\n# {category.name}\n')
+            for tool in sorted(tools, key=attrgetter('name')):
                 anchor = self._generate_anchor(tool.name)
                 f.write(f'<a name="{anchor}"></a>\n')
                 f.write(f'## {tool.name}\n')
@@ -120,21 +131,18 @@ def setup_tool_categorizer():
     """Set up categories for tool categorization."""
     categorizer = ToolCategorizer()
 
-    storage_category = ToolCategory(
-        name='Storage Tools', keywords=['bucket_', 'buckets', 'table_', 'tables']
-    )
-    sql_category = ToolCategory(name='SQL Tools', keywords=['dialect', 'query_'])
-    jobs_category = ToolCategory(name='Jobs Tools', keywords=['job'])
-    docs_category = ToolCategory(name='Documentation Tools', keywords=['docs'])
-    components_category = ToolCategory(
-        name='Component Tools', keywords=['component', 'transformation']
-    )
-
-    categorizer.add_category(storage_category)
-    categorizer.add_category(sql_category)
-    categorizer.add_category(jobs_category)
-    categorizer.add_category(docs_category)
-    categorizer.add_category(components_category)
+    categorizer.add_category(
+        ToolCategory('Storage Tools', re.compile(r'(bucket_|buckets|table_|tables)', re.IGNORECASE)))
+    categorizer.add_category(
+        ToolCategory('SQL Tools', re.compile(r'(dialect|query_)', re.IGNORECASE)))
+    categorizer.add_category(
+        ToolCategory('Component Tools', re.compile(r'(component|transformation)')))
+    categorizer.add_category(
+        ToolCategory('Jobs Tools', re.compile(r'job', re.IGNORECASE)))
+    categorizer.add_category(
+        ToolCategory('Documentation Tools', re.compile(r'docs', re.IGNORECASE)))
+    categorizer.add_category(
+        ToolCategory('Other Tools', re.compile(r'.+', re.IGNORECASE)))  # catch-all category should be last
 
     return categorizer
 
