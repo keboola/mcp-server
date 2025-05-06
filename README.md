@@ -57,8 +57,8 @@ To use this server with Claude Desktop, follow these steps:
         "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
-        "KBC_STORAGE_TOKEN": "your-keboola-storage-token",
-        "KBC_WORKSPACE_SCHEMA": "your-workspace-schema"
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
       }
     }
   }
@@ -68,8 +68,8 @@ To use this server with Claude Desktop, follow these steps:
 Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
-- `your-keboola-storage-token` with your Keboola Storage API token
-- `your-workspace-schema` with your Snowflake schema or BigQuery dataset of your workspace
+- `your_keboola_storage_token` with your Keboola Storage API token
+- `your_workspace_schema` with your Snowflake schema or BigQuery dataset of your workspace
 
 > Note: If you are using a specific version of Python (e.g. 3.11 due to some package compatibility issues), 
 > you'll need to update the `command` into using that specific version, e.g. `/path/to/keboola-mcp-server/.venv/bin/python3.11`
@@ -105,7 +105,7 @@ To use this server with Cursor AI, you have two options for configuring the tran
 {
   "mcpServers": {
     "keboola": {
-      "url": "http://localhost:8000/sse?storage_token=YOUR-KEBOOLA-STORAGE-TOKEN&workspace_schema=YOUR-WORKSPACE-SCHEMA"
+      "url": "http://localhost:8000/sse?storage_token=YOUR_KEBOOLA_STORAGE_TOKEN&workspace_schema=YOUR_WORKSPACE_SCHEMA"
     }
   }
 }
@@ -126,8 +126,8 @@ To use this server with Cursor AI, you have two options for configuring the tran
          "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
-        "KBC_STORAGE_TOKEN": "your-keboola-storage-token", 
-        "KBC_WORKSPACE_SCHEMA": "your-workspace-schema"         
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token", 
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"         
       }
     }
   }
@@ -155,15 +155,15 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 ```
 - where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
 ```shell
-export KBC_STORAGE_TOKEN="your-keboola-storage-token"
-export KBC_WORKSPACE_SCHEMA="your-workspace-schema"
+export KBC_STORAGE_TOKEN="your_keboola_storage_token"
+export KBC_WORKSPACE_SCHEMA="your_workspace_schema"
 ```
 
 Replace:
 - `/path/to/keboola-mcp-server` with your actual path to the cloned repository
 - `YOUR_REGION` with your Keboola region (e.g., `north-europe.azure`, etc.). You can remove it if your region is just `connection` explicitly
-- `your-keboola-storage-token` with your Keboola Storage API token
-- `your-workspace-schema` with your Snowflake schema or BigQuery dataset of your workspace
+- `your_keboola_storage_token` with your Keboola Storage API token
+- `your_workspace_schema` with your Snowflake schema or BigQuery dataset of your workspace
 
 After updating the configuration:
 1. Restart Cursor AI
@@ -187,33 +187,41 @@ This will give your MCP server instance permissions to access your BigQuery work
 
 ## Available Tools
 
-The server provides the following tools for interacting with Keboola Connection:
+The server offers a variety of tools for interacting with Keboola Connection.
+For detailed documentation of all available tools, please refer to [TOOLS.md](TOOLS.md).
 
 ### Storage Tools
-- `retrieve_buckets` - List all buckets in your Keboola project
-- `get_bucket_detail` - Get detailed information about a specific bucket
-- `retrieve_bucket_tables` - List all tables in a specific bucket
-- `get_table_detail` - Get detailed information about a specific table
-- `update_bucket_description` - Update the description of a bucket
-- `update_table_description` - Update the description of a table
+- [get_bucket_detail](TOOLS.md#get_bucket_detail): Gets detailed information about a specific bucket.
+- [get_table_detail](TOOLS.md#get_table_detail): Gets detailed information about a specific table including its DB identifier and column information.
+- [retrieve_bucket_tables](TOOLS.md#retrieve_bucket_tables): Retrieves all tables in a specific bucket with their basic information.
+- [retrieve_buckets](TOOLS.md#retrieve_buckets): Retrieves information about all buckets in the project.
+- [update_bucket_description](TOOLS.md#update_bucket_description): Update the description for a given Keboola bucket.
+- [update_table_description](TOOLS.md#update_table_description): Update the description for a given Keboola table.
 
 ### SQL Tools
-- `query_table` - Execute SQL queries on tables in your workspace
-- `get_sql_dialect` - Get the SQL dialect used in your workspace (Snowflake or BigQuery)
+- [get_sql_dialect](TOOLS.md#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
+- [query_table](TOOLS.md#query_table): Executes an SQL SELECT query to get the data from the underlying database.
 
 ### Component Tools
-- `retrieve_components` - List available components and their configurations
-- `retrieve_transformations` - List transformation configurations
-- `get_component_details` - Get detailed information about a specific component
-- `create_sql_transformation` - Create a new SQL transformation configuration
+- [create_sql_transformation](TOOLS.md#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
+  description, and optionally a list of created table names if and only if they are generated within the SQL
+  statements.
+- [get_component_details](TOOLS.md#get_component_details): Gets detailed information about a specific Keboola component configuration given component/transformation ID and
+  configuration ID.
+- [retrieve_components](TOOLS.md#retrieve_components): Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
+  If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
+  component_types.
+- [retrieve_transformations](TOOLS.md#retrieve_transformations): Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
 
-### Job Tools
-- `retrieve_jobs` - List jobs in your project
-- `get_job_detail` - Get detailed information about a specific job
-- `start_job` - Start a new job for a component configuration
+### Jobs Tools
+- [get_job_detail](TOOLS.md#get_job_detail): Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
+  results, and any relevant metadata.
+- [retrieve_jobs](TOOLS.md#retrieve_jobs): Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
+  filtering.
+- [start_job](TOOLS.md#start_job): Starts a new job for a given component or transformation.
 
 ### Documentation Tools
-- `docs_query` - Query documentation and help information
+- [docs_query](TOOLS.md#docs_query): Answers a question using the Keboola documentation as a source.
 
 ## Development
 

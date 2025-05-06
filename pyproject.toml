@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "0.14.0"
+version = "0.16.1"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,15 +20,29 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
+codestyle = [
     "black ~= 25.1",
-    "build ~= 1.2",
     "isort ~= 6.0",
-    "mypy ~= 1.5",
+    "flake8 ~= 7.2",
+    "Flake8-pyproject ~= 1.2",
+    "flake8-bugbear ~= 24.12",
+    "flake8-colors ~= 0.1",
+    "flake8-isort ~= 6.1",
+    "flake8-quotes ~= 3.4",
+    "flake8-typing-imports ~= 1.16",
+    "pep8-naming ~= 0.14",
+]
+tests = [
     "pytest ~= 8.3",
     "pytest-asyncio ~= 0.25",
     "pytest-cov ~= 6.0",
     "pytest-mock ~= 3.14",
+    
+]
+dev = [
+    "tox ~= 4.23",
+    "build ~= 1.2",
+    "wheel~=0.45",
 ]
 
 [project.scripts]
@@ -36,37 +50,61 @@ keboola_mcp_server = "keboola_mcp_server.cli:main"
 keboola-mcp-server = "keboola_mcp_server.cli:main"
 
 [tool.black]
-line-length = 100
 target-version = ["py310"]
-skip_string_normalization = true
+skip-string-normalization = true
+line-length = 120
 
 [tool.isort]
 profile = "black"
-line_length = 100
+line_length = 120
 multi_line_output = 3
+use_parentheses = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keboola_mcp_server"]
 
 [tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 addopts = "--cov=keboola_mcp_server --cov-report=term-missing --cov-report=xml"
 testpaths = ["tests"]
 asyncio_mode = "strict"
 
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = false
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-show_error_codes = true
-ignore_missing_imports = true
-namespace_packages = true
-explicit_package_bases = true
+[tool.flake8]
+max-line-length = 120
+import-order-style = "edited"
+application-package-names = ["keboola_mcp_server"]
+min-python-version = "3.10.0"
+# Skip unused import checks F401 in __init__.py files; re-exported imports are intentional. 
+per-file-ignores = [
+    "__init__.py: F401",
+]
+# For Compatibility with black we skip: E203 whitespace before ':', W503 checks line break before binary operator
+# For Compatibility with isort we skip: I101 Imported names are in the wrong order since we follow isort format using
+# alphabetical case-sensitive sort A, B, a, b 
+extend-ignore = ["E203", "W503", "I101"] 
+
+[tool.tox]
+requires = ["tox>=4.23"]
+env_list = ["python", "flake8"]
+
+[tool.tox.env_run_base]
+description = "Run tests"
+extras = ["tests"]
+package = "wheel"
+wheel_build_env = ".pkg"
+commands = [["pytest", "--junitxml", "./test-results.xml"]]
+
+[tool.tox.env.flake8]
+description = "Run code style check using flake8"
+package = "skip"
+deps = [
+    "flake8 ~= 7.2",
+    "Flake8-pyproject ~= 1.2",
+    "flake8-bugbear ~= 24.12",
+    "flake8-colors ~= 0.1",
+    "flake8-isort ~= 6.1",
+    "flake8-quotes ~= 3.4",
+    "flake8-typing-imports ~= 1.16",
+    "pep8-naming ~= 0.14",
+]
+commands = [["flake8", "src/", "tests/"]]

@@ -7,16 +7,11 @@ from mcp.server.fastmcp import FastMCP
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import (
-    KeboolaMcpServer,
-    SessionParams,
-    SessionState,
-    SessionStateFactory,
-)
+from keboola_mcp_server.mcp import KeboolaMcpServer, SessionParams, SessionState, SessionStateFactory
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
-from keboola_mcp_server.tools.sql import WorkspaceManager, add_sql_tools, query_table
+from keboola_mcp_server.tools.sql import WorkspaceManager, add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
 
 LOG = logging.getLogger(__name__)
@@ -66,9 +61,7 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
         Configured FastMCP server instance
     """
     # Initialize FastMCP server with system instructions
-    mcp = KeboolaMcpServer(
-        'Keboola Explorer', session_state_factory=_create_session_state_factory(config)
-    )
+    mcp = KeboolaMcpServer('Keboola Explorer', session_state_factory=_create_session_state_factory(config))
 
     add_component_tools(mcp)
     add_doc_tools(mcp)
