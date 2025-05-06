@@ -150,9 +150,10 @@ class JobDetail(JobListItem):
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
 
-# The Parameter Optional annotation is not working with MCP and when the bot tries to call the tool with appropriate parameters,
-# it raises `Invalid type for parameter 'status' in tool retrieve_jobs`, either bot cannot use the tool or mcp parsing
-# the parameters is not working. So we need to use Annotated[JOB_STATUS, ...] = None instead of
+
+# The Parameter Optional annotation is not working with MCP and when the bot tries to call the tool with appropriate
+# parameters, it raises `Invalid type for parameter 'status' in tool retrieve_jobs`, either bot cannot use the tool or
+# mcp parsing the parameters is not working. So we need to use Annotated[JOB_STATUS, ...] = None instead of
 # Optional[JOB_STATUS] = None despite having type check errors in the code.
 @tool_errors()
 async def retrieve_jobs(
