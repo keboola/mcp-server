@@ -23,4 +23,5 @@ wheels/
 coverage.xml
 htmlcov/
 .pytest_cache/
+integtest-results.xml
 test-results.xml

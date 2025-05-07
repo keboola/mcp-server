@@ -49,7 +49,7 @@ def _default_session_state_factory(params: SessionParams) -> SessionState:
     return params
 
 
-class StatefullServerSession(ServerSession):
+class StatefulServerSession(ServerSession):
     def __init__(
         self,
         read_stream: MemoryObjectReceiveStream[types.JSONRPCMessage | Exception],
@@ -90,7 +90,7 @@ class _KeboolaServer(Server):
         async with AsyncExitStack() as stack:
             lifespan_context = await stack.enter_async_context(self.lifespan(self))
             session = await stack.enter_async_context(
-                StatefullServerSession(read_stream, write_stream, initialization_options, state)
+                StatefulServerSession(read_stream, write_stream, initialization_options, state)
             )
 
             async with anyio.create_task_group() as tg:
