@@ -26,7 +26,7 @@ from keboola_mcp_server.tools.sql import get_sql_dialect
 
 LOG = logging.getLogger(__name__)
 
-############################## Add component tools to the MCP server #########################################
+# Add component tools to the MCP server #########################################
 
 # Regarding the conventional naming of entity models for components and their associated configurations,
 # we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
@@ -103,7 +103,8 @@ async def retrieve_components_configurations(
     ),
 ]:
     """
-    Retrieves configurations of components present in the project, optionally filtered by component types or specific component IDs
+    Retrieves configurations of components present in the project,
+    optionally filtered by component types or specific component IDs
     If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
     component_types.
 
@@ -190,10 +191,12 @@ async def get_component_detail(
     Gets detailed information about a specific Keboola component given component ID.
     USAGE:
         - Use when you want to see the details of a specific component to get its documentation, configuration schemas
-        ,etc. Especially in situation when the users asks to create or update a component configuration. This tool is mainly for internal use by the agent.
+        ,etc. Especially in situation when the users asks to create or update a component configuration.
+        This tool is mainly for internal use by the agent.
     EXAMPLES:
         - user_input: `Create a generic extractor configuration for x`
-            -> Set the component_id if you know it or find the component_id by find_component_id or docs use tool and set it
+            -> Set the component_id if you know it or find the component_id by find_component_id
+               or docs use tool and set it
             -> returns the details of the component/transformation configuration pair
     """
     client = KeboolaClient.from_state(ctx.session.state)
@@ -397,7 +400,10 @@ async def create_component_root_configuration(
         ),
     ],
     storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined',
+        description=(
+            'The table and/or file input / output mapping of the component configuration. '
+            'It is present only for components that have tables or file input mapping defined'
+        ),
         default=None,
     ),
     parameters: dict[str, Any] = Field(
@@ -491,7 +497,10 @@ async def create_component_row_configuration(
         ),
     ],
     storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined',
+        description=(
+            'The table and/or file input / output mapping of the component configuration. '
+            'It is present only for components that have tables or file input mapping defined'
+        ),
         default=None,
     ),
     parameters: dict[str, Any] = Field(
@@ -504,7 +513,8 @@ async def create_component_row_configuration(
     ),
 ]:
     """
-    Creates a component configuration row in the specified configuration_id, using the specified name, component ID, configuration JSON, and description.
+    Creates a component configuration row in the specified configuration_id, using the specified name,
+    component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
         The configuration JSON object must follow the row_configuration_schema of the specified component.
@@ -595,7 +605,11 @@ async def update_component_root_configuration(
         ),
     ],
     storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined',
+        description=(
+            'The table and/or file input / output mapping of the component configuration. '
+            'It is present only for components that are not row-based and have tables or file '
+            'input mapping defined'
+        ),
         default=None,
     ),
     parameters: dict[str, Any] = Field(
@@ -703,7 +717,11 @@ async def update_component_row_configuration(
         ),
     ],
     storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined',
+        description=(
+            'The table and/or file input / output mapping of the component configuration. '
+            'It is present only for components that are not row-based and have tables or file '
+            'input mapping defined'
+        ),
         default=None,
     ),
     parameters: dict[str, Any] = Field(
@@ -862,4 +880,4 @@ async def find_component_id(
     return suggestion_response.components
 
 
-############################## End of component tools #########################################
+# End of component tools #########################################
