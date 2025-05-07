@@ -22,9 +22,8 @@ def env_file_loaded() -> bool:
 def keboola_client(env_file_loaded: bool, mocker) -> KeboolaClient:
     storage_api_url = os.getenv(STORAGE_API_URL_ENV_VAR)
     storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
-    assert (
-        storage_api_url and storage_api_token
-    ), f'{STORAGE_API_URL_ENV_VAR} and {STORAGE_API_TOKEN_ENV_VAR} must be set'
+    assert storage_api_url, f'{STORAGE_API_URL_ENV_VAR} must be set'
+    assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
     return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
 
 
