@@ -2,7 +2,10 @@
   <img src="https://cdn.prod.website-files.com/5e21dc6f4c5acf29c35bb32c/5e21e66410e34945f7f25add_Keboola_logo.svg"  alt="Keboola Logo" align="right">
 </p>
 
+<!-- @chocho general note: with all the tables it feels very cluttered -->
+
 # Keboola MCP Server
+---
 
 [![PyPI version](https://badge.fury.io/py/keboola-mcp-server.svg)](https://badge.fury.io/py/keboola-mcp-server)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/keboola-mcp-server)](https://pypi.org/project/keboola-mcp-server/)
@@ -11,13 +14,16 @@
 ![MCP Version](https://img.shields.io/badge/MCP-0.2-blue)
 ![Docker Image](https://img.shields.io/docker/image-size/keboola/mcp-server)
 
-Keboola MCP transforms complex data operations into simple conversations. It lets **users** and AI agents like **Claude**, **Cursor**, **Windsurf**, or **VS Code** create, update, maintain and operate rich data-driven workflows and analysis without even knowing. Using natural language.
+> **Keboola MCP Server** Connect your data to **Cursor**, **Claude**, **Windsurf**, **VS Code**, and other AI assistants—with pipelines that deliver the right data when and where they need it.
 
-> This is where data engineering becomes "let me just write one last prompt" type of job.
+<!-- Show animated gif so people understand  -->
+
+> This is where data engineering feels less like coding—and more like just writing one last prompt.
 
 ## 💡 Example Usage
 
 Ask your AI assistant to:
+<!--  I am totally confused here as Pavel. I don't understand why you're suddenly talking about some AI assistant when I wanted to use MCP to connect to do pipelines ? Then it goes with examples. If it prepapers data examples should be more focused on integration, transformation and data delivery, automation, and those should be first not last @chocho  -->
 
 - 📊 **Exploration** - "What sales data do we have in Keboola? Show me the main tables and their origins, trustworthiness."
 - 🔍 **Analysis** - "Analyze our customer retention - which segments had the highest churn last quarter?"
@@ -28,10 +34,19 @@ Ask your AI assistant to:
 - 🚀 **Workflow Automation** - "Schedule our marketing data pipeline to run daily at 6am and send an email when it completes."
 - 📝 **Documentation & Governance** - "Document all tables in our GENERAL_LEDGER_FLOW with their purposes, update frequencies, and data owners."
 
-## Give It a Shot
+#Setup
+
+---
+
+## Get access token
 Sign-up to [Keboola Playground](https://chat.canary-orion.keboola.dev/).
 > If you wanna use it with existing Keboola project, we keep this invite only so far, feel free to reach out through [GitHub Issues](https://github.com/keboola/mcp-server/issues)!
+<!-- There should be a simple way how to do it from terminal with one command 
+Plus "register" without this is how you get an access token doesn't make sense. I know Keboola and always have hard time understanding where to find our token. So we need to make it really easy.
+@chocho -->
 
+
+<!-- Youre talking about agents and agentic world but where are the agentic stack tools ? Supabase, a2a support, data to frameworks like Crew, Langchain, etc. ? They should be on top @chocho -->
 
 ## ✅ Compatibility
 
@@ -112,8 +127,14 @@ docker run -it \
 
 ---
 
-## 💻 AI Assistant Integration
+#Project admin mode
+<!-- @chocho add here how to run MCP in read/write, integrations, etc. -->
 
+#Project read only mode
+<!-- @chocho - write here how to just read for data analyses, etc.  -->
+
+# 💻 AI Assistant Integration
+---
 ### Claude Desktop Configuration
 
 ```json
@@ -187,7 +208,10 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 
 ---
 
-## 🧰 Supported Tools
+# 🧰 Supported Tools
+---
+**Heads up:** Keboola MCP is still evolving (pre-1.0), so some breaking changes might happen as we improve things. The good news? Your AI agents will automatically adjust to new tools, so most of the time, you won’t even notice.
+
 LLMs, agents and users can combine all these tools to help you achieve your goals.
 | Category | Tool | Description |
 |----------|------|-------------|
