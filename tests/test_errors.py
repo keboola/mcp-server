@@ -71,9 +71,9 @@ async def test_tool_function_recovery_instructions(
     Verifies that the tool_errors decorator handles various combinations of recovery parameters.
     """
     tool_func = request.getfixturevalue(function_fixture)
-    decorated_func = tool_errors(
-        default_recovery=default_recovery, recovery_instructions=recovery_instructions
-    )(tool_func)
+    decorated_func = tool_errors(default_recovery=default_recovery, recovery_instructions=recovery_instructions)(
+        tool_func
+    )
 
     if expected_recovery_message is None:
         with pytest.raises(ValueError) as excinfo:
@@ -89,9 +89,7 @@ async def test_tool_function_recovery_instructions(
 @pytest.mark.asyncio
 async def test_logging_on_tool_exception(caplog, function_with_value_error):
     """Test if logging works correctly with the tool function."""
-    decorated_func = tool_errors(default_recovery='General recovery message.')(
-        function_with_value_error
-    )
+    decorated_func = tool_errors(default_recovery='General recovery message.')(function_with_value_error)
 
     with caplog.at_level(logging.ERROR):
         try:
