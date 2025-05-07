@@ -399,16 +399,21 @@ async def create_component_root_configuration(
             description='The ID of the component for which to create the configuration.',
         ),
     ],
-    storage: Optional[dict[str, Any]] = Field(
-        description=(
-            'The table and/or file input / output mapping of the component configuration. '
-            'It is present only for components that have tables or file input mapping defined'
+    parameters: Annotated[
+        dict[str, Any],
+        Field(
+            description='The component configuration parameters, adhering to the root_configuration_schema'
         ),
-        default=None,
-    ),
-    parameters: dict[str, Any] = Field(
-        description='The component configuration parameters, adhering to the root_configuration_schema'
-    ),
+    ],
+    storage: Annotated[
+        Optional[dict[str, Any]],
+        Field(
+            description=(
+                'The table and/or file input / output mapping of the component configuration. '
+                'It is present only for components that have tables or file input mapping defined'
+            ),
+        ),
+    ] = None,
 ) -> Annotated[
     ComponentRootConfiguration,
     Field(
@@ -436,7 +441,7 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    configuration_payload = {"storage": storage, "parameters": parameters}
+    configuration_payload = {'storage': storage, 'parameters': parameters}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -496,16 +501,21 @@ async def create_component_row_configuration(
             description='The ID of the configuration for which to create the configuration row.',
         ),
     ],
-    storage: Optional[dict[str, Any]] = Field(
-        description=(
-            'The table and/or file input / output mapping of the component configuration. '
-            'It is present only for components that have tables or file input mapping defined'
+    parameters: Annotated[
+        dict[str, Any],
+        Field(
+            description='The component row configuration parameters, adhering to the row_configuration_schema'
         ),
-        default=None,
-    ),
-    parameters: dict[str, Any] = Field(
-        description='The component row configuration parameters, adhering to the row_configuration_schema'
-    ),
+    ],
+    storage: Annotated[
+        Optional[dict[str, Any]],
+        Field(
+            description=(
+                'The table and/or file input / output mapping of the component configuration. '
+                'It is present only for components that have tables or file input mapping defined'
+            ),
+        ),
+    ] = None,
 ) -> Annotated[
     ComponentRowConfiguration,
     Field(
@@ -538,7 +548,7 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    configuration_payload = {"storage": storage, "parameters": parameters}
+    configuration_payload = {'storage': storage, 'parameters': parameters}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -604,17 +614,22 @@ async def update_component_root_configuration(
             description="The ID of the configuration which you'd like to update.",
         ),
     ],
-    storage: Optional[dict[str, Any]] = Field(
-        description=(
-            'The table and/or file input / output mapping of the component configuration. '
-            'It is present only for components that are not row-based and have tables or file '
-            'input mapping defined'
+    parameters: Annotated[
+        dict[str, Any],
+        Field(
+            description='The component configuration parameters, adhering to the root_configuration_schema schema'
         ),
-        default=None,
-    ),
-    parameters: dict[str, Any] = Field(
-        description='The component configuration parameters, adhering to the root_configuration_schema schema'
-    ),
+    ],
+    storage: Annotated[
+        Optional[dict[str, Any]],
+        Field(
+            description=(
+                'The table and/or file input / output mapping of the component configuration. '
+                'It is present only for components that are not row-based and have tables or file '
+                'input mapping defined'
+            ),
+        ),
+    ] = None,
 ) -> Annotated[
     ComponentRootConfiguration,
     Field(
@@ -643,7 +658,7 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    configuration_payload = {"storage": storage, "parameters": parameters}
+    configuration_payload = {'storage': storage, 'parameters': parameters}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -716,17 +731,21 @@ async def update_component_row_configuration(
             description="The ID of the configuration row which you'd like to update.",
         ),
     ],
-    storage: Optional[dict[str, Any]] = Field(
-        description=(
-            'The table and/or file input / output mapping of the component configuration. '
-            'It is present only for components that are not row-based and have tables or file '
-            'input mapping defined'
+    parameters: Annotated[
+        dict[str, Any],
+        Field(
+            description='The component row configuration parameters, adhering to the row_configuration_schema'
         ),
-        default=None,
-    ),
-    parameters: dict[str, Any] = Field(
-        description='The component row configuration parameters, adhering to the row_configuration_schema'
-    ),
+    ],
+    storage: Annotated[
+        Optional[dict[str, Any]],
+        Field(
+            description=(
+                'The table and/or file input / output mapping of the component configuration. '
+                'It is present only for components that have tables or file input mapping defined'
+            ),
+        ),
+    ] = None,
 ) -> Annotated[
     ComponentRowConfiguration,
     Field(
@@ -761,7 +780,7 @@ async def update_component_row_configuration(
         f'and row id {configuration_row_id}.'
     )
 
-    configuration_payload = {"storage": storage, "parameters": parameters}
+    configuration_payload = {'storage': storage, 'parameters': parameters}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -821,10 +840,10 @@ async def get_component_configuration_examples(
     from pathlib import Path
 
     # Construct the path to the JSONL file TODO: fix the path somehow
-    jsonl_path = Path(__file__).parent.parent.parent / "json-schemas/output" / f"sample_data_{component_id}.jsonl"
+    jsonl_path = Path(__file__).parent.parent.parent / 'json-schemas/output' / f'sample_data_{component_id}.jsonl'
 
     if not jsonl_path.exists():
-        return f"No configuration examples found for component {component_id}"
+        return f'No configuration examples found for component {component_id}'
 
     # Read and parse the JSONL file
     examples = []
@@ -845,15 +864,15 @@ async def get_component_configuration_examples(
                 continue  # Skip lines that are not valid JSON
 
     if not examples:
-        return f"No configuration examples found for component {component_id}"
+        return f'No configuration examples found for component {component_id}'
 
     # Format the examples as a markdown list
-    markdown = "Configuration examples\n\n"
+    markdown = 'Configuration examples\n\n'
     for i, example in enumerate(examples, 1):
         markdown += f"{i}. Configuration:\n```json\n{json.dumps(example['config_example'], indent=2)}\n```\n"
         if example['config_row_example']:
             markdown += f"   Configuration Row:\n```json\n{json.dumps(example['config_row_example'], indent=2)}\n```\n"
-        markdown += "\n"
+        markdown += '\n'
 
     return markdown
 

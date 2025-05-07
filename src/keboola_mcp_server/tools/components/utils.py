@@ -1,6 +1,5 @@
 import logging
 from typing import Any, Optional, Sequence, Union, cast, get_args
-from typing import Any, Optional, Sequence, Union, cast, get_args
 
 import requests
 from pydantic import BaseModel, Field
@@ -52,7 +51,6 @@ async def _retrieve_components_configurations_by_types(
     endpoint = f'branch/{client.storage_client_sync._branch_id}/components'
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
-    raw_components_with_configurations = []
     components_with_configurations = []
     for _type in component_types:
         # retrieve components by type with configurations
@@ -66,7 +64,8 @@ async def _retrieve_components_configurations_by_types(
         # extend the list with the raw components with configurations
         # TODO: ugly, refactor
         for raw_component in raw_components_with_configurations_by_type:
-            # build components with configurations list, each item contains a component and its associated configurations
+            # build components with configurations list, each item contains a component and its
+            # associated configurations
             raw_configuration_responses = [
                 ComponentConfigurationResponse.model_validate(
                     {**raw_configuration, 'component_id': raw_component['id']}
@@ -116,7 +115,9 @@ async def _retrieve_components_configurations_by_ids(
         raw_component = await client.storage_client.get(endpoint)
         # build component configurations list grouped by components
         raw_configuration_responses = [
-            ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
+            ComponentConfigurationResponse.model_validate(
+                {**raw_configuration, 'component_id': raw_component['id']}
+            )
             for raw_configuration in raw_configurations
         ]
         configurations_metadata = [

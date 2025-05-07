@@ -267,7 +267,9 @@ class ComponentRowConfiguration(ComponentConfigurationResponseBase):
 
     version: int = Field(description='The version of the component configuration')
     storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined.',
+        description='The table and/or file input / output mapping of the component configuration. '
+                    'It is present only for components that are not row-based and have tables or '
+                    'file input mapping defined.',
         default=None,
     )
     parameters: dict[str, Any] = Field(description='The user parameters, adhering to the row configuration schema')
@@ -288,7 +290,9 @@ class ComponentRootConfiguration(ComponentConfigurationResponseBase):
 
     version: int = Field(description='The version of the component configuration')
     storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined',
+        description='The table and/or file input / output mapping of the component configuration. '
+                    'It is present only for components that are not row-based and have tables or '
+                    'file input mapping defined',
         default=None,
     )
     parameters: dict[str, Any] = Field(
