@@ -1,4 +1,4 @@
-from typing import Sequence, Union
+from typing import Any, Sequence, Union
 
 import pytest
 
@@ -7,6 +7,7 @@ from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
     _get_transformation_configuration,
     _handle_component_types,
+    _validate_transformation_configuration,
 )
 
 
@@ -88,3 +89,56 @@ def test_get_transformation_configuration(
         for created_table, expected_table_name in zip(configuration.storage.output.tables, created_table_names):
             assert created_table.source == expected_table_name
             assert created_table.destination == f'{expected_bucket_id}.{expected_table_name}'
+
+
+@pytest.mark.parametrize(
+    'storage, parameters, success',
+    [
+        # example of a valid storage and parameters configuration - empty
+        (
+            {'input': {'tables': []}, 'output': {'tables': []}},
+            {'blocks': []},
+            True,
+        ),
+        # example of a valid storage and parameters configuration - empty encapsulated
+        (
+            {'storage': {'input': {'tables': []}, 'output': {'tables': []}}},
+            {'parameters': {'blocks': []}},
+            True,
+        ),
+        # additional paramters should be ignored, no error should be raised
+        (
+            {
+                'input': {'tables': [{'test': 'test', 'source': 'source', 'destination': 'destination'}]},
+                'output': {'tables': [], 'test': 'test'},
+            },
+            {
+                'blocks': [
+                    {
+                        'name': 'Block 0',
+                        'codes': [{'name': 'Code 0', 'test': 'test', 'script': ['foo']}],
+                        'test': 'test',
+                    }
+                ],
+                'test': 'test',
+            },
+            True,
+        ),
+        # additional paramter without expected params should raise an error
+        (
+            {'input': {'tables': [{'test': 'test'}]}, 'output': {'tables': []}},
+            {'blocks': []},
+            False,
+        ),
+    ],
+)
+def test_validate_transformation_configuration(storage: dict[str, Any], parameters: dict[str, Any], success: bool):
+    """Test validate_transformation_configuration tool which should return the correct transformation configuration
+    given the storage and parameters configurations."""
+
+    if success:
+        validated_configuration = _validate_transformation_configuration(storage, parameters)
+        assert isinstance(validated_configuration, TransformationConfiguration)
+    else:
+        with pytest.raises(ValueError):
+            _validate_transformation_configuration(storage, parameters)

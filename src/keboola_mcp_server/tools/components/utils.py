@@ -191,12 +191,12 @@ class TransformationConfiguration(BaseModel):
                 """The code for the transformation block."""
 
                 name: str = Field(description='The name of the current code script')
-                script: list[str] = Field(description='List of current code statements')
+                script: Sequence[str] = Field(description='List of current code statements')
 
             name: str = Field(description='The name of the current block')
-            codes: list[Code] = Field(description='The code scripts')
+            codes: Sequence[Code] = Field(description='The code scripts')
 
-        blocks: list[Block] = Field(description='The blocks for the transformation')
+        blocks: Sequence[Block] = Field(description='The blocks for the transformation')
 
     class Storage(BaseModel):
         """The storage configuration for the transformation. For now it stores only input and output tables."""
@@ -207,8 +207,8 @@ class TransformationConfiguration(BaseModel):
             class Table(BaseModel):
                 """The table used in the transformation"""
 
-                destination: Optional[str] = Field(description='The destination table name', default=None)
-                source: Optional[str] = Field(description='The source table name', default=None)
+                destination: Optional[str] = Field(description='The destination table name')
+                source: Optional[str] = Field(description='The source table name')
 
             tables: list[Table] = Field(description='The tables used in the transformation', default=[])
 
@@ -257,4 +257,23 @@ def _get_transformation_configuration(
             )
             for out_table in output_tables
         ]
+    return TransformationConfiguration(parameters=parameters, storage=storage)
+
+
+def _validate_transformation_configuration(
+    raw_storage: dict[str, Any],
+    raw_parameters: dict[str, Any],
+) -> TransformationConfiguration:
+    """
+    Utility function to validate the storage and parameters configurations.
+    :param raw_storage: The storage configuration in dict format
+    :param raw_parameters: The parameters configuration in dict format
+    :return: The transformation configuration
+    """
+    # get storage and parameters from the raw configuration
+    fixed_storage = raw_storage.get('storage', raw_storage)
+    fixed_parameters = raw_parameters.get('parameters', raw_parameters)
+    # validate the storage and parameters configurations
+    storage = TransformationConfiguration.Storage.model_validate(fixed_storage)
+    parameters = TransformationConfiguration.Parameters.model_validate(fixed_parameters)
     return TransformationConfiguration(parameters=parameters, storage=storage)

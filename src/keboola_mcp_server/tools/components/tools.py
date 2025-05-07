@@ -13,6 +13,7 @@ from keboola_mcp_server.tools.components.utils import (
     _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
+    _validate_transformation_configuration,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 
@@ -337,20 +338,36 @@ async def update_sql_transformation_configuration(
             description='Detailed description of the new changes to the transformation configuration.',
         ),
     ],
-    updated_configuration: Annotated[
-        dict[str, Any],
+    updated_parameters_configuration: Annotated[
+        dict,
         Field(
             description=(
-                'Updated transformation configuration JSON object containing both updated settings applied and all '
-                'existing settings preserved.'
+                'Required updated parameters configuration dictionary of the transformation containing both updated '
+                'settings applied and all existing settings preserved.'
+            ),
+        ),
+    ],
+    updated_storage_configuration: Annotated[
+        dict,
+        Field(
+            description=(
+                'Required updated storage configuration dictionary of the transformation containing both updated settings '
+                'applied and all existing settings preserved.'
             ),
         ),
     ],
     updated_description: Annotated[
         str,
         Field(
-            description='Updated previous description incorporating the new changes of the transformation '
-            'configuration. Default is empty string.',
+            description='Updated previous detailed description incorporating the new changes of the transformation '
+            'configuration. Default is empty string if no update is needed.',
+        ),
+    ] = '',
+    updated_name: Annotated[
+        str,
+        Field(
+            description='Updated previous name of the transformation configuration. Default is empty string if no '
+            'update is needed.',
         ),
     ] = '',
     is_disabled: Annotated[
@@ -384,12 +401,19 @@ async def update_sql_transformation_configuration(
 
     try:
         LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+        # Validate the storage and parameters configurations
+        validated_configuration = _validate_transformation_configuration(
+            raw_storage=updated_storage_configuration,
+            raw_parameters=updated_parameters_configuration,
+        )
+
         updated_raw_configuration = await client.storage_client.update_component_configuration(
             component_id=sql_transformation_id,
             configuration_id=configuration_id,
-            configuration=updated_configuration,
+            configuration=validated_configuration.model_dump(),
             change_description=change_description,
             updated_description=updated_description if updated_description else None,
+            updated_name=updated_name if updated_name else None,
             is_disabled=is_disabled,
         )
 

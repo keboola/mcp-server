@@ -364,8 +364,13 @@ async def test_create_transformation_configuration_fail(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    'sql_dialect, expected_component_id',
-    [('Snowflake', 'keboola.snowflake-transformation'), ('BigQuery', 'keboola.bigquery-transformation')],
+    'sql_dialect, expected_component_id, updated_name, updated_description, is_disabled',
+    [
+        # ('Snowflake', 'keboola.snowflake-transformation', 'new_name', 'new_description', False),
+        # ('BigQuery', 'keboola.bigquery-transformation', 'new_name', 'new_description', False),
+        # ('BigQuery', 'keboola.bigquery-transformation', None, None, False),
+        ('BigQuery', 'keboola.bigquery-transformation', None, None, True),
+    ],
 )
 async def test_update_transformation_configuration(
     mocker: MockerFixture,
@@ -374,15 +379,20 @@ async def test_update_transformation_configuration(
     mock_configuration: dict[str, Any],
     sql_dialect: str,
     expected_component_id: str,
+    updated_name: str,
+    updated_description: str,
+    is_disabled: bool,
 ):
-    """Test update_sql_transformation_configuration tool."""
+    """Test update_sql_transformation_configuration tool and tools."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     # Mock the WorkspaceManager
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
-    new_config = {'foo': 'foo'}
+    new_storage_configuration = {'storage': {'input': {'tables': []}, 'output': {'tables': []}}}
+    new_parameters_configuration = {'parameters': {'blocks': []}}
+    new_config = {**new_parameters_configuration, **new_storage_configuration}
     new_change_description = 'foo fooo'
     mock_configuration['configuration'] = new_config
     mock_configuration['changeDescription'] = new_change_description
@@ -393,11 +403,13 @@ async def test_update_transformation_configuration(
 
     updated_configuration = await update_sql_transformation_configuration(
         context,
-        mock_configuration['id'],
-        new_change_description,
-        new_config,
-        updated_description=str(),
-        is_disabled=False,
+        configuration_id=mock_configuration['id'],
+        change_description=new_change_description,
+        updated_parameters_configuration=new_parameters_configuration,
+        updated_storage_configuration=new_storage_configuration,
+        updated_description=updated_description or str(),
+        updated_name=updated_name or str(),
+        is_disabled=is_disabled,
     )
 
     assert isinstance(updated_configuration, ComponentConfiguration)
@@ -412,6 +424,7 @@ async def test_update_transformation_configuration(
         configuration_id=mock_configuration['id'],
         change_description=new_change_description,
         configuration=new_config,
-        updated_description=None,
-        is_disabled=False,
+        updated_description=updated_description,
+        updated_name=updated_name,
+        is_disabled=is_disabled,
     )

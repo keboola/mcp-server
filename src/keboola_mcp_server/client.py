@@ -292,6 +292,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         configuration: dict[str, Any],
         change_description: str,
         updated_description: Optional[str] = None,
+        updated_name: Optional[str] = None,
         is_disabled: bool = False,
     ) -> dict[str, Any]:
         """
@@ -311,7 +312,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         }
         if updated_description:
             payload['description'] = updated_description
-
+        if updated_name:
+            payload['name'] = updated_name
         if is_disabled:
             payload['isDisabled'] = is_disabled
 
