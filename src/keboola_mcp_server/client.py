@@ -417,10 +417,11 @@ class ComponentSuggestionResponse(BaseModel):
     components: list[SuggestedComponent] = Field(description='List of suggested components.', default_factory=list)
 
 
-class AIServiceClient(Endpoint):
+class AIServiceClient(KeboolaServiceClient):
     """Class handling endpoints for interacting with the Keboola AI Service."""
 
-    def __init__(self, root_url: str, token: str) -> None:
+    @classmethod
+    def create(cls, root_url: str, token: str) -> 'AIServiceClient':
         """
         Creates an AIServiceClient from a Keboola Storage API token.
 
@@ -444,24 +445,22 @@ class AIServiceClient(Endpoint):
         Answers a question using the Keboola documentation as a source.
         :param query: The query to answer.
         """
-        url = f'{self.root_url.rstrip("/")}/docs/question'
-        response = self._post(
-            url,
-            json={'query': query},
+        response = await self.raw_client.post(
+            endpoint='docs/question',
+            data={'query': query},
             headers={'Accept': 'application/json'},
         )
 
         return DocsQuestionResponse.model_validate(response)
 
-    def suggest_component(self, query: str) -> ComponentSuggestionResponse:
+    async def suggest_component(self, query: str) -> ComponentSuggestionResponse:
         """
         Provides list of component suggestions based on natural language query.
         :param query: The query to answer.
         """
-        url = f'{self.root_url.rstrip("/")}/suggest/component'
-        response = self._post(
-            url,
-            json={'prompt': query},
+        response = await self.raw_client.post(
+            endpoint='suggest/component',
+            data={'prompt': query},
             headers={'Accept': 'application/json'},
         )
 

@@ -235,10 +235,19 @@ async def test_get_component_configuration_details(
     mock_configuration.update(
         {
             'id': configuration_id,
+            'name': 'Test configuration',
+            'description': 'Test configuration description',
+            'version': 1,
             'rows': None,
             'configuration': {
                 'parameters': {'accessKeyId': 'test'},
                 'storage': {'input': {'tables': []}},
+            },
+            'isDisabled': False,
+            'created': '2021-01-01T00:00:00+00:00',
+            'creatorToken': {
+                'id': 1,
+                'description': 'test'
             },
         }
     )
@@ -246,24 +255,25 @@ async def test_get_component_configuration_details(
     # Prepare mock component
     mock_component.update({'id': component_id, 'flags': ['genericDockerUI-tableInput'], 'type': 'extractor'})
 
+    # Mock storage_client_sync
+    keboola_client.storage_client_sync = MagicMock()
+    keboola_client.storage_client_sync._branch_id = mock_branch_id
+    keboola_client.storage_client_sync.configurations = MagicMock()
+    keboola_client.storage_client_sync.configurations.detail = MagicMock(return_value=mock_configuration)
+
     # Setup Storage API mocks
     keboola_client.storage_client = MagicMock()
     keboola_client.storage_client._branch_id = mock_branch_id
-    keboola_client.storage_client.configurations = MagicMock()
-    keboola_client.storage_client.configurations.detail = MagicMock(return_value=mock_configuration)
+    keboola_client.storage_client.get = AsyncMock(return_value=mock_metadata)
 
     # Setup AI service mocks
     keboola_client.ai_service_client = MagicMock()
     keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=mock_component)
 
-    # Mock different responses for client.get based on endpoint
-    def mock_response(endpoint, **kwargs):
-        if 'metadata' in endpoint:
-            return mock_metadata
-        else:
-            return {'components': [{'id': component_id, 'flags': mock_component['flags']}]}
-
-    keboola_client.get = AsyncMock(side_effect=mock_response)
+    # Mock keboola_client.get, který je potřeba pro _get_component_details a _get_component_flags
+    keboola_client.get = AsyncMock(
+        return_value={'components': [{'id': component_id, 'flags': mock_component['flags']}]}
+    )
 
     # Execute
     result = await get_component_configuration_details(component_id, configuration_id, context)
@@ -280,8 +290,8 @@ async def test_get_component_configuration_details(
     assert result.root_configuration.configuration_id == configuration_id
     assert result.root_configuration.parameters == mock_configuration['configuration']['parameters']
 
-    # Verify mock was called correctly
-    keboola_client.storage_client.configurations.detail.assert_called_once_with(component_id, configuration_id)
+    # Verify mock
+    keboola_client.storage_client_sync.configurations.detail.assert_called_once_with(component_id, configuration_id)
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id)
 
 
