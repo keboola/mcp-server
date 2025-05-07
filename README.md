@@ -14,8 +14,8 @@ A Model Context Protocol (MCP) server for interacting with Keboola Connection. T
 - Snowflake or BigQuery Read Only Workspace
 
 ## Installation
-
-### Installing via Pip
+There are two options how to install the MCP Server:
+### Option 1: Installing via Pip
 
 First, create a virtual environment and then install 
 the [keboola_mcp_server](https://pypi.org/project/keboola-mcp-server/) package:
@@ -28,7 +28,7 @@ pip3 install keboola_mcp_server
 ```
 
 
-### Installing via Smithery
+### Option 2: Installing via Smithery
 
 To install Keboola MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/keboola-mcp-server):
 
