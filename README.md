@@ -55,7 +55,7 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 ## 🚀 Quick Start Guide
 
 ### 1. Get Your Keboola Token (Easiest Method)
-1. Use the Keboola Playground: [chat.keboola.com](chat.keboola.com)
+1. Use the Keboola Playground: [https://chat.canary-orion.keboola.dev/](https://chat.canary-orion.keboola.dev/)
 2. Sign in using Google. (If your goal is to just experiment with data or your project in chat, this is it.)
 3. Click your profile (bottom-left).
 4. Copy:
