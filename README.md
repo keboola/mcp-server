@@ -294,7 +294,7 @@ LLMs, agents, and users can combine all these tools to help you achieve your goa
 
 ---
 
-## 🛠️ Troubleshooting & Debugging
+## Troubleshooting & Debugging
 
 ### Common Issues
 
@@ -345,7 +345,7 @@ A high-level overview of what capabilities are exposed via the MCP Server from t
 
 ---
 
-## 🔗 Stay In Touch
+## Stay In Touch
 
   [LinkedIn](https://www.linkedin.com/company/keboola)•
   [X](https://x.com/keboola) •
@@ -355,7 +355,7 @@ A high-level overview of what capabilities are exposed via the MCP Server from t
 
 ---
 
-## 🧭 Want To Go Further?
+## Want To Go Further?
 
 - 📘 [User Docs](https://docs.keboola.com/)
 - 📘 [Developer Docs](https://developers.keboola.com/)
