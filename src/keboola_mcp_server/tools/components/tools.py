@@ -896,7 +896,7 @@ async def find_component_id(
             -> returns a list of component IDs that match the query, ordered by relevance/best match.
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    suggestion_response = client.ai_service_client.suggest_component(query)
+    suggestion_response = await client.ai_service_client.suggest_component(query)
     return suggestion_response.components
 
 
