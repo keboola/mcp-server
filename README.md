@@ -4,11 +4,13 @@
 
 # Keboola MCP Server
 
-> **Keboola MCP Server** Connect your data to **Cursor**, **Claude**, **Windsurf**, **VS Code**, and other AI assistants—with pipelines that deliver the right data when and where they need it.
+> Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data when and where they need it.
 
 <p align="center">
   <img src="./assets/claude-setup.gif"  alt="Claude setup animated" >
 </p>
+# What Is This?
+Keboola MCP Server is an open-source bridge between your Keboola project and modern AI tools. It turns Keboola features—like storage access, SQL transformations, and job triggers—into callable tools for Claude, Cursor, CrewAI, LangChain, Amazon Q, and more.
 
 > This is where data engineering feels less like coding—and more like just writing one last prompt.
 
@@ -17,21 +19,22 @@
 
 The Keboola MCP Server can be integrated with nearly any platform that supports the MCP protocol.
 
-#### 🤖 Agent Frameworks
-- **[CrewAI](https://github.com/crewAIInc/crewAI-tools#crewai-tools-and-mcp)**: Add Keboola as a custom tool provider to your agent crew.
+#### Agent Frameworks
+- **[CrewAI](https://github.com/crewAIInc/crewAI-tools#crewai-tools-and-mcp)**(fully supported, tested): Add Keboola as a custom tool provider to your agent crew.
+- **[LangChain](https://github.com/langchain-ai/langchain-mcp-adapters)**(fully supported, tested): Use Keboola MCP via MCP Adapters in your LangChain applications.
 - **[AutoGen](https://microsoft.github.io/autogen/dev//user-guide/agentchat-user-guide/tutorial/agents.html#using-tools-and-workbench)**: Register Keboola MCP Server with AutoGen's **AssistantAgent**.
 - **[OpenAI](https://openai.github.io/openai-agents-python/mcp/)**: Added Keboola MCP Server to Agents.
 - **[Amazon Q – Generative AI Assistant](https://aws.amazon.com/blogs/devops/extend-the-amazon-q-developer-cli-with-mcp/)**: Configure Keboola MCP Server and start using it from Amazon Q Developer CLI.
-- **[LangChain](https://github.com/langchain-ai/langchain-mcp-adapters)**: Use Keboola MCP via MCP Adapters in your LangChain applications.
 
-#### 🔄 Automation Platforms
-- **[n8n](https://github.com/nerding-io/n8n-nodes-mcp)**: Use HTTP nodes to query data or trigger transformations.
-- **[Vercel](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#mcp-tools)**: Build apps on top of Keboola MCP Server in minutes.
-- **[Gumloop](https://github.com/gumloop/guMCP/tree/main/src/servers)**: Add Keboola MCP as a node in Gumloop and use it in your workflows.
+
+#### Automation Platforms
+- **[n8n](https://github.com/nerding-io/n8n-nodes-mcp)**(fully supported, tested): Use HTTP nodes to query data or trigger transformations.
+- **[Vercel](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#mcp-tools)**(fully supported, tested): Build apps on top of Keboola MCP Server in minutes.
+- **[Gumloop](https://github.com/gumloop/guMCP/tree/main/src/servers)**(Experimental): Add Keboola MCP as a node in Gumloop and use it in your workflows.
 
 **Other Integrations**: All platforms can connect to Keboola MCP Server via HTTP + Server-Sent Events (SSE) or stdio, making integration seamless regardless of programming language or environment.
 
-> We do not provide a hosted remote MCP Server yet, but stay tuned.
+> Currently, no hosted remote MCP Server is provided. A hosted solution may become available in the future.
 
 ### Development Environments & Clients
 
@@ -41,14 +44,53 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 | Snowflake, BigQuery | ✅ Native support (no data movement) |
 | Other databases | ✅ Supported (via Extractors, Writers & Apps) |
 | **Operating Systems**  |
-| macOS, Linux, Windows | ✅ Fully supported |
+| macOS, Linux, Windows | ✅ Fully supported, tested |
 | **MCP Clients (AI Assistants)**  |
-| Claude (Desktop & Web), Cursor, Windsurf, Zed, Replit, Codeium, Sourcegraph | ✅ Fully supported |
+| Claude (Desktop & Web), Cursor, | ✅ Fully supported, tested |
+| Windsurf, Zed, Replit, Codeium, Sourcegraph | ✅ Supported |
 | Custom Clients | ✅ Via MCP  |
 
 ---
 
 ## 🚀 Quick Start Guide
+
+### 1. Get Your Keboola Token (Easiest Method)
+1. Use the Keboola Playground: chat.keboola.com
+2. Sign in using Google. (If your goal is to just experiment with data or your project in chat, this is it.)
+3. Click your profile (bottom-left).
+4. Copy:
+    - KBC_STORAGE_TOKEN
+    - KBC_WORKSPACE_SCHEMA
+
+5. Create a .env file:
+```bash
+KBC_STORAGE_TOKEN=your_token_here
+KBC_WORKSPACE_SCHEMA=your_workspace_schema_here
+```
+
+Always use .env to protect your tokens. See .env.example.
+
+### 2. Install and Run
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip3 install keboola_mcp_server
+
+# Run server
+uvx keboola_mcp_server --api-url https://connection.canary-orion.keboola.dev
+```
+3. Test Locally
+```bash
+npx @modelcontextprotocol/inspector uvx keboola_mcp_server --api-url https://connection.canary-orion.keboola.dev
+```
+
+### Required Environment Variables
+
+|Variable| Required | Description
+|KBC_STORAGE_TOKEN| ✅| Keboola Storage API token |
+|KBC_WORKSPACE_SCHEMA| ✅ | Snowflake schema or BigQuery dataset  |
+|GOOGLE_APPLICATION_CREDENTIALS | For BigQuery | Path to Google credentials |
+
+## Full Installation Instructions
 
 ### 0. Prerequisites
 
@@ -61,7 +103,7 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 
 #### Containerized In Docker
 1. To run the server in a container, you will need to have [Docker installed](https://docs.docker.com/engine/install/).
-2. Once Docker is installed, you will also need to ensure Docker is running. The image is public; if you get errors on pull, you may have an expired token and need to `docker logout ghcr.io`.
+2. Once Docker is installed, you will also need to ensure Docker is running. The Docker image is publicly accessible. If you encounter authentication errors during pull, ensure you're logged out of private registries with `docker logout ghcr.io`.
 
 ### 1. Get Keboola Storage API Token
 Keboola has various token types; MCP Server requires a valid **Storage API Token**.
@@ -147,7 +189,7 @@ Replace `YOUR_REGION` in the API URL with your Keboola deployment region:
 
 ---
 
-## 💻 Integrating with popular MCP Clients
+## Integrating with popular MCP Clients
 
 ### Claude Desktop Configuration
 
@@ -203,7 +245,7 @@ Replace `YOUR_REGION` in the API URL with your Keboola deployment region:
 
 ---
 
-## 🧰 Supported Tools
+## Supported Tools Inside Keboola MCP Server
 LLMs, agents, and users can combine all these tools to help you achieve your goals.
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -226,6 +268,9 @@ LLMs, agents, and users can combine all these tools to help you achieve your goa
 | | `start_job` | Triggers a component or transformation job to run with specified parameters and configurations. |
 | **Documentation** | `docs_query` | Searches and retrieves relevant Keboola documentation based on natural language queries. |
 
+> Full tool catalog: docs/tools.md
+
+
 ---
 
 ## 🛠️ Troubleshooting & Debugging
@@ -238,7 +283,6 @@ LLMs, agents, and users can combine all these tools to help you achieve your goa
 | **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct and accessible. |
 | **Connection Timeout** | Check network connectivity to your Keboola region. |
 | **SQL Query Errors** | Verify SQL dialect matches your backend (Snowflake/BigQuery). |
-
 
 ### Debugging Tools
 
@@ -260,6 +304,14 @@ This table is repeated from the "Quick Start Guide" for easy reference during tr
 | `KBC_STORAGE_TOKEN` | Yes | Your Keboola Storage API token |
 | `KBC_WORKSPACE_SCHEMA` | For queries | Your Keboola workspace schema name |
 | `GOOGLE_APPLICATION_CREDENTIALS` | For BigQuery | Path to Google credentials JSON file |
+
+### BigQuery support
+If your Keboola project uses BigQuery backend you will need to set GOOGLE_APPLICATION_CREDENTIALS environment variable in addition to KBC_STORAGE_TOKEN and KBC_WORKSPACE_SCHEMA.
+
+Go to your Keboola BigQuery workspace and display its credentials (click Connect button).
+Download the credentials file to your local disk. It is a plain JSON file.
+Set the full path of the downloaded JSON credentials file to GOOGLE_APPLICATION_CREDENTIALS environment variable.
+This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud.
 
 
 ---
