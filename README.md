@@ -281,7 +281,7 @@ LLMs, agents, and users can combine all these tools to help you achieve your goa
 
 | Issue | Solution |
 |-------|----------|
-| **Authentication Errors**, **Token Not Found** | Verify your `KBC_STORAGE_TOKEN` environment variable is set with a valid token. |
+| **Authentication Errors**, **Token Not Found** | Verify your `KBC_STORAGE_TOKEN` and URL environment variables are set and valid. |
 | **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct and accessible. |
 | **Connection Timeout** | Check network connectivity to your Keboola region. |
 | **SQL Query Errors** | Verify SQL dialect matches your backend (Snowflake/BigQuery). |
