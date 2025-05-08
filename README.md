@@ -91,6 +91,33 @@ npx @modelcontextprotocol/inspector uvx keboola_mcp_server --api-url https://con
 |KBC_WORKSPACE_SCHEMA| ✅ | Snowflake schema or BigQuery dataset  |
 |GOOGLE_APPLICATION_CREDENTIALS | For BigQuery | Path to Google credentials |
 
+4. Configure Claude
+
+- Go to Settings / Developer / Edit Config
+- Add Keboola MCP Server
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "uvx",
+      "args": [
+        "keboola_mcp_server",
+        "--api-url",
+        "https://connection.canary-orion.keboola.dev"
+      ],
+      "env": {
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+      }
+    }
+  }
+}
+```
+5. Restart Claude
+6. Ask your first question: "What is in my project?" and get perfect answer describing your empty project.
+
+
 ## Full Installation Instructions
 
 ### 0. Prerequisites
