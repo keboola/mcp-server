@@ -244,10 +244,7 @@ async def test_get_component_configuration_details(
             },
             'isDisabled': False,
             'created': '2021-01-01T00:00:00+00:00',
-            'creatorToken': {
-                'id': 1,
-                'description': 'test'
-            },
+            'creatorToken': {'id': 1, 'description': 'test'},
         }
     )
 

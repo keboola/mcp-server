@@ -115,9 +115,7 @@ async def _retrieve_components_configurations_by_ids(
         raw_component = await client.storage_client.get(endpoint)
         # build component configurations list grouped by components
         raw_configuration_responses = [
-            ComponentConfigurationResponse.model_validate(
-                {**raw_configuration, 'component_id': raw_component['id']}
-            )
+            ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
             for raw_configuration in raw_configurations
         ]
         configurations_metadata = [

@@ -401,9 +401,7 @@ async def create_component_root_configuration(
     ],
     parameters: Annotated[
         dict[str, Any],
-        Field(
-            description='The component configuration parameters, adhering to the root_configuration_schema'
-        ),
+        Field(description='The component configuration parameters, adhering to the root_configuration_schema'),
     ],
     storage: Annotated[
         Optional[dict[str, Any]],
@@ -503,9 +501,7 @@ async def create_component_row_configuration(
     ],
     parameters: Annotated[
         dict[str, Any],
-        Field(
-            description='The component row configuration parameters, adhering to the row_configuration_schema'
-        ),
+        Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
     ],
     storage: Annotated[
         Optional[dict[str, Any]],
@@ -617,9 +613,7 @@ async def update_component_root_configuration(
     ],
     parameters: Annotated[
         dict[str, Any],
-        Field(
-            description='The component configuration parameters, adhering to the root_configuration_schema schema'
-        ),
+        Field(description='The component configuration parameters, adhering to the root_configuration_schema schema'),
     ],
     storage: Annotated[
         Optional[dict[str, Any]],
@@ -735,9 +729,7 @@ async def update_component_row_configuration(
     ],
     parameters: Annotated[
         dict[str, Any],
-        Field(
-            description='The component row configuration parameters, adhering to the row_configuration_schema'
-        ),
+        Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
     ],
     storage: Annotated[
         Optional[dict[str, Any]],
