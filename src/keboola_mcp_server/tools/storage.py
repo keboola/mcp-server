@@ -1,20 +1,24 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
 import logging
+from datetime import datetime
 from typing import Annotated, Any, Mapping, Optional, cast
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.mcp import KeboolaMcpServer
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
+TOOL_GROUP_NAME = 'STORAGE'
 
-def add_storage_tools(mcp: FastMCP) -> None:
+
+def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
     mcp.add_tool(get_bucket_detail)
     mcp.add_tool(retrieve_buckets)
@@ -22,6 +26,7 @@ def add_storage_tools(mcp: FastMCP) -> None:
     mcp.add_tool(retrieve_bucket_tables)
     mcp.add_tool(update_bucket_description)
     mcp.add_tool(update_table_description)
+    mcp.add_tool(update_column_description)
 
     LOG.info('Storage tools added to the MCP server.')
 
@@ -64,7 +69,7 @@ class BucketDetail(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def set_table_count(cls, values):
+    def set_table_count(cls, values: dict[str, Any]) -> dict[str, Any]:
         if isinstance(values.get('tables'), list):
             values['tables_count'] = len(values['tables'])
         else:
@@ -73,7 +78,7 @@ class BucketDetail(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def set_description(cls, values):
+    def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
         values['description'] = extract_description(values)
         return values
 
@@ -123,50 +128,15 @@ class TableDetail(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def set_description(cls, values):
+    def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
         values['description'] = extract_description(values)
         return values
 
 
-class UpdateBucketDescriptionResponse(BaseModel):
-    success: bool = True
-    description: str = Field(description='The updated description value')
-    timestamp: str = Field(description='When the description was updated')
-
-    @model_validator(mode='before')
-    @classmethod
-    def extract_from_response(cls, values):
-        if isinstance(values, list) and values:
-            data = values[0]  # the response returns a list - elements for each update
-            return {
-                'success': True,
-                'description': data.get('value'),
-                'timestamp': data.get('timestamp'),
-            }
-        else:
-            raise ValueError('Expected input data in UpdateBucketDescriptionResponse to be non-empty list.')
-
-
-class UpdateTableDescriptionResponse(BaseModel):
-    success: bool = True
-    description: str = Field(description='The updated table description value')
-    timestamp: str = Field(description='When the description was updated')
-
-    @model_validator(mode='before')
-    @classmethod
-    def extract_metadata(cls, values):
-        metadata = values.get('metadata', [])
-        if isinstance(metadata, list) and metadata:
-            entry = metadata[0]
-            return {
-                'success': True,
-                'description': entry.get('value'),
-                'timestamp': entry.get('timestamp'),
-            }
-        else:
-            raise ValueError(
-                'Expected input data in UpdateTableDescriptionResponse to have non-empty list in "metadata" field.'
-            )
+class UpdateDescriptionResponse(BaseModel):
+    description: str = Field(..., description='The updated description value.', alias='value')
+    timestamp: datetime = Field(..., description='The timestamp of the description update.')
+    success: bool = Field(default=True, description='Indicates if the update succeeded.')
 
 
 @tool_errors()
@@ -238,7 +208,7 @@ async def update_bucket_description(
     description: Annotated[str, Field(description='The new description for the bucket.')],
     ctx: Context,
 ) -> Annotated[
-    UpdateBucketDescriptionResponse,
+    UpdateDescriptionResponse,
     Field(description='The response object of the Bucket description update.'),
 ]:
     """Update the description for a given Keboola bucket."""
@@ -250,8 +220,9 @@ async def update_bucket_description(
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
     response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
+    description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION.value)
 
-    return UpdateBucketDescriptionResponse.model_validate(response)
+    return UpdateDescriptionResponse.model_validate(description_entry)
 
 
 @tool_errors()
@@ -260,7 +231,7 @@ async def update_table_description(
     description: Annotated[str, Field(description='The new description for the table.')],
     ctx: Context,
 ) -> Annotated[
-    UpdateTableDescriptionResponse,
+    UpdateDescriptionResponse,
     Field(description='The response object of the Table description update.'),
 ]:
     """Update the description for a given Keboola table."""
@@ -272,5 +243,45 @@ async def update_table_description(
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
     response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
+    description_entry = next(
+        entry for entry in response.get('metadata') if entry.get('key') == MetadataField.DESCRIPTION.value
+    )
 
-    return UpdateTableDescriptionResponse.model_validate(response)
+    return UpdateDescriptionResponse.model_validate(description_entry)
+
+
+@tool_errors()
+async def update_column_description(
+    table_id: Annotated[str, Field(description='The ID of the table that contains the column.')],
+    column_name: Annotated[str, Field(description='The name of the column to update.')],
+    description: Annotated[str, Field(description='The new description for the column.')],
+    ctx: Context,
+) -> Annotated[
+    UpdateDescriptionResponse,
+    Field(description='The response object of the column description update.'),
+]:
+    """Update the description for a given column in a Keboola table."""
+    client = KeboolaClient.from_state(ctx.session.state)
+    metadata_endpoint = f'tables/{table_id}/metadata'
+
+    data = {
+        'provider': 'user',
+        'columnsMetadata': {
+            f'{column_name}': [
+                {
+                    'key': MetadataField.DESCRIPTION.value,
+                    'value': description,
+                    'columnName': column_name,
+                }
+            ]
+        },
+    }
+
+    response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
+    description_entry = next(
+        entry
+        for entry in response.get('columnsMetadata').get(column_name)
+        if entry.get('key') == MetadataField.DESCRIPTION.value
+    )
+
+    return UpdateDescriptionResponse.model_validate(description_entry)
