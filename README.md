@@ -13,35 +13,38 @@
 > This is where data engineering feels less like coding—and more like just writing one last prompt.
 
 ## Compatibility
-### Platforms
-All major agentic platforms support using MCP via stdio or SSE.
-| **Environment** | **Support Status** |
-|-------------|---------------|
-| CrewAI | via MCP |
-| OpenAI Agents SDK | via MCP |
-| Microsoft Copilot Studio | via MCP |
-| N8N | via MCP |
-| Zapier | via MCP |
-| Apify | via MCP |
-| More | via MCP |
+### Integration with Other Platforms
+
+The Keboola MCP Server can be integrated with nearly any platform that supports the MCP protocol.
+
+#### 🤖 Agent Frameworks
+- **[CrewAI](https://github.com/crewAIInc/crewAI-tools#crewai-tools-and-mcp)**: Add Keboola as a custom tool provider to your agent crew.
+- **[AutoGen](https://microsoft.github.io/autogen/dev//user-guide/agentchat-user-guide/tutorial/agents.html#using-tools-and-workbench)**: Register Keboola MCP Server with AutoGen's **AssistantAgent**.
+- **[OpenAI](https://openai.github.io/openai-agents-python/mcp/)**: Added Keboola MCP Server to Agents.
+- **[Amazon Q – Generative AI Assistant](https://aws.amazon.com/blogs/devops/extend-the-amazon-q-developer-cli-with-mcp/)**: Configure Keboola MCP Server and start using it from Amazon Q Developer CLI.
+- **[LangChain](https://github.com/langchain-ai/langchain-mcp-adapters)**: Use Keboola MCP via MCP Adapters in your LangChain applications.
+
+#### 🔄 Automation Platforms
+- **[n8n](https://github.com/nerding-io/n8n-nodes-mcp)**: Use HTTP nodes to query data or trigger transformations.
+- **[Vercel](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#mcp-tools)**: Build apps on top of Keboola MCP Server in minutes.
+- **[Gumloop](https://github.com/gumloop/guMCP/tree/main/src/servers)**
+
+**Other Integrations**: All platforms can connect to Keboola MCP Server via HTTP + Server-Sent Events (SSE) or stdio, making integration seamless regardless of programming language or environment.
+
+> We do not provide a hosted remote MCP Server yet, but stay tuned.
 
 ### Development Environments & Clients
 
 | **Environment** | **Support Status** |
 |-------------|---------------|
 | **Data Backends**  |
-| Snowflake | ✅ Native support (no data movement) |
-| BigQuery | ✅ Native support (no data movement) |
+| Snowflake, BigQuery | ✅ Native support (no data movement) |
 | Other databases | ✅ Supported (via Extractors, Writers & Apps) |
 | **Operating Systems**  |
-| macOS | ✅ Fully supported |
-| Linux | ✅ Fully supported |
-| Windows | ✅ Fully supported |
+| macOS, Linux, Windows | ✅ Fully supported |
 | **MCP Clients (AI Assistants)**  |
-| Claude (Desktop & Web) | ✅ Fully supported |
-| Cursor | ✅ Fully supported |
-| Perplexity | ✅ Fully supported |
-| Custom Agents | ✅ Via MCP  |
+| Claude (Desktop & Web), Cursor, Windsurf, Zed, Replit, Codeium, Sourcegraph | ✅ Fully supported |
+| Custom Clients | ✅ Via MCP  |
 
 ---
 
@@ -197,24 +200,6 @@ Replace `YOUR_REGION` in the API URL with your Keboola deployment region:
 1. Open Settings → Features → MCP Servers.
 2. Click "+ Add new global MCP Server".
 3. Fill in the configuration details similar to the Claude example above.
-
-### Integration with Other Platforms
-
-The Keboola MCP Server can be integrated with nearly any platform that supports the MCP protocol.
-
-#### 🤖 Agent Frameworks
-- **[CrewAI](https://github.com/crewAIInc/crewAI-tools#crewai-tools-and-mcp)**: Add Keboola as a custom tool provider to your agent crew.
-- **[AutoGen](https://microsoft.github.io/autogen/dev//user-guide/agentchat-user-guide/tutorial/agents.html#using-tools-and-workbench)**: Register Keboola MCP Server with AutoGen's **AssistantAgent**.
-- **[LangChain](https://github.com/langchain-ai/langchain-mcp-adapters)**: Use Keboola MCP via MCP Adapters in your LangChain applications.
-
-#### 🔄 Automation Platforms
-- **[n8n](https://github.com/nerding-io/n8n-nodes-mcp)**: Use HTTP nodes to query data or trigger transformations.
-- **[Vercel](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#mcp-tools)**: Build apps on top of Keboola MCP Server in minutes.
-- **[Gumloop](https://github.com/gumloop/guMCP/tree/main/src/servers)**
-
-**Other Integrations**: All platforms can connect to Keboola MCP Server via HTTP + Server-Sent Events (SSE) or stdio, making integration seamless regardless of programming language or environment.
-
-> We do not provide a hosted remote MCP Server yet, but stay tuned.
 
 ---
 
