@@ -243,6 +243,7 @@ Replace `YOUR_REGION` in the API URL with your Keboola deployment region:
 1. Open Settings → Features → MCP Servers.
 2. Click "+ Add new global MCP Server".
 3. Fill in the configuration details similar to the Claude example above.
+4. Restart Cursor
 
 ---
 
