@@ -289,7 +289,7 @@ LLMs, agents, and users can combine all these tools to help you achieve your goa
 | | `start_job` | Triggers a component or transformation job to run with specified parameters and configurations. |
 | **Documentation** | `docs_query` | Searches and retrieves relevant Keboola documentation based on natural language queries. |
 
-> Full tool catalog: docs/tools.md
+> Full tool catalog: [coming soon](./TOOLS.md)
 
 
 ---
