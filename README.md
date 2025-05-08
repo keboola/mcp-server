@@ -56,13 +56,13 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 ## 🚀 Quick Start Guide
 
 ### 1. Get Your Keboola Token (Easiest Method)
-#### 1.1. Use the Keboola Playground: [https://chat.canary-orion.keboola.dev/](https://chat.canary-orion.keboola.dev/)
-#### 1.2. Sign in using Google. (If your goal is to just experiment with data or your project in chat, this is it.)
-#### 1.3. Click your profile (bottom-left).
-#### 1.4. Copy:
+#### 1.1 Use the Keboola Playground: [https://chat.canary-orion.keboola.dev/](https://chat.canary-orion.keboola.dev/)
+#### 1.2 Sign in using Google. (If your goal is to just experiment with data or your project in chat, this is it.)
+#### 1.3 Click your profile (bottom-left).
+#### 1.4 Copy:
     - KBC_STORAGE_TOKEN
     - KBC_WORKSPACE_SCHEMA
-#### 1.5. Create a .env file:
+#### 1.5 Create a .env file:
 ```bash
 KBC_STORAGE_TOKEN=your_token_here
 KBC_WORKSPACE_SCHEMA=your_workspace_schema_here
