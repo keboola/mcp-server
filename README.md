@@ -77,9 +77,7 @@ pip3 install keboola_mcp_server
 # Run server
 uvx keboola_mcp_server --api-url https://connection.canary-orion.keboola.dev
 ```
-2.2 Set Variables
-
-#### Required Environment Variables
+2.2 Set Required Variables
 ```bash
 export KBC_STORAGE_TOKEN=your_token_here
 export KBC_WORKSPACE_SCHEMA=your_workspace_schema_here
