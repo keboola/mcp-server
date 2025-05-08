@@ -13,7 +13,7 @@ Keboola MCP Server is an open-source bridge between your Keboola project and mod
 - **Component Integration**: Configure and run Keboola components
 - **Documentation**: Access Keboola documentation via queries
 
-<details open>
+<details closed>
 <summary><b>Before You Begin</b></summary>
 
 Make sure you have:
