@@ -87,8 +87,9 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
 
 #### Claude Desktop Configuration
 
-1. Go to Settings → Developer → Edit Config
+1. Go to Settings → Developer → Edit Config (if you don't see the claude_desktop_config.json, create it)
 2. Add the following configuration:
+3. Restart Claude desktop for changes to take effect
 
 ```json
 {
@@ -126,7 +127,6 @@ Config file locations:
      - `KBC_STORAGE_TOKEN`: your_keboola_storage_token
      - `KBC_WORKSPACE_SCHEMA`: your_workspace_schema
      - (For BigQuery users) `GOOGLE_APPLICATION_CREDENTIALS`: /full/path/to/credentials.json
-4. Restart Cursor for changes to take effect
 
 > **Note**: Make sure you have `uv` installed. The MCP client will use it to automatically download and run the Keboola MCP Server. 
 > **Installing uv**:
