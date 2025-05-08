@@ -27,7 +27,7 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 #### 🔄 Automation Platforms
 - **[n8n](https://github.com/nerding-io/n8n-nodes-mcp)**: Use HTTP nodes to query data or trigger transformations.
 - **[Vercel](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#mcp-tools)**: Build apps on top of Keboola MCP Server in minutes.
-- **[Gumloop](https://github.com/gumloop/guMCP/tree/main/src/servers)**
+- **[Gumloop](https://github.com/gumloop/guMCP/tree/main/src/servers)**: Add Keboola MCP as a node in Gumloop and use it in your workflows.
 
 **Other Integrations**: All platforms can connect to Keboola MCP Server via HTTP + Server-Sent Events (SSE) or stdio, making integration seamless regardless of programming language or environment.
 
@@ -74,7 +74,7 @@ Keboola has various token types; MCP Server requires a valid Storage API Token.
 ### 1.2 Get API Token via CLI
 1. Install [Keboola CLI](https://developers.keboola.com/cli/installation/).
 2. Run `kbc local get-token --email=you@example.com` (requires Google SSO).
-3. Your `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA` is saved in a `.env` file in the current directory.
+3. Your `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA` are saved in a `.env` file in the current directory.
 
 #### 1.3 Get Token For Existing Keboola Project
 1. Navigate to your project.
