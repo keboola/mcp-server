@@ -347,9 +347,10 @@ A high-level overview of what capabilities are exposed via the MCP Server from t
 
 ## 🔗 Stay In Touch
 
-  <a href="https://www.linkedin.com/company/keboola">LinkedIn</a> •
-  <a href="https://x.com/keboola">X</a> •
-  <a href="https://changelog.keboola.com/">Changelog</a>
+  [LinkedIn](https://www.linkedin.com/company/keboola)</a> •
+  [X](https://x.com/keboola) •
+  [Changelog](https://changelog.keboola.com/) •
+  [Create issue](https://github.com/keboola/mcp-server/issues/new)
 
 
 ---
@@ -360,3 +361,4 @@ A high-level overview of what capabilities are exposed via the MCP Server from t
 - 📘 [Developer Docs](https://developers.keboola.com/)
 - 🌐 [Keboola Platform](https://www.keboola.com)
 - 🛠 [Keboola Playground](https://chat.canary-orion.keboola.dev/)
+- 🛠 [Create issue](https://github.com/keboola/mcp-server/issues/new)
