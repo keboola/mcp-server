@@ -61,14 +61,11 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 4. Copy:
     - KBC_STORAGE_TOKEN
     - KBC_WORKSPACE_SCHEMA
-
 5. Create a .env file:
 ```bash
 KBC_STORAGE_TOKEN=your_token_here
 KBC_WORKSPACE_SCHEMA=your_workspace_schema_here
 ```
-
-Always use .env to protect your tokens. See .env.example.
 
 ### 2. Install and Run
 ```bash
@@ -77,10 +74,6 @@ pip3 install keboola_mcp_server
 
 # Run server
 uvx keboola_mcp_server --api-url https://connection.canary-orion.keboola.dev
-```
-3. Test Locally
-```bash
-npx @modelcontextprotocol/inspector uvx keboola_mcp_server --api-url https://connection.canary-orion.keboola.dev
 ```
 
 ### Required Environment Variables
@@ -92,9 +85,8 @@ npx @modelcontextprotocol/inspector uvx keboola_mcp_server --api-url https://con
 |GOOGLE_APPLICATION_CREDENTIALS | For BigQuery | Path to Google credentials |
 
 4. Configure Claude
-
-- Go to Settings / Developer / Edit Config
-- Add Keboola MCP Server
+- Go to Settings / Developer / Edit Config.
+- Add Keboola MCP Server to the config file.
 
 ```json
 {
