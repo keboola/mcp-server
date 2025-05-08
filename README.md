@@ -52,7 +52,7 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 
 ### 0. Prerequisites
 
-- A Keboola account with **API token**
+- A Keboola account with **Storage API token**
 - (Optional) A Keboola workspace with Snowflake or BigQuery
 
 #### Python & uv
@@ -63,7 +63,7 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 1. To run the server in a container, you will need to have [Docker installed](https://docs.docker.com/engine/install/).
 2. Once Docker is installed, you will also need to ensure Docker is running. The image is public; if you get errors on pull, you may have an expired token and need to `docker logout ghcr.io`.
 
-### 1. Get Keboola Storage Token
+### 1. Get Keboola Storage API Token
 Keboola has various token types; MCP Server requires a valid Storage API Token.
 
 #### 1.1 Sign Up To Get API Token
