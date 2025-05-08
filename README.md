@@ -63,7 +63,7 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
     - KBC_WORKSPACE_SCHEMA
 
 5. Create a .env file:
-```bash
+> ```bash
 KBC_STORAGE_TOKEN=your_token_here
 KBC_WORKSPACE_SCHEMA=your_workspace_schema_here
 ```
