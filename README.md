@@ -4,7 +4,7 @@
 
 # Keboola MCP Server
 
-> Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agentd when and where they need it.
+> Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agents when and where they need it.
 
 <p align="center">
   <img src="./assets/claude-setup.gif"  alt="Claude setup animated" >
