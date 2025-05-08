@@ -9,6 +9,7 @@
 <p align="center">
   <img src="./assets/claude-setup.gif"  alt="Claude setup animated" >
 </p>
+
 # What Is This?
 Keboola MCP Server is an open-source bridge between your Keboola project and modern AI tools. It turns Keboola features—like storage access, SQL transformations, and job triggers—into callable tools for Claude, Cursor, CrewAI, LangChain, Amazon Q, and more.
 
@@ -347,7 +348,7 @@ A high-level overview of what capabilities are exposed via the MCP Server from t
 
 ## 🔗 Stay In Touch
 
-  [LinkedIn](https://www.linkedin.com/company/keboola)</a> •
+  [LinkedIn](https://www.linkedin.com/company/keboola)•
   [X](https://x.com/keboola) •
   [Changelog](https://changelog.keboola.com/) •
   [Create issue](https://github.com/keboola/mcp-server/issues/new)
