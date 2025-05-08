@@ -64,24 +64,24 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 2. Once Docker is installed, you will also need to ensure Docker is running. The image is public; if you get errors on pull, you may have an expired token and need to `docker logout ghcr.io`.
 
 ### 1. Get Keboola Storage API Token
-Keboola has various token types; MCP Server requires a valid Storage API Token.
+Keboola has various token types; MCP Server requires a valid **Storage API Token**.
 
 #### 1.1 Sign Up To Get API Token
 1. Sign up for Keboola at chat.keboola.com with a valid Google account.
 2. Navigate to your profile in bottom left.
 3. There you can see your `KBC_WORKSPACE_SCHEMA` and click on `get my token`.
 
-### 1.2 Get API Token via CLI
+### 1.2 Get Storage API Token via CLI
 1. Install [Keboola CLI](https://developers.keboola.com/cli/installation/).
 2. Run `kbc local get-token --email=you@example.com` (requires Google SSO).
 3. Your `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA` are saved in a `.env` file in the current directory.
 
-#### 1.3 Get Token For Existing Keboola Project
+#### 1.3 Get Storage API Token For Existing Keboola Project
 1. Navigate to your project.
 2. Click on your profile icon in the top right corner.
 3. Go to project Settings.
 4. Select API Tokens.
-5. Create a new token and give it a name (allow full access to all components and buckets).
+5. Create a new **Storage API Token** and give it a name (allow full access to all components and buckets).
 6. Click on create.
 7. Create a SQL workspace.
 8. Click on connect and copy the WORKSPACE_SCHEMA.
