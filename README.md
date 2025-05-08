@@ -71,7 +71,7 @@ Keboola has various token types; MCP Server requires a valid Storage API Token.
 ### 1.2 Get API Token via CLI
 1. Install [Keboola CLI](https://developers.keboola.com/cli/installation/).
 2. Run `kbc local get-token --email=you@example.com` (requires Google SSO).
-3. Your token is saved in a `.env` file in the current directory.
+3. Your `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA` is saved in a `.env` file in the current directory.
 
 #### 1.3 Get Token For Existing Keboola Project
 1. Navigate to your project.
@@ -80,6 +80,8 @@ Keboola has various token types; MCP Server requires a valid Storage API Token.
 4. Select API Tokens.
 5. Create a new token and give it a name (allow full access to all components and buckets).
 6. Click on create.
+7. Create a SQL workspace.
+8. Click on connect and copy the WORKSPACE_SCHEMA.
 
 ### 2. Required Environment Variables
 
