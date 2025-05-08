@@ -56,19 +56,20 @@ The Keboola MCP Server can be integrated with nearly any platform that supports 
 ## 🚀 Quick Start Guide
 
 ### 1. Get Your Keboola Token (Easiest Method)
-1. Use the Keboola Playground: [https://chat.canary-orion.keboola.dev/](https://chat.canary-orion.keboola.dev/)
-2. Sign in using Google. (If your goal is to just experiment with data or your project in chat, this is it.)
-3. Click your profile (bottom-left).
-4. Copy:
+1.1. Use the Keboola Playground: [https://chat.canary-orion.keboola.dev/](https://chat.canary-orion.keboola.dev/)
+1.2. Sign in using Google. (If your goal is to just experiment with data or your project in chat, this is it.)
+1.3. Click your profile (bottom-left).
+1.4. Copy:
     - KBC_STORAGE_TOKEN
     - KBC_WORKSPACE_SCHEMA
-5. Create a .env file:
+1.5. Create a .env file:
 ```bash
 KBC_STORAGE_TOKEN=your_token_here
 KBC_WORKSPACE_SCHEMA=your_workspace_schema_here
 ```
 
 ### 2. Install and Run
+2.1 Create Virtual Environment & Install Keboola MCP Server
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip3 install keboola_mcp_server
@@ -76,16 +77,16 @@ pip3 install keboola_mcp_server
 # Run server
 uvx keboola_mcp_server --api-url https://connection.canary-orion.keboola.dev
 ```
+2.2 Set Variables
 
-### Required Environment Variables
+#### Required Environment Variables
+```bash
+export KBC_STORAGE_TOKEN=your_token_here
+export KBC_WORKSPACE_SCHEMA=your_workspace_schema_here
+export GOOGLE_APPLICATION_CREDENTIALS=your_google_credentials
+```
 
-|Variable| Required | Description|
-|----------|------|-------------|
-|KBC_STORAGE_TOKEN| ✅| Keboola Storage API token |
-|KBC_WORKSPACE_SCHEMA| ✅ | Snowflake schema or BigQuery dataset  |
-|GOOGLE_APPLICATION_CREDENTIALS | For BigQuery | Path to Google credentials |
-
-4. Configure Claude
+2.3 Configure Claude
 - Go to Settings / Developer / Edit Config.
 - Add Keboola MCP Server to the config file.
 
@@ -107,9 +108,9 @@ uvx keboola_mcp_server --api-url https://connection.canary-orion.keboola.dev
   }
 }
 ```
-5. Restart Claude
-6. Ask your first question: "What is in my project?" and get perfect answer describing your empty project.
-
+2.4 Restart Claude
+2.5 Ask your first question: "What is in my project?" and get perfect answer describing your empty project.
+2.6 Success
 
 ## Full Installation Instructions
 
