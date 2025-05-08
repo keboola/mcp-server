@@ -139,7 +139,7 @@ class RawKeboolaClient:
         headers = self.headers | (headers or {})
         async with httpx.AsyncClient() as client:
             response = await client.put(
-                f'{self.base_storage_api_url}/v2/storage/{endpoint}',
+                f'{self.base_api_url}/{endpoint}',
                 headers=self.headers,
                 json=data if data is not None else {},
             )
@@ -267,6 +267,84 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: A new instance of AsyncStorageClient
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=f'{root_url}/{version}/storage', api_token=token))
+
+    async def create_component_root_configuration(
+        self,
+        data: dict[str, Any],
+        component_id: str,
+        branch_id: str = 'default',
+    ) -> dict[str, Any]:
+        """
+        Creates a new configuration for a component.
+
+        :param data: The configuration data to create
+        :param component_id: The ID of the component
+        :param branch_id: The ID of the branch (default: 'default')
+        :return: Dictionary with created configuration details
+        """
+        return await self.post(endpoint=f'branch/{branch_id}/components/{component_id}/configs', data=data)
+
+    async def create_component_row_configuration(
+        self,
+        data: dict[str, Any],
+        component_id: str,
+        config_id: str,
+        branch_id: str = 'default',
+    ) -> dict[str, Any]:
+        """
+        Creates a new row configuration for a component configuration.
+
+        :param data: The configuration data to create row configuration
+        :param component_id: The ID of the component
+        :param config_id: The ID of the configuration
+        :param branch_id: The ID of the branch (default: 'default')
+        """
+        return await self.post(
+            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}/rows',
+            data=data,
+        )
+
+    async def update_component_root_configuration(
+        self,
+        data: dict[str, Any],
+        component_id: str,
+        config_id: str,
+        branch_id: str = 'default',
+    ) -> dict[str, Any]:
+        """
+        Updates a component configuration.
+
+        :param data: The configuration data to update
+        :param component_id: The ID of the component
+        :param config_id: The ID of the configuration
+        :param branch_id: The ID of the branch (default: 'default')
+        """
+        return await self.put(
+            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}',
+            data=data,
+        )
+
+    async def update_component_row_configuration(
+        self,
+        data: dict[str, Any],
+        component_id: str,
+        config_id: str,
+        configuration_row_id: str,
+        branch_id: str = 'default',
+    ) -> dict[str, Any]:
+        """
+        Updates a row configuration for a component configuration.
+
+        :param data: The configuration data to update row configuration
+        :param component_id: The ID of the component
+        :param config_id: The ID of the configuration
+        :param configuration_row_id: The ID of the row
+        :param branch_id: The ID of the branch (default: 'default')
+        """
+        return await self.put(
+            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}',
+            data=data,
+        )
 
 
 class JobsQueueClient(KeboolaServiceClient):

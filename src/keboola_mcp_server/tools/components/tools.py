@@ -437,7 +437,6 @@ async def create_component_root_configuration(
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs'
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
@@ -446,13 +445,14 @@ async def create_component_root_configuration(
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
-        new_raw_configuration = await client.post(
-            endpoint,
+        new_raw_configuration = await client.storage_client.create_component_root_configuration(
+            component_id=component_id,
             data={
                 'name': name,
                 'description': description,
                 'configuration': configuration_payload,
             },
+            branch_id=client.storage_client_sync._branch_id,
         )
 
         new_configuration = ComponentRootConfiguration(
@@ -541,7 +541,6 @@ async def create_component_row_configuration(
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}/rows'
 
     LOG.info(
         f'Creating new configuration row: {name} for component: {component_id} '
@@ -553,8 +552,10 @@ async def create_component_row_configuration(
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
-        new_raw_configuration = await client.post(
-            endpoint,
+        new_raw_configuration = await client.storage_client.create_component_row_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            branch_id=client.storage_client_sync._branch_id,
             data={
                 'name': name,
                 'description': description,
@@ -654,7 +655,6 @@ async def update_component_root_configuration(
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f'branch/{client.storage_client._branch_id}/components/{component_id}/configs/{configuration_id}'
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
@@ -663,8 +663,10 @@ async def update_component_root_configuration(
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
-        new_raw_configuration = await client.put(
-            endpoint,
+        new_raw_configuration = await client.storage_client.update_component_root_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            branch_id=client.storage_client_sync._branch_id,
             data={
                 'name': name,
                 'description': description,
@@ -770,10 +772,6 @@ async def update_component_row_configuration(
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = (
-        f'branch/{client.storage_client._branch_id}'
-        f'/components/{component_id}/configs/{configuration_id}/rows/{configuration_row_id}'
-    )
 
     LOG.info(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
@@ -785,8 +783,11 @@ async def update_component_row_configuration(
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
-        new_raw_configuration = await client.put(
-            endpoint,
+        new_raw_configuration = await client.storage_client.update_component_row_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            configuration_row_id=configuration_row_id,
+            branch_id=client.storage_client_sync._branch_id,
             data={
                 'name': name,
                 'description': description,
