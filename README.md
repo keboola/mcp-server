@@ -85,7 +85,8 @@ npx @modelcontextprotocol/inspector uvx keboola_mcp_server --api-url https://con
 
 ### Required Environment Variables
 
-|Variable| Required | Description
+|Variable| Required | Description|
+|----------|------|-------------|
 |KBC_STORAGE_TOKEN| ✅| Keboola Storage API token |
 |KBC_WORKSPACE_SCHEMA| ✅ | Snowflake schema or BigQuery dataset  |
 |GOOGLE_APPLICATION_CREDENTIALS | For BigQuery | Path to Google credentials |
