@@ -7,11 +7,12 @@ Keboola MCP Server is an open-source bridge between your Keboola project and mod
 
 ## Features
 
-- **Storage Access**: Query tables, buckets, and schemas directly
-- **SQL Transformations**: Execute and create transformations with natural language
-- **Job Management**: Trigger, monitor, and retrieve job information
-- **Component Integration**: Configure and run Keboola components
-- **Documentation**: Access Keboola documentation via queries
+- **Storage**: Query tables directly and manage table or bucket descriptions  
+- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations  
+- **SQL**: Create SQL transformations with natural language
+- **Jobs**: Run components and transformations, and retrieve job execution details  
+- **Metadata**: Search, read, and update project documentation and object metadata using natural language
+
 
 <details closed>
 <summary><b>Before You Begin</b></summary>
@@ -51,6 +52,46 @@ Make sure you have:
  For more installation options, see the [official uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
 
 </details>
+
+## Preparations
+
+Before setting up the MCP server, you need three key pieces of information:
+
+### KBC_STORAGE_TOKEN
+This is your authentication token for Keboola:
+
+For instructions on how to create and manage Storage API tokens, refer to the [official Keboola documentation](https://help.keboola.com/management/project/tokens/).
+
+**Note**: If you want the MCP server to have limited access, use custom storage token, if you want the MCP to access everything in your project, use the master token.
+
+### KBC_WORKSPACE_SCHEMA
+This identifies your workspace in Keboola and is required for SQL queries:
+
+Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA.
+
+**Note**: Use Read-Only access when creating the Workspace
+
+### Keboola Region
+Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
+
+| Region | API URL |
+|--------|---------|
+| AWS North America | `https://connection.keboola.com` |
+| AWS Europe | `https://connection.eu-central-1.keboola.com` |
+| Google Cloud EU | `https://connection.europe-west3.gcp.keboola.com` |
+| Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
+| Azure EU | `https://connection.north-europe.azure.keboola.com` |
+
+
+### BigQuery-Specific Setup
+
+If your Keboola project uses BigQuery backend, you will need to set `GOOGLE_APPLICATION_CREDENTIALS` environment variable in addition to `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA`:
+
+1. Go to your Keboola BigQuery workspace and display its credentials (click Connect button)
+2. Download the credentials file to your local disk. It is a plain JSON file
+3. Set the full path of the downloaded JSON credentials file to `GOOGLE_APPLICATION_CREDENTIALS` environment variable
+4. This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud
+**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in the BigQuery workspace, you simply click connect and copy the Dataset Name. 
 
 ## Running Keboola MCP Server
 
@@ -225,41 +266,6 @@ docker run -it \
 | Testing CLI manually | Yes | Use terminal to run |
 | Using Docker | Yes | Run docker container |
 
-## Preparations
-
-Before setting up the MCP server, you need three key pieces of information:
-
-### KBC_STORAGE_TOKEN
-This is your authentication token for Keboola:
-
-For instructions on how to create and manage Storage API tokens, refer to the [official Keboola documentation](https://help.keboola.com/management/project/tokens/).
-
-### KBC_WORKSPACE_SCHEMA
-This identifies your workspace in Keboola and is required for SQL queries:
-
-Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA.
-
-### Keboola Region
-Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
-
-| Region | API URL |
-|--------|---------|
-| AWS North America | `https://connection.keboola.com` |
-| AWS Europe | `https://connection.eu-central-1.keboola.com` |
-| Google Cloud EU | `https://connection.europe-west3.gcp.keboola.com` |
-| Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
-| Azure EU | `https://connection.north-europe.azure.keboola.com` |
-
-
-### BigQuery-Specific Setup
-
-If your Keboola project uses BigQuery backend, you will need to set `GOOGLE_APPLICATION_CREDENTIALS` environment variable in addition to `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA`:
-
-1. Go to your Keboola BigQuery workspace and display its credentials (click Connect button)
-2. Download the credentials file to your local disk. It is a plain JSON file
-3. Set the full path of the downloaded JSON credentials file to `GOOGLE_APPLICATION_CREDENTIALS` environment variable
-4. This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud
-**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in the BigQuery workspace, you simply click connect and copy the Dataset Name. 
 
 ## Using MCP Server
 
@@ -274,7 +280,6 @@ What buckets and tables are in my Keboola project?
 ### Examples of What You Can Do
 
 **Data Exploration:**
-- "Show me the schema of table X with sample data"
 - "What tables contain customer information?"
 - "Run a query to find the top 10 customers by revenue"
 
@@ -307,7 +312,7 @@ What buckets and tables are in my Keboola project?
 | **Storage** | `retrieve_buckets` | Lists all storage buckets in your Keboola project |
 | | `get_bucket_detail` | Retrieves detailed information about a specific bucket |
 | | `retrieve_bucket_tables` | Returns all tables within a specific bucket |
-| | `get_table_detail` | Provides detailed schema information for a specific table |
+| | `get_table_detail` | Provides detailed information for a specific table |
 | | `update_bucket_description` | Updates the description of a bucket |
 | | `update_table_description` | Updates the description of a table |
 | **SQL** | `query_table` | Executes custom SQL queries against your data |
