@@ -112,19 +112,19 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
     "keboola": {
       "command": "uvx",
       "args": [
-        "keboola_mcp_server" 
+        "keboola_mcp_server",
         "--api-url", "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
         "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
-        // For BigQuery users, add the following line:
-        // "GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
       }
     }
   }
 }
 ```
+> **Note**: For BigQuery users, add the following line into "env": {}:
+>"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
 
 Config file locations:
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -142,19 +142,19 @@ Config file locations:
     "keboola": {
       "command": "uvx",
       "args": [
-        "keboola_mcp_server" 
+        "keboola_mcp_server",
         "--api-url", "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
         "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
-        // For BigQuery users, add the following line:
-        // "GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
       }
     }
   }
 }
 ```
+> **Note**: For BigQuery users, add the following line into "env": {}:
+>"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
 
 #### Cursor Configuration for Windows WSL
 
@@ -203,13 +203,14 @@ For developers working on the MCP server code itself:
       "env": {
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
         "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
-      // For BigQuery users, add the following line:
-      // "GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
+
       }
     }
   }
 }
 ```
+> **Note**: For BigQuery users, add the following line into "env": {}:
+>"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
 
 ### Option C: Manual CLI Mode (For Testing Only)
 
