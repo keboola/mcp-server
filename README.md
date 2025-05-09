@@ -14,8 +14,7 @@ Keboola MCP Server is an open-source bridge between your Keboola project and mod
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
 
 
-<details closed>
-<summary><b>Before You Begin</b></summary>
+## Preparations
 
 Make sure you have:
 - [ ] Python 3.10+ installed
@@ -51,9 +50,6 @@ Make sure you have:
 
  For more installation options, see the [official uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
 
-</details>
-
-## Preparations
 
 Before setting up the MCP server, you need three key pieces of information:
 
