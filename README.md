@@ -69,7 +69,7 @@ This identifies your workspace in Keboola and is required for SQL queries:
 
 Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA.
 
-**Note**: Use Read-Only access when creating the Workspace
+**Note**: Check Grant read-only access to all Project data option when creating the workspace
 
 ### Keboola Region
 Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
