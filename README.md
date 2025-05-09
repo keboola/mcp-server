@@ -21,58 +21,37 @@ Make sure you have:
 - [ ] Access to a Keboola project with admin rights
 - [ ] Your preferred MCP client (Claude, Cursor, etc.)
 
+**Note**: Make sure you have `uv` installed. The MCP client will use it to automatically download and run the Keboola MCP Server. 
+**Installing uv**:
+ 
+*macOS/Linux*:
+ ```bash
+ # Using the installer script
+ curl -LsSf https://astral.sh/uv/install.sh | sh
+ 
+ # Or using pip
+ pip install uv
+ 
+ # Or using Homebrew
+ brew install uv
+ ```
+ 
+ *Windows*:
+ ```powershell
+ # Using the installer script
+ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+ 
+ # Or using pip
+ pip install uv
+ 
+ # Or using winget
+ winget install --id=astral-sh.uv -e
+ ```
+
+ For more installation options, see the [official uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
+
+
 </details>
-
-## Preparations
-
-Before setting up the MCP server, you need three key pieces of information:
-
-### KBC_STORAGE_TOKEN
-This is your authentication token for Keboola:
-
-For instructions on how to create and manage Storage API tokens, refer to the [official Keboola documentation](https://help.keboola.com/management/project/tokens/).
-
-### KBC_WORKSPACE_SCHEMA
-This identifies your workspace in Keboola and is required for SQL queries:
-
-**Option 1: Use an existing Workspace**
-1. Navigate to Workspaces section in Keboola
-2. Select your Snowflake workspace (read-only is sufficient)
-3. Click "Connect" to view connection details
-4. Copy the schema name (format: `KEBOOLA_WORKSPACE_123456789`)
-
-**Option 2: Create a new SQL Workspace**
-1. Go to Workspaces → Create Workspace
-2. Select Snowflake SQL Workspace Workspace
-3. Give it a descriptive name (e.g., "MCP Read-Only")
-4. Tick the box next to "Grant read-only access to all Project data"
-5. Click Create Workspace
-6. After the workspace is created, open the configuration and in the right side Click "Connect" to view connection details
-7. Copy the schema name (format: `KEBOOLA_WORKSPACE_123456789`)
-
-
-### Keboola Region
-Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
-
-| Region | API URL |
-|--------|---------|
-| AWS North America | `https://connection.keboola.com` |
-| AWS Europe | `https://connection.eu-central-1.keboola.com` |
-| Google Cloud EU | `https://connection.europe-west3.gcp.keboola.com` |
-| Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
-| Azure EU | `https://connection.north-europe.azure.keboola.com` |
-
-
-### BigQuery-Specific Setup
-
-If your Keboola project uses BigQuery backend, you will need to set `GOOGLE_APPLICATION_CREDENTIALS` environment variable in addition to `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA`:
-
-1. Go to your Keboola BigQuery workspace and display its credentials (click Connect button)
-2. Download the credentials file to your local disk. It is a plain JSON file
-3. Set the full path of the downloaded JSON credentials file to `GOOGLE_APPLICATION_CREDENTIALS` environment variable
-4. This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud
-**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in the BigQuery workspace, you simply click connect and copy the Dataset Name. 
-
 
 ## Running Keboola MCP Server
 
@@ -128,34 +107,6 @@ Config file locations:
      - `KBC_WORKSPACE_SCHEMA`: your_workspace_schema
      - (For BigQuery users) `GOOGLE_APPLICATION_CREDENTIALS`: /full/path/to/credentials.json
 
-> **Note**: Make sure you have `uv` installed. The MCP client will use it to automatically download and run the Keboola MCP Server. 
-> **Installing uv**:
-> 
-> *macOS/Linux*:
-> ```bash
-> # Using the installer script
-> curl -LsSf https://astral.sh/uv/install.sh | sh
-> 
-> # Or using pip
-> pip install uv
-> 
-> # Or using Homebrew
-> brew install uv
-> ```
-> 
-> *Windows*:
-> ```powershell
-> # Using the installer script
-> powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-> 
-> # Or using pip
-> pip install uv
-> 
-> # Or using winget
-> winget install --id=astral-sh.uv -e
-> ```
->
-> For more installation options, see the [official uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
 
 ### Option B: Local Development Mode
 
@@ -235,6 +186,43 @@ docker run -it \
 | Developing MCP locally | No (Claude starts it) | Point config to python path |
 | Testing CLI manually | Yes | Use terminal to run |
 | Using Docker | Yes | Run docker container |
+
+## Preparations
+
+Before setting up the MCP server, you need three key pieces of information:
+
+### KBC_STORAGE_TOKEN
+This is your authentication token for Keboola:
+
+For instructions on how to create and manage Storage API tokens, refer to the [official Keboola documentation](https://help.keboola.com/management/project/tokens/).
+
+### KBC_WORKSPACE_SCHEMA
+This identifies your workspace in Keboola and is required for SQL queries:
+
+**Option 1: Use an existing Workspace**
+Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA.
+
+### Keboola Region
+Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
+
+| Region | API URL |
+|--------|---------|
+| AWS North America | `https://connection.keboola.com` |
+| AWS Europe | `https://connection.eu-central-1.keboola.com` |
+| Google Cloud EU | `https://connection.europe-west3.gcp.keboola.com` |
+| Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
+| Azure EU | `https://connection.north-europe.azure.keboola.com` |
+
+
+### BigQuery-Specific Setup
+
+If your Keboola project uses BigQuery backend, you will need to set `GOOGLE_APPLICATION_CREDENTIALS` environment variable in addition to `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA`:
+
+1. Go to your Keboola BigQuery workspace and display its credentials (click Connect button)
+2. Download the credentials file to your local disk. It is a plain JSON file
+3. Set the full path of the downloaded JSON credentials file to `GOOGLE_APPLICATION_CREDENTIALS` environment variable
+4. This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud
+**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in the BigQuery workspace, you simply click connect and copy the Dataset Name. 
 
 ## Using MCP Server
 
