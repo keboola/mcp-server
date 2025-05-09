@@ -318,21 +318,6 @@ What buckets and tables are in my Keboola project?
 | **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct |
 | **Connection Timeout** | Check network connectivity |
 
-
-### Agent Framework Integration
-
-- **[CrewAI](https://github.com/crewAIInc/crewAI-tools#crewai-tools-and-mcp)**: Add Keboola as a custom tool provider
-- **[LangChain](https://github.com/langchain-ai/langchain-mcp-adapters)**: Use via MCP Adapters
-- **[AutoGen](https://microsoft.github.io/autogen/dev//user-guide/agentchat-user-guide/tutorial/agents.html#using-tools-and-workbench)**: Register with **AssistantAgent**
-- **[OpenAI](https://openai.github.io/openai-agents-python/mcp/)**: Added to Agents
-- **[Amazon Q](https://aws.amazon.com/blogs/devops/extend-the-amazon-q-developer-cli-with-mcp/)**: Configure via Developer CLI
-
-### Automation Platforms
-
-- **[n8n](https://github.com/nerding-io/n8n-nodes-mcp)**: Use HTTP nodes
-- **[Vercel](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#mcp-tools)**: Build apps quickly
-- **[Gumloop](https://github.com/gumloop/guMCP/tree/main/src/servers)**: Add as a workflow node
-
 ## Support and Feedback
 
 **⭐ The primary way to get help, report bugs, or request features is by [opening an issue on GitHub](https://github.com/keboola/mcp-server/issues/new). ⭐**
