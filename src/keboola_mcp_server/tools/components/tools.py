@@ -23,7 +23,9 @@ from keboola_mcp_server.tools.components.utils import (
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
 )
+
 from keboola_mcp_server.tools.sql import get_sql_dialect
+from .validation import validate_component_configuration
 
 LOG = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ LOG = logging.getLogger(__name__)
 RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_component_configurations'
 RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
 GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = 'get_component_configuration_details'
+VALIDATE_COMPONENT_CONFIGURATION_TOOL_NAME: str = 'validate_component_configuration'
 
 
 def add_component_tools(mcp: FastMCP) -> None:
@@ -76,6 +79,9 @@ def add_component_tools(mcp: FastMCP) -> None:
 
     mcp.add_tool(find_component_id)
     LOG.info(f'Added tool: {find_component_id.__name__}.')
+
+    mcp.add_tool(validate_component_configuration, name=VALIDATE_COMPONENT_CONFIGURATION_TOOL_NAME)
+    LOG.info(f'Added tool: {VALIDATE_COMPONENT_CONFIGURATION_TOOL_NAME}.')
 
     LOG.info('Component tools initialized.')
 
@@ -390,7 +396,7 @@ async def create_component_root_configuration(
         str,
         Field(
             description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
+                    'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
     ],
@@ -408,11 +414,18 @@ async def create_component_root_configuration(
         Optional[dict[str, Any]],
         Field(
             description=(
-                'The table and/or file input / output mapping of the component configuration. '
-                'It is present only for components that have tables or file input mapping defined'
+                    'The table and/or file input / output mapping of the component configuration. '
+                    'It is present only for components that have tables or file input mapping defined'
             ),
         ),
     ] = None,
+    validate_schema: Annotated[
+        bool,
+        Field(
+            description='Whether to validate the configuration against the schema before creating it.',
+            default=True,
+        ),
+    ] = True,
 ) -> Annotated[
     ComponentRootConfiguration,
     Field(
@@ -439,10 +452,19 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
+    if validate_schema:
+        from .validation import validate_component_configuration
+
+        LOG.info(f'Validating configuration for component: {component_id}')
+        validation_result = await validate_component_configuration(ctx, component_id, parameters, False)
+
+        if not validation_result["valid"]:
+            error_details = "\n".join([f"- {error['path']}: {error['message']}"
+                                       for error in validation_result["errors"]])
+            raise ValueError(f"Configuration validation failed:\n{error_details}")
+
     configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
+
     try:
         new_raw_configuration = await client.storage_client.create_component_root_configuration(
             component_id=component_id,
@@ -471,7 +493,6 @@ async def create_component_root_configuration(
         LOG.exception(f'Error when creating new component configuration: {e}')
         raise e
 
-
 async def create_component_row_configuration(
     ctx: Context,
     name: Annotated[
@@ -484,7 +505,7 @@ async def create_component_row_configuration(
         str,
         Field(
             description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
+                    'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
     ],
@@ -508,11 +529,18 @@ async def create_component_row_configuration(
         Optional[dict[str, Any]],
         Field(
             description=(
-                'The table and/or file input / output mapping of the component configuration. '
-                'It is present only for components that have tables or file input mapping defined'
+                    'The table and/or file input / output mapping of the component configuration. '
+                    'It is present only for components that have tables or file input mapping defined'
             ),
         ),
     ] = None,
+    validate_schema: Annotated[
+        bool,
+        Field(
+            description='Whether to validate the configuration against the schema before creating it.',
+            default=True,
+        ),
+    ] = True,
 ) -> Annotated[
     ComponentRowConfiguration,
     Field(
@@ -544,10 +572,19 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
+    if validate_schema:
+        from .validation import validate_component_configuration
+
+        LOG.info(f'Validating row configuration for component: {component_id}')
+        validation_result = await validate_component_configuration(ctx, component_id, parameters, True)
+
+        if not validation_result["valid"]:
+            error_details = "\n".join([f"- {error['path']}: {error['message']}"
+                                       for error in validation_result["errors"]])
+            raise ValueError(f"Row configuration validation failed:\n{error_details}")
+
     configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
+
     try:
         new_raw_configuration = await client.storage_client.create_component_row_configuration(
             component_id=component_id,
@@ -590,7 +627,7 @@ async def update_component_root_configuration(
         str,
         Field(
             description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
+                    'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
     ],
@@ -620,12 +657,19 @@ async def update_component_root_configuration(
         Optional[dict[str, Any]],
         Field(
             description=(
-                'The table and/or file input / output mapping of the component configuration. '
-                'It is present only for components that are not row-based and have tables or file '
-                'input mapping defined'
+                    'The table and/or file input / output mapping of the component configuration. '
+                    'It is present only for components that are not row-based and have tables or file '
+                    'input mapping defined'
             ),
         ),
     ] = None,
+    validate_schema: Annotated[
+        bool,
+        Field(
+            description='Whether to validate the configuration against the schema before updating it.',
+            default=True,
+        ),
+    ] = True,
 ) -> Annotated[
     ComponentRootConfiguration,
     Field(
@@ -653,10 +697,19 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
+    if validate_schema:
+        from .validation import validate_component_configuration
+
+        LOG.info(f'Validating configuration for component: {component_id}')
+        validation_result = await validate_component_configuration(ctx, component_id, parameters, False)
+
+        if not validation_result["valid"]:
+            error_details = "\n".join([f"- {error['path']}: {error['message']}"
+                                       for error in validation_result["errors"]])
+            raise ValueError(f"Configuration validation failed:\n{error_details}")
+
     configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
+
     try:
         new_raw_configuration = await client.storage_client.update_component_root_configuration(
             component_id=component_id,
@@ -678,13 +731,13 @@ async def update_component_root_configuration(
         )
 
         LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
+            f'Updated configuration for component "{component_id}" with configuration id '
             f'"{new_configuration.configuration_id}".'
         )
 
         return new_configuration
     except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
+        LOG.exception(f'Error when updating component configuration: {e}')
         raise e
 
 
@@ -700,7 +753,7 @@ async def update_component_row_configuration(
         str,
         Field(
             description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
+                    'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
     ],
@@ -736,11 +789,18 @@ async def update_component_row_configuration(
         Optional[dict[str, Any]],
         Field(
             description=(
-                'The table and/or file input / output mapping of the component configuration. '
-                'It is present only for components that have tables or file input mapping defined'
+                    'The table and/or file input / output mapping of the component configuration. '
+                    'It is present only for components that have tables or file input mapping defined'
             ),
         ),
     ] = None,
+    validate_schema: Annotated[
+        bool,
+        Field(
+            description='Whether to validate the configuration against the schema before updating it.',
+            default=True,
+        ),
+    ] = True,
 ) -> Annotated[
     ComponentRowConfiguration,
     Field(
@@ -771,10 +831,19 @@ async def update_component_row_configuration(
         f'and row id {configuration_row_id}.'
     )
 
+    if validate_schema:
+        from .validation import validate_component_configuration
+
+        LOG.info(f'Validating row configuration for component: {component_id}')
+        validation_result = await validate_component_configuration(ctx, component_id, parameters, True)
+
+        if not validation_result["valid"]:
+            error_details = "\n".join([f"- {error['path']}: {error['message']}"
+                                       for error in validation_result["errors"]])
+            raise ValueError(f"Row configuration validation failed:\n{error_details}")
+
     configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
+
     try:
         new_raw_configuration = await client.storage_client.update_component_row_configuration(
             component_id=component_id,
@@ -797,13 +866,13 @@ async def update_component_row_configuration(
         )
 
         LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
+            f'Updated configuration for component "{component_id}" with configuration id '
             f'"{new_configuration.configuration_id}".'
         )
 
         return new_configuration
     except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
+        LOG.exception(f'Error when updating component configuration: {e}')
         raise e
 
 

@@ -15,6 +15,7 @@ dependencies = [
     "kbcstorage ~= 0.9",
     "httpx ~= 0.28",
     "google-cloud-bigquery ~= 3.31",
+    "jsonschema ~= 4.21",
 ]
 
 [project.optional-dependencies]
