@@ -396,7 +396,7 @@ async def create_component_root_configuration(
         str,
         Field(
             description=(
-                    'The detailed description of the component configuration explaining its purpose and functionality.'
+                'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
     ],
@@ -414,8 +414,8 @@ async def create_component_root_configuration(
         Optional[dict[str, Any]],
         Field(
             description=(
-                    'The table and/or file input / output mapping of the component configuration. '
-                    'It is present only for components that have tables or file input mapping defined'
+                'The table and/or file input / output mapping of the component configuration. '
+                'It is present only for components that have tables or file input mapping defined'
             ),
         ),
     ] = None,
@@ -505,7 +505,7 @@ async def create_component_row_configuration(
         str,
         Field(
             description=(
-                    'The detailed description of the component configuration explaining its purpose and functionality.'
+                'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
     ],
@@ -529,8 +529,8 @@ async def create_component_row_configuration(
         Optional[dict[str, Any]],
         Field(
             description=(
-                    'The table and/or file input / output mapping of the component configuration. '
-                    'It is present only for components that have tables or file input mapping defined'
+                'The table and/or file input / output mapping of the component configuration. '
+                'It is present only for components that have tables or file input mapping defined'
             ),
         ),
     ] = None,
@@ -627,7 +627,7 @@ async def update_component_root_configuration(
         str,
         Field(
             description=(
-                    'The detailed description of the component configuration explaining its purpose and functionality.'
+                'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
     ],
@@ -657,9 +657,9 @@ async def update_component_root_configuration(
         Optional[dict[str, Any]],
         Field(
             description=(
-                    'The table and/or file input / output mapping of the component configuration. '
-                    'It is present only for components that are not row-based and have tables or file '
-                    'input mapping defined'
+                'The table and/or file input / output mapping of the component configuration. '
+                'It is present only for components that are not row-based and have tables or file '
+                'input mapping defined'
             ),
         ),
     ] = None,

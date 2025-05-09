@@ -127,11 +127,9 @@ async def validate_component_configuration(
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
-    # Try to get component details which might include the schema
     component_detail = await _get_component_details(client=client, component_id=component_id)
     schema = component_detail.row_configuration_schema if is_row_configuration else component_detail.root_configuration_schema
 
-    # If schema is not found in component details, fetch directly
     if not schema:
         LOG.info(f"Schema not found in component details, fetching directly from API for {component_id}")
         root_schema, row_schema = await fetch_component_schema(client, component_id)
