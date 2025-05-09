@@ -6,6 +6,7 @@ from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
 from keboola_mcp_server.tools.components.model import (
+    Component,
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
     ComponentDetail,
@@ -364,7 +365,7 @@ async def create_sql_transformation(
         new_transformation_configuration = ComponentConfigurationResponse(
             **new_raw_transformation_configuration,
             component_id=transformation_id,
-            component=component,
+            component=Component.from_component_detail(component),
         )
 
         LOG.info(

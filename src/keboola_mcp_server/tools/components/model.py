@@ -127,6 +127,26 @@ class Component(ReducedComponent):
         serialization_alias='configurationRowSchema',
     )
 
+    @classmethod
+    def from_component_detail(cls, component_detail: 'ComponentDetail') -> 'Component':
+        """
+        Create a Component instance from a ComponentDetail instance.
+
+        This is the inverse operation of ComponentDetail.from_component_response.
+        """
+        return cls(
+            component_id=component_detail.component_id,
+            component_name=component_detail.component_name,
+            component_type=component_detail.component_type,
+            # Use empty flags list since we can't reliably reconstruct them from ComponentDetail
+            flags=[],
+            component_categories=component_detail.component_categories,
+            documentation_url=component_detail.documentation_url,
+            documentation=component_detail.documentation,
+            configuration_schema=component_detail.root_configuration_schema,
+            configuration_row_schema=component_detail.row_configuration_schema,
+        )
+
 
 class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
     """
