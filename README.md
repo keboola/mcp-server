@@ -50,7 +50,6 @@ Make sure you have:
 
  For more installation options, see the [official uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
 
-
 </details>
 
 ## Running Keboola MCP Server
@@ -107,6 +106,32 @@ Config file locations:
      - `KBC_WORKSPACE_SCHEMA`: your_workspace_schema
      - (For BigQuery users) `GOOGLE_APPLICATION_CREDENTIALS`: /full/path/to/credentials.json
 
+#### Cursor Configuration for Windows WSL
+
+When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this configuration:
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "wsl.exe",
+      "args": [
+        "bash",
+        "-c",
+        "'source /wsl_path/to/keboola-mcp-server/.env",
+        "&&",
+        "/wsl_path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
+      ]
+    }
+  }
+}
+```
+
+Where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
+```bash
+export KBC_STORAGE_TOKEN="your_keboola_storage_token"
+export KBC_WORKSPACE_SCHEMA="your_workspace_schema"
+```
 
 ### Option B: Local Development Mode
 
@@ -199,7 +224,6 @@ For instructions on how to create and manage Storage API tokens, refer to the [o
 ### KBC_WORKSPACE_SCHEMA
 This identifies your workspace in Keboola and is required for SQL queries:
 
-**Option 1: Use an existing Workspace**
 Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA.
 
 ### Keboola Region
@@ -309,13 +333,18 @@ What buckets and tables are in my Keboola project?
 - **[Vercel](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#mcp-tools)**: Build apps quickly
 - **[Gumloop](https://github.com/gumloop/guMCP/tree/main/src/servers)**: Add as a workflow node
 
+## Support and Feedback
+
+**⭐ The primary way to get help, report bugs, or request features is by [opening an issue on GitHub](https://github.com/keboola/mcp-server/issues/new). ⭐**
+
+The development team actively monitors issues and will respond as quickly as possible. For general information about Keboola, please use the resources below.
 
 ## Resources
 
 - [User Documentation](https://docs.keboola.com/)
 - [Developer Documentation](https://developers.keboola.com/)
 - [Keboola Platform](https://www.keboola.com)
-- [Issue Tracker](https://github.com/keboola/mcp-server/issues/new)
+- [Issue Tracker](https://github.com/keboola/mcp-server/issues/new) ← **Primary contact method for MCP Server**
 
 ## Connect
 
