@@ -149,7 +149,7 @@ async def _get_component_flags(client: KeboolaClient, component_id: str) -> list
     :param client: The Keboola client
     :param component_id: The ID of the Keboola component you want details about
     """
-    available_components = await client.get('', params={'exclude': 'componentDetails'})
+    available_components = await client.storage_client.get('', params={'exclude': 'componentDetails'})
 
     # retrieve component info
     component_info = next(
@@ -178,7 +178,7 @@ async def _get_component_details(
     """
     component_info: Component
     try:
-        raw_component = client.ai_service_client.get_component_detail(component_id)
+        raw_component = await client.ai_service_client.get_component_detail(component_id)
         LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
         component_info = Component.model_validate(raw_component)
         component_info.flags = await _get_component_flags(client, component_id)
