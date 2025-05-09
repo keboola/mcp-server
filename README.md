@@ -98,13 +98,26 @@ Config file locations:
 1. Go to Settings → MCP
 2. Click "+ Add new global MCP Server"
 3. Configure with these settings:
-   - **Name**: `keboola` > you can choose the name by yourself
-   - **Command**: `uvx`
-   - **Arguments**: `keboola_mcp_server --api-url https://connection.YOUR_REGION.keboola.com`
-   - **Environment Variables**:
-     - `KBC_STORAGE_TOKEN`: your_keboola_storage_token
-     - `KBC_WORKSPACE_SCHEMA`: your_workspace_schema
-     - (For BigQuery users) `GOOGLE_APPLICATION_CREDENTIALS`: /full/path/to/credentials.json
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "uvx",
+      "args": [
+        "keboola_mcp_server" 
+        "--api-url", "https://connection.YOUR_REGION.keboola.com"
+      ],
+      "env": {
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+        // For BigQuery users, add the following line:
+        // "GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
+      }
+    }
+  }
+}
+```
 
 #### Cursor Configuration for Windows WSL
 
