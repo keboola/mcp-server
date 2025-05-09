@@ -15,3 +15,5 @@ from keboola_mcp_server.tools.components.tools import (
     retrieve_components_configurations,
     retrieve_transformations_configurations,
 )
+
+from keboola_mcp_server.tools.components.validation import validate_component_configuration
