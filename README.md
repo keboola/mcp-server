@@ -101,7 +101,7 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
 
 #### Claude Desktop Configuration
 
-1. Go to Settings → Developer → Edit Config (if you don't see the claude_desktop_config.json, create it)
+1. Go to Claude (top left corner of your screen) -> Settings → Developer → Edit Config (if you don't see the claude_desktop_config.json, create it)
 2. Add the following configuration:
 3. Restart Claude desktop for changes to take effect
 
