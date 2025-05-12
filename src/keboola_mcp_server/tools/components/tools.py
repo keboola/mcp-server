@@ -375,7 +375,7 @@ async def update_sql_transformation_configuration(
     EXAMPLES:
     - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
         - set the transformation_id and configuration_id accordingly and update configuration parameters based on
-        the [USER INTENT]
+          the [USER INTENT]
         - returns the updated transformation configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
