@@ -7,7 +7,8 @@ from typing import Annotated, Any, Literal, Mapping, Optional, Sequence
 
 from google.api_core.exceptions import BadRequest
 from google.cloud.bigquery import Client, Row
-from mcp.server.fastmcp import Context, FastMCP
+# from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 

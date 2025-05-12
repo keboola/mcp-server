@@ -7,7 +7,8 @@ from collections import defaultdict
 from operator import attrgetter
 from typing import Iterable, Mapping
 
-from mcp.types import Tool
+# from mcp.types import Tool
+from fastmcp.tools import Tool
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.server import create_server

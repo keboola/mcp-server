@@ -3,7 +3,8 @@
 import logging
 from typing import Annotated, Any, Mapping, Optional, cast
 
-from mcp.server.fastmcp import Context, FastMCP
+# from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient
