@@ -26,14 +26,13 @@ Make sure you have:
  
 *macOS/Linux*:
  ```bash
- # Using the installer script
- curl -LsSf https://astral.sh/uv/install.sh | sh
- 
- # Or using pip
- pip install uv
- 
- # Or using Homebrew
+
+#if homebrew is not installed on your machine use:
+# /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+ # Install using Homebrew
  brew install uv
+
  ```
  
  *Windows*:
