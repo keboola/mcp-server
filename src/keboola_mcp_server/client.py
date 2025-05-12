@@ -301,7 +301,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_id: The id of the configuration
         :param configuration: The updated configuration dictionary
         :param change_description: The description of the modification to the configuration
-        :param updated_description: The entire description of the updated configuration
+        :param updated_description: The entire description of the updated configuration, if None, the original
+            description is preserved
         :param is_disabled: Whether the configuration should be disabled
         :return: The response from the API call - updated configuration or raise an error
         """

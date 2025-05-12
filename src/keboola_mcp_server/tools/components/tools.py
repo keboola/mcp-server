@@ -349,8 +349,8 @@ async def update_sql_transformation_configuration(
     updated_description: Annotated[
         str,
         Field(
-            description='Updated previous description incorporating the new changes of the transformation '
-            'configuration. Default is empty string.',
+            description='Updated existing transformation description reflecting the changes made in the behavior of '
+            'the transformation. If no behavior changes are made, empty string preserves the original description.',
         ),
     ] = '',
     is_disabled: Annotated[
@@ -371,6 +371,8 @@ async def update_sql_transformation_configuration(
 
     CONSIDERATIONS:
     - The configuration JSON data must follow the current Keboola transformation configuration schema.
+    - The SQL code statements should follow the current SQL dialect, which can be retrieved using appropriate tool.
+    - When the behavior of the transformation is not changed, the updated_description can be empty string.
 
     EXAMPLES:
     - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
