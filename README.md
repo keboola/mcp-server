@@ -350,3 +350,9 @@ The development team actively monitors issues and will respond as quickly as pos
 - [LinkedIn](https://www.linkedin.com/company/keboola)
 - [Twitter](https://x.com/keboola)
 - [Changelog](https://changelog.keboola.com/)
+
+## Community Contributors
+
+Thank you to all contributors who help improve the Keboola MCP Server! Contributions in the form of bug reports, feature requests, documentation, and code are all welcome.
+
+Want to contribute? Check out the [issue tracker](https://github.com/keboola/mcp-server/issues) for open issues or create a new one.
