@@ -364,7 +364,7 @@ async def test_create_transformation_configuration_fail(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    'sql_dialect, expected_component_id',
+    ('sql_dialect', 'expected_component_id'),
     [('Snowflake', 'keboola.snowflake-transformation'), ('BigQuery', 'keboola.bigquery-transformation')],
 )
 async def test_update_transformation_configuration(
