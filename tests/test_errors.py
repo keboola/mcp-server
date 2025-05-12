@@ -22,7 +22,7 @@ def function_with_value_error():
 # --- Test tool_errors ---
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    'function_fixture, default_recovery, recovery_instructions, expected_recovery_message, exception_message',
+    ('function_fixture', 'default_recovery', 'recovery_instructions', 'expected_recovery_message', 'exception_message'),
     [
         # Case with both default_recovery and recovery_instructions specified
         (
@@ -76,7 +76,7 @@ async def test_tool_function_recovery_instructions(
     )
 
     if expected_recovery_message is None:
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(ValueError, match=exception_message) as excinfo:
             await decorated_func()
     else:
         with pytest.raises(ToolException) as excinfo:

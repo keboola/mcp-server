@@ -56,7 +56,7 @@ def assert_retrieve_components() -> (
             all(isinstance(config, ReducedComponentConfiguration) for config in component.configurations)
             for component in result
         )
-        # use zip to iterate over the result and mock_configurations since we artifically mock the .get method
+        # use zip to iterate over the result and mock_configurations since we artificially mock the .get method
         assert all(
             all(
                 config.configuration_id == expected['id']
@@ -252,7 +252,7 @@ async def test_get_component_configuration_details(
 
 
 @pytest.mark.parametrize(
-    'sql_dialect, expected_component_id, expected_configuration_id',
+    ('sql_dialect', 'expected_component_id', 'expected_configuration_id'),
     [
         ('Snowflake', 'keboola.snowflake-transformation', '1234'),
         ('BigQuery', 'keboola.bigquery-transformation', '5678'),
@@ -353,7 +353,7 @@ async def test_create_transformation_configuration_fail(
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='Unsupported SQL dialect'):
         _ = await create_sql_transformation(
             context,
             'test_name',
