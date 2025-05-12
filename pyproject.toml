@@ -13,7 +13,7 @@ authors = [
     { name = "Keboola", email = "devel@keboola.com" }
 ]
 dependencies = [
-    "mcp[cli] ~= 1.6",
+    "fastmcp ~= 2.2",
     "kbcstorage ~= 0.9",
     "httpx ~= 0.28",
     "google-cloud-bigquery ~= 3.31"
