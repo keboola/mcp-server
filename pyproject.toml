@@ -35,8 +35,9 @@ tests = [
     "pytest ~= 8.3",
     "pytest-asyncio ~= 0.25",
     "pytest-cov ~= 6.0",
-    "pytest-mock ~= 3.14",
+    "pytest-datadir ~= 1.6.1",
     "python-dotenv ~= 1.1",
+    "pytest-mock ~= 3.14",
 ]
 dev = [
     "tox ~= 4.23",
@@ -62,8 +63,15 @@ use_parentheses = true
 packages = ["src/keboola_mcp_server"]
 
 [tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
+log_cli = false
+log_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 
 [tool.flake8]
 max-line-length = 120

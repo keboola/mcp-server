@@ -134,9 +134,7 @@ async def test_get_job_detail(
     assert result.config_id == mock_job['config']
     assert result.is_finished == mock_job['isFinished']
     assert result.created_time is not None
-    assert result.created_time.replace(tzinfo=None) == datetime.strptime(
-        mock_job['createdTime'], iso_format
-    )
+    assert result.created_time.replace(tzinfo=None) == datetime.strptime(mock_job['createdTime'], iso_format)
     assert result.start_time is not None
     assert result.start_time.replace(tzinfo=None) == datetime.strptime(mock_job['startTime'], iso_format)
     assert result.end_time is not None
