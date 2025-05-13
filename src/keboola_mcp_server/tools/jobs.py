@@ -219,8 +219,30 @@ async def retrieve_jobs(
     - If limit = 100 and offset = 100, the second 100 jobs will be listed.
     - If sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
     """
-    client = KeboolaClient.from_state(ctx.session.state)
     _status = [status] if status else None
+
+    print(ctx)
+    LOG.info(ctx)
+    print()
+    print(ctx.session)
+    LOG.info(ctx.session)
+    print()
+    print(ctx.fastmcp)
+    LOG.info(ctx.fastmcp)
+    print()
+    print(ctx.request_id)
+    LOG.info(ctx.request_id)
+    print()
+    print(ctx.request_context)
+    LOG.info(ctx.request_context)
+    print()
+    print(ctx.client_id)
+    LOG.info(ctx.client_id)
+    print()
+    print(ctx.session.state)
+    LOG.info(ctx.session.state)
+
+    client = KeboolaClient.from_state(ctx.session.state)
 
     raw_jobs = await client.jobs_queue_client.search_jobs_by(
         component_id=component_id,

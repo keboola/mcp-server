@@ -12,8 +12,8 @@ class TestServer:
     @pytest.mark.asyncio
     async def test_list_tools(self):
         server = create_server()
-        tools = await server.list_tools()
-        assert sorted(t.name for t in tools) == [
+        tools = await server.get_tools()
+        assert sorted(tool.name for tool in tools.values()) == [
             'create_sql_transformation',
             'docs_query',
             'get_bucket_detail',
@@ -35,12 +35,12 @@ class TestServer:
     @pytest.mark.asyncio
     async def test_tools_have_descriptions(self):
         server = create_server()
-        tools = await server.list_tools()
+        tools = await server.get_tools()
 
         missing_descriptions: list[str] = []
-        for t in tools:
-            if not t.description:
-                missing_descriptions.append(t.name)
+        for tool in tools.values():
+            if not tool.description:
+                missing_descriptions.append(tool.name)
 
         missing_descriptions.sort()
         assert not missing_descriptions, f'These tools have no description: {missing_descriptions}'
