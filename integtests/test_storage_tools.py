@@ -16,7 +16,7 @@ from keboola_mcp_server.tools.storage import (
 
 @pytest.mark.asyncio
 async def test_retrieve_buckets(mcp_context_client: Context, test_buckets: list[BucketDef]):
-    """Tests that retrieve_buckets returns a list of BucketDetail instances."""
+    """Tests that `retrieve_buckets` returns a list of `BucketDetail` instances."""
     result = await retrieve_buckets(mcp_context_client)
 
     assert isinstance(result, list)
@@ -28,7 +28,7 @@ async def test_retrieve_buckets(mcp_context_client: Context, test_buckets: list[
 
 @pytest.mark.asyncio
 async def test_get_bucket_detail(mcp_context_client: Context, test_buckets: list[BucketDef]):
-    """Tests that get_bucket_detail returns a BucketDetail instance for each bucket."""
+    """Tests that for each test bucket, `get_bucket_detail` returns a `BucketDetail` instance."""
     for bucket in test_buckets:
         result = await get_bucket_detail(bucket.bucket_id, mcp_context_client)
         assert isinstance(result, BucketDetail)
@@ -37,9 +37,8 @@ async def test_get_bucket_detail(mcp_context_client: Context, test_buckets: list
 
 @pytest.mark.asyncio
 async def test_get_table_detail(mcp_context_client: Context, test_tables: list[TableDef], shared_datadir: Path):
-    """Tests that get_table_detail returns a TableDetail instance for each test table with correct fields."""
+    """Tests that for each test table, `get_table_detail` returns a `TableDetail` instance with correct fields."""
 
-    # Test that the table detail is correct for the test_table_01 table
     for table in test_tables:
         table_path = shared_datadir / 'proj' / table.bucket_id / f'{table.table_name}.csv'
         with table_path.open('r', encoding='utf-8') as f:
