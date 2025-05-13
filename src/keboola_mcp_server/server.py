@@ -3,7 +3,8 @@
 import logging
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+# from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config

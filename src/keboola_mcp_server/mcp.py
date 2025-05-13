@@ -32,11 +32,12 @@ import anyio
 import mcp.types as types
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import ServerSession, stdio_server
-from mcp.server import FastMCP, Server
-from mcp.server.lowlevel.server import LifespanResultT
+# from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
+from mcp.server.lowlevel.server import LifespanResultT, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.sse import SseServerTransport
-from mcp.types import AnyFunction
+from mcp.types import AnyFunction, ToolAnnotations
 
 LOG = logging.getLogger(__name__)
 
@@ -134,12 +135,20 @@ class KeboolaMcpServer(FastMCP):
                 state=self._session_state_factory(dict(os.environ)),
             )
 
-    async def run_sse_async(self) -> None:
+    async def run_sse_async(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        log_level: str | None = None,
+        uvicorn_config: dict | None = None,
+    ) -> None:
         """Run the server using SSE transport."""
         import uvicorn
         from starlette.applications import Starlette
         from starlette.requests import Request
         from starlette.routing import Mount, Route
+
+        uvicorn_config = uvicorn_config or {}
 
         sse = SseServerTransport('/messages/')
 
@@ -163,9 +172,10 @@ class KeboolaMcpServer(FastMCP):
 
         config = uvicorn.Config(
             starlette_app,
-            host=self.settings.host,
-            port=self.settings.port,
-            log_level=self.settings.log_level.lower(),
+            host=host or self.settings.host,
+            port=port or self.settings.port,
+            log_level=log_level or self.settings.log_level.lower(),
+            **uvicorn_config,
         )
         server = uvicorn.Server(config)
         await server.serve()
@@ -175,9 +185,13 @@ class KeboolaMcpServer(FastMCP):
         fn: AnyFunction,
         name: str | None = None,
         description: str | None = None,
+        tags: set[str] | None = None,
+        annotations: ToolAnnotations | dict[str, Any] | None = None,
     ) -> None:
         super().add_tool(
             fn=fn,
             name=name,
             description=description or textwrap.dedent(fn.__doc__ or '').strip(),
+            tags=tags,
+            annotations=annotations,
         )
