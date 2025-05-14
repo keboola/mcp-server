@@ -23,43 +23,37 @@ Issues:
 """
 
 import logging
-import os
 import textwrap
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from typing import Any, Callable
+from contextlib import AsyncExitStack
+from typing import Any, Callable, Optional
 
 import anyio
-import mcp.types as types
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-
-# from mcp.server.fastmcp import FastMCP
 from fastmcp import FastMCP
-from mcp import ServerSession, stdio_server
-from mcp.server.lowlevel.server import LifespanResultT, Server
+from mcp import ServerSession
+from mcp.server.lowlevel.server import Server
 from mcp.server.models import InitializationOptions
-from mcp.server.sse import SseServerTransport
+from mcp.shared.message import SessionMessage
 from mcp.types import AnyFunction, ToolAnnotations
 
 LOG = logging.getLogger(__name__)
 
 SessionParams = dict[str, str]
 SessionState = dict[str, Any]
-SessionStateFactory = Callable[[SessionParams], SessionState]
-
-
-def _default_session_state_factory(params: SessionParams) -> SessionState:
-    return params
+SessionStateFactory = Callable[[Optional[SessionParams]], SessionState]
 
 
 class StatefullServerSession(ServerSession):
     def __init__(
         self,
-        read_stream: MemoryObjectReceiveStream[types.JSONRPCMessage | Exception],
-        write_stream: MemoryObjectSendStream[types.JSONRPCMessage],
+        read_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
+        write_stream: MemoryObjectSendStream[SessionMessage],
         init_options: InitializationOptions,
         state: SessionState | None = None,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(read_stream, write_stream, init_options)
+        stateless = False  # statefull by default
+        super().__init__(read_stream, write_stream, init_options, stateless, **kwargs)
         self._state = state or {}
 
     @property
@@ -67,32 +61,55 @@ class StatefullServerSession(ServerSession):
         return self._state
 
 
+def _default_session_state_factory() -> SessionStateFactory:
+    def _(params: SessionParams | None = None) -> SessionState:
+        return params or {}
+
+    return _
+
+
 class _KeboolaServer(Server):
-    def __init__(
-        self,
-        name: str,
-        version: str | None = None,
-        instructions: str | None = None,
-        lifespan: Callable[['Server'], AbstractAsyncContextManager[LifespanResultT]] | None = None,
-    ) -> None:
-        super().__init__(name, version=version, instructions=instructions, lifespan=lifespan)
+
+    def __init__(self, session_state_factory: SessionStateFactory | None = None, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._session_state_factory = session_state_factory or _default_session_state_factory()
 
     async def run(
         self,
-        read_stream: MemoryObjectReceiveStream[types.JSONRPCMessage | Exception],
-        write_stream: MemoryObjectSendStream[types.JSONRPCMessage],
+        read_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
+        write_stream: MemoryObjectSendStream[SessionMessage],
         initialization_options: InitializationOptions,
         # When False, exceptions are returned as messages to the client.
         # When True, exceptions are raised, which will cause the server to shut down
         # but also make tracing exceptions much easier during testing and when using
         # in-process servers.
         raise_exceptions: bool = False,
-        state: SessionState | None = None,
+        # When True, the server is stateless and
+        # clients can perform initialization with any node. The client must still follow
+        # the initialization lifecycle, but can do so with any available node
+        # rather than requiring initialization for each connection.
+        stateless: bool = False,
+        **kwargs: Any,
     ):
+        """
+        This class is overridden to allow passing the session state factory to the session.
+        Other approach would be use the session in appropriate place in the code (in tools, etc.), but this
+        approach allows to have the session state factory in the server constructor and use it in the tools.
+        """
+        if stateless:
+            LOG.warning('Stateless mode is not supported in Keboola MCP server, will be ignored.')
+
         async with AsyncExitStack() as stack:
             lifespan_context = await stack.enter_async_context(self.lifespan(self))
             session = await stack.enter_async_context(
-                StatefullServerSession(read_stream, write_stream, initialization_options, state)
+                StatefullServerSession(
+                    read_stream,
+                    write_stream,
+                    initialization_options,
+                    stateless=False,
+                    state=self._session_state_factory(None),
+                    **kwargs,
+                )
             )
 
             async with anyio.create_task_group() as tg:
@@ -111,75 +128,18 @@ class _KeboolaServer(Server):
 class KeboolaMcpServer(FastMCP):
     def __init__(
         self,
-        name: str | None = None,
-        instructions: str | None = None,
-        *,
         session_state_factory: SessionStateFactory | None = None,
+        *args: Any,
         **settings: Any,
     ) -> None:
-        super().__init__(name, instructions, **settings)
+        super().__init__(*args, **settings)
         self._mcp_server = _KeboolaServer(
             name=self._mcp_server.name,
             instructions=self._mcp_server.instructions,
             lifespan=self._mcp_server.lifespan,
+            session_state_factory=session_state_factory,
         )
         self._setup_handlers()
-        self._session_state_factory = session_state_factory or _default_session_state_factory
-
-    async def run_stdio_async(self) -> None:
-        """Run the server using stdio transport."""
-        async with stdio_server() as (read_stream, write_stream):
-            await self._mcp_server.run(
-                read_stream,
-                write_stream,
-                initialization_options=self._mcp_server.create_initialization_options(),
-                state=self._session_state_factory(dict(os.environ)),
-            )
-
-    async def run_sse_async(
-        self,
-        host: str | None = None,
-        port: int | None = None,
-        log_level: str | None = None,
-        uvicorn_config: dict | None = None,
-    ) -> None:
-        """Run the server using SSE transport."""
-        import uvicorn
-        from starlette.applications import Starlette
-        from starlette.requests import Request
-        from starlette.routing import Mount, Route
-
-        uvicorn_config = uvicorn_config or {}
-
-        sse = SseServerTransport('/messages/')
-
-        async def handle_sse(request: Request):
-            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-                await self._mcp_server.run(
-                    streams[0],
-                    streams[1],
-                    initialization_options=self._mcp_server.create_initialization_options(),
-                    state=self._session_state_factory(dict(request.query_params)),
-                )
-
-        starlette_app = Starlette(
-            debug=self.settings.debug,
-            routes=[
-                Route('/sse', endpoint=handle_sse),
-                Mount('/messages/', app=sse.handle_post_message),
-                # TODO: add endpoints for health-check and info
-            ],
-        )
-
-        config = uvicorn.Config(
-            starlette_app,
-            host=host or self.settings.host,
-            port=port or self.settings.port,
-            log_level=log_level or self.settings.log_level.lower(),
-            **uvicorn_config,
-        )
-        server = uvicorn.Server(config)
-        await server.serve()
 
     def add_tool(
         self,
