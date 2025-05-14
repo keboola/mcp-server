@@ -4,7 +4,7 @@ import dataclasses
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
 
@@ -16,10 +16,12 @@ class Config:
     storage_token: Optional[str] = None
     storage_api_url: str = 'https://connection.keboola.com'
     workspace_schema: Optional[str] = None
+    transport: Optional[Literal['stdio', 'streamable-http', 'sse']] = None
+    request_param_source: Optional[Literal['query_params', 'headers']] = None
 
     @classmethod
-    def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, str]:
-        options: dict[str, str] = {}
+    def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, Any]:
+        options: dict[str, str | None] = {}
         for f in dataclasses.fields(cls):
             if f.name in d:
                 options[f.name] = d.get(f.name)
