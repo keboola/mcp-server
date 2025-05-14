@@ -56,7 +56,7 @@ def _infer_session_params() -> SessionParams:
     """
 
     request = _safe_get_http_request()
-    if not request:
+    if request is None:
         # Fallback to environment variables for stdio-based communication because there is no HTTP request
         # So the server is running locally
         return dict(os.environ)
@@ -78,7 +78,7 @@ def _get_session_params(
         return dict(os.environ)
     elif transport in ('streamable-http', 'sse'):
         request = _safe_get_http_request()
-        if not request:
+        if request is None:
             raise RuntimeError(
                 'No HTTP request found, but required for the state parameters given the selected transport.'
             )
