@@ -35,23 +35,32 @@ def _safe_get_http_request() -> Request | None:
         return None
 
 
-def _infer_session_params(request_param_source: Optional[RequestParameterSource] = None) -> SessionParams:
+def _infer_session_params_from_request(request: Request) -> SessionParams:
+    """
+    Infers session parameters from the current HTTP request.
+    """
+    if all(required_field in request.query_params for required_field in Config.required_fields()):
+        return dict(request.query_params)
+    elif all(required_field in request.headers for required_field in Config.required_fields()):
+        return dict(request.headers)
+    else:
+        LOG.warning('No required fields found in the request. Using empty session params.')
+        return {}
+
+
+def _infer_session_params() -> SessionParams:
     """
     Infers session parameters from the current HTTP request if available, or falls back to environment variables.
     :param request_param_source: Determines whether to use query parameters or headers if both are available. Default
         is 'query_params'.
     """
-    request_param_source = request_param_source or 'query_params'
 
     request = _safe_get_http_request()
     if not request:
         # Fallback to environment variables for stdio-based communication because there is no HTTP request
+        # So the server is running locally
         return dict(os.environ)
-
-    if request_param_source == 'headers':
-        return dict(request.headers)
-    elif request_param_source == 'query_params':
-        return dict(request.query_params)
+    return _infer_session_params_from_request(request)
 
 
 def _get_session_params(
@@ -64,16 +73,17 @@ def _get_session_params(
     """
 
     if not transport:
-        return _infer_session_params(request_param_source)
+        return _infer_session_params()
     elif transport == 'stdio':
         return dict(os.environ)
     elif transport in ('streamable-http', 'sse'):
-        request_param_source = request_param_source or 'query_params'
         request = _safe_get_http_request()
         if not request:
             raise RuntimeError(
                 'No HTTP request found, but required for the state parameters given the selected transport.'
             )
+        if not request_param_source:
+            return _infer_session_params_from_request(request)
         if request_param_source == 'headers':
             return dict(request.headers)
         elif request_param_source == 'query_params':
@@ -99,7 +109,6 @@ def _create_session_state_factory_based_on_transport(config: Optional[Config] = 
 def _create_session_state_factory(config: Optional[Config] = None) -> SessionStateFactory:
     def _(params: SessionParams | None) -> SessionState:
         params = params or {}
-
         LOG.info(f'Creating SessionState for params: {params.keys() if params else "None"}.')
 
         if not config:
@@ -112,13 +121,19 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
         state: SessionState = {}
         # Create Keboola client instance
         try:
+            if not cfg.storage_token:
+                raise ValueError('Storage token is not provided.')
             client = KeboolaClient(cfg.storage_token, cfg.storage_api_url)
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
         except Exception as e:
+            # TODO: When using the server remotelly (http transport), we need to handle the case when the storage token
+            # is not provided. We do not want to fail the server when private session state is created.
             LOG.error(f'Failed to initialize Keboola client: {e}')
             raise
         try:
+            if not cfg.workspace_schema:
+                raise ValueError('Workspace schema is not provided.')
             workspace_manager = WorkspaceManager(client, cfg.workspace_schema)
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             LOG.info('Successfully initialized Storage API Workspace manager.')
