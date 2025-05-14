@@ -43,17 +43,21 @@ SessionState = dict[str, Any]
 SessionStateFactory = Callable[[Optional[SessionParams]], SessionState]
 
 
-class StatefullServerSession(ServerSession):
+class StatefulServerSession(ServerSession):
     def __init__(
         self,
         read_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
         write_stream: MemoryObjectSendStream[SessionMessage],
         init_options: InitializationOptions,
+        stateless: bool = False,
         state: SessionState | None = None,
         **kwargs: Any,
     ) -> None:
-        stateless = False  # statefull by default
-        super().__init__(read_stream, write_stream, init_options, stateless, **kwargs)
+        if stateless:
+            LOG.warning(
+                'Stateless mode is not supported for StatefulServerSession, stateless parameter will be ignored.'
+            )
+        super().__init__(read_stream, write_stream, init_options, stateless=False, **kwargs)
         self._state = state or {}
 
     @property
@@ -96,17 +100,14 @@ class _KeboolaServer(Server):
         Other approach would be use the session in appropriate place in the code (in tools, etc.), but this
         approach allows to have the session state factory in the server constructor and use it in the tools.
         """
-        if stateless:
-            LOG.warning('Stateless mode is not supported in Keboola MCP server, will be ignored.')
-
         async with AsyncExitStack() as stack:
             lifespan_context = await stack.enter_async_context(self.lifespan(self))
             session = await stack.enter_async_context(
-                StatefullServerSession(
+                StatefulServerSession(
                     read_stream,
                     write_stream,
                     initialization_options,
-                    stateless=False,
+                    stateless=stateless,
                     state=self._session_state_factory(None),
                     **kwargs,
                 )
