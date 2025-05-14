@@ -11,6 +11,7 @@ LOG = logging.getLogger(__name__)
 STORAGE_TOKEN_KEY = 'storage_token'
 WORKSPACE_SCHEMA_KEY = 'workspace_schema'
 
+
 @dataclass(frozen=True)
 class Config:
     """Server configuration."""
@@ -39,7 +40,7 @@ class Config:
         or their uppercase variant prefixed with 'KBC_'.
         """
         return cls(**cls._read_options(d))
-    
+
     @staticmethod
     def required_fields() -> list[str]:
         return [
