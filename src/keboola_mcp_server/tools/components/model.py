@@ -156,6 +156,11 @@ class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
     version: int = Field(description='The version of the component configuration')
     configuration: dict[str, Any] = Field(description='The configuration of the component')
     rows: Optional[list[dict[str, Any]]] = Field(description='The rows of the component configuration', default=None)
+    change_description: Optional[str] = Field(
+        description='The description of the changes made to the component configuration',
+        default=None,
+        validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
+    )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
         default=[],

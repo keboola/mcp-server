@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "0.16.2"
+version = "0.17.1"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,7 @@ codestyle = [
     "flake8-bugbear ~= 24.12",
     "flake8-colors ~= 0.1",
     "flake8-isort ~= 6.1",
+    "flake8-pytest-style ~= 2.1",
     "flake8-quotes ~= 3.4",
     "flake8-typing-imports ~= 1.16",
     "pep8-naming ~= 0.14",
@@ -34,8 +35,9 @@ tests = [
     "pytest ~= 8.3",
     "pytest-asyncio ~= 0.25",
     "pytest-cov ~= 6.0",
-    "pytest-mock ~= 3.14",
+    "pytest-datadir ~= 1.6.1",
     "python-dotenv ~= 1.1",
+    "pytest-mock ~= 3.14",
 ]
 dev = [
     "tox ~= 4.23",
@@ -62,14 +64,22 @@ use_parentheses = true
 packages = ["src/keboola_mcp_server"]
 
 [tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
+log_cli = false
+log_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 
 [tool.flake8]
 max-line-length = 120
 import-order-style = "edited"
 application-package-names = ["keboola_mcp_server"]
 min-python-version = "3.10.0"
+pytest-fixture-no-parentheses = true
 # Skip unused import checks F401 in __init__.py files; re-exported imports are intentional. 
 per-file-ignores = [
     "__init__.py: F401",
@@ -129,6 +139,7 @@ deps = [
     "flake8-bugbear ~= 24.12",
     "flake8-colors ~= 0.1",
     "flake8-isort ~= 6.1",
+    "flake8-pytest-style ~= 2.1",
     "flake8-quotes ~= 3.4",
     "flake8-typing-imports ~= 1.16",
     "pep8-naming ~= 0.14",

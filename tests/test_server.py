@@ -37,6 +37,7 @@ class TestServer:
             'update_column_description',
             'update_component_root_configuration',
             'update_component_row_configuration',
+            'update_sql_transformation_configuration',
             'update_table_description',
         ]
 

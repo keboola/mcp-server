@@ -133,15 +133,12 @@ async def test_get_job_detail(
     assert result.component_id == mock_job['component']
     assert result.config_id == mock_job['config']
     assert result.is_finished == mock_job['isFinished']
-    assert result.created_time is not None and result.created_time.replace(tzinfo=None) == datetime.strptime(
-        mock_job['createdTime'], iso_format
-    )
-    assert result.start_time is not None and result.start_time.replace(tzinfo=None) == datetime.strptime(
-        mock_job['startTime'], iso_format
-    )
-    assert result.end_time is not None and result.end_time.replace(tzinfo=None) == datetime.strptime(
-        mock_job['endTime'], iso_format
-    )
+    assert result.created_time is not None
+    assert result.created_time.replace(tzinfo=None) == datetime.strptime(mock_job['createdTime'], iso_format)
+    assert result.start_time is not None
+    assert result.start_time.replace(tzinfo=None) == datetime.strptime(mock_job['startTime'], iso_format)
+    assert result.end_time is not None
+    assert result.end_time.replace(tzinfo=None) == datetime.strptime(mock_job['endTime'], iso_format)
     assert result.url == mock_job['url']
     assert result.config_data == mock_job['configData']
     assert result.config_row_ids == mock_job['configRowIds']

@@ -257,7 +257,7 @@ async def test_get_table_detail(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    'sapi_response, expected',
+    ('sapi_response', 'expected'),
     [
         (
             [{'id': 'in.c-bucket.foo', 'name': 'foo'}],
