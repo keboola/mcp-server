@@ -8,10 +8,13 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
+    ComponentConfigurationMetadata,
+    ComponentConfigurationResponse,
+    ComponentDetail,
     ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
-    ReducedComponentConfiguration,
+    ReducedComponentDetail,
 )
 
 LOG = logging.getLogger(__name__)
@@ -48,30 +51,40 @@ async def _retrieve_components_configurations_by_types(
     endpoint = f'branch/{client.storage_client_sync._branch_id}/components'
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
-    raw_components_with_configurations = []
-    for type in component_types:
+    components_with_configurations = []
+    for _type in component_types:
         # retrieve components by type with configurations
         params = {
             'include': 'configuration',
-            'componentType': type,
+            'componentType': _type,
         }
         raw_components_with_configurations_by_type = cast(
             list[dict[str, Any]], await client.storage_client.get(endpoint, params=params)
         )
         # extend the list with the raw components with configurations
-        raw_components_with_configurations.extend(raw_components_with_configurations_by_type)
-
-    # build components with configurations list, each item contains a component and its associated configurations
-    components_with_configurations = [
-        ComponentWithConfigurations(
-            component=ReducedComponent.model_validate(raw_component),
-            configurations=[
-                ReducedComponentConfiguration.model_validate({**raw_configuration, 'component_id': raw_component['id']})
+        # TODO: ugly, refactor
+        for raw_component in raw_components_with_configurations_by_type:
+            # build components with configurations list, each item contains a component and its
+            # associated configurations
+            raw_configuration_responses = [
+                ComponentConfigurationResponse.model_validate(
+                    {**raw_configuration, 'component_id': raw_component['id']}
+                )
                 for raw_configuration in raw_component.get('configurations', [])
-            ],
-        )
-        for raw_component in raw_components_with_configurations
-    ]
+            ]
+            configurations_metadata = [
+                ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
+                for raw_response in raw_configuration_responses
+            ]
+
+            components_with_configurations.append(
+                ComponentWithConfigurations(
+                    component=ReducedComponentDetail.from_component_response(
+                        ReducedComponent.model_validate(raw_component)
+                    ),
+                    configurations=configurations_metadata,
+                )
+            )
 
     # perform logging
     total_configurations = sum(len(component.configurations) for component in components_with_configurations)
@@ -101,15 +114,21 @@ async def _retrieve_components_configurations_by_ids(
         endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}'
         raw_component = await client.storage_client.get(endpoint)
         # build component configurations list grouped by components
+        raw_configuration_responses = [
+            ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
+            for raw_configuration in raw_configurations
+        ]
+        configurations_metadata = [
+            ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
+            for raw_response in raw_configuration_responses
+        ]
+
         components_with_configurations.append(
             ComponentWithConfigurations(
-                component=ReducedComponent.model_validate(raw_component),
-                configurations=[
-                    ReducedComponentConfiguration.model_validate(
-                        {**raw_configuration, 'component_id': raw_component['id']}
-                    )
-                    for raw_configuration in raw_configurations
-                ],
+                component=ReducedComponentDetail.from_component_response(
+                    ReducedComponent.model_validate(raw_component)
+                ),
+                configurations=configurations_metadata,
             )
         )
 
@@ -122,10 +141,29 @@ async def _retrieve_components_configurations_by_ids(
     return components_with_configurations
 
 
+async def _get_component_flags(client: KeboolaClient, component_id: str) -> list[str]:
+    """
+    Utility function to retrieve the component flags by component ID.
+
+
+    :param client: The Keboola client
+    :param component_id: The ID of the Keboola component you want details about
+    """
+    available_components = await client.storage_client.get('', params={'exclude': 'componentDetails'})
+
+    # retrieve component info
+    component_info = next(
+        (component for component in available_components.get('components', []) if component['id'] == component_id),
+        {},
+    )
+
+    return component_info.get('flags', [])
+
+
 async def _get_component_details(
     client: KeboolaClient,
     component_id: str,
-) -> Component:
+) -> ComponentDetail:
     """
     Utility function to retrieve the component details by component ID, used in tools:
     - get_component_configuration_details
@@ -138,10 +176,13 @@ async def _get_component_details(
     :param client: The Keboola client
     :return: The component details
     """
+    component_info: Component
     try:
         raw_component = await client.ai_service_client.get_component_detail(component_id)
         LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
-        return Component.model_validate(raw_component)
+        component_info = Component.model_validate(raw_component)
+        component_info.flags = await _get_component_flags(client, component_id)
+        # get component flags
     except requests.HTTPError as e:
         if e.response.status_code == 404:
             LOG.info(
@@ -152,10 +193,12 @@ async def _get_component_details(
             endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}'
             raw_component = await client.storage_client.get(endpoint)
             LOG.info(f'Retrieved component details for component {component_id} from Storage API.')
-            return Component.model_validate(raw_component)
+            component_info = Component.model_validate(raw_component)
         else:
             # If it's not a 404, re-raise the error
             raise
+
+    return ComponentDetail.from_component_response(component_info)
 
 
 def _get_sql_transformation_id_from_sql_dialect(

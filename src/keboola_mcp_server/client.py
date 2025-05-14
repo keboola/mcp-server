@@ -320,6 +320,84 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return await self.raw_client.put(endpoint=endpoint, data=payload)
 
+    async def create_component_root_configuration(
+        self,
+        data: dict[str, Any],
+        component_id: str,
+        branch_id: str = 'default',
+    ) -> dict[str, Any]:
+        """
+        Creates a new configuration for a component.
+
+        :param data: The configuration data to create
+        :param component_id: The ID of the component
+        :param branch_id: The ID of the branch (default: 'default')
+        :return: Dictionary with created configuration details
+        """
+        return await self.post(endpoint=f'branch/{branch_id}/components/{component_id}/configs', data=data)
+
+    async def create_component_row_configuration(
+        self,
+        data: dict[str, Any],
+        component_id: str,
+        config_id: str,
+        branch_id: str = 'default',
+    ) -> dict[str, Any]:
+        """
+        Creates a new row configuration for a component configuration.
+
+        :param data: The configuration data to create row configuration
+        :param component_id: The ID of the component
+        :param config_id: The ID of the configuration
+        :param branch_id: The ID of the branch (default: 'default')
+        """
+        return await self.post(
+            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}/rows',
+            data=data,
+        )
+
+    async def update_component_root_configuration(
+        self,
+        data: dict[str, Any],
+        component_id: str,
+        config_id: str,
+        branch_id: str = 'default',
+    ) -> dict[str, Any]:
+        """
+        Updates a component configuration.
+
+        :param data: The configuration data to update
+        :param component_id: The ID of the component
+        :param config_id: The ID of the configuration
+        :param branch_id: The ID of the branch (default: 'default')
+        """
+        return await self.put(
+            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}',
+            data=data,
+        )
+
+    async def update_component_row_configuration(
+        self,
+        data: dict[str, Any],
+        component_id: str,
+        config_id: str,
+        configuration_row_id: str,
+        branch_id: str = 'default',
+    ) -> dict[str, Any]:
+        """
+        Updates a row configuration for a component configuration.
+
+        :param data: The configuration data to update row configuration
+        :param component_id: The ID of the component
+        :param config_id: The ID of the configuration
+        :param configuration_row_id: The ID of the row
+        :param branch_id: The ID of the branch (default: 'default')
+        """
+        return await self.put(
+            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}',
+            data=data,
+        )
+
 
 class JobsQueueClient(KeboolaServiceClient):
     """
@@ -455,10 +533,22 @@ class DocsQuestionResponse(BaseModel):
     )
 
 
+class SuggestedComponent(BaseModel):
+    """The AI service response to a /docs/suggest-component request."""
+
+    component_id: str = Field(description='Text of the answer to a component suggestion query.', alias='componentId')
+    score: float = Field(description='Score of the component suggestion query.')
+    source: str = Field(description='Source of the component suggestion result.')
+
+
+class ComponentSuggestionResponse(BaseModel):
+    """The AI service response to a /suggest/component request."""
+
+    components: list[SuggestedComponent] = Field(description='List of suggested components.', default_factory=list)
+
+
 class AIServiceClient(KeboolaServiceClient):
-    """
-    Async client for Keboola AI Service.
-    """
+    """Class handling endpoints for interacting with the Keboola AI Service."""
 
     @classmethod
     def create(cls, root_url: str, token: str) -> 'AIServiceClient':
@@ -483,9 +573,7 @@ class AIServiceClient(KeboolaServiceClient):
     async def docs_question(self, query: str) -> DocsQuestionResponse:
         """
         Answers a question using the Keboola documentation as a source.
-
-        :param query: The query to answer
-        :return: Response containing the answer and source URLs
+        :param query: The query to answer.
         """
         response = await self.raw_client.post(
             endpoint='docs/question',
@@ -494,3 +582,16 @@ class AIServiceClient(KeboolaServiceClient):
         )
 
         return DocsQuestionResponse.model_validate(response)
+
+    async def suggest_component(self, query: str) -> ComponentSuggestionResponse:
+        """
+        Provides list of component suggestions based on natural language query.
+        :param query: The query to answer.
+        """
+        response = await self.raw_client.post(
+            endpoint='suggest/component',
+            data={'prompt': query},
+            headers={'Accept': 'application/json'},
+        )
+
+        return ComponentSuggestionResponse.model_validate(response)
