@@ -11,7 +11,7 @@ from keboola_mcp_server.tools.components.utils import (
 
 
 @pytest.mark.parametrize(
-    'component_type, expected',
+    ('component_type', 'expected'),
     [
         ('application', ['application']),
         (['extractor', 'writer'], ['extractor', 'writer']),
@@ -28,7 +28,7 @@ def test_handle_component_types(
 
 
 @pytest.mark.parametrize(
-    'sql_statements, created_table_names, transformation_name, expected_bucket_id',
+    ('sql_statements', 'created_table_names', 'transformation_name', 'expected_bucket_id'),
     [
         # testing with multiple sql statements and no output table mappings
         # it should not create any output tables

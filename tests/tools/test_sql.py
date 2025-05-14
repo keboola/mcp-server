@@ -71,7 +71,8 @@ async def test_get_sql_dialect(dialect: str, empty_context: Context, mocker):
 
 
 class TestWorkspaceManagerSnowflake:
-    @pytest.fixture()
+
+    @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
         keboola_client.storage_client.get.return_value = [
             {
@@ -103,7 +104,7 @@ class TestWorkspaceManagerSnowflake:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        'table, sapi_result, expected',
+        ('table', 'sapi_result', 'expected'),
         [
             (
                 # table in.c-foo.bar in its own project
@@ -148,7 +149,7 @@ class TestWorkspaceManagerSnowflake:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        'query, expected',
+        ('query', 'expected'),
         [
             (
                 'select id, name, email from user;',
@@ -183,7 +184,7 @@ class TestWorkspaceManagerSnowflake:
 
 
 class TestWorkspaceManagerBigQuery:
-    @pytest.fixture()
+    @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
         keboola_client.storage_client.get.return_value = [
             {
@@ -215,7 +216,7 @@ class TestWorkspaceManagerBigQuery:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        'table, expected',
+        ('table', 'expected'),
         [
             (
                 # table in.c-foo.bar in its own project or a tables shared from other project
@@ -241,7 +242,7 @@ class TestWorkspaceManagerBigQuery:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        'query, expected',
+        ('query', 'expected'),
         [
             (
                 'select id, name, email from user;',
