@@ -34,7 +34,7 @@ class TableDef:
 
 
 @pytest.fixture(scope='session')
-def test_buckets() -> list[BucketDef]:
+def buckets() -> list[BucketDef]:
     return [
         BucketDef('in.c-test_bucket_01', 'test_bucket_01'),
         BucketDef('in.c-test_bucket_02', 'test_bucket_02'),
@@ -42,7 +42,7 @@ def test_buckets() -> list[BucketDef]:
 
 
 @pytest.fixture(scope='session')
-def test_tables() -> list[TableDef]:
+def tables() -> list[TableDef]:
     return [
         TableDef(
             bucket_id='in.c-test_bucket_01',
@@ -78,7 +78,7 @@ def shared_datadir_ro() -> Path:
 
 @pytest.fixture(scope='session')
 def keboola_project(
-    env_file_loaded: bool, shared_datadir_ro: Path, test_buckets: list[BucketDef], test_tables: list[TableDef]
+    env_file_loaded: bool, shared_datadir_ro: Path, buckets: list[BucketDef], tables: list[TableDef]
 ) -> Generator[str, Any, None]:
     """
     Sets up a Keboola project with items needed for integration tests.
@@ -94,7 +94,7 @@ def keboola_project(
     if current_buckets:
         pytest.fail(f'Expecting empty Keboola project, but found {len(current_buckets)} buckets')
 
-    for bucket in test_buckets:
+    for bucket in buckets:
         LOG.info(f'Creating bucket with display name={bucket.display_name}')
         storage_client.buckets.create(bucket.display_name)
 
@@ -102,7 +102,7 @@ def keboola_project(
     if current_tables:
         pytest.fail(f'Expecting empty Keboola project, but found {len(current_tables)} tables')
 
-    for table in test_tables:
+    for table in tables:
         LOG.info(f'Creating table with name={table.table_name}')
         storage_client.tables.create(
             bucket_id=table.bucket_id,
