@@ -1,6 +1,7 @@
 """Command-line interface for the Keboola MCP server."""
 
 import argparse
+import asyncio
 import logging
 import sys
 from typing import Optional
@@ -23,7 +24,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Keboola MCP Server')
     parser.add_argument(
         '--transport',
-        choices=['stdio', 'sse'],
+        choices=['stdio', 'sse', 'streamable-http'],
         default='stdio',
         help='Transport to use for MCP communication',
     )
@@ -38,8 +39,8 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
-def main(args: Optional[list[str]] = None) -> None:
-    """Run the MCP server.
+async def main(args: Optional[list[str]] = None) -> None:
+    """Run the MCP server in async mode.
 
     Args:
         args: Command line arguments. If None, uses sys.argv[1:].
@@ -63,12 +64,12 @@ def main(args: Optional[list[str]] = None) -> None:
 
     try:
         # Create and run server
-        mcp = create_server(config)
-        mcp.run(transport=parsed_args.transport)
+        keboola_mcp_server = create_server(config)
+        await keboola_mcp_server.run_async(transport=parsed_args.transport)
     except Exception as e:
         LOG.exception(f'Server failed: {e}')
         sys.exit(1)
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
