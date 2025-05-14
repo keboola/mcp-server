@@ -8,6 +8,8 @@ from typing import Any, Literal, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
 
+STORAGE_TOKEN_KEY = 'storage_token'
+WORKSPACE_SCHEMA_KEY = 'workspace_schema'
 
 @dataclass(frozen=True)
 class Config:
@@ -37,6 +39,13 @@ class Config:
         or their uppercase variant prefixed with 'KBC_'.
         """
         return cls(**cls._read_options(d))
+    
+    @staticmethod
+    def required_fields() -> list[str]:
+        return [
+            STORAGE_TOKEN_KEY,
+            WORKSPACE_SCHEMA_KEY,
+        ]
 
     def replace_by(self, d: Mapping[str, str]) -> 'Config':
         """
