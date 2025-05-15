@@ -407,6 +407,7 @@ async def test_update_transformation_configuration(
     mock_configuration['configuration'] = new_config
     mock_configuration['changeDescription'] = new_change_description
     mock_component['id'] = expected_component_id
+    keboola_client.storage_client.get = mocker.AsyncMock(return_value={'components': []})
     keboola_client.storage_client.update_component_configuration = mocker.AsyncMock(return_value=mock_configuration)
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
@@ -420,7 +421,7 @@ async def test_update_transformation_configuration(
         is_disabled=False,
     )
 
-    assert isinstance(updated_configuration, ComponentConfiguration)
+    assert isinstance(updated_configuration, ComponentConfigurationResponse)
     assert updated_configuration.configuration == new_config
     assert updated_configuration.component_id == expected_component_id
     assert updated_configuration.configuration_id == mock_configuration['id']

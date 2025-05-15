@@ -416,7 +416,7 @@ async def update_sql_transformation_configuration(
         ),
     ] = False,
 ) -> Annotated[
-    ComponentConfiguration,
+    ComponentConfigurationResponse,
     Field(
         description='Updated transformation configuration.',
     ),
@@ -452,10 +452,10 @@ async def update_sql_transformation_configuration(
         )
 
         transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
-        updated_transformation_configuration = ComponentConfiguration(
+        updated_transformation_configuration = ComponentConfigurationResponse(
             **updated_raw_configuration,
             component_id=transformation.component_id,
-            component=transformation,
+            component=Component.from_component_detail(transformation),
         )
 
         LOG.info(
