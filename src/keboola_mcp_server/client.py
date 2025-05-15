@@ -1,13 +1,18 @@
 """Keboola Storage API client wrapper."""
 
 import logging
-from typing import Any, Mapping, Optional, cast
+from typing import Any, Mapping, Optional, Union, cast
 
 import httpx
 from kbcstorage.client import Client as SyncStorageClient
 from pydantic import BaseModel, Field
 
 LOG = logging.getLogger(__name__)
+
+JsonPrimitive = Union[int, float, str, bool, None]
+JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
+JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
+JsonStruct = Union[JsonDict, JsonList]
 
 
 class KeboolaClient:
@@ -79,7 +84,7 @@ class RawKeboolaClient:
         endpoint: str,
         params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> JsonStruct:
         """
         Makes a GET request to the service API.
 
@@ -96,14 +101,14 @@ class RawKeboolaClient:
                 params=params,
             )
             response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+            return cast(JsonStruct, response.json())
 
     async def post(
         self,
         endpoint: str,
         data: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> JsonStruct:
         """
         Makes a POST request to the service API.
 
@@ -120,14 +125,14 @@ class RawKeboolaClient:
                 json=data or {},
             )
             response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+            return cast(JsonStruct, response.json())
 
     async def put(
         self,
         endpoint: str,
         data: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
 
@@ -144,13 +149,13 @@ class RawKeboolaClient:
                 json=data or {},
             )
             response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+            return cast(JsonStruct, response.json())
 
     async def delete(
         self,
         endpoint: str,
         headers: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> JsonStruct:
         """
         Makes a DELETE request to the service API.
 
@@ -166,7 +171,7 @@ class RawKeboolaClient:
             )
             response.raise_for_status()
 
-            return cast(dict[str, Any], response.json())
+            return cast(JsonStruct, response.json())
 
 
 class KeboolaServiceClient:
@@ -203,7 +208,7 @@ class KeboolaServiceClient:
         self,
         endpoint: str,
         params: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
+    ) -> JsonStruct:
         """
         Makes a GET request to the service API.
 
@@ -217,7 +222,7 @@ class KeboolaServiceClient:
         self,
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
+    ) -> JsonStruct:
         """
         Makes a POST request to the service API.
 
@@ -231,7 +236,7 @@ class KeboolaServiceClient:
         self,
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
+    ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
 
@@ -244,7 +249,7 @@ class KeboolaServiceClient:
     async def delete(
         self,
         endpoint: str,
-    ) -> dict[str, Any]:
+    ) -> JsonStruct:
         """
         Makes a DELETE request to the service API.
 
@@ -285,6 +290,41 @@ class AsyncStorageClient(KeboolaServiceClient):
             branch_id=branch_id,
         )
 
+    async def bucket_detail(self, bucket_id: str) -> JsonStruct:
+        """
+        Retrieves information about a given bucket.
+
+        :param bucket_id: The id of the bucket
+        :return: Bucket details as dictionary
+        """
+        return await self.get(endpoint=f'buckets/{bucket_id}')
+
+    async def bucket_list(self) -> JsonList:
+        """
+        Lists all buckets.
+
+        :return: List of buckets as dictionary
+        """
+        return cast(JsonList, await self.get(endpoint='buckets'))
+
+    async def bucket_table_list(self, bucket_id: str) -> JsonList:
+        """
+        Lists all tables in a given bucket.
+
+        :param bucket_id: The id of the bucket
+        :return: List of tables as dictionary
+        """
+        return cast(JsonList, await self.get(endpoint=f'buckets/{bucket_id}/tables'))
+
+    async def table_detail(self, table_id: str) -> JsonDict:
+        """
+        Retrieves information about a given table.
+
+        :param table_id: The id of the table
+        :return: Table details as dictionary
+        """
+        return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
+
     async def update_component_configuration(
         self,
         component_id: str,
@@ -293,7 +333,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         change_description: str,
         updated_description: Optional[str] = None,
         is_disabled: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonDict:
         """
         Updates a component configuration.
 
@@ -318,7 +358,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         if is_disabled:
             payload['isDisabled'] = is_disabled
 
-        return await self.raw_client.put(endpoint=endpoint, data=payload)
+        return cast(JsonDict, await self.put(endpoint=endpoint, data=payload))
 
 
 class JobsQueueClient(KeboolaServiceClient):
@@ -337,7 +377,7 @@ class JobsQueueClient(KeboolaServiceClient):
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
 
-    async def get_job_detail(self, job_id: str) -> dict[str, Any]:
+    async def get_job_detail(self, job_id: str) -> JsonDict:
         """
         Retrieves information about a given job.
 
@@ -345,7 +385,7 @@ class JobsQueueClient(KeboolaServiceClient):
         :return: Job details as dictionary
         """
 
-        return await self.raw_client.get(endpoint=f'jobs/{job_id}')
+        return cast(JsonDict, await self.get(endpoint=f'jobs/{job_id}'))
 
     async def search_jobs_by(
         self,
@@ -356,7 +396,7 @@ class JobsQueueClient(KeboolaServiceClient):
         offset: int = 0,
         sort_by: Optional[str] = 'startTime',
         sort_order: Optional[str] = 'desc',
-    ) -> dict[str, Any]:
+    ) -> JsonList:
         """
         Searches for jobs based on the provided parameters.
 
@@ -385,7 +425,7 @@ class JobsQueueClient(KeboolaServiceClient):
         self,
         component_id: str,
         configuration_id: str,
-    ) -> dict[str, Any]:
+    ) -> JsonDict:
         """
         Creates a new job.
 
@@ -398,9 +438,9 @@ class JobsQueueClient(KeboolaServiceClient):
             'config': configuration_id,
             'mode': 'run',
         }
-        return await self.raw_client.post(endpoint='jobs', data=payload)
+        return cast(JsonDict, await self.post(endpoint='jobs', data=payload))
 
-    async def _search(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _search(self, params: dict[str, Any]) -> JsonList:
         """
         Searches for jobs based on the provided parameters.
 
@@ -439,7 +479,7 @@ class JobsQueueClient(KeboolaServiceClient):
             - sortOrder str: The jobs sorting order, default "desc"
                 values: asc, desc
         """
-        return await self.raw_client.get(endpoint='search/jobs', params=params)
+        return cast(JsonList, await self.get(endpoint='search/jobs', params=params))
 
 
 class DocsQuestionResponse(BaseModel):
@@ -471,14 +511,14 @@ class AIServiceClient(KeboolaServiceClient):
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
 
-    async def get_component_detail(self, component_id: str) -> dict[str, Any]:
+    async def get_component_detail(self, component_id: str) -> JsonDict:
         """
         Retrieves information about a given component.
 
         :param component_id: The id of the component
         :return: Component details as dictionary
         """
-        return await self.get(endpoint=f'docs/components/{component_id}')
+        return cast(JsonDict, await self.get(endpoint=f'docs/components/{component_id}'))
 
     async def docs_question(self, query: str) -> DocsQuestionResponse:
         """

@@ -2,12 +2,12 @@
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Mapping, Optional, cast
+from typing import Annotated, Any, Optional, cast
 
 from mcp.server.fastmcp import Context
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import KeboolaMcpServer
@@ -146,9 +146,9 @@ async def get_bucket_detail(
     """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
-    raw_bucket = cast(dict[str, Any], client.storage_client_sync.buckets.detail(bucket_id))
+    raw_bucket = await client.storage_client.bucket_detail(bucket_id)
 
-    return BucketDetail(**raw_bucket)
+    return BucketDetail.model_validate(raw_bucket)
 
 
 @tool_errors()
@@ -156,9 +156,9 @@ async def retrieve_buckets(ctx: Context) -> list[BucketDetail]:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     assert isinstance(client, KeboolaClient)
-    raw_bucket_data = client.storage_client_sync.buckets.list()
+    raw_bucket_data = await client.storage_client.bucket_list()
 
-    return [BucketDetail(**raw_bucket) for raw_bucket in raw_bucket_data]
+    return [BucketDetail.model_validate(raw_bucket) for raw_bucket in raw_bucket_data]
 
 
 @tool_errors()
@@ -169,19 +169,20 @@ async def get_table_detail(
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
 
-    raw_table = cast(Mapping[str, Any], client.storage_client_sync.tables.detail(table_id))
+    raw_table = await client.storage_client.table_detail(table_id)
+    raw_columns = cast(list[str], raw_table.get('columns', []))
     column_info = [
         TableColumnInfo(name=col, quoted_name=await workspace_manager.get_quoted_name(col))
-        for col in raw_table.get('columns', [])
+        for col in raw_columns
     ]
 
     table_fqn = await workspace_manager.get_table_fqn(raw_table)
 
-    return TableDetail(
-        **{
-            **raw_table,
+    return TableDetail.model_validate(
+        raw_table |
+        {
             'columns': column_info,
-            'fully_qualified_name': table_fqn.identifier,
+            'fully_qualified_name': table_fqn.identifier if table_fqn else None,
         }
     )
 
@@ -195,11 +196,8 @@ async def retrieve_bucket_tables(
     # TODO: requesting "metadata" to get the table description;
     #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
-    raw_tables = cast(
-        list[Mapping[str, Any]],
-        client.storage_client_sync.buckets.list_tables(bucket_id, include=['metadata']),
-    )
-    return [TableDetail(**raw_table) for raw_table in raw_tables]
+    raw_tables = await client.storage_client.bucket_table_list(bucket_id)
+    return [TableDetail.model_validate(raw_table) for raw_table in raw_tables]
 
 
 @tool_errors()
@@ -219,7 +217,7 @@ async def update_bucket_description(
         'provider': 'user',
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
-    response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
+    response = cast(list[JsonDict], await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION.value)
 
     return UpdateDescriptionResponse.model_validate(description_entry)
@@ -242,9 +240,10 @@ async def update_table_description(
         'provider': 'user',
         'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
     }
-    response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
+    response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
+    raw_metadata = cast(list[JsonDict], response.get('metadata', []))
     description_entry = next(
-        entry for entry in response.get('metadata') if entry.get('key') == MetadataField.DESCRIPTION.value
+        entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION.value
     )
 
     return UpdateDescriptionResponse.model_validate(description_entry)
@@ -277,10 +276,11 @@ async def update_column_description(
         },
     }
 
-    response = await client.storage_client.post(endpoint=metadata_endpoint, data=data)
+    response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
+    column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
     description_entry = next(
         entry
-        for entry in response.get('columnsMetadata').get(column_name)
+        for entry in column_metadata.get(column_name, [])
         if entry.get('key') == MetadataField.DESCRIPTION.value
     )
 
