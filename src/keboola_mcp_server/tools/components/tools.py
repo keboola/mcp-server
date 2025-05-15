@@ -192,7 +192,7 @@ async def get_component_configuration_details(
 
     # Get Configuration Metadata if exists
     endpoint = (
-        f'branch/{client.storage_client_sync._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        f'branch/{client.storage_client.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
     )
     r_metadata = await client.storage_client.get(endpoint)
     if r_metadata:
@@ -293,7 +293,7 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{transformation_id}/configs'
+    endpoint = f'branch/{client.storage_client.branch_id}/components/{transformation_id}/configs'
 
     LOG.info(f'Creating new transformation configuration: {name} for component: {transformation_id}.')
     # Try to create the new transformation configuration and return the new object if successful
