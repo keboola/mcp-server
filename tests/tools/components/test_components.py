@@ -261,11 +261,15 @@ async def test_get_component_configuration_details(
     # Setup Storage API mocks
     keboola_client.storage_client = MagicMock()
     keboola_client.storage_client._branch_id = mock_branch_id
-    keboola_client.storage_client.get = AsyncMock(return_value=mock_metadata)
+    keboola_client.storage_client.get = AsyncMock(
+        side_effect=lambda path, **kwargs: mock_metadata
+        if 'metadata' in path
+        else {'components': [{'id': component_id, 'flags': mock_component['flags']}]}
+    )
 
     # Setup AI service mocks
     keboola_client.ai_service_client = MagicMock()
-    keboola_client.ai_service_client.get_component_detail = MagicMock(return_value=mock_component)
+    keboola_client.ai_service_client.get_component_detail = AsyncMock(return_value=mock_component)
 
     # Mock keboola_client.get, který je potřeba pro _get_component_details a _get_component_flags
     keboola_client.get = AsyncMock(
