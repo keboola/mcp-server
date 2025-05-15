@@ -2,6 +2,7 @@ import logging
 from typing import Any, Optional, Sequence, Union, cast, get_args
 
 import requests
+from httpx import HTTPStatusError
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
@@ -142,7 +143,7 @@ async def _get_component_details(
         raw_component = await client.ai_service_client.get_component_detail(component_id)
         LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
         return Component.model_validate(raw_component)
-    except requests.HTTPError as e:
+    except (requests.HTTPError, HTTPStatusError) as e:
         if e.response.status_code == 404:
             LOG.info(
                 f'Component {component_id} not found in AI service catalog (possibly private). '
