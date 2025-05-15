@@ -310,6 +310,7 @@ What buckets and tables are in my Keboola project?
 | | `retrieve_bucket_tables` | Returns all tables within a specific bucket |
 | | `get_table_detail` | Provides detailed information for a specific table |
 | | `update_bucket_description` | Updates the description of a bucket |
+| | `update_column_description` | Updates the description for a given column in a table. |
 | | `update_table_description` | Updates the description of a table |
 | **SQL** | `query_table` | Executes custom SQL queries against your data |
 | | `get_sql_dialect` | Identifies whether your workspace uses Snowflake or BigQuery SQL dialect |
@@ -317,6 +318,7 @@ What buckets and tables are in my Keboola project?
 | | `get_component_details` | Retrieves detailed configuration information for a specific component |
 | | `retrieve_transformations` | Returns all transformation configurations in your project |
 | | `create_sql_transformation` | Creates a new SQL transformation with custom queries |
+| | `update_sql_transformation` | Updates an existing SQL transformation configuration, sql query, description or disables the configuration |
 | **Job** | `retrieve_jobs` | Lists and filters jobs by status, component, or configuration |
 | | `get_job_detail` | Returns comprehensive details about a specific job |
 | | `start_job` | Triggers a component or transformation job to run |
