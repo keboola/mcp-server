@@ -4,9 +4,12 @@ import dataclasses
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
+
+STORAGE_TOKEN_KEY = 'storage_token'
+WORKSPACE_SCHEMA_KEY = 'workspace_schema'
 
 
 @dataclass(frozen=True)
@@ -16,10 +19,12 @@ class Config:
     storage_token: Optional[str] = None
     storage_api_url: str = 'https://connection.keboola.com'
     workspace_schema: Optional[str] = None
+    transport: Optional[Literal['stdio', 'streamable-http', 'sse']] = None
+    request_param_source: Optional[Literal['query_params', 'headers']] = None
 
     @classmethod
-    def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, str]:
-        options: dict[str, str] = {}
+    def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, Any]:
+        options: dict[str, str | None] = {}
         for f in dataclasses.fields(cls):
             if f.name in d:
                 options[f.name] = d.get(f.name)
@@ -35,6 +40,13 @@ class Config:
         or their uppercase variant prefixed with 'KBC_'.
         """
         return cls(**cls._read_options(d))
+
+    @staticmethod
+    def required_fields() -> list[str]:
+        return [
+            STORAGE_TOKEN_KEY,
+            WORKSPACE_SCHEMA_KEY,
+        ]
 
     def replace_by(self, d: Mapping[str, str]) -> 'Config':
         """

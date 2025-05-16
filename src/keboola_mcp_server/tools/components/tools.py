@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated, Any, Sequence
 
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient

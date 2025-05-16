@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Annotated, Any, Mapping, Optional, cast
 
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import KeboolaClient

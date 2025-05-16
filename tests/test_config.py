@@ -59,6 +59,8 @@ class TestConfig:
         assert config.storage_token is None
         assert config.storage_api_url == 'https://connection.keboola.com'
         assert config.workspace_schema is None
+        assert config.transport is None
+        assert config.request_param_source is None
 
     def test_no_token_password_in_repr(self) -> None:
         config = Config(storage_token='foo')
@@ -66,5 +68,7 @@ class TestConfig:
             'Config('
             "storage_token='****', "
             "storage_api_url='https://connection.keboola.com', "
-            'workspace_schema=None)'
+            'workspace_schema=None, '
+            'transport=None, '
+            'request_param_source=None)'
         )

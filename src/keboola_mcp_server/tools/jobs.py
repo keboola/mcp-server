@@ -2,7 +2,7 @@ import datetime
 import logging
 from typing import Annotated, Any, Literal, Optional, Union
 
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
@@ -222,8 +222,9 @@ async def retrieve_jobs(
     - If limit = 100 and offset = 100, the second 100 jobs will be listed.
     - If sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
     """
-    client = KeboolaClient.from_state(ctx.session.state)
     _status = [status] if status else None
+
+    client = KeboolaClient.from_state(ctx.session.state)
 
     raw_jobs = await client.jobs_queue_client.search_jobs_by(
         component_id=component_id,

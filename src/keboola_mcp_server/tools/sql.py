@@ -5,9 +5,9 @@ import logging
 from io import StringIO
 from typing import Annotated, Any, Literal, Mapping, Optional, Sequence
 
+from fastmcp import Context, FastMCP
 from google.api_core.exceptions import BadRequest
 from google.cloud.bigquery import Client, Row
-from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 

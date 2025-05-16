@@ -7,7 +7,7 @@ from collections import defaultdict
 from operator import attrgetter
 from typing import Iterable, Mapping
 
-from mcp.types import Tool
+from fastmcp.tools import Tool
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.server import create_server
@@ -136,9 +136,8 @@ def setup_tool_categorizer():
     categorizer.add_category(ToolCategory('Component Tools', re.compile(r'(component|transformation)')))
     categorizer.add_category(ToolCategory('Jobs Tools', re.compile(r'job', re.IGNORECASE)))
     categorizer.add_category(ToolCategory('Documentation Tools', re.compile(r'docs', re.IGNORECASE)))
-    categorizer.add_category(
-        ToolCategory('Other Tools', re.compile(r'.+', re.IGNORECASE))
-    )  # catch-all category should be last
+    # catch-all category should be last
+    categorizer.add_category(ToolCategory('Other Tools', re.compile(r'.+', re.IGNORECASE)))
 
     return categorizer
 
@@ -160,9 +159,9 @@ async def generate_docs() -> None:
 
     try:
         mcp = create_server(config)
-        tools = await mcp.list_tools()
+        tools = await mcp.get_tools()
         categorizer = setup_tool_categorizer()
-        doc_gen = ToolDocumentationGenerator(tools, categorizer)
+        doc_gen = ToolDocumentationGenerator(list(tools.values()), categorizer)
         doc_gen.generate()
     except Exception as e:
         LOG.exception(f'Failed to generate documentation: {e}')
