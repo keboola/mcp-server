@@ -13,6 +13,7 @@ wheels/
 
 # Virtual environments
 .venv
+venv
 
 # Environment variables
 .env
@@ -25,3 +26,4 @@ htmlcov/
 .pytest_cache/
 integtest-results.xml
 test-results.xml
+.tox/

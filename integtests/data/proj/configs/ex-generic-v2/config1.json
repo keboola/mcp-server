@@ -1,0 +1,29 @@
+{
+    "parameters": {
+        "api": {
+            "baseUrl": "https://wttr.in"
+        },
+        "config": {
+            "outputBucket": "",
+            "incrementalOutput": false,
+            "jobs": [
+                {
+                    "__NAME": "root",
+                    "endpoint": "/",
+                    "method": "GET",
+                    "dataType": "",
+                    "params": {
+                        "format": {
+                            "attr": "format"
+                        }
+                    },
+                    "dataField": {
+                        "path": "current_condition",
+                        "delimiter": "."
+                    }
+                }
+            ],
+            "format": "j1"
+        }
+    }
+}

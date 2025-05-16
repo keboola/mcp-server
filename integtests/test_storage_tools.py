@@ -1,5 +1,4 @@
 import csv
-from pathlib import Path
 
 import pytest
 from mcp.server.fastmcp import Context
@@ -37,12 +36,11 @@ async def test_get_bucket_detail(mcp_context_client: Context, buckets: list[Buck
 
 
 @pytest.mark.asyncio
-async def test_get_table_detail(mcp_context_client: Context, tables: list[TableDef], shared_datadir: Path):
+async def test_get_table_detail(mcp_context_client: Context, tables: list[TableDef]):
     """Tests that for each test table, `get_table_detail` returns a `TableDetail` instance with correct fields."""
 
     for table in tables:
-        table_path = shared_datadir / 'proj' / table.bucket_id / f'{table.table_name}.csv'
-        with table_path.open('r', encoding='utf-8') as f:
+        with table.file_path.open('r', encoding='utf-8') as f:
             reader = csv.reader(f)
             columns = frozenset(next(reader))
 

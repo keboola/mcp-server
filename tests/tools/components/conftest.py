@@ -122,6 +122,6 @@ def mcp_context_components_configs(mocker: MockerFixture, mcp_context_client: Co
     keboola_client = mcp_context_client.session.state[KeboolaClient.STATE_KEY]
     keboola_client.storage_client_sync.components = mocker.MagicMock()
     keboola_client.storage_client_sync.configurations = mocker.MagicMock()
-    keboola_client.storage_client_sync._branch_id = mock_branch_id
+    keboola_client.storage_client.branch_id = mock_branch_id
 
     return mcp_context_client
