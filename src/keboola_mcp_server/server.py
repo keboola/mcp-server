@@ -2,16 +2,18 @@
 
 import logging
 import os
-from typing import Literal, Optional
+from functools import wraps
+from typing import Any, Callable, Literal, Optional
 
-# from mcp.server.fastmcp import FastMCP
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_http_request
+from fastmcp.utilities.types import find_kwarg_by_type
+from mcp.types import AnyFunction
 from starlette.requests import Request
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import KeboolaMcpServer, SessionParams, SessionState, SessionStateFactory
+from keboola_mcp_server.mcp import KeboolaMcpServer
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
@@ -22,99 +24,39 @@ LOG = logging.getLogger(__name__)
 
 TransportType = Literal['stdio', 'sse', 'streamable-http']
 RequestParameterSource = Literal['query_params', 'headers']
+SessionParams = dict[str, str]
+SessionState = dict[str, Any]
+SessionStateFactory = Callable[[Optional[SessionParams]], SessionState]
 
 
-def _safe_get_http_request() -> Request | None:
+def create_server(config: Optional[Config] = None) -> FastMCP:
+    """Create and configure the MCP server.
+
+    Args:
+        config: Server configuration. If None, loads from environment.
+
+    Returns:
+        Configured FastMCP server instance
     """
-    Gets the active starlette request (the current HTTP request).
-    If the request is not available (e.g. using stdio transport), returns None.
-    """
-    try:
-        return get_http_request()
-    except RuntimeError:
-        return None
+    # Initialize FastMCP server with system instructions
+    mcp = KeboolaMcpServer(name='Keboola Explorer')
+    mcp.set_config(config)
+
+    add_component_tools(mcp)
+    add_doc_tools(mcp)
+    add_job_tools(mcp)
+    add_storage_tools(mcp)
+    add_sql_tools(mcp)
+
+    return mcp
 
 
-def _infer_session_params_from_request(request: Request) -> SessionParams:
-    """
-    Infers session parameters from the current HTTP request.
-    """
-    if all(required_field in request.query_params for required_field in Config.required_fields()):
-        return dict(request.query_params)
-    elif all(required_field in request.headers for required_field in Config.required_fields()):
-        return dict(request.headers)
-    else:
-        LOG.warning('No required fields found in the request. Using empty session params.')
-        return {}
-
-
-def _infer_session_params() -> SessionParams:
-    """
-    Infers session parameters from the current HTTP request if available, or falls back to environment variables.
-    :param request_param_source: Determines whether to use query parameters or headers if both are available. Default
-        is 'query_params'.
-    """
-
-    request = _safe_get_http_request()
-    if request is None:
-        # Fallback to environment variables for stdio-based communication because there is no HTTP request
-        # So the server is running locally
-        return dict(os.environ)
-    return _infer_session_params_from_request(request)
-
-
-def _get_session_params(
-    transport: Optional[TransportType] = None, request_param_source: Optional[RequestParameterSource] = None
-) -> SessionParams:
-    """
-    Gets or infers the session parameters given the transport and request parameter source.
-    :param transport: The transport type.
-    :param request_param_source: Determines whether to use query parameters or headers if both are available.
-    """
-
-    if not transport:
-        return _infer_session_params()
-    elif transport == 'stdio':
-        return dict(os.environ)
-    elif transport in ('streamable-http', 'sse'):
-        request = _safe_get_http_request()
-        if request is None:
-            raise RuntimeError(
-                'No HTTP request found, but required for the state parameters given the selected transport.'
-            )
-        if not request_param_source:
-            return _infer_session_params_from_request(request)
-        if request_param_source == 'headers':
-            return dict(request.headers)
-        elif request_param_source == 'query_params':
-            return dict(request.query_params)
-
-
-def _create_session_state_factory_based_on_transport(config: Optional[Config] = None) -> SessionStateFactory:
-    transport = config.transport if config else None
-    request_param_source = config.request_param_source if config else None
-
+def create_session_state_factory() -> SessionStateFactory:
     def _(params: SessionParams | None = None) -> SessionState:
-        if not params:
-            LOG.info(
-                f'Retrieving session params from transport: {transport} and request_param_source: '
-                f'{request_param_source}.'
-            )
-            params = _get_session_params(transport, request_param_source)
-        return _create_session_state_factory(config)(params)
-
-    return _
-
-
-def _create_session_state_factory(config: Optional[Config] = None) -> SessionStateFactory:
-    def _(params: SessionParams | None) -> SessionState:
         params = params or {}
         LOG.info(f'Creating SessionState for params: {params.keys() if params else "None"}.')
 
-        if not config:
-            cfg = Config.from_dict(params)
-        else:
-            cfg = config.replace_by(params)
+        cfg = Config.from_dict(params)
 
         LOG.info(f'Creating SessionState from config: {cfg}.')
 
@@ -146,24 +88,143 @@ def _create_session_state_factory(config: Optional[Config] = None) -> SessionSta
     return _
 
 
-def create_server(config: Optional[Config] = None) -> FastMCP:
-    """Create and configure the MCP server.
+def session_state(
+    session_state_field_name: str = 'state',
+    session_state_factory: SessionStateFactory | None = None,
+    _custom_decorator: Callable[[str, SessionStateFactory], AnyFunction] | None = None,
+) -> Callable[[AnyFunction], AnyFunction]:
+    """Decorator to inject the session state into the Context parameter of a tool function.
 
-    Args:
-        config: Server configuration. If None, loads from environment.
+    This decorator dynamically inserts a session state object into the Context parameter of a tool function.
+    The session state is created using the session_state_factory and attached to the Context's session.
+    This allows tools to access and modify persistent state across multiple requests.
 
-    Returns:
-        Configured FastMCP server instance
+    :param session_state_field_name: The name of the field in the Context.session object that will hold the
+    session state.
+    :param session_state_factory: The factory function that creates the session state. If not provided, the
+    default factory is used. The factory function can use the `get_context`, `get_http_request` or access the
+    `environment` variables to create the session state.
+    :param _custom_decorator: A custom decorator function that will be used to insert the session state into the
+    tool function. If not provided, the default decorator function will be used. To customize this,
+    follow the default_decorator pattern bellow.
+
+    example:
+    ```python
+    @session_state('my_state', session_state_factory)
+    def tool(ctx: Context, ...):
+        ...
+        ... = ctx.session.my_state['my_key']  # my_key is inserted by the session_state_factory
+    ```
     """
-    # Initialize FastMCP server with system instructions
-    mcp = KeboolaMcpServer(
-        name='Keboola Explorer', session_state_factory=_create_session_state_factory_based_on_transport(config)
-    )
+    if callable(session_state_field_name):
+        raise TypeError(
+            'The @KeboolaMcpServer.session_state decorator was used incorrectly. '
+            'Did you forget to call it? Use @KeboolaMcpServer.session_state()'
+        )
 
-    add_component_tools(mcp)
-    add_doc_tools(mcp)
-    add_job_tools(mcp)
-    add_storage_tools(mcp)
-    add_sql_tools(mcp)
+    session_state_factory = session_state_factory or _default_session_state_factory()
 
-    return mcp
+    def default_decorator(session_state_field_name: str, session_state_factory: SessionStateFactory) -> AnyFunction:
+        """
+        Serves for wrapping the session_state_field_name and session_state_factory parameters due to customization
+        of the default decorator.
+        """
+
+        def _wrapper(fn: AnyFunction) -> AnyFunction:
+            """
+            :param fn: The tool function to decorate.
+            """
+
+            @wraps(fn)
+            async def _inject_session_state(*args, **kwargs) -> Any:
+                """
+                Injects the session state into the Context parameter in the tool function, only if the function
+                has a parameter of a type Context, otherwise it raises an error. If the context already has the
+                session state, it is not overridden. It is executed by the MCP server when the annotated tool
+                function is called.
+
+                :param kwargs: The arguments of the tool function. Must include the Context type argument.
+                :raises TypeError: If the Context argument is not found in the function parameters.
+                                    If the session instance is not available in the context.
+                :returns: The result of the tool function.
+                """
+                ctx_kwarg = find_kwarg_by_type(fn, Context)
+                if ctx_kwarg is None:
+                    raise TypeError(
+                        'Context argument is required, add "ctx: Context" parameter to the function parameters.'
+                    )
+
+                ctx: Optional[Context] = kwargs.get(ctx_kwarg)
+                if ctx is None or not hasattr(ctx, 'session'):
+                    raise TypeError('Session instance is not available in the context, or the context is undefined.')
+
+                assert isinstance(ctx, Context)
+                if not hasattr(ctx.session, session_state_field_name):
+                    params = _get_session_params()
+                    state: SessionState = session_state_factory(params)
+                    setattr(ctx.session, session_state_field_name, state)
+                return await fn(*args, **kwargs)
+
+            return _inject_session_state
+
+        return _wrapper
+
+    decorator = _custom_decorator or default_decorator
+    return decorator(session_state_field_name, session_state_factory)
+
+
+def _default_session_state_factory() -> SessionStateFactory:
+    def _(params: SessionParams | None = None) -> SessionState:
+        return params or {}
+
+    return _
+
+
+def _safe_get_http_request() -> Optional[Request]:
+    """
+    Attempts to retrieve the current HTTP request. Returns None if not available.
+    """
+    try:
+        return get_http_request()
+    except RuntimeError:
+        return None
+
+
+def _infer_session_params(request: Optional[Request] = None) -> SessionParams:
+    """
+    Infers session parameters from the current HTTP request if available, or falls back to environment variables.
+    :param request: The current HTTP request. If None, falls back to environment variables.
+    """
+    if request is None:
+        # Fallback to environment variables for stdio-based communication because there is no HTTP request
+        # So the server is running locally
+        return dict(os.environ)
+    if Config.contains_required_fields(request.query_params):
+        return dict(request.query_params)
+    elif Config.contains_required_fields(request.headers):
+        return dict(request.headers)
+    else:
+        LOG.warning('No required fields found in the request. Using empty session params.')
+        return {}
+
+
+def _get_session_params(transport: Optional[TransportType] = None) -> SessionParams:
+    """
+    Gets or infers the session parameters based on the current HTTP request or environment variables from the given
+    transport.
+    :param transport: The transport type.
+        - 'stdio': Use environment variables.
+        - 'streamable-http': Use headers.
+        - 'sse': Use headers.
+        - None: Infer from the current HTTP request (query params or headers) or from environment variables.
+    """
+    if transport == 'stdio':
+        return dict(os.environ)
+    if transport == 'streamable-http':
+        request = get_http_request()
+        return dict(request.headers)
+    if transport == 'sse':
+        # SSE transport if explicitly specified, uses query params due to backward compatibility
+        request = get_http_request()
+        return dict(request.query_params)
+    return _infer_session_params(_safe_get_http_request())
