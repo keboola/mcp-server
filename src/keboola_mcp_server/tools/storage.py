@@ -196,7 +196,7 @@ async def retrieve_bucket_tables(
     # TODO: requesting "metadata" to get the table description;
     #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
-    raw_tables = await client.storage_client.bucket_table_list(bucket_id)
+    raw_tables = await client.storage_client.bucket_table_list(bucket_id, include=['metadata'])
     return [TableDetail.model_validate(raw_table) for raw_table in raw_tables]
 
 

@@ -307,14 +307,18 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonList, await self.get(endpoint='buckets'))
 
-    async def bucket_table_list(self, bucket_id: str) -> JsonList:
+    async def bucket_table_list(self, bucket_id: str, include: list[str] | None = None) -> JsonList:
         """
         Lists all tables in a given bucket.
 
         :param bucket_id: The id of the bucket
+        :param include: List of fields to include in the response
         :return: List of tables as dictionary
         """
-        return cast(JsonList, await self.get(endpoint=f'buckets/{bucket_id}/tables'))
+        params = {}
+        if include is not None and isinstance(include, list):
+            params['include'] = ','.join(include)
+        return cast(JsonList, await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
 
     async def table_detail(self, table_id: str) -> JsonDict:
         """
