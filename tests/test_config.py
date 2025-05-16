@@ -60,7 +60,6 @@ class TestConfig:
         assert config.storage_api_url == 'https://connection.keboola.com'
         assert config.workspace_schema is None
         assert config.transport is None
-        assert config.request_param_source is None
 
     def test_no_token_password_in_repr(self) -> None:
         config = Config(storage_token='foo')
@@ -69,6 +68,21 @@ class TestConfig:
             "storage_token='****', "
             "storage_api_url='https://connection.keboola.com', "
             'workspace_schema=None, '
-            'transport=None, '
-            'request_param_source=None)'
+            'transport=None)'
         )
+
+    @pytest.mark.parametrize(
+        ('required_fields', 'input_params', 'expected_result'),
+        [
+            (['storage_token'], ['storage_token', 'KBC_STORAGE_TOKEN'], True),
+            (['foo'], ['foo', 'KBC_FOO'], True),
+            (['storage_token', 'foo'], ['KBC_STORAGE_TOKEN', 'foo'], True),
+            (['storage_token', 'foo'], ['storage_token'], False),
+        ],
+    )
+    def test_contains_required_fields(
+        self, mocker, required_fields: list[str], input_params: list[str], expected_result: bool
+    ) -> None:
+        mocker.patch('keboola_mcp_server.config.Config.required_fields', return_value=required_fields)
+        params = {param: 'value' for param in input_params}
+        assert Config.contains_required_fields(params) == expected_result

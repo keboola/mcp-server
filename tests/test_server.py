@@ -1,14 +1,20 @@
-from typing import Optional
+from functools import wraps
+from typing import Annotated, Optional
 
 import pytest
+from fastmcp import Client, Context
+from mcp.types import AnyFunction, TextContent
+from pydantic import Field
 from starlette.requests import Request
 
+from keboola_mcp_server.mcp import KeboolaMcpServer
 from keboola_mcp_server.server import (
-    RequestParameterSource,
+    SessionState,
+    SessionStateFactory,
     TransportType,
     _get_session_params,
-    _infer_session_params,
     create_server,
+    session_state,
 )
 from keboola_mcp_server.tools.components import (
     GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
@@ -68,7 +74,6 @@ class TestServer:
     ],
 )
 def test_infer_session_params_request(mocker, current_transport: str, request_param_source: str):
-
     # Create a mock request with query parameters based on the request_param_source
     mock_request = None
     expected_params = {'storage_token': 'test-storage-token', 'workspace_schema': 'test-workspace-schema'}
@@ -77,9 +82,10 @@ def test_infer_session_params_request(mocker, current_transport: str, request_pa
         mock_request = mocker.MagicMock(spec=Request)
         if request_param_source == 'headers':
             mock_request.headers = expected_params
-
+            mock_request.query_params = {}
         if request_param_source == 'query_params':
             mock_request.query_params = expected_params
+            mock_request.headers = {}
     elif current_transport == 'stdio':
         mock_request = None
         os_env_parameters = expected_params
@@ -87,25 +93,19 @@ def test_infer_session_params_request(mocker, current_transport: str, request_pa
     # Patch the _safe_get_http_request function to return our mock request
     mocker.patch('keboola_mcp_server.server.get_http_request', return_value=mock_request)
     mocker.patch('keboola_mcp_server.server.os.environ', os_env_parameters)
-    params = _infer_session_params()
+    params = _get_session_params(None)
     assert params == expected_params
 
 
 @pytest.mark.parametrize(
-    ('current_transport', 'request_param_source'),
+    ('current_transport'),
     [
-        ('streamable-http', 'headers'),
-        ('streamable-http', 'query_params'),
-        ('streamable-http', None),
-        ('sse', 'headers'),
-        ('sse', 'query_params'),
-        ('sse', None),
-        ('stdio', None),
+        ('streamable-http'),
+        ('sse'),
+        ('stdio'),
     ],
 )
-def test_get_session_params(
-    mocker, current_transport: Optional[TransportType], request_param_source: Optional[RequestParameterSource]
-):
+def test_get_session_params(mocker, current_transport: Optional[TransportType]):
 
     # Create a mock request with query parameters based on the request_param_source
     mock_request = None
@@ -113,15 +113,12 @@ def test_get_session_params(
     os_env_parameters = {}
     if current_transport in ('streamable-http', 'sse'):
         mock_request = mocker.MagicMock(spec=Request)
-        if request_param_source == 'headers':
+        if current_transport == 'streamable-http':
+            # Streamable HTTP transport we prefer headers
             mock_request.headers = expected_params
-
-        if request_param_source == 'query_params':
+        if current_transport == 'sse':
+            # SSE transport expects query params due to backwards compatibility
             mock_request.query_params = expected_params
-
-        if not request_param_source:
-            mock_request.query_params = expected_params
-
     elif current_transport == 'stdio':
         mock_request = None
         os_env_parameters = expected_params
@@ -129,5 +126,108 @@ def test_get_session_params(
     # Patch the _safe_get_http_request function to return our mock request
     mocker.patch('keboola_mcp_server.server.get_http_request', return_value=mock_request)
     mocker.patch('keboola_mcp_server.server.os.environ', os_env_parameters)
-    params = _get_session_params(current_transport, request_param_source)
+    params = _get_session_params(current_transport)
     assert params == expected_params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('state_name', 'session_state_factory', 'use_custom_decorator', 'expected_state'),
+    [
+        # whether to use the state factory and custom decorator
+        ('state1', None, False, {}),
+        ('state2', lambda _: {'vaule1': 'value1', 'value2': 'value2'}, False, {'vaule1': 'value1', 'value2': 'value2'}),
+        ('state3', lambda x: {'vaule1': 'value1', **x}, True, {'vaule1': 'value1', 'value2': 'value2'}),
+    ],
+)
+async def test_session_state(
+    mocker,
+    state_name: str,
+    session_state_factory: Optional[SessionStateFactory],
+    use_custom_decorator: bool,
+    expected_state: SessionState,
+):
+
+    input_params_function = {'param': 'value'}
+    expected_param_description = 'Parameter 1 description'
+    custom_decorator = None
+    if use_custom_decorator:
+
+        def decorator(state_name: str, session_state_factory: SessionStateFactory) -> AnyFunction:
+
+            def _wrap(func: AnyFunction) -> AnyFunction:
+
+                @wraps(func)
+                def _inject(*args, **kwargs):
+                    # we know that the context is named ctx
+                    assert 'ctx' in kwargs
+                    assert 'param' in kwargs
+                    ctx = kwargs['ctx']
+                    assert isinstance(ctx, Context)
+                    if not hasattr(ctx.session, state_name):
+                        setattr(ctx.session, state_name, session_state_factory({'value2': 'value2'}))
+                    else:
+                        assert getattr(ctx.session, state_name) == expected_state
+                    return func(*args, **kwargs)
+
+                return _inject
+
+            return _wrap
+
+        custom_decorator = decorator
+    else:
+        custom_decorator = None
+
+    @session_state(state_name, session_state_factory, custom_decorator)
+    async def assessed_function(
+        ctx: Context, param: Annotated[str, Field(description=expected_param_description)]
+    ) -> str:
+        """custom text"""
+        assert hasattr(ctx.session, state_name)
+        assert getattr(ctx.session, state_name) == expected_state
+        return param
+
+    mcp = KeboolaMcpServer()
+    mcp.add_tool(assessed_function, name='assessed-function')
+    # When calling the os.environ, we want to return the expected state to get params, default factory passes
+    # all params
+    mocker.patch('keboola_mcp_server.server.os.environ', return_value=expected_state)
+    # running the server as stdio transport through client
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        assert len(tools) == 1
+        assert tools[0].name == 'assessed-function'
+        assert tools[0].description == 'custom text'
+        # check if the inputSchema contains the expected param description
+        assert expected_param_description in str(tools[0].inputSchema)
+        result = await client.call_tool('assessed-function', input_params_function)
+        assert isinstance(result[0], TextContent)
+        assert result[0].text == 'value'
+
+
+@pytest.mark.asyncio
+async def test_session_state_called_once(mocker):
+    expected_state = {'value1': 'value1', 'value2': 'value2'}
+    mock_func = mocker.patch('keboola_mcp_server.server._get_session_params', return_value=expected_state)
+
+    @session_state('state', None, None)
+    async def assessed_function(ctx: Context, param: str) -> str:
+        assert hasattr(ctx.session, 'state')
+        assert ctx.session.state == {'value1': 'value1', 'value2': 'value2'}
+        return param
+
+    mcp = KeboolaMcpServer()
+    mcp.add_tool(assessed_function, name='assessed-function')
+    async with Client(mcp) as client:
+        result = await client.call_tool('assessed-function', {'param': 'value'})
+        assert isinstance(result[0], TextContent)
+        assert result[0].text == 'value'
+        result = await client.call_tool('assessed-function', {'param': 'value'})
+        assert isinstance(result[0], TextContent)
+        assert result[0].text == 'value'
+        result = await client.call_tool('assessed-function', {'param': 'value'})
+        assert isinstance(result[0], TextContent)
+        assert result[0].text == 'value'
+
+    # we expect the function to be called only once for one connection we reuse the same session
+    assert mock_func.call_count == 1

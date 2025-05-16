@@ -1,6 +1,7 @@
 import pytest
 from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.fastmcp import Context
+from mcp.server.session import ServerSession
 
 from keboola_mcp_server.client import (
     AIServiceClient,
@@ -9,8 +10,12 @@ from keboola_mcp_server.client import (
     KeboolaClient,
     RawKeboolaClient,
 )
-from keboola_mcp_server.mcp import StatefulServerSession
+from keboola_mcp_server.server import SessionState
 from keboola_mcp_server.tools.sql import WorkspaceManager
+
+
+class StatefulServerSession(ServerSession):
+    state: SessionState
 
 
 @pytest.fixture
