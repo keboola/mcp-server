@@ -1,5 +1,4 @@
 from typing import Optional
-from unittest.mock import patch
 
 import pytest
 from starlette.requests import Request
@@ -84,12 +83,10 @@ def test_infer_session_params_request(mocker, current_transport: str, request_pa
         os_env_parameters = expected_params
 
     # Patch the _safe_get_http_request function to return our mock request
-    with (
-        patch('keboola_mcp_server.server.get_http_request', return_value=mock_request),
-        patch('keboola_mcp_server.server.os.environ', os_env_parameters),
-    ):
-        params = _infer_session_params()
-        assert params == expected_params
+    mocker.patch('keboola_mcp_server.server.get_http_request', return_value=mock_request)
+    mocker.patch('keboola_mcp_server.server.os.environ', os_env_parameters)
+    params = _infer_session_params()
+    assert params == expected_params
 
 
 @pytest.mark.parametrize(
@@ -128,9 +125,7 @@ def test_get_session_params(
         os_env_parameters = expected_params
 
     # Patch the _safe_get_http_request function to return our mock request
-    with (
-        patch('keboola_mcp_server.server.get_http_request', return_value=mock_request),
-        patch('keboola_mcp_server.server.os.environ', os_env_parameters),
-    ):
-        params = _get_session_params(current_transport, request_param_source)
-        assert params == expected_params
+    mocker.patch('keboola_mcp_server.server.get_http_request', return_value=mock_request)
+    mocker.patch('keboola_mcp_server.server.os.environ', os_env_parameters)
+    params = _get_session_params(current_transport, request_param_source)
+    assert params == expected_params
