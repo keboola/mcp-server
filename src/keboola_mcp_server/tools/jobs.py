@@ -220,27 +220,6 @@ async def retrieve_jobs(
     """
     _status = [status] if status else None
 
-    print(ctx)
-    LOG.info(ctx)
-    print()
-    print(ctx.session)
-    LOG.info(ctx.session)
-    print()
-    print(ctx.fastmcp)
-    LOG.info(ctx.fastmcp)
-    print()
-    print(ctx.request_id)
-    LOG.info(ctx.request_id)
-    print()
-    print(ctx.request_context)
-    LOG.info(ctx.request_context)
-    print()
-    print(ctx.client_id)
-    LOG.info(ctx.client_id)
-    print()
-    print(ctx.session.state)
-    LOG.info(ctx.session.state)
-
     client = KeboolaClient.from_state(ctx.session.state)
 
     raw_jobs = await client.jobs_queue_client.search_jobs_by(
