@@ -307,7 +307,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonList, await self.get(endpoint='buckets'))
 
-    async def bucket_table_list(self, bucket_id: str, include: list[str] | None = None) -> JsonList:
+    async def bucket_table_list(self, bucket_id: str, include: list[str] | None = None) -> list[JsonDict]:
         """
         Lists all tables in a given bucket.
 
@@ -318,7 +318,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         params = {}
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
-        return cast(JsonList, await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
+        return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
 
     async def table_detail(self, table_id: str) -> JsonDict:
         """
@@ -329,7 +329,38 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
 
-    async def update_component_configuration(
+    async def configuration_detail(self, component_id: str, configuration_id: str) -> JsonDict:
+        """
+        Retrieves information about a given configuration.
+
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :return: The parsed json from the HTTP response.
+        :raises ValueError: If the component_id or configuration_id is invalid.
+        """
+        if not isinstance(component_id, str) or component_id == '':
+            raise ValueError(f"Invalid component_id '{component_id}'.")
+        if not isinstance(configuration_id, str) or configuration_id == '':
+            raise ValueError(f"Invalid configuration_id '{configuration_id}'.")
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+
+        return cast(JsonDict, await self.get(endpoint=endpoint))
+
+    async def configuration_list(self, component_id: str) -> list[JsonDict]:
+        """
+        Lists configurations of the given component.
+
+        :param component_id: The id of the component.
+        :return: List of configurations.
+        :raises ValueError: If the component_id is invalid.
+        """
+        if not isinstance(component_id, str) or component_id == '':
+            raise ValueError(f"Invalid component_id '{component_id}'.")
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
+
+        return cast(list[JsonDict], await self.get(endpoint=endpoint))
+
+    async def configuration_update(
         self,
         component_id: str,
         configuration_id: str,

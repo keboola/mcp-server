@@ -4,7 +4,7 @@ from typing import Any, Optional, Sequence, Union, cast, get_args
 from httpx import HTTPStatusError
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
@@ -96,17 +96,21 @@ async def _retrieve_components_configurations_by_ids(
     components_with_configurations = []
     for component_id in component_ids:
         # retrieve configurations for component ids
-        raw_configurations = client.storage_client_sync.configurations.list(component_id)
+        raw_configurations = await client.storage_client.configuration_list(component_id=component_id)
         # retrieve component details
-        endpoint = f'branch/{client.storage_client.branch_id}/components/{component_id}'
-        raw_component = await client.storage_client.get(endpoint)
+        raw_component = cast(
+            JsonDict,
+            await client.storage_client.get(
+                endpoint=f'branch/{client.storage_client.branch_id}/components/{component_id}'
+            ),
+        )
         # build component configurations list grouped by components
         components_with_configurations.append(
             ComponentWithConfigurations(
                 component=ReducedComponent.model_validate(raw_component),
                 configurations=[
                     ReducedComponentConfiguration.model_validate(
-                        {**raw_configuration, 'component_id': raw_component['id']}
+                        raw_configuration | {'component_id': raw_component['id']}
                     )
                     for raw_configuration in raw_configurations
                 ],
@@ -139,7 +143,7 @@ async def _get_component_details(
     :return: The component details
     """
     try:
-        raw_component = await client.ai_service_client.get_component_detail(component_id)
+        raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
         return Component.model_validate(raw_component)
     except HTTPStatusError as e:
@@ -150,7 +154,7 @@ async def _get_component_details(
             )
 
             endpoint = f'branch/{client.storage_client.branch_id}/components/{component_id}'
-            raw_component = await client.storage_client.get(endpoint)
+            raw_component = await client.storage_client.get(endpoint=endpoint)
             LOG.info(f'Retrieved component details for component {component_id} from Storage API.')
             return Component.model_validate(raw_component)
         else:
