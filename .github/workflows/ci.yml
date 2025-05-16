@@ -30,12 +30,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install  ".[dev]"
 
       # Runs tests with coverage and generates coverage.xml file and test-results.xml file
       # and checks flake8 code-style formatting that is compatible with isort & black
       # see setup in pyproject.toml
-      - name: Run tox
+      - name: Unit tests and code style check
         run: |
           tox
 
@@ -81,9 +81,48 @@ jobs:
           compression-level: 0  # wheels are ZIP archives
           retention-days: 7
 
+  integration_tests:
+    name: Integration Tests
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+      # This ensures tests run sequentially, not in parallel
+      max-parallel: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+
+      - name: Integration tests
+        env:
+          INTEGTEST_STORAGE_TOKEN: ${{ secrets.INTEGTEST_STORAGE_TOKEN }}
+          INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
+          INTEGTEST_WORKSPACE_SCHEMA: ${{ vars.INTEGTEST_WORKSPACE_SCHEMA }}
+        run: |
+          tox -e integtests
+
+      - name: Publish integration test results
+        uses: dorny/test-reporter@v1
+        if: success() || failure() # run this step even if a previous step failed
+        with:
+          name: Integration test results (${{ matrix.python-version }})
+          path: ./integtest-results.xml
+          reporter: 'java-junit'
+
   deploy_to_pypi:
     needs:
       - build
+      - integration_tests
     runs-on: ubuntu-latest
     if: |
       startsWith(github.ref, 'refs/tags/') &&

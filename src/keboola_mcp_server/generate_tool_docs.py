@@ -130,15 +130,14 @@ def setup_tool_categorizer():
     categorizer = ToolCategorizer()
 
     categorizer.add_category(
-        ToolCategory('Storage Tools', re.compile(r'(bucket_|buckets|table_|tables)', re.IGNORECASE))
+        ToolCategory('Storage Tools', re.compile(r'(bucket_|buckets|table_|tables|column_|columns)', re.IGNORECASE))
     )
     categorizer.add_category(ToolCategory('SQL Tools', re.compile(r'(dialect|query_)', re.IGNORECASE)))
     categorizer.add_category(ToolCategory('Component Tools', re.compile(r'(component|transformation)')))
     categorizer.add_category(ToolCategory('Jobs Tools', re.compile(r'job', re.IGNORECASE)))
     categorizer.add_category(ToolCategory('Documentation Tools', re.compile(r'docs', re.IGNORECASE)))
-    categorizer.add_category(
-        ToolCategory('Other Tools', re.compile(r'.+', re.IGNORECASE))
-    )  # catch-all category should be last
+    # catch-all category should be last
+    categorizer.add_category(ToolCategory('Other Tools', re.compile(r'.+', re.IGNORECASE)))
 
     return categorizer
 

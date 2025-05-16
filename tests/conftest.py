@@ -37,9 +37,9 @@ def workspace_manager(mocker) -> WorkspaceManager:
     return mocker.MagicMock(WorkspaceManager)
 
 
-@pytest.fixture()
+@pytest.fixture
 def empty_context(mocker) -> Context:
-    """Creates the mocked `mcp.server.fastmcp.Context` instance with the `StatefullServerSession` and empty state."""
+    """Creates the mocked `mcp.server.fastmcp.Context` instance with the `StatefulServerSession` and empty state."""
     ctx = mocker.MagicMock(Context)
     ctx.session = (session := mocker.MagicMock(StatefulServerSession))
     type(session).state = (state := mocker.PropertyMock())

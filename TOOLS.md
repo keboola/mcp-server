@@ -9,6 +9,7 @@ This document provides details about the tools available in the Keboola MCP serv
 - [retrieve_bucket_tables](#retrieve_bucket_tables): Retrieves all tables in a specific bucket with their basic information.
 - [retrieve_buckets](#retrieve_buckets): Retrieves information about all buckets in the project.
 - [update_bucket_description](#update_bucket_description): Update the description for a given Keboola bucket.
+- [update_column_description](#update_column_description): Update the description for a given column in a Keboola table.
 - [update_table_description](#update_table_description): Update the description for a given Keboola table.
 
 ### SQL Tools
@@ -25,6 +26,8 @@ configuration ID.
 If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
 component_types.
 - [retrieve_transformations](#retrieve_transformations): Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
+- [update_sql_transformation_configuration](#update_sql_transformation_configuration): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
+configuration.
 
 ### Jobs Tools
 - [get_job_detail](#get_job_detail): Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
@@ -161,6 +164,44 @@ Update the description for a given Keboola bucket.
     "description"
   ],
   "title": "update_bucket_descriptionArguments",
+  "type": "object"
+}
+```
+
+---
+<a name="update_column_description"></a>
+## update_column_description
+**Description**:
+
+Update the description for a given column in a Keboola table.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "table_id": {
+      "description": "The ID of the table that contains the column.",
+      "title": "Table Id",
+      "type": "string"
+    },
+    "column_name": {
+      "description": "The name of the column to update.",
+      "title": "Column Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "The new description for the column.",
+      "title": "Description",
+      "type": "string"
+    }
+  },
+  "required": [
+    "table_id",
+    "column_name",
+    "description"
+  ],
+  "title": "update_column_descriptionArguments",
   "type": "object"
 }
 ```
@@ -470,6 +511,68 @@ EXAMPLES:
 ```
 
 ---
+<a name="update_sql_transformation_configuration"></a>
+## update_sql_transformation_configuration
+**Description**:
+
+Updates an existing SQL transformation configuration, optionally updating the description and disabling the
+configuration.
+
+CONSIDERATIONS:
+- The configuration JSON data must follow the current Keboola transformation configuration schema.
+- The SQL code statements should follow the current SQL dialect, which can be retrieved using appropriate tool.
+- When the behavior of the transformation is not changed, the updated_description can be empty string.
+
+EXAMPLES:
+- user_input: `Can you edit this transformation configuration that [USER INTENT]?`
+    - set the transformation_id and configuration_id accordingly and update configuration parameters based on
+      the [USER INTENT]
+    - returns the updated transformation configuration if successful.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_id": {
+      "description": "Unique identifier of the Keboola transformation configuration you want to update",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "change_description": {
+      "description": "Detailed description of the new changes to the transformation configuration.",
+      "title": "Change Description",
+      "type": "string"
+    },
+    "updated_configuration": {
+      "description": "Updated transformation configuration JSON object containing both updated settings applied and all existing settings preserved.",
+      "title": "Updated Configuration",
+      "type": "object"
+    },
+    "updated_description": {
+      "default": "",
+      "description": "Updated existing transformation description reflecting the changes made in the behavior of the transformation. If no behavior changes are made, empty string preserves the original description.",
+      "title": "Updated Description",
+      "type": "string"
+    },
+    "is_disabled": {
+      "default": false,
+      "description": "Whether to disable the transformation configuration. Default is False.",
+      "title": "Is Disabled",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "configuration_id",
+    "change_description",
+    "updated_configuration"
+  ],
+  "title": "update_sql_transformation_configurationArguments",
+  "type": "object"
+}
+```
+
+---
 
 # Jobs Tools
 <a name="get_job_detail"></a>
@@ -528,50 +631,29 @@ EXAMPLES:
 {
   "properties": {
     "status": {
-      "anyOf": [
-        {
-          "enum": [
-            "waiting",
-            "processing",
-            "success",
-            "error",
-            "created"
-          ],
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
       "default": null,
       "description": "The optional status of the jobs to filter by, if None then default all.",
-      "title": "Status"
+      "enum": [
+        "waiting",
+        "processing",
+        "success",
+        "error",
+        "created"
+      ],
+      "title": "Status",
+      "type": "string"
     },
     "component_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
       "default": null,
       "description": "The optional ID of the component whose jobs you want to list, default = None.",
-      "title": "Component Id"
+      "title": "Component Id",
+      "type": "string"
     },
     "config_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
       "default": null,
       "description": "The optional ID of the component configuration whose jobs you want to list, default = None.",
-      "title": "Config Id"
+      "title": "Config Id",
+      "type": "string"
     },
     "limit": {
       "default": 100,
