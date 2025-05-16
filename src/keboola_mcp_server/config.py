@@ -4,12 +4,11 @@ import dataclasses
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal, Mapping, Optional
+from typing import Mapping, Optional
 
 LOG = logging.getLogger(__name__)
 
 STORAGE_TOKEN_KEY = 'storage_token'
-WORKSPACE_SCHEMA_KEY = 'workspace_schema'
 
 
 @dataclass(frozen=True)
@@ -19,17 +18,16 @@ class Config:
     storage_token: Optional[str] = None
     storage_api_url: str = 'https://connection.keboola.com'
     workspace_schema: Optional[str] = None
-    transport: Optional[Literal['stdio', 'streamable-http', 'sse']] = None
-    request_param_source: Optional[Literal['query_params', 'headers']] = None
+    transport: Optional[str] = None
 
     @classmethod
-    def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, Any]:
-        options: dict[str, str | None] = {}
+    def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, str]:
+        options: dict[str, str] = {}
         for f in dataclasses.fields(cls):
             if f.name in d:
-                options[f.name] = d.get(f.name)
+                options[f.name] = d[f.name]
             elif (dict_name := f'KBC_{f.name.upper()}') in d:
-                options[f.name] = d.get(dict_name)
+                options[f.name] = d[dict_name]
         return options
 
     @classmethod
@@ -43,10 +41,17 @@ class Config:
 
     @staticmethod
     def required_fields() -> list[str]:
-        return [
-            STORAGE_TOKEN_KEY,
-            WORKSPACE_SCHEMA_KEY,
-        ]
+        required_fields = [STORAGE_TOKEN_KEY]
+        return required_fields
+
+    @staticmethod
+    def contains_required_fields(params: Mapping[str, str]) -> bool:
+        required_fields = Config.required_fields()
+        kbc_required_fields = [f'KBC_{field.upper()}' for field in required_fields]
+        return all(
+            any(field in params for field in disjunctive_fields)
+            for disjunctive_fields in zip(required_fields, kbc_required_fields)
+        )
 
     def replace_by(self, d: Mapping[str, str]) -> 'Config':
         """
