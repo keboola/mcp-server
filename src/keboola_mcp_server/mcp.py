@@ -96,7 +96,7 @@ class _KeboolaServer(Server):
         **kwargs: Any,
     ):
         """
-        This class is overridden to allow passing the session state factory to the session.
+        This method is overridden to allow passing the session state factory to the session.
         Other approach would be use the session in appropriate place in the code (in tools, etc.), but this
         approach allows to have the session state factory in the server constructor and use it in the tools.
         """
