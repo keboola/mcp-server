@@ -1,1 +1,0 @@
-{"component_id": "ex-generic-v2", "config_example": {"parameters": {"api": {"baseUrl": "https://catfact.ninja/"}, "config": {"outputBucket": "test", "incrementalOutput": false, "jobs": [{"__NAME": "fact", "endpoint": "fact", "method": "GET", "dataType": "fact", "dataField": {"path": ".", "delimiter": "."}}]}}}, "config_row_example": null} 

@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Annotated, Any, Optional, Sequence, cast
 
@@ -923,43 +924,22 @@ async def get_component_configuration_examples(
             -> set the component_id parameter accordingly
             -> returns a markdown formatted string with configuration examples
     """
-    import json
-    from pathlib import Path
+    client = KeboolaClient.from_state(ctx.session.state)
+    raw_component = await client.ai_service_client.get_component_detail(component_id)
+    root_examples = raw_component.get('rootConfigurationExamples') or []
+    row_examples = raw_component.get('rowConfigurationExamples') or []
 
-    # Construct the path to the JSONL file TODO: fix the path somehow
-    jsonl_path = Path(__file__).parent.parent.parent / 'json-schemas/output' / f'sample_data_{component_id}.jsonl'
+    markdown = f'# Configuration Examples for `{component_id}`\n\n'
 
-    if not jsonl_path.exists():
-        return f'No configuration examples found for component {component_id}'
+    if root_examples:
+        markdown += '## Root Configuration Examples\n\n'
+        for i, example in enumerate(root_examples, 1):
+            markdown += f'{i}. Root Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
-    # Read and parse the JSONL file
-    examples = []
-    with open(jsonl_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:  # Skip empty lines
-                continue
-            try:
-                data = json.loads(line)
-                if data.get('component_id') == component_id and data.get('config_example'):
-                    example = {
-                        'config_example': data['config_example'],
-                        'config_row_example': data['config_row_example'],
-                    }
-                    examples.append(example)
-            except json.JSONDecodeError:
-                continue  # Skip lines that are not valid JSON
-
-    if not examples:
-        return f'No configuration examples found for component {component_id}'
-
-    # Format the examples as a markdown list
-    markdown = 'Configuration examples\n\n'
-    for i, example in enumerate(examples, 1):
-        markdown += f"{i}. Configuration:\n```json\n{json.dumps(example['config_example'], indent=2)}\n```\n"
-        if example['config_row_example']:
-            markdown += f"   Configuration Row:\n```json\n{json.dumps(example['config_row_example'], indent=2)}\n```\n"
-        markdown += '\n'
+    if row_examples:
+        markdown += '## Row Configuration Examples\n\n'
+        for i, example in enumerate(row_examples, 1):
+            markdown += f'{i}. Row Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
     return markdown
 

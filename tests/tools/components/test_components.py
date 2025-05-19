@@ -24,6 +24,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentDetail,
     ReducedComponentDetail,
 )
+from keboola_mcp_server.tools.components.tools import get_component_configuration_examples
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
 
@@ -436,3 +437,40 @@ async def test_update_transformation_configuration(
         updated_description=None,
         is_disabled=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_get_component_configuration_examples(
+        mocker: MockerFixture,
+        mcp_context_components_configs: Context,
+        mock_component: dict[str, Any],
+):
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    # Setup mock to return test data
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+
+    text = await get_component_configuration_examples(component_id='keboola.ex-aws-s3', ctx=context)
+    assert text == """# Configuration Examples for `keboola.ex-aws-s3`
+
+## Root Configuration Examples
+
+1. Root Configuration:
+```json
+{
+  "foo": "root"
+}
+```
+
+## Row Configuration Examples
+
+1. Row Configuration:
+```json
+{
+  "foo": "row"
+}
+```
+
+"""
