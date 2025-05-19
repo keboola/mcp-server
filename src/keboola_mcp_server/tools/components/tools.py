@@ -5,6 +5,7 @@ from fastmcp import Context, FastMCP
 from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.model import ComponentConfiguration, ComponentType, ComponentWithConfigurations
 from keboola_mcp_server.tools.components.utils import (
     _get_component_details,
@@ -56,7 +57,7 @@ def add_component_tools(mcp: FastMCP) -> None:
 
 # tools #########################################
 
-
+@with_session_state()
 async def retrieve_components_configurations(
     ctx: Context,
     component_types: Annotated[
@@ -110,6 +111,7 @@ async def retrieve_components_configurations(
         return await _retrieve_components_configurations_by_ids(client, component_ids)
 
 
+@with_session_state()
 async def retrieve_transformations_configurations(
     ctx: Context,
     transformation_ids: Annotated[
@@ -152,6 +154,7 @@ async def retrieve_transformations_configurations(
         return await _retrieve_components_configurations_by_ids(client, transformation_ids)
 
 
+@with_session_state()
 async def get_component_configuration_details(
     component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
     configuration_id: Annotated[
@@ -212,6 +215,7 @@ async def get_component_configuration_details(
     )
 
 
+@with_session_state()
 async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
@@ -325,6 +329,7 @@ async def create_sql_transformation(
         raise e
 
 
+@with_session_state()
 async def update_sql_transformation_configuration(
     ctx: Context,
     configuration_id: Annotated[

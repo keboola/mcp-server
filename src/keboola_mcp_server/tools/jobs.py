@@ -7,6 +7,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.mcp import with_session_state
 
 LOG = logging.getLogger(__name__)
 
@@ -156,6 +157,7 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 # mcp parsing the parameters is not working. So we need to use Annotated[JOB_STATUS, ...] = None instead of
 # Optional[JOB_STATUS] = None despite having type check errors in the code.
 @tool_errors()
+@with_session_state()
 async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
@@ -240,6 +242,7 @@ async def retrieve_jobs(
 
 
 @tool_errors()
+@with_session_state()
 async def get_job_detail(
     job_id: Annotated[
         str,
@@ -262,6 +265,7 @@ async def get_job_detail(
 
 
 @tool_errors()
+@with_session_state()
 async def start_job(
     ctx: Context,
     component_id: Annotated[
