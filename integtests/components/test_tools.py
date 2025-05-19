@@ -16,14 +16,14 @@ LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_get_component_configuration_details(mcp_context_client: Context, configs: list[ConfigDef]):
+async def test_get_component_configuration_details(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `get_component_configuration_details` returns a `ComponentConfiguration` instance."""
 
     for config in configs:
         assert config.configuration_id is not None
 
         result = await get_component_configuration_details(
-            component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context_client
+            component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context
         )
 
         assert isinstance(result, ComponentConfiguration)
@@ -39,14 +39,14 @@ async def test_get_component_configuration_details(mcp_context_client: Context, 
 
 
 @pytest.mark.asyncio
-async def test_retrieve_components_by_ids(mcp_context_client: Context, configs: list[ConfigDef]):
+async def test_retrieve_components_by_ids(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `retrieve_components_configurations` returns components filtered by component IDs."""
 
     # Get unique component IDs from test configs
     component_ids = list({config.component_id for config in configs})
     assert len(component_ids) > 0
 
-    result = await retrieve_components_configurations(ctx=mcp_context_client, component_ids=component_ids)
+    result = await retrieve_components_configurations(ctx=mcp_context, component_ids=component_ids)
 
     # Verify result structure and content
     assert isinstance(result, list)
@@ -62,7 +62,7 @@ async def test_retrieve_components_by_ids(mcp_context_client: Context, configs: 
 
 
 @pytest.mark.asyncio
-async def test_retrieve_components_by_types(mcp_context_client: Context, configs: list[ConfigDef]):
+async def test_retrieve_components_by_types(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `retrieve_components_configurations` returns components filtered by component types."""
 
     # Get unique component IDs from test configs
@@ -71,7 +71,7 @@ async def test_retrieve_components_by_types(mcp_context_client: Context, configs
 
     component_types: list[ComponentType] = ['extractor']
 
-    result = await retrieve_components_configurations(ctx=mcp_context_client, component_types=component_types)
+    result = await retrieve_components_configurations(ctx=mcp_context, component_types=component_types)
 
     assert isinstance(result, list)
     # Currently, we only have extractor components in the project

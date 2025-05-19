@@ -161,7 +161,8 @@ def keboola_project(
     env_file_loaded: bool
 ) -> Generator[ProjectDef, Any, None]:
     """
-    Sets up a Keboola project with items needed for integration tests.
+    Sets up a Keboola project with items needed for integration tests,
+    such as buckets, tables and configurations.
     After the tests, the project is cleaned up.
     """
     # Cannot use keboola_client fixture because it is function-scoped
@@ -233,9 +234,12 @@ def workspace_manager(keboola_client: KeboolaClient) -> WorkspaceManager:
 
 
 @pytest.fixture
-def mcp_context_client(
-    mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, keboola_project: str
+def mcp_context(
+    mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, keboola_project: ProjectDef
 ) -> Context:
+    """
+    MCP context containing the Keboola client and workspace manager.
+    """
     client_context = mocker.MagicMock(Context)
     client_context.session = mocker.MagicMock(StatefulServerSession)
     client_context.session.state = {
