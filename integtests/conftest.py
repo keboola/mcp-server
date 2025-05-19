@@ -6,11 +6,12 @@ from typing import Any, Generator
 
 import pytest
 from dotenv import load_dotenv
-from mcp.server.fastmcp import Context
+from fastmcp import Context
+from mcp.server.session import ServerSession
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.mcp import StatefulServerSession
-from keboola_mcp_server.tools.sql import WorkspaceManager
+from keboola_mcp_server.server import SessionState
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -31,6 +32,10 @@ class TableDef:
     bucket_id: str
     table_name: str
     table_id: str
+
+
+class StatefulServerSession(ServerSession):
+    state: SessionState
 
 
 @pytest.fixture(scope='session')
