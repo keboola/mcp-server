@@ -7,14 +7,12 @@ from mcp.types import AnyFunction, TextContent
 from pydantic import Field
 from starlette.requests import Request
 
-from keboola_mcp_server.mcp import KeboolaMcpServer
+from keboola_mcp_server.mcp import KeboolaMcpServer, _get_session_params, with_session_state_from
 from keboola_mcp_server.server import (
     SessionState,
     SessionStateFactory,
     TransportType,
-    _get_session_params,
     create_server,
-    session_state,
 )
 from keboola_mcp_server.tools.components import (
     GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
@@ -91,8 +89,8 @@ def test_infer_session_params_request(mocker, current_transport: str, request_pa
         os_env_parameters = expected_params
 
     # Patch the _safe_get_http_request function to return our mock request
-    mocker.patch('keboola_mcp_server.server.get_http_request', return_value=mock_request)
-    mocker.patch('keboola_mcp_server.server.os.environ', os_env_parameters)
+    mocker.patch('keboola_mcp_server.mcp.get_http_request', return_value=mock_request)
+    mocker.patch('keboola_mcp_server.mcp.os.environ', os_env_parameters)
     params = _get_session_params(None)
     assert params == expected_params
 
@@ -124,8 +122,8 @@ def test_get_session_params(mocker, current_transport: Optional[TransportType]):
         os_env_parameters = expected_params
 
     # Patch the _safe_get_http_request function to return our mock request
-    mocker.patch('keboola_mcp_server.server.get_http_request', return_value=mock_request)
-    mocker.patch('keboola_mcp_server.server.os.environ', os_env_parameters)
+    mocker.patch('keboola_mcp_server.mcp.get_http_request', return_value=mock_request)
+    mocker.patch('keboola_mcp_server.mcp.os.environ', os_env_parameters)
     params = _get_session_params(current_transport)
     assert params == expected_params
 
@@ -140,7 +138,7 @@ def test_get_session_params(mocker, current_transport: Optional[TransportType]):
         ('state3', lambda x: {'vaule1': 'value1', **x}, True, {'vaule1': 'value1', 'value2': 'value2'}),
     ],
 )
-async def test_session_state(
+async def test_with_session_state_from(
     mocker,
     state_name: str,
     session_state_factory: Optional[SessionStateFactory],
@@ -178,7 +176,7 @@ async def test_session_state(
     else:
         custom_decorator = None
 
-    @session_state(state_name, session_state_factory, custom_decorator)
+    @with_session_state_from(state_name, session_state_factory, custom_decorator)
     async def assessed_function(
         ctx: Context, param: Annotated[str, Field(description=expected_param_description)]
     ) -> str:
@@ -191,7 +189,7 @@ async def test_session_state(
     mcp.add_tool(assessed_function, name='assessed-function')
     # When calling the os.environ, we want to return the expected state to get params, default factory passes
     # all params
-    mocker.patch('keboola_mcp_server.server.os.environ', return_value=expected_state)
+    mocker.patch('keboola_mcp_server.mcp.os.environ', return_value=expected_state)
     # running the server as stdio transport through client
     async with Client(mcp) as client:
         tools = await client.list_tools()
@@ -206,11 +204,11 @@ async def test_session_state(
 
 
 @pytest.mark.asyncio
-async def test_session_state_called_once(mocker):
+async def test_with_session_state_from_initialized_once(mocker):
     expected_state = {'value1': 'value1', 'value2': 'value2'}
-    mock_func = mocker.patch('keboola_mcp_server.server._get_session_params', return_value=expected_state)
+    mock_func = mocker.patch('keboola_mcp_server.mcp._get_session_params', return_value=expected_state)
 
-    @session_state('state', None, None)
+    @with_session_state_from('state', None, None)
     async def assessed_function(ctx: Context, param: str) -> str:
         assert hasattr(ctx.session, 'state')
         assert ctx.session.state == {'value1': 'value1', 'value2': 'value2'}
@@ -229,5 +227,5 @@ async def test_session_state_called_once(mocker):
         assert isinstance(result[0], TextContent)
         assert result[0].text == 'value'
 
-    # we expect the function to be called only once for one connection we reuse the same session
+    # we expect the function to be called only once (for initialization) for one connection we reuse the same session
     assert mock_func.call_count == 1

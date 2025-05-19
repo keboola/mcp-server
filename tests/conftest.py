@@ -10,8 +10,8 @@ from keboola_mcp_server.client import (
     KeboolaClient,
     RawKeboolaClient,
 )
-from keboola_mcp_server.server import SessionState
-from keboola_mcp_server.tools.sql import WorkspaceManager
+from keboola_mcp_server.mcp import SessionState
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
 class StatefulServerSession(ServerSession):
