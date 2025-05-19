@@ -492,7 +492,7 @@ async def create_component_root_configuration(
             description='The ID of the component for which to create the configuration.',
         ),
     ],
-    parameters: Annotated[
+    root_configuration: Annotated[
         dict[str, Any],
         Field(description='The component configuration parameters, adhering to the root_configuration_schema'),
     ],
@@ -514,10 +514,8 @@ async def create_component_root_configuration(
     """
     Creates a component configuration using the specified name, component ID, configuration JSON, and description.
     CONSIDERATIONS:
-        The configuration JSON object must follow the root_configuration_schema of the specified component.
-        Make sure the configuration parameters always adhere to the root_configuration_schema,
-        which is available via the component_detail tool.
-        The configuration JSON object should adhere to the component's configuration examples if found.
+        The root_configuration JSON object must follow the root_configuration_schema of the specified component.
+        It can also adhere to the appropriate configuration examples if available.
 
     USAGE:
         - Use when you want to create a new root configuration for a specific component.
@@ -531,7 +529,7 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
+    configuration_payload = {'storage': storage, 'parameters': root_configuration}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -592,7 +590,7 @@ async def create_component_row_configuration(
             description='The ID of the configuration for which to create the configuration row.',
         ),
     ],
-    parameters: Annotated[
+    row_configuration: Annotated[
         dict[str, Any],
         Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
     ],
@@ -616,10 +614,8 @@ async def create_component_row_configuration(
     component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-        The configuration JSON object must follow the row_configuration_schema of the specified component.
-        Make sure the configuration parameters always adhere to the row_configuration_schema,
-        which is available via the component_detail tool.
-        The configuration JSON object should adhere to the component's configuration examples if found.
+        The row_configuration JSON object must follow the row_configuration_schema of the specified component.
+        It can also adhere to the appropriate configuration examples if available.
 
     USAGE:
         - Use when you want to create a new root configuration for a specific component.
@@ -636,7 +632,7 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
+    configuration_payload = {'storage': storage, 'parameters': row_configuration}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -704,9 +700,9 @@ async def update_component_root_configuration(
             description="The ID of the configuration which you'd like to update.",
         ),
     ],
-    parameters: Annotated[
+    root_configuration: Annotated[
         dict[str, Any],
-        Field(description='The component configuration parameters, adhering to the root_configuration_schema schema'),
+        Field(description='The root configuration parameters, adhering to the root_configuration_schema schema'),
     ],
     storage: Annotated[
         Optional[dict[str, Any]],
@@ -727,11 +723,8 @@ async def update_component_root_configuration(
     """
     Updates a specific component configuration using given by component ID, and configuration ID.
     CONSIDERATIONS:
-        The configuration JSON object must follow the root_configuration_schema of the specified component.
-        Make sure the configuration parameters always adhere to the root_configuration_schema,
-        which is available via the component_detail tool.
-        The configuration JSON object should adhere to the component's configuration examples if found
-
+        The root_configuration JSON object must follow the root_configuration_schema of the specified component.
+        It can also adhere to the appropriate configuration examples if available.
     USAGE:
         - Use when you want to update a root configuration of a specific component.
     EXAMPLES:
@@ -745,7 +738,7 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
+    configuration_payload = {'storage': storage, 'parameters': root_configuration}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -820,9 +813,9 @@ async def update_component_row_configuration(
             description="The ID of the configuration row which you'd like to update.",
         ),
     ],
-    parameters: Annotated[
+    row_configuration: Annotated[
         dict[str, Any],
-        Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
+        Field(description='The row configuration parameters, adhering to the row_configuration_schema'),
     ],
     storage: Annotated[
         Optional[dict[str, Any]],
@@ -844,9 +837,8 @@ async def update_component_row_configuration(
     component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-        The configuration JSON object must follow the row_configuration_schema of the specified component.
-        Make sure the configuration parameters always adhere to the row_configuration_schema,
-        which is available via the component_detail tool.
+        The row_configuration JSON object must follow the row_configuration_schema of the specified component.
+        It can also adhere to the appropriate configuration examples if available.
 
     USAGE:
         - Use when you want to update a row configuration for a specific component and configuration.
@@ -863,7 +855,7 @@ async def update_component_row_configuration(
         f'and row id {configuration_row_id}.'
     )
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
+    configuration_payload = {'storage': storage, 'parameters': row_configuration}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
