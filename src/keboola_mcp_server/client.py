@@ -595,3 +595,20 @@ class AIServiceClient(KeboolaServiceClient):
         )
 
         return ComponentSuggestionResponse.model_validate(response)
+
+    async def get_component_configuration_examples(self, component_id: str):
+        """
+        Retrieve example configurations for a specific component.
+        :param component_id: The unique identifier of the component whose configuration examples are to be retrieved.
+
+        :return: A dictionary containing:
+                - ``componentID``: The ID of the component.
+                - ``rootConfigurationExamples``: Examples of how the component is configured at the root level.
+                - ``rowConfigurationExamples``: Examples of how the component is configured at the row level.
+        """
+        response = await self.get(endpoint=f'docs/components/{component_id}')
+        return {
+            'componentID': response.get('componentId'),
+            'rootConfigurationExamples': response.get('rootConfigurationExamples'),
+            'rowConfigurationExamples': response.get('rowConfigurationExamples'),
+        }

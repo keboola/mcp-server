@@ -262,9 +262,11 @@ async def test_get_component_configuration_details(
     keboola_client.storage_client = MagicMock()
     keboola_client.storage_client._branch_id = mock_branch_id
     keboola_client.storage_client.get = AsyncMock(
-        side_effect=lambda path, **kwargs: mock_metadata
-        if 'metadata' in path
-        else {'components': [{'id': component_id, 'flags': mock_component['flags']}]}
+        side_effect=lambda path, **kwargs: (
+            mock_metadata
+            if 'metadata' in path
+            else {'components': [{'id': component_id, 'flags': mock_component['flags']}]}
+        )
     )
 
     # Setup AI service mocks
