@@ -57,17 +57,34 @@ def tables() -> list[TableDef]:
     ]
 
 
-def _keboola_client() -> KeboolaClient:
-    storage_api_url = os.getenv(STORAGE_API_URL_ENV_VAR)
-    storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
-    assert storage_api_url, f'{STORAGE_API_URL_ENV_VAR} must be set'
-    assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
-    return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
-
-
 @pytest.fixture(scope='session')
 def env_file_loaded() -> bool:
     return load_dotenv()
+
+
+@pytest.fixture(scope='session')
+def storage_api_url(env_file_loaded: bool) -> str:
+    storage_api_url = os.getenv(STORAGE_API_URL_ENV_VAR)
+    assert storage_api_url, f'{STORAGE_API_URL_ENV_VAR} must be set'
+    return storage_api_url
+
+
+@pytest.fixture(scope='session')
+def storage_api_token(env_file_loaded: bool) -> str:
+    storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
+    assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
+    return storage_api_token
+
+
+@pytest.fixture(scope='session')
+def workspace_schema(env_file_loaded: bool) -> str:
+    workspace_schema = os.getenv(WORKSPACE_SCHEMA_ENV_VAR)
+    assert workspace_schema, f'{WORKSPACE_SCHEMA_ENV_VAR} must be set'
+    return workspace_schema
+
+
+def _keboola_client(storage_api_token: str, storage_api_url: str) -> KeboolaClient:
+    return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
 
 
 @pytest.fixture(scope='session')
@@ -83,6 +100,7 @@ def shared_datadir_ro() -> Path:
 
 @pytest.fixture(scope='session')
 def keboola_project(
+    storage_api_token: str, storage_api_url: str,
     env_file_loaded: bool, shared_datadir_ro: Path, buckets: list[BucketDef], tables: list[TableDef]
 ) -> Generator[str, Any, None]:
     """
@@ -90,7 +108,7 @@ def keboola_project(
     After the tests, the project is cleaned up.
     """
     # Cannot use keboola_client fixture because it is function-scoped
-    storage_client = _keboola_client().storage_client_sync
+    storage_client = _keboola_client(storage_api_token, storage_api_url).storage_client_sync
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
     LOG.info(f'Setting up Keboola project with ID={project_id}')
@@ -127,14 +145,14 @@ def keboola_project(
 
 
 @pytest.fixture
-def keboola_client(env_file_loaded: bool) -> KeboolaClient:
-    return _keboola_client()
+def keboola_client(
+    env_file_loaded: bool, storage_api_token: str, storage_api_url: str
+) -> KeboolaClient:
+    return _keboola_client(storage_api_token, storage_api_url)
 
 
 @pytest.fixture
-def workspace_manager(keboola_client: KeboolaClient) -> WorkspaceManager:
-    workspace_schema = os.getenv(WORKSPACE_SCHEMA_ENV_VAR)
-    assert workspace_schema, f'{WORKSPACE_SCHEMA_ENV_VAR} must be set'
+def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> WorkspaceManager:
     return WorkspaceManager(keboola_client, workspace_schema)
 
 
