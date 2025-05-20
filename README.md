@@ -1,4 +1,5 @@
 # Keboola MCP Server
+
 > Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agents when and where they need it.
 
 ## Overview
@@ -13,46 +14,46 @@ Keboola MCP Server is an open-source bridge between your Keboola project and mod
 - **Jobs**: Run components and transformations, and retrieve job execution details  
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
 
-
 ## Preparations
 
 Make sure you have:
+
 - [ ] Python 3.10+ installed
 - [ ] Access to a Keboola project with admin rights
 - [ ] Your preferred MCP client (Claude, Cursor, etc.)
 
-**Note**: Make sure you have `uv` installed. The MCP client will use it to automatically download and run the Keboola MCP Server. 
+**Note**: Make sure you have `uv` installed. The MCP client will use it to automatically download and run the Keboola MCP Server.
 **Installing uv**:
- 
-*macOS/Linux*:
- ```bash
 
+*macOS/Linux*:
+
+```bash
 #if homebrew is not installed on your machine use:
 # /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
- # Install using Homebrew
- brew install uv
+# Install using Homebrew
+brew install uv
+```
 
- ```
- 
- *Windows*:
- ```powershell
- # Using the installer script
- powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
- 
- # Or using pip
- pip install uv
- 
- # Or using winget
- winget install --id=astral-sh.uv -e
- ```
+*Windows*:
 
- For more installation options, see the [official uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
+```powershell
+# Using the installer script
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
+# Or using pip
+pip install uv
+
+# Or using winget
+winget install --id=astral-sh.uv -e
+```
+
+For more installation options, see the [official uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
 
 Before setting up the MCP server, you need three key pieces of information:
 
 ### KBC_STORAGE_TOKEN
+
 This is your authentication token for Keboola:
 
 For instructions on how to create and manage Storage API tokens, refer to the [official Keboola documentation](https://help.keboola.com/management/project/tokens/).
@@ -60,6 +61,7 @@ For instructions on how to create and manage Storage API tokens, refer to the [o
 **Note**: If you want the MCP server to have limited access, use custom storage token, if you want the MCP to access everything in your project, use the master token.
 
 ### KBC_WORKSPACE_SCHEMA
+
 This identifies your workspace in Keboola and is required for SQL queries:
 
 Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA.
@@ -67,6 +69,7 @@ Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspa
 **Note**: Check Grant read-only access to all Project data option when creating the workspace
 
 ### Keboola Region
+
 Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
 
 | Region | API URL |
@@ -77,7 +80,6 @@ Your Keboola API URL depends on your deployment region. You can determine your r
 | Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
 | Azure EU | `https://connection.north-europe.azure.keboola.com` |
 
-
 ### BigQuery-Specific Setup
 
 If your Keboola project uses BigQuery backend, you will need to set `GOOGLE_APPLICATION_CREDENTIALS` environment variable in addition to `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA`:
@@ -86,7 +88,7 @@ If your Keboola project uses BigQuery backend, you will need to set `GOOGLE_APPL
 2. Download the credentials file to your local disk. It is a plain JSON file
 3. Set the full path of the downloaded JSON credentials file to `GOOGLE_APPLICATION_CREDENTIALS` environment variable
 4. This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud
-**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in the BigQuery workspace, you simply click connect and copy the Dataset Name. 
+**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in the BigQuery workspace, you simply click connect and copy the Dataset Name.
 
 ## Running Keboola MCP Server
 
@@ -122,10 +124,12 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
   }
 }
 ```
+
 > **Note**: For BigQuery users, add the following line into "env": {}:
 >"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
 
 Config file locations:
+
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
@@ -152,6 +156,7 @@ Config file locations:
   }
 }
 ```
+
 > **Note**: For BigQuery users, add the following line into "env": {}:
 >"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
 
@@ -177,6 +182,7 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 ```
 
 Where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
+
 ```bash
 export KBC_STORAGE_TOKEN="your_keboola_storage_token"
 export KBC_WORKSPACE_SCHEMA="your_workspace_schema"
@@ -208,6 +214,7 @@ For developers working on the MCP server code itself:
   }
 }
 ```
+
 > **Note**: For BigQuery users, add the following line into "env": {}:
 >"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
 
@@ -262,28 +269,32 @@ docker run -it \
 | Testing CLI manually | Yes | Use terminal to run |
 | Using Docker | Yes | Run docker container |
 
-
 ## Using MCP Server
 
 Once your MCP client (Claude/Cursor) is configured and running, you can start querying your Keboola data:
 
 ### Verify Your Setup
+
 You can start with a simple query to confirm everything is working:
-```
+
+```text
 What buckets and tables are in my Keboola project?
 ```
 
 ### Examples of What You Can Do
 
 **Data Exploration:**
+
 - "What tables contain customer information?"
 - "Run a query to find the top 10 customers by revenue"
 
 **Data Analysis:**
+
 - "Analyze my sales data by region for the last quarter"
 - "Find correlations between customer age and purchase frequency"
 
 **Data Pipelines:**
+
 - "Create a SQL transformation that joins customer and order tables"
 - "Start the data extraction job for my Salesforce component"
 
