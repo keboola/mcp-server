@@ -34,7 +34,22 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         default='INFO',
         help='Logging level',
     )
-    parser.add_argument('--api-url', default='https://connection.keboola.com', help='Keboola Storage API URL')
+    parser.add_argument('--api-url', default='https://connection.keboola.com', help=(
+        'Keboola Storage API URL. Default is https://connection.keboola.com. Important for server setup, for now we '
+        'support rewriting the API URL within each server session, but in the future we will support only one API URL '
+        'per server.'
+    ))
+    parser.add_argument('--storage-token', default=None, help=(
+        'Keboola Storage API token (optional). If not provided, the server will use the token from the request or from'
+        'the environment variable based on the transport of the server. This parameter serves mainly for local server '
+        'setup, because when accessing the MCP server remotely you need to provide token through request.'
+    ))
+    parser.add_argument('--workspace-schema', default=None, help=(
+        'Keboola Storage API workspace schema (optional). If not provided, the server will use the schema from the '
+        'request or from the environment variable based on the transport of the server. This parameter serves mainly '
+        'for local server setup, because when accessing the MCP server remotely you need to provide schema through '
+        'request.'
+    ))
 
     return parser.parse_args(args)
 
@@ -57,8 +72,10 @@ async def main(args: Optional[list[str]] = None) -> None:
     # Create config from the CLI arguments
     config = Config.from_dict(
         {
+            'storage_token': parsed_args.storage_token,
             'storage_api_url': parsed_args.api_url,
             'log_level': parsed_args.log_level,
+            'workspace_schema': parsed_args.workspace_schema,
             'transport': parsed_args.transport,
         }
     )
@@ -66,7 +83,7 @@ async def main(args: Optional[list[str]] = None) -> None:
     try:
         # Create and run server
         keboola_mcp_server = create_server(config)
-        await keboola_mcp_server.run_async(transport=parsed_args.transport)
+        await keboola_mcp_server.run_async(transport=parsed_args.transport, log_level=parsed_args.log_level)
     except Exception as e:
         LOG.exception(f'Server failed: {e}')
         sys.exit(1)
