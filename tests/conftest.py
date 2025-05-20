@@ -10,12 +10,7 @@ from keboola_mcp_server.client import (
     KeboolaClient,
     RawKeboolaClient,
 )
-from keboola_mcp_server.mcp import SessionState
 from keboola_mcp_server.tools.workspace import WorkspaceManager
-
-
-class StatefulServerSession(ServerSession):
-    state: SessionState
 
 
 @pytest.fixture
@@ -44,9 +39,10 @@ def workspace_manager(mocker) -> WorkspaceManager:
 
 @pytest.fixture
 def empty_context(mocker) -> Context:
-    """Creates the mocked `mcp.server.fastmcp.Context` instance with the `StatefulServerSession` and empty state."""
+    """Creates the mocked `mcp.server.fastmcp.Context` instance with the `ServerSession` and empty state."""
     ctx = mocker.MagicMock(Context)
-    ctx.session = (session := mocker.MagicMock(StatefulServerSession))
+    ctx.session = (session := mocker.MagicMock(ServerSession))
+    # We set the user session state as it is done in the @with_session_state decorator
     type(session).state = (state := mocker.PropertyMock())
     state.return_value = {}
     return ctx

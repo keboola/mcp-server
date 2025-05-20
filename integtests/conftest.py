@@ -10,7 +10,6 @@ from fastmcp import Context
 from mcp.server.session import ServerSession
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.server import SessionState
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -32,10 +31,6 @@ class TableDef:
     bucket_id: str
     table_name: str
     table_id: str
-
-
-class StatefulServerSession(ServerSession):
-    state: SessionState
 
 
 @pytest.fixture(scope='session')
@@ -143,7 +138,8 @@ def mcp_context_client(
     mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, keboola_project: str
 ) -> Context:
     client_context = mocker.MagicMock(Context)
-    client_context.session = mocker.MagicMock(StatefulServerSession)
+    client_context.session = mocker.MagicMock(ServerSession)
+    # We set the user session state as it is done in the @with_session_state decorator
     client_context.session.state = {
         KeboolaClient.STATE_KEY: keboola_client,
         WorkspaceManager.STATE_KEY: workspace_manager,
