@@ -76,4 +76,3 @@ async def test_retrieve_components_by_types(mcp_context: Context, configs: list[
     for item in result:
         assert isinstance(item, ComponentWithConfigurations)
         assert item.component.component_type == 'extractor'
-
