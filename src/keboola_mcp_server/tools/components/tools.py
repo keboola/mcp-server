@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Sequence
+from typing import Annotated, Sequence, Optional, List, Dict, Any
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
@@ -9,6 +9,8 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfiguration,
     ComponentType,
     ComponentWithConfigurations,
+    DataApp,
+    DataAppConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
     _get_component_details,
@@ -18,7 +20,8 @@ from keboola_mcp_server.tools.components.utils import (
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
 )
-from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.tools.storage import retrieve_buckets, retrieve_bucket_tables
+from keboola_mcp_server.tools.sql import get_sql_dialect, query_table
 
 LOG = logging.getLogger(__name__)
 
@@ -55,6 +58,12 @@ def add_component_tools(mcp: FastMCP) -> None:
 
     mcp.add_tool(create_sql_transformation)
     LOG.info(f'Added tool: {create_sql_transformation.__name__}.')
+
+    mcp.add_tool(create_data_app)
+    LOG.info('Added tool: create_data_app.')
+
+    mcp.add_tool(_start_data_app)
+    LOG.info('Added tool: _start_data_app.')
 
     LOG.info('Component tools initialized.')
 
@@ -329,6 +338,327 @@ async def create_sql_transformation(
     except Exception as e:
         LOG.exception(f'Error when creating new transformation configuration: {e}')
         raise e
+
+
+async def _get_data_context(ctx: Context) -> Dict[str, Any]:
+    """
+    Get context about available data in the Keboola project.
+    
+    Args:
+        ctx: The MCP server context
+        
+    Returns:
+        Dictionary containing information about available data
+    """
+    try:
+        # Get available buckets and tables
+        buckets = await retrieve_buckets(ctx)
+        data_context = {
+            'buckets': [],
+            'tables': [],
+            'sql_dialect': await get_sql_dialect(ctx)
+        }
+        
+        # For each bucket, get tables and sample data
+        for bucket in buckets:
+            bucket_info = {
+                'id': bucket.bucket_id,
+                'name': bucket.bucket_name,
+                'description': bucket.bucket_description,
+                'tables': []
+            }
+            
+            # Get tables in  bucket
+            tables = await retrieve_bucket_tables(ctx, bucket.bucket_id)
+            for table in tables:
+                try:
+                    # Get a sample of the table data
+                    sample_data = await query_table(
+                        ctx,
+                        table_id=table.table_id,
+                        limit=5,
+                        columns=[]
+                    )
+                    
+                    # Get table info
+                    table_info = {
+                        'id': table.table_id,
+                        'name': table.table_name,
+                        'description': table.table_description,
+                        'columns': list(sample_data[0].keys()) if sample_data else [],
+                        'sample_rows': [
+                            {k: str(v) for k, v in row.items()} 
+                            for row in sample_data
+                        ] if sample_data else []
+                    }
+                    bucket_info['tables'].append(table_info)
+                except Exception as e:
+                    LOG.warning(f"Could not get sample data for table {table.table_id}: {e}")
+                    bucket_info['tables'].append({
+                        'id': table.table_id,
+                        'name': table.table_name,
+                        'description': table.table_description,
+                        'columns': [],
+                        'sample_rows': []
+                    })
+            
+            data_context['buckets'].append(bucket_info)
+            
+        return data_context
+        
+    except Exception as e:
+        LOG.error(f"Error getting data context: {e}")
+        return {
+            'buckets': [],
+            'tables': [],
+            'sql_dialect': None
+        }
+
+
+async def _generate_data_app_script(
+    ctx: Context, 
+    name: str, 
+    description: str,
+    user_query: Optional[str] = None
+) -> List[str]:
+    """
+    Generate a Streamlit script for a data app using Claude and data context.
+    
+    Args:
+        ctx: The MCP server context
+        name: The name of the data app
+        description: Detailed description of what the data app should do
+        user_query: Optional query from the user about what data to use
+        
+    Returns:
+        List of script lines
+    """
+    # Get data context from Keboola project
+    data_context = await _get_data_context(ctx)
+    
+    # Create a prompt for Claude that includes data context
+    # TODO: Make sure libraries that need to be used but are not in the list below are added to packages
+    # Use: - If any libraries are missing, add them to the packages list in config
+
+    prompt = f"""Generate a Streamlit script for a data app named '{name}' that {description}.
+
+Available Data Context:
+{data_context}
+
+User Query: {user_query if user_query else 'No specific query provided'}
+
+Pre-installed Libraries:
+- streamlit
+- pandas
+- numpy
+- plotly
+- matplotlib
+- seaborn
+- scikit-learn
+- altair
+- streamlit-aggrid
+- streamlit-authenticator
+- streamlit-keboola-api
+- pydeck
+- extra-streamlit-components
+
+Requirements:
+- Use Streamlit for data visualization or interaction
+- Include proper error handling
+- Add helpful comments
+- Follow Python best practices
+- Use Keboola's CommonInterface for data access:
+   - Use ci = CommonInterface() for data access
+   - Use ci.get_input_tables_definitions() to get table definitions
+   - Use ci.get_input_tables() to read data
+   - Handle table paths and CSV reading properly
+- Make the UI clean and user-friendly
+- Include data validation and error handling for missing or invalid data
+- Add appropriate visualizations based on the data types
+- Include filters and interactive elements where appropriate
+
+
+Please provide only the Python code, no explanations. The code should:
+- Initialize Keboola CommonInterface for data access
+- Handle the specific data tables mentioned in the user query or description
+- Create appropriate visualizations based on the data
+- Include proper error handling for data access and processing
+- Follow Streamlit best practices for UI/UX
+- Use proper Keboola data access patterns"""
+
+    # Use Claude to generate the data app
+    try:
+        response = await ctx.generate(prompt)
+        if not response or not isinstance(response, str):
+            raise ValueError("Failed to generate data app from Claude")
+            
+        script_lines = [
+            line.strip() 
+            for line in response.split('\n') 
+            if line.strip() and not line.strip().startswith('```')
+        ]
+        
+        return script_lines
+        
+    except Exception as e:
+        LOG.error(f"Error generating with Claude. Error: {e}")
+        raise RuntimeError(f"Failed to generate data app script: {e}") from e
+
+
+async def create_data_app(
+    ctx: Context,
+    name: Annotated[
+        str,
+        Field(
+            description='A short, descriptive name for the data app.',
+        ),
+    ],
+    description: Annotated[
+        str,
+        Field(
+            description='Detailed description of what the data app does and its purpose.',
+        ),
+    ],
+    slug: Annotated[
+        str,
+        Field(
+            description='Unique identifier for the data app (e.g., "my-data-app").',
+        ),
+    ],
+    user_query: Annotated[
+        Optional[str],
+        Field(
+            description='Optional query about what data to use in the data app.',
+        ),
+    ] = None,
+    script: Annotated[
+        Optional[Sequence[str]],
+        Field(
+            description='List of Python script lines that make up the data app. If not provided, Claude will generate a script based on the description and data context.',
+        ),
+    ] = None,
+    size: Annotated[
+        str,
+        Field(
+            description='Size of the data app instance (tiny, small, medium, large).',
+        ),
+    ] = 'tiny',
+    auto_suspend_after_seconds: Annotated[
+        int,
+        Field(
+            description='Number of seconds after which the data app will auto-suspend.',
+        ),
+    ] = 900,
+    streamlit_config: Annotated[
+        Optional[dict[str, str]],
+        Field(
+            description='Streamlit configuration including config.toml and other settings.',
+        ),
+    ] = None,
+) -> Annotated[
+    DataAppConfiguration,
+    Field(
+        description='Newly created Data App Configuration.',
+    ),
+]:
+    """
+    Creates a new data app with the specified configuration. If no script is provided,
+    Claude will generate one based on the description and available data context.
+    
+    USAGE:
+        - Use when you want to create a new data app in Keboola.
+        - Use when you want Claude to generate a script based on available data.
+        
+    EXAMPLES:
+        - user_input: "Create a data app that visualizes sales data from the sales bucket"
+            - set description to explain the visualization needs
+            - set user_query to specify which data to use
+            - Claude will generate an appropriate script using the actual data
+        - user_input: "Create a data app with this specific script"
+            - provide the script directly
+            - returns the created data app configuration
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    
+    # If no script is given, use chat agent to generate one
+    if not script:
+        script = await _generate_data_app_script(ctx, name, description, user_query)
+        LOG.info(f"Generating using agent...")
+    
+    # General Config
+    data_app = DataApp(
+        slug=slug,
+        script=list(script),
+        size=size,
+        autoSuspendAfterSeconds=auto_suspend_after_seconds,
+        streamlit=streamlit_config or { # Default keboola streamlit config
+            "config.toml": "[theme]\nfont = \"sans serif\"\ntextColor = \"#222529\"\nbackgroundColor = \"#FFFFFF\"\nsecondaryBackgroundColor = \"#E6F2FF\"\nprimaryColor = \"#1F8FFF\""
+        }
+    )
+    
+    # Basic Component Configuration
+    configuration = {
+        'name': name,
+        'description': description,
+        'configuration': {
+            'parameters': {
+                'size': size,
+                'autoSuspendAfterSeconds': auto_suspend_after_seconds,
+                'dataApp': data_app.model_dump(),
+                'id': slug,
+                'script': script
+            },
+            'authorization': {
+                'app_proxy': {
+                    'auth_providers': [],
+                    'auth_rules': [
+                        {
+                            'type': 'pathPrefix',
+                            'value': '/',
+                            'auth_required': False
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    
+    # Get the data app component ID
+    component_id = 'keboola.app-data-app' 
+    
+    endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{component_id}/configs'
+    
+    try:
+        new_raw_configuration = await client.storage_client.post(endpoint, data=configuration)
+        
+        # Get component details
+        component = await _get_component_details(client=client, component_id=component_id)
+        
+        # Create and return the data app configuration
+        new_configuration = DataAppConfiguration(
+            **new_raw_configuration,
+            component_id=component_id,
+            component=component,
+            data_app=data_app,
+            authorization=configuration['configuration']['authorization']
+        )
+        
+        LOG.info(f'Created new data app "{name}" with configuration id "{new_configuration.configuration_id}".')
+        return new_configuration
+        
+    except Exception as e:
+        LOG.exception(f'Error when creating new data app configuration: {e}')
+        raise e
+
+async def _start_data_app(ctx: Context, data_app_id: str) -> None:
+    """
+    Start a data app using the Keboola API.
+    
+    Args:
+        ctx: The MCP server context
+    """
+    # TODO: Implement
+    pass
 
 
 ############################## End of component tools #########################################

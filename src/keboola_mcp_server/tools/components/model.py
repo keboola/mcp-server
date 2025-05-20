@@ -4,7 +4,8 @@ from pydantic import AliasChoices, BaseModel, Field
 
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
-AllComponentTypes = Union[ComponentType, TransformationType]
+DataAppType = Literal['dataapp']
+AllComponentTypes = Union[ComponentType, TransformationType, DataAppType]
 
 
 class ReducedComponent(BaseModel):
@@ -161,4 +162,36 @@ class ComponentConfiguration(ReducedComponentConfiguration):
         validation_alias=AliasChoices('component'),
         serialization_alias='component',
         default=None,
+    )
+
+#! Data App
+class DataApp(BaseModel):
+    """Model for Keboola Data App configuration."""
+    
+    slug: str = Field(description='The unique identifier for the data app')
+    streamlit: Optional[dict[str, str]] = Field(
+        description='Streamlit configuration including config.toml and other settings',
+        default=None
+    )
+    script: List[str] = Field(
+        description='List of Python script lines that make up the data app',
+        default_factory=list
+    )
+    size: str = Field(
+        description='The size of the data app instance (tiny, small, medium, large)',
+        default='tiny'
+    )
+    autoSuspendAfterSeconds: int = Field(
+        description='Number of seconds after which the data app will auto-suspend',
+        default=900
+    )
+
+
+class DataAppConfiguration(ComponentConfiguration):
+    """Extended component configuration specifically for data apps."""
+    
+    data_app: DataApp = Field(description='The data app configuration')
+    authorization: Optional[dict[str, Any]] = Field(
+        description='Authorization configuration for the data app',
+        default=None
     )
