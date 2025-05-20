@@ -345,6 +345,43 @@ What buckets and tables are in my Keboola project?
 | **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct |
 | **Connection Timeout** | Check network connectivity |
 
+## Development
+
+### Installation
+
+Basic setup:
+
+```bash
+uv sync --extra dev
+```
+
+With the basic setup, you can use `uv run tox` to run tests and check code style.
+
+Recommended setup:
+
+```bash
+uv sync --extra dev --extra tests --extra codestyle
+```
+
+With the recommended setup, packages for testing and code style checking will be installed which allows IDEs like
+VsCode or Cursor to check the code or run tests during development.
+
+### Integration tests
+
+To run integration tests locally, use `uv run tox -e integtests`.
+NOTE: You will need to set the following environment variables:
+
+- `INTEGTEST_STORAGE_API_URL`
+- `INTEGTEST_STORAGE_TOKEN`
+- `INTEGTEST_WORKSPACE_SCHEMA`
+
+In order to get these values, you need a dedicated Keboola project for integration tests.
+
+### Updating `uv.lock`
+
+Update the `uv.lock` file if you have added or removed dependencies. Also consider updating the lock with newer dependency
+versions when creating a release (`uv lock --upgrade`).
+
 ## Support and Feedback
 
 **⭐ The primary way to get help, report bugs, or request features is by [opening an issue on GitHub](https://github.com/keboola/mcp-server/issues/new). ⭐**
