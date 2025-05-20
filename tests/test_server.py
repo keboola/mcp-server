@@ -276,8 +276,8 @@ async def test_keboola_injection_and_lifespan(
     mocker, os_environ_params: dict[str, str], expected_params: dict[str, str]
 ):
     """
-    Test that the KeboolaClient and WorkspaceManager are injected into the context and that the lifespan of the client is managed
-    by the server.
+    Test that the KeboolaClient and WorkspaceManager are injected into the context and that the lifespan of the client
+    is managed by the server.
     Test that the ServerState is properly initialized and that the client and workspace are properly disposed of.
     """
     cfg_dict = {
