@@ -83,7 +83,7 @@ async def main(args: Optional[list[str]] = None) -> None:
     try:
         # Create and run server
         keboola_mcp_server = create_server(config)
-        await keboola_mcp_server.run_async(transport=parsed_args.transport, log_level=parsed_args.log_level)
+        await keboola_mcp_server.run_async(transport=parsed_args.transport)
     except Exception as e:
         LOG.exception(f'Server failed: {e}')
         sys.exit(1)
