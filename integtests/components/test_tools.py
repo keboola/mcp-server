@@ -11,6 +11,7 @@ from keboola_mcp_server.tools.components import (
     get_component_configuration_details,
     retrieve_components_configurations,
 )
+from keboola_mcp_server.tools.components.tools import RetrieveComponentsArgs
 
 LOG = logging.getLogger(__name__)
 
@@ -42,21 +43,18 @@ async def test_get_component_configuration_details(mcp_context: Context, configs
 async def test_retrieve_components_by_ids(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `retrieve_components_configurations` returns components filtered by component IDs."""
 
-    # Get unique component IDs from test configs
     component_ids = list({config.component_id for config in configs})
     assert len(component_ids) > 0
 
-    result = await retrieve_components_configurations(ctx=mcp_context, component_ids=component_ids)
+    args = RetrieveComponentsArgs(component_ids=component_ids)
+    result = await retrieve_components_configurations(ctx=mcp_context, args=args)
 
-    # Verify result structure and content
     assert isinstance(result, list)
     assert len(result) == len(component_ids)
 
     for item in result:
         assert isinstance(item, ComponentWithConfigurations)
         assert item.component.component_id in component_ids
-
-        # Check that configurations belong to this component
         for config in item.configurations:
             assert config.component_id == item.component.component_id
 
@@ -65,18 +63,17 @@ async def test_retrieve_components_by_ids(mcp_context: Context, configs: list[Co
 async def test_retrieve_components_by_types(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `retrieve_components_configurations` returns components filtered by component types."""
 
-    # Get unique component IDs from test configs
     component_ids = list({config.component_id for config in configs})
     assert len(component_ids) > 0
 
     component_types: list[ComponentType] = ['extractor']
-
-    result = await retrieve_components_configurations(ctx=mcp_context, component_types=component_types)
+    args = RetrieveComponentsArgs(component_types=component_types)
+    result = await retrieve_components_configurations(ctx=mcp_context, args=args)
 
     assert isinstance(result, list)
-    # Currently, we only have extractor components in the project
     assert len(result) == len(component_ids)
 
     for item in result:
         assert isinstance(item, ComponentWithConfigurations)
         assert item.component.component_type == 'extractor'
+
