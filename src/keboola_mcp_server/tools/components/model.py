@@ -79,6 +79,7 @@ class ComponentConfigurationResponseBase(BaseModel):
             'configuration-description',
         ),
         serialization_alias='configurationDescription',
+        default=None,
     )
     is_disabled: bool = Field(
         description='Whether the component configuration is disabled',
@@ -138,7 +139,7 @@ class Component(ReducedComponent):
             component_id=component_detail.component_id,
             component_name=component_detail.component_name,
             component_type=component_detail.component_type,
-            # Use empty flags list since we can't reliably reconstruct them from ComponentDetail
+            # TODO: fix this -- Use empty flags list since we can't reliably reconstruct them from ComponentDetail
             flags=[],
             component_categories=component_detail.component_categories,
             documentation_url=component_detail.documentation_url,
@@ -361,8 +362,8 @@ class ComponentConfigurationOutput(BaseModel):
             row_configuration = ComponentRowConfiguration(
                 **row,
                 component_id=configuration_response.component_id,
-                parameters=row['configuration']['parameters'],
-                storage=row['configuration'].get('storage'),
+                parameters=row.get('configuration', {}).get('parameters', {}),
+                storage=row.get('configuration', {}).get('storage'),
             )
             row_configurations.append(row_configuration)
 
