@@ -147,9 +147,9 @@ class JobDetail(JobListItem):
 
 # MCP tools ########################################
 
+JOB_STATUS = Literal['waiting', 'processing', 'success', 'error', 'created']
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
-
 
 # The Parameter Optional annotation is not working with MCP and when the bot tries to call the tool with appropriate
 # parameters, it raises `Invalid type for parameter 'status' in tool retrieve_jobs`, either bot cannot use the tool or
@@ -159,51 +159,36 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 async def retrieve_jobs(
     ctx: Context,
     status: Annotated[
-        JOB_STATUS,
-        Field(
-            Optional[JOB_STATUS],
-            description='The optional status of the jobs to filter by, if None then default all.',
-        ),
-    ] = None,
+        JOB_STATUS | None,
+        Field(description="Optional status to filter jobs by.")
+    ],
     component_id: Annotated[
-        str,
-        Field(
-            Optional[str],
-            description='The optional ID of the component whose jobs you want to list, default = None.',
-        ),
-    ] = None,
+        str | None,
+        Field(description="Optional component ID to filter jobs.")
+    ],
     config_id: Annotated[
-        str,
-        Field(
-            Optional[str],
-            description='The optional ID of the component configuration whose jobs you want to list, default = None.',
-        ),
-    ] = None,
+        str | None,
+        Field(description="Optional configuration ID to filter jobs.")
+    ],
     limit: Annotated[
         int,
-        Field(int, description='The number of jobs to list, default = 100, max = 500.', ge=1, le=500),
-    ] = 100,
-    offset: Annotated[int, Field(int, description='The offset of the jobs to list, default = 0.', ge=0)] = 0,
+        Field(description="Max jobs to return (1-500).")
+    ],
+    offset: Annotated[
+        int,
+        Field(description="Offset for pagination.")
+    ],
     sort_by: Annotated[
         SORT_BY_VALUES,
-        Field(
-            Optional[SORT_BY_VALUES],
-            description='The field to sort the jobs by, default = "startTime".',
-        ),
-    ] = 'startTime',
+        Field(description="Field to sort jobs by.")
+    ],
     sort_order: Annotated[
         SORT_ORDER_VALUES,
-        Field(
-            Optional[SORT_ORDER_VALUES],
-            description='The order to sort the jobs by, default = "desc".',
-        ),
-    ] = 'desc',
+        Field(description="Sort order: asc or desc.")
+    ],
 ) -> Annotated[
     list[JobListItem],
-    Field(
-        list[JobListItem],
-        description='The retrieved list of jobs list items. If empty then no jobs were found.',
-    ),
+    Field(description="List of job summaries."),
 ]:
     """
     Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
@@ -223,19 +208,18 @@ async def retrieve_jobs(
     - If sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    _status = [status] if status else None
 
     raw_jobs = await client.jobs_queue_client.search_jobs_by(
         component_id=component_id,
         config_id=config_id,
         limit=limit,
         offset=offset,
-        status=_status,
+        status=[status] if status else None,
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    LOG.info(f'Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.')
-    return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
+
+    return [JobListItem.model_validate(job) for job in raw_jobs]
 
 
 @tool_errors()

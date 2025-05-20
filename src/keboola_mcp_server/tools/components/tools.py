@@ -1,8 +1,9 @@
+import json
 import logging
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Sequence, cast, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import Field
+from pydantic import Field, BaseModel, RootModel
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.tools.components.model import ComponentConfiguration, ComponentType, ComponentWithConfigurations
@@ -56,74 +57,58 @@ def add_component_tools(mcp: FastMCP) -> None:
 
 # tools #########################################
 
+class RetrieveComponentsArgs(BaseModel):
+    component_types: list[ComponentType] = Field(
+        default_factory=list,
+        description="List of component types to filter by. If none, return all components."
+    )
+    component_ids: list[str] = Field(
+        default_factory=list,
+        description="List of component IDs to retrieve configurations for. If none, return all components."
+    )
+
+    class Config:
+        extra = 'forbid'
+        json_schema_extra = {
+            "required": ["component_types", "component_ids"],
+            "additionalProperties": False,
+        }
 
 async def retrieve_components_configurations(
     ctx: Context,
-    component_types: Annotated[
-        Sequence[ComponentType],
-        Field(
-            description='List of component types to filter by. If none, return all components.',
-        ),
-    ] = tuple(),
-    component_ids: Annotated[
-        Sequence[str],
-        Field(
-            description='List of component IDs to retrieve configurations for. If none, return all components.',
-        ),
-    ] = tuple(),
-) -> Annotated[
-    list[ComponentWithConfigurations],
-    Field(
-        description='List of objects, each containing a component and its associated configurations.',
-    ),
-]:
+    args: RetrieveComponentsArgs,
+) -> list[ComponentWithConfigurations]:
     """
-    Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
-    If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
-    component_types.
+    Retrieves component configurations based on type or ID.
 
-    USAGE:
-    - Use when you want to see components configurations in the project for given component_types.
-    - Use when you want to see components configurations in the project for given component_ids.
-
-    EXAMPLES:
-    - user_input: `give me all components`
-        - returns all components configurations in the project
-    - user_input: `list me all extractor components`
-        - set types to ["extractor"]
-        - returns all extractor components configurations in the project
-    - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-        - set component_ids to list of identifiers accordingly if you know them
-        - returns all configurations for the given components
-    - user_input: `give me configurations for 'specified-id'`
-        - set component_ids to ['specified-id']
-        - returns the configurations of the component with ID 'specified-id'
+    USAGE: same as before...
     """
-    # If no component IDs are provided, retrieve component configurations by types (default is all types)
-    if not component_ids:
-        client = KeboolaClient.from_state(ctx.session.state)
-        component_types = _handle_component_types(component_types)  # if none, return all types
+
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    if not args.component_ids:
+        component_types = _handle_component_types(args.component_types)
         return await _retrieve_components_configurations_by_types(client, component_types)
-    # If component IDs are provided, retrieve component configurations by IDs
     else:
-        client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_ids(client, component_ids)
+        return await _retrieve_components_configurations_by_ids(client, args.component_ids)
 
+class RetrieveTransformationsArgs(BaseModel):
+    transformation_ids: list[str] = Field(
+        default_factory=list,
+        description="List of transformation component IDs to retrieve configurations for."
+    )
+
+    class Config:
+        extra = 'forbid'
+        json_schema_extra = {
+            "required": ["transformation_ids"],
+            "additionalProperties": False,
+        }
 
 async def retrieve_transformations_configurations(
     ctx: Context,
-    transformation_ids: Annotated[
-        Sequence[str],
-        Field(
-            description='List of transformation component IDs to retrieve configurations for.',
-        ),
-    ] = tuple(),
-) -> Annotated[
-    list[ComponentWithConfigurations],
-    Field(
-        description='List of objects, each containing a transformation component and its associated configurations.',
-    ),
-]:
+    args: RetrieveTransformationsArgs,
+) -> list[ComponentWithConfigurations]:
     """
     Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
 
@@ -143,13 +128,14 @@ async def retrieve_transformations_configurations(
         - returns the transformation configurations with ID 'specified-id'
     """
     # If no transformation IDs are provided, retrieve transformations configurations by transformation type
-    if not transformation_ids:
-        client = KeboolaClient.from_state(ctx.session.state)
+
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    if not args.transformation_ids:
         return await _retrieve_components_configurations_by_types(client, ['transformation'])
     # If transformation IDs are provided, retrieve transformations configurations by IDs
     else:
-        client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_ids(client, transformation_ids)
+        return await _retrieve_components_configurations_by_ids(client, args.transformation_ids)
 
 
 async def get_component_configuration_details(
@@ -212,47 +198,32 @@ async def get_component_configuration_details(
     )
 
 
+class CreateSQLTransformationArgs(BaseModel):
+    name: str = Field(
+        description="A short, descriptive name summarizing the purpose of the SQL transformation."
+    )
+    description: str = Field(
+        description="The detailed description of the SQL transformation capturing the user intent, explaining the SQL query, and the expected output."
+    )
+    sql_statements: list[str] = Field(
+        description="The executable SQL query statements written in the current SQL dialect. Each statement should be a separate item in the list."
+    )
+    created_table_names: list[str] = Field(
+        default_factory=list,
+        description="An empty list or a list of created table names if and only if they are generated within SQL statements (e.g., using `CREATE TABLE ...`)."
+    )
+
+    class Config:
+        extra = 'forbid'
+        json_schema_extra = {
+            "required": ["name", "description", "sql_statements", "created_table_names"],
+            "additionalProperties": False,
+        }
+
 async def create_sql_transformation(
     ctx: Context,
-    name: Annotated[
-        str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
-        ),
-    ],
-    description: Annotated[
-        str,
-        Field(
-            description=(
-                'The detailed description of the SQL transformation capturing the user intent, explaining the '
-                'SQL query, and the expected output.'
-            ),
-        ),
-    ],
-    sql_statements: Annotated[
-        Sequence[str],
-        Field(
-            description=(
-                'The executable SQL query statements written in the current SQL dialect. '
-                'Each statement should be a separate item in the list.'
-            ),
-        ),
-    ],
-    created_table_names: Annotated[
-        Sequence[str],
-        Field(
-            description=(
-                'An empty list or a list of created table names if and only if they are generated within SQL '
-                'statements (e.g., using `CREATE TABLE ...`).'
-            ),
-        ),
-    ] = tuple(),
-) -> Annotated[
-    ComponentConfiguration,
-    Field(
-        description='Newly created SQL Transformation Configuration.',
-    ),
-]:
+    args: CreateSQLTransformationArgs,
+) -> ComponentConfiguration:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
     description, and optionally a list of created table names if and only if they are generated within the SQL
@@ -286,26 +257,25 @@ async def create_sql_transformation(
     transformation_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}')
 
-    # Process the data to be stored in the transformation configuration - parameters(sql statements)
-    # and storage(input and output tables)
+    # Build configuration payload
     transformation_configuration_payload = _get_transformation_configuration(
-        statements=sql_statements, transformation_name=name, output_tables=created_table_names
+        statements=args.sql_statements,
+        transformation_name=args.name,
+        output_tables=args.created_table_names,
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
     endpoint = f'branch/{client.storage_client.branch_id}/components/{transformation_id}/configs'
 
-    LOG.info(f'Creating new transformation configuration: {name} for component: {transformation_id}.')
-    # Try to create the new transformation configuration and return the new object if successful
-    # or log an error and raise an exception if not
+    LOG.info(f'Creating new transformation configuration: {args.name} for component: {transformation_id}.')
     try:
         new_raw_transformation_configuration = cast(
             JsonDict,
             await client.storage_client.post(
                 endpoint=endpoint,
                 data={
-                    'name': name,
-                    'description': description,
+                    'name': args.name,
+                    'description': args.description,
                     'configuration': transformation_configuration_payload.model_dump(),
                 },
             )
@@ -313,8 +283,7 @@ async def create_sql_transformation(
 
         component = await _get_component_details(client=client, component_id=transformation_id)
         new_transformation_configuration = ComponentConfiguration.model_validate(
-            new_raw_transformation_configuration |
-            {
+            new_raw_transformation_configuration | {
                 'component_id': transformation_id,
                 'component': component,
             }
@@ -325,51 +294,52 @@ async def create_sql_transformation(
             f'"{new_transformation_configuration.configuration_id}".'
         )
         return new_transformation_configuration
+
     except Exception as e:
         LOG.exception(f'Error when creating new transformation configuration: {e}')
         raise e
 
 
+class UpdatedConfigurationModel(BaseModel):
+    foo: str = Field(description="Some required field")
+    bar: int = Field(description="Another required field")
+
+    class Config:
+        extra = 'forbid'
+
+
+class UpdateSQLTransformationArgs(BaseModel):
+    configuration_id: str = Field(
+        description='Unique identifier of the Keboola transformation configuration you want to update'
+    )
+    change_description: str = Field(
+        description='Detailed description of the new changes to the transformation configuration.'
+    )
+    updated_configuration: UpdatedConfigurationModel  # No description here to avoid $ref + description conflict
+    updated_description: str = Field(
+        description='Updated transformation description, or empty string to preserve existing one.'
+    )
+    is_disabled: bool = Field(
+        description='Whether to disable the transformation configuration.'
+    )
+
+    class Config:
+        extra = 'forbid'
+        json_schema_extra = {
+            "required": [
+                "configuration_id",
+                "change_description",
+                "updated_configuration",
+                "updated_description",
+                "is_disabled",
+            ],
+            "additionalProperties": False,
+        }
+
 async def update_sql_transformation_configuration(
     ctx: Context,
-    configuration_id: Annotated[
-        str,
-        Field(description='Unique identifier of the Keboola transformation configuration you want to update'),
-    ],
-    change_description: Annotated[
-        str,
-        Field(
-            description='Detailed description of the new changes to the transformation configuration.',
-        ),
-    ],
-    updated_configuration: Annotated[
-        dict[str, Any],
-        Field(
-            description=(
-                'Updated transformation configuration JSON object containing both updated settings applied and all '
-                'existing settings preserved.'
-            ),
-        ),
-    ],
-    updated_description: Annotated[
-        str,
-        Field(
-            description='Updated existing transformation description reflecting the changes made in the behavior of '
-            'the transformation. If no behavior changes are made, empty string preserves the original description.',
-        ),
-    ] = '',
-    is_disabled: Annotated[
-        bool,
-        Field(
-            description='Whether to disable the transformation configuration. Default is False.',
-        ),
-    ] = False,
-) -> Annotated[
-    ComponentConfiguration,
-    Field(
-        description='Updated transformation configuration.',
-    ),
-]:
+    args: UpdateSQLTransformationArgs,
+) -> ComponentConfiguration:
     """
     Updates an existing SQL transformation configuration, optionally updating the description and disabling the
     configuration.
@@ -393,11 +363,11 @@ async def update_sql_transformation_configuration(
         LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
         updated_raw_configuration = await client.storage_client.configuration_update(
             component_id=sql_transformation_id,
-            configuration_id=configuration_id,
-            configuration=updated_configuration,
-            change_description=change_description,
-            updated_description=updated_description if updated_description else None,
-            is_disabled=is_disabled,
+            configuration_id=args.configuration_id,
+            configuration=args.updated_configuration,
+            change_description=args.change_description,
+            updated_description=args.updated_description,
+            is_disabled=args.is_disabled,
         )
 
         transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
