@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from functools import wraps
 from typing import Annotated, Optional
 
@@ -7,11 +8,20 @@ from mcp.types import AnyFunction, TextContent
 from pydantic import Field
 from starlette.requests import Request
 
-from keboola_mcp_server.mcp import KeboolaMcpServer, _get_session_params, with_session_state_from
-from keboola_mcp_server.server import (
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.mcp import (
+    KeboolaMcpServer,
+    ServerState,
+    SessionParamsFactory,
     SessionState,
     SessionStateFactory,
     TransportType,
+    _get_session_params,
+    with_session_state,
+    with_session_state_from,
+)
+from keboola_mcp_server.server import (
     create_server,
 )
 from keboola_mcp_server.tools.components import (
@@ -19,6 +29,7 @@ from keboola_mcp_server.tools.components import (
     RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
 )
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
 class TestServer:
@@ -88,8 +99,9 @@ def test_infer_session_params_request(mocker, current_transport: str, request_pa
         mock_request = None
         os_env_parameters = expected_params
 
-    # Patch the _safe_get_http_request function to return our mock request
-    mocker.patch('keboola_mcp_server.mcp.get_http_request', return_value=mock_request)
+    if current_transport != 'stdio':
+        # Patch the _safe_get_http_request function to return our mock request
+        mocker.patch('keboola_mcp_server.mcp.get_http_request', return_value=mock_request)
     mocker.patch('keboola_mcp_server.mcp.os.environ', os_env_parameters)
     params = _get_session_params(None)
     assert params == expected_params
@@ -114,9 +126,11 @@ def test_get_session_params(mocker, current_transport: Optional[TransportType]):
         if current_transport == 'streamable-http':
             # Streamable HTTP transport we prefer headers
             mock_request.headers = expected_params
+            mock_request.query_params = {}
         if current_transport == 'sse':
             # SSE transport expects query params due to backwards compatibility
             mock_request.query_params = expected_params
+            mock_request.headers = {}
     elif current_transport == 'stdio':
         mock_request = None
         os_env_parameters = expected_params
@@ -130,17 +144,29 @@ def test_get_session_params(mocker, current_transport: Optional[TransportType]):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('state_name', 'session_state_factory', 'use_custom_decorator', 'expected_state'),
+    ('state_name', 'session_params_factory', 'session_state_factory', 'use_custom_decorator', 'expected_state'),
     [
         # whether to use the state factory and custom decorator
-        ('state1', None, False, {}),
-        ('state2', lambda _: {'vaule1': 'value1', 'value2': 'value2'}, False, {'vaule1': 'value1', 'value2': 'value2'}),
-        ('state3', lambda x: {'vaule1': 'value1', **x}, True, {'vaule1': 'value1', 'value2': 'value2'}),
+        ('state1', None, None, False, {}),
+        # Testing the session state factory
+        (
+            'state2',
+            None,
+            lambda _: {'vaule1': 'value1', 'value2': 'value2'},
+            False,
+            {'vaule1': 'value1', 'value2': 'value2'},
+        ),
+        # Testing the session state factory with a custom decorator, decorator passes the params
+        # and the state factory returns the params
+        ('state3', None, lambda x: {'vaule1': 'value1', **x}, True, {'vaule1': 'value1', 'value2': 'value2'}),
+        # Testing the session params factory, state factory passes the params
+        ('state4', lambda x: {'vaule1': 'value1'}, lambda x: {**x}, False, {'vaule1': 'value1'}),
     ],
 )
 async def test_with_session_state_from(
     mocker,
     state_name: str,
+    session_params_factory: Optional[SessionParamsFactory],
     session_state_factory: Optional[SessionStateFactory],
     use_custom_decorator: bool,
     expected_state: SessionState,
@@ -151,7 +177,9 @@ async def test_with_session_state_from(
     custom_decorator = None
     if use_custom_decorator:
 
-        def decorator(state_name: str, session_state_factory: SessionStateFactory) -> AnyFunction:
+        def decorator(
+            state_name: str, session_state_factory: SessionStateFactory, session_params_factory: SessionParamsFactory
+        ) -> AnyFunction:
 
             def _wrap(func: AnyFunction) -> AnyFunction:
 
@@ -176,7 +204,7 @@ async def test_with_session_state_from(
     else:
         custom_decorator = None
 
-    @with_session_state_from(state_name, session_state_factory, custom_decorator)
+    @with_session_state_from(state_name, session_state_factory, session_params_factory, custom_decorator)
     async def assessed_function(
         ctx: Context, param: Annotated[str, Field(description=expected_param_description)]
     ) -> str:
@@ -208,7 +236,7 @@ async def test_with_session_state_from_initialized_once(mocker):
     expected_state = {'value1': 'value1', 'value2': 'value2'}
     mock_func = mocker.patch('keboola_mcp_server.mcp._get_session_params', return_value=expected_state)
 
-    @with_session_state_from('state', None, None)
+    @with_session_state_from('state', None, None, None)
     async def assessed_function(ctx: Context, param: str) -> str:
         assert hasattr(ctx.session, 'state')
         assert ctx.session.state == {'value1': 'value1', 'value2': 'value2'}
@@ -229,3 +257,61 @@ async def test_with_session_state_from_initialized_once(mocker):
 
     # we expect the function to be called only once (for initialization) for one connection we reuse the same session
     assert mock_func.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('os_environ_params', 'expected_params'),
+    [
+        # no params in os.environ, tokens as in the config
+        ({}, {'storage_token': 'test-storage-token', 'workspace_schema': 'test-workspace-schema'}),
+        # params in os.environ, tokens configured from os.environ, missing from the config
+        (
+            {'storage_token': 'test-storage-token-2'},
+            {'storage_token': 'test-storage-token-2', 'workspace_schema': 'test-workspace-schema'},
+        ),
+    ],
+)
+async def test_keboola_injection_and_lifespan(
+    mocker, os_environ_params: dict[str, str], expected_params: dict[str, str]
+):
+    """
+    Test that the KeboolaClient and WorkspaceManager are injected into the context and that the lifespan of the client is managed
+    by the server.
+    Test that the ServerState is properly initialized and that the client and workspace are properly disposed of.
+    """
+    cfg_dict = {
+        'storage_token': 'test-storage-token',
+        'workspace_schema': 'test-workspace-schema',
+        'storage_api_url': 'https://connection.keboola.com',
+        'transport': 'stdio',
+    }
+    config = Config.from_dict(cfg_dict)
+
+    mocker.patch('keboola_mcp_server.mcp.os.environ', os_environ_params)
+
+    server = create_server(config)
+
+    @with_session_state()
+    async def assessed_function(ctx: Context, param: str) -> str:
+        assert hasattr(ctx.session, 'state')
+        client = KeboolaClient.from_state(ctx.session.state)
+        assert isinstance(client, KeboolaClient)
+        workspace = WorkspaceManager.from_state(ctx.session.state)
+        assert isinstance(workspace, WorkspaceManager)
+
+        # check the server state life_span
+        server_state = ServerState.from_context(ctx)
+        assert asdict(server_state.config) == asdict(config)
+
+        assert client.token == expected_params['storage_token']
+        assert workspace._workspace_schema == expected_params['workspace_schema']
+
+        return param
+
+    server.add_tool(assessed_function, name='assessed_function')
+
+    async with Client(server) as client:
+        result = await client.call_tool('assessed_function', {'param': 'value'})
+        assert isinstance(result[0], TextContent)
+        assert result[0].text == 'value'
