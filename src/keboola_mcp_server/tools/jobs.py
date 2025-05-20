@@ -151,44 +151,48 @@ JOB_STATUS = Literal['waiting', 'processing', 'success', 'error', 'created']
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
 
+
 # The Parameter Optional annotation is not working with MCP and when the bot tries to call the tool with appropriate
 # parameters, it raises `Invalid type for parameter 'status' in tool retrieve_jobs`, either bot cannot use the tool or
 # mcp parsing the parameters is not working. So we need to use Annotated[JOB_STATUS, ...] = None instead of
 # Optional[JOB_STATUS] = None despite having type check errors in the code.
 @tool_errors()
 async def retrieve_jobs(
-    ctx: Context,
+    ctx: Annotated[
+        Context,
+        Field(exclude=True)  # ensures it's not included in the tool JSON schema
+    ],
     status: Annotated[
         JOB_STATUS | None,
-        Field(description="Optional status to filter jobs by.")
-    ],
+        Field(description='Optional status to filter jobs by.')
+    ] = None,
     component_id: Annotated[
         str | None,
-        Field(description="Optional component ID to filter jobs.")
-    ],
+        Field(description='Optional component ID to filter jobs.')
+    ] = None,
     config_id: Annotated[
         str | None,
-        Field(description="Optional configuration ID to filter jobs.")
-    ],
+        Field(description='Optional configuration ID to filter jobs.')
+    ] = None,
     limit: Annotated[
         int,
-        Field(description="Max jobs to return (1-500).")
-    ],
+        Field(description='Max jobs to return (1-500).')
+    ] = 100,
     offset: Annotated[
         int,
-        Field(description="Offset for pagination.")
-    ],
+        Field(description='Offset for pagination.')
+    ] = 0,
     sort_by: Annotated[
         SORT_BY_VALUES,
-        Field(description="Field to sort jobs by.")
-    ],
+        Field(description='Field to sort jobs by.')
+    ] = 'startTime',
     sort_order: Annotated[
         SORT_ORDER_VALUES,
-        Field(description="Sort order: asc or desc.")
-    ],
+        Field(description='Sort order: asc or desc.')
+    ] = 'desc',
 ) -> Annotated[
     list[JobListItem],
-    Field(description="List of job summaries."),
+    Field(description='List of job summaries.'),
 ]:
     """
     Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
