@@ -16,9 +16,17 @@ class Config:
     """Server configuration."""
 
     storage_token: Optional[str] = None
-    storage_api_url: str = 'https://connection.keboola.com'
+    """Storage token to access the storage API using the MCP tools, required.
+    None when the server is accessed remotely."""
     workspace_schema: Optional[str] = None
-    transport: Optional[str] = None
+    """Workspace schema to access the buckets, tables in the storage and execute sql queries over them, not required.
+    None when the server is accessed remotely."""
+    storage_api_url: str = 'https://connection.keboola.com'
+    """Storage API URL to access the storage API of the current stack."""
+    log_level: str = 'INFO'
+    """Logging level to use for the server."""
+    transport: str = 'stdio'
+    """Transport to use for the server. Possible values: `stdio`, `sse`, `streamable-http`."""
 
     @classmethod
     def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, str]:
