@@ -1,13 +1,12 @@
 import json
 import logging
-from typing import Annotated, Any, Optional, Sequence
+from typing import Annotated, Any, Optional, Sequence, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
-from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
+from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.tools.components.model import (
-    Component,
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
     ComponentDetail,
@@ -243,14 +242,16 @@ async def get_component_configuration_details(
     # Get Component Details
     component = await _get_component_details(client=client, component_id=component_id)
     # Get Configuration Details
-    raw_configuration = client.storage_client_sync.configurations.detail(component_id, configuration_id)
+    raw_configuration = await client.storage_client.configuration_detail(
+        component_id=component_id, configuration_id=configuration_id
+    )
     LOG.info(f'Retrieved configuration details for {component_id} component with configuration {configuration_id}.')
 
     # Get Configuration Metadata if exists
     endpoint = (
-        f'branch/{client.storage_client_sync._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        f'branch/{client.storage_client.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
     )
-    r_metadata = await client.storage_client.get(endpoint)
+    r_metadata = await client.storage_client.get(endpoint=endpoint)
     if r_metadata:
         LOG.info(
             f'Retrieved configuration metadata for {component_id} component with configuration {configuration_id}.'
@@ -350,26 +351,31 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f'branch/{client.storage_client_sync._branch_id}/components/{transformation_id}/configs'
+    endpoint = f'branch/{client.storage_client.branch_id}/components/{transformation_id}/configs'
 
     LOG.info(f'Creating new transformation configuration: {name} for component: {transformation_id}.')
     # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
     try:
-        new_raw_transformation_configuration = await client.storage_client.post(
-            endpoint,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': transformation_configuration_payload.model_dump(),
-            },
+        new_raw_transformation_configuration = cast(
+            JsonDict,
+            await client.storage_client.post(
+                endpoint=endpoint,
+                data={
+                    'name': name,
+                    'description': description,
+                    'configuration': transformation_configuration_payload.model_dump(),
+                },
+            )
         )
 
         component = await _get_component_details(client=client, component_id=transformation_id)
-        new_transformation_configuration = ComponentConfigurationResponse(
-            **new_raw_transformation_configuration,
-            component_id=transformation_id,
-            component=Component.from_component_detail(component),
+        new_transformation_configuration = ComponentConfigurationResponse.model_validate(
+            new_raw_transformation_configuration |
+            {
+                'component_id': transformation_id,
+                'component': component,
+            }
         )
 
         LOG.info(
@@ -443,7 +449,7 @@ async def update_sql_transformation_configuration(
 
     try:
         LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
-        updated_raw_configuration = await client.storage_client.update_component_configuration(
+        updated_raw_configuration = await client.storage_client.configuration_update(
             component_id=sql_transformation_id,
             configuration_id=configuration_id,
             configuration=updated_configuration,
@@ -453,10 +459,12 @@ async def update_sql_transformation_configuration(
         )
 
         transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
-        updated_transformation_configuration = ComponentConfigurationResponse(
-            **updated_raw_configuration,
-            component_id=transformation.component_id,
-            component=Component.from_component_detail(transformation),
+        updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
+            updated_raw_configuration |
+            {
+                'component_id': transformation.component_id,
+                'component': transformation,
+            }
         )
 
         LOG.info(

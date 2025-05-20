@@ -21,6 +21,7 @@ def keboola_client(mocker) -> KeboolaClient:
     client.storage_client_sync = mocker.MagicMock(SyncStorageClient)
     # Mock asynchronous clients
     client.storage_client = mocker.MagicMock(AsyncStorageClient)
+    client.storage_client.branch_id = 'default'
     client.jobs_queue_client = mocker.MagicMock(JobsQueueClient)
     client.ai_service_client = mocker.MagicMock(AIServiceClient)
     # Mock the underlying api_client for async clients if needed for deeper testing
