@@ -38,7 +38,7 @@ jobs:
       # see setup in pyproject.toml
       - name: Unit tests and code style check
         run: |
-          tox
+          uv run tox
 
       - name: Publish test results
         uses: dorny/test-reporter@v1
@@ -57,7 +57,7 @@ jobs:
 
       - name: Build wheels package
         run: |
-          python -m build --wheel
+          uv build --wheel --no-sources
 
       - name: Get package version
         id: get_package_version
