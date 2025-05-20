@@ -1,5 +1,4 @@
 import csv
-from pathlib import Path
 
 import pytest
 from fastmcp import Context
@@ -16,9 +15,9 @@ from keboola_mcp_server.tools.storage import (
 
 
 @pytest.mark.asyncio
-async def test_retrieve_buckets(mcp_context_client: Context, buckets: list[BucketDef]):
+async def test_retrieve_buckets(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that `retrieve_buckets` returns a list of `BucketDetail` instances."""
-    result = await retrieve_buckets(mcp_context_client)
+    result = await retrieve_buckets(mcp_context)
 
     assert isinstance(result, list)
     for item in result:
@@ -28,25 +27,24 @@ async def test_retrieve_buckets(mcp_context_client: Context, buckets: list[Bucke
 
 
 @pytest.mark.asyncio
-async def test_get_bucket_detail(mcp_context_client: Context, buckets: list[BucketDef]):
+async def test_get_bucket_detail(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that for each test bucket, `get_bucket_detail` returns a `BucketDetail` instance."""
     for bucket in buckets:
-        result = await get_bucket_detail(bucket.bucket_id, mcp_context_client)
+        result = await get_bucket_detail(bucket.bucket_id, mcp_context)
         assert isinstance(result, BucketDetail)
         assert result.id == bucket.bucket_id
 
 
 @pytest.mark.asyncio
-async def test_get_table_detail(mcp_context_client: Context, tables: list[TableDef], shared_datadir: Path):
+async def test_get_table_detail(mcp_context: Context, tables: list[TableDef]):
     """Tests that for each test table, `get_table_detail` returns a `TableDetail` instance with correct fields."""
 
     for table in tables:
-        table_path = shared_datadir / 'proj' / table.bucket_id / f'{table.table_name}.csv'
-        with table_path.open('r', encoding='utf-8') as f:
+        with table.file_path.open('r', encoding='utf-8') as f:
             reader = csv.reader(f)
             columns = frozenset(next(reader))
 
-        result = await get_table_detail(table.table_id, mcp_context_client)
+        result = await get_table_detail(table.table_id, mcp_context)
         assert isinstance(result, TableDetail)
         assert result.id == table.table_id
         assert result.name == table.table_name
@@ -55,7 +53,7 @@ async def test_get_table_detail(mcp_context_client: Context, tables: list[TableD
 
 
 @pytest.mark.asyncio
-async def test_retrieve_bucket_tables(mcp_context_client: Context, tables: list[TableDef], buckets: list[BucketDef]):
+async def test_retrieve_bucket_tables(mcp_context: Context, tables: list[TableDef], buckets: list[BucketDef]):
     """Tests that `retrieve_bucket_tables` returns the correct tables for each bucket."""
     # Group tables by bucket to verify counts
     tables_by_bucket = {}
@@ -65,7 +63,7 @@ async def test_retrieve_bucket_tables(mcp_context_client: Context, tables: list[
         tables_by_bucket[table.bucket_id].append(table)
 
     for bucket in buckets:
-        result = await retrieve_bucket_tables(bucket.bucket_id, mcp_context_client)
+        result = await retrieve_bucket_tables(bucket.bucket_id, mcp_context)
 
         assert isinstance(result, list)
         for item in result:
