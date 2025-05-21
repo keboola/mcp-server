@@ -19,6 +19,9 @@ from keboola_mcp_server.tools.components.model import ComponentConfiguration
 AsyncContextServerRemoteRunner = Callable[
     [FastMCP, Literal['sse', 'streamable-http'], int], _AsyncGeneratorContextManager[str]
 ]
+AsyncContextClientRunner = Callable[
+    [Literal['sse', 'streamable-http'], str, dict[str, str] | None], _AsyncGeneratorContextManager[Client]
+]
 
 
 LOG = logging.getLogger(__name__)
@@ -56,6 +59,41 @@ def run_server_remote() -> AsyncContextServerRemoteRunner:
 
     return _run_server_remote
 
+
+@pytest.fixture
+def run_client() -> AsyncContextClientRunner:
+    """
+    Run the client in a async context manager which will ensure that the client is properly closed after the test.
+    The client is created with the given transport and url of the remote server.
+    """
+
+    @asynccontextmanager
+    async def _run_client(
+        transport: Literal['sse', 'streamable-http'], url: str, headers: dict[str, str] | None = None
+    ) -> AsyncGenerator[Client, None]:
+
+        if transport == 'sse':
+            transport_explicit = SSETransport(url=url)
+        else:
+            transport_explicit = StreamableHttpTransport(url=url, headers=headers)
+        client_explicit = Client(transport_explicit)
+
+        exception_from_client = None
+
+        LOG.info(f'Running client connecting to {url} expecting `{transport}` server transport.')
+        async with client_explicit:
+            try:
+                yield client_explicit
+            except Exception as e:
+                LOG.error(f'Error in client TaskGroup: {e}')
+                exception_from_client = e
+
+        del client_explicit
+        if exception_from_client:
+            # we need to raise the exception from the client TaskGroup otherwise it will inform about task group error
+            raise exception_from_client
+
+    return _run_client
 
 
 @pytest.fixture
@@ -146,4 +184,3 @@ async def test_stdio_setup(
     async with Client(server) as client:
         await assert_basic_setup(server, client)
         await assert_mcp_tool_call(client)
-
