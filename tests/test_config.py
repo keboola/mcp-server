@@ -59,16 +59,18 @@ class TestConfig:
         assert config.storage_token is None
         assert config.storage_api_url == 'https://connection.keboola.com'
         assert config.workspace_schema is None
-        assert config.transport is None
+        assert config.transport == 'stdio'
+        assert config.log_level == 'INFO'
 
     def test_no_token_password_in_repr(self) -> None:
         config = Config(storage_token='foo')
         assert str(config) == (
             'Config('
             "storage_token='****', "
-            "storage_api_url='https://connection.keboola.com', "
             'workspace_schema=None, '
-            'transport=None)'
+            "storage_api_url='https://connection.keboola.com', "
+            "log_level='INFO', "
+            "transport='stdio')"
         )
 
     @pytest.mark.parametrize(
