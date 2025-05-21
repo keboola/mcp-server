@@ -17,6 +17,7 @@ from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import ComponentConfiguration
 
 
+
 @pytest.fixture
 def assert_basic_setup():
     """
@@ -79,3 +80,30 @@ def assert_mcp_tool_call(configs: list[ConfigDef]):
             assert component_config.component.component_name is not None
 
     return _assert_mcp_tool_call
+
+
+@pytest.mark.asyncio
+async def test_stdio_setup(
+    mocker,
+    assert_basic_setup: Callable[[FastMCP, Client], Awaitable[None]],
+    assert_mcp_tool_call: Callable[[Client], Awaitable[None]],
+    storage_api_token: str,
+    workspace_schema: str,
+    storage_api_url: str,
+):
+
+    setup = {
+        'storage_token': storage_api_token,
+        'workspace_schema': workspace_schema,
+        'storage_api_url': storage_api_url,
+        'transport': 'stdio',
+    }
+    config = Config.from_dict(setup)
+
+    mocker.patch('keboola_mcp_server.mcp.os.environ', setup)
+
+    server = create_server(config)
+    async with Client(server) as client:
+        await assert_basic_setup(server, client)
+        await assert_mcp_tool_call(client)
+
