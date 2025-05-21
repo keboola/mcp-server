@@ -6,6 +6,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
+from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentConfigurationOutput,
@@ -87,6 +88,7 @@ def add_component_tools(mcp: FastMCP) -> None:
 # tools #########################################
 
 
+@tool_errors()
 async def retrieve_components_configurations(
     ctx: Context,
     component_types: Annotated[
@@ -141,6 +143,7 @@ async def retrieve_components_configurations(
         return await _retrieve_components_configurations_by_ids(client, component_ids)
 
 
+@tool_errors()
 async def retrieve_transformations_configurations(
     ctx: Context,
     transformation_ids: Annotated[
@@ -183,6 +186,7 @@ async def retrieve_transformations_configurations(
         return await _retrieve_components_configurations_by_ids(client, transformation_ids)
 
 
+@tool_errors()
 async def get_component_detail(
     ctx: Context,
     component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
@@ -208,6 +212,7 @@ async def get_component_detail(
     return await _get_component_details(component_id=component_id, client=client)
 
 
+@tool_errors()
 async def get_component_configuration_details(
     component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
     configuration_id: Annotated[
@@ -271,6 +276,7 @@ async def get_component_configuration_details(
     return ComponentConfigurationOutput.from_component_configuration_response(configuration_response, component)
 
 
+@tool_errors()
 async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
@@ -389,6 +395,7 @@ async def create_sql_transformation(
         raise e
 
 
+@tool_errors()
 async def update_sql_transformation_configuration(
     ctx: Context,
     configuration_id: Annotated[
@@ -480,6 +487,7 @@ async def update_sql_transformation_configuration(
         raise e
 
 
+@tool_errors()
 async def create_component_root_configuration(
     ctx: Context,
     name: Annotated[
@@ -572,6 +580,7 @@ async def create_component_root_configuration(
         raise e
 
 
+@tool_errors()
 async def create_component_row_configuration(
     ctx: Context,
     name: Annotated[
@@ -676,6 +685,7 @@ async def create_component_row_configuration(
         raise e
 
 
+@tool_errors()
 async def update_component_root_configuration(
     ctx: Context,
     name: Annotated[
@@ -783,6 +793,7 @@ async def update_component_root_configuration(
         raise e
 
 
+@tool_errors()
 async def update_component_row_configuration(
     ctx: Context,
     name: Annotated[
@@ -901,6 +912,7 @@ async def update_component_row_configuration(
         raise e
 
 
+@tool_errors()
 async def get_component_configuration_examples(
     ctx: Context,
     component_id: Annotated[
@@ -944,6 +956,7 @@ async def get_component_configuration_examples(
     return markdown
 
 
+@tool_errors()
 async def find_component_id(
     ctx: Context,
     query: Annotated[
