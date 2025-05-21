@@ -244,3 +244,82 @@ async def test_http_setup(
         async with run_client('streamable-http', url, headers) as client:
             await assert_basic_setup(server, client)
             await assert_mcp_tool_call(client)
+
+
+@pytest.mark.asyncio
+async def test_http_multiple_clients(
+    run_server_remote: AsyncContextServerRemoteRunner,
+    run_client: AsyncContextClientRunner,
+    assert_basic_setup: Callable[[FastMCP, Client], Awaitable[None]],
+    assert_mcp_tool_call: Callable[[Client], Awaitable[None]],
+    storage_api_token: str,
+    workspace_schema: str,
+    storage_api_url: str,
+):
+
+    config = Config.from_dict(
+        {
+            'transport': 'streamable-http',
+            # we pass empty dict and test if it is set from the headers
+        }
+    )
+
+    server = create_server(config)
+    async with run_server_remote(server, 'streamable-http', random.randint(8000, 9000)) as url:
+        headers = {
+            'storage_token': storage_api_token,
+            'workspace_schema': workspace_schema,
+            'storage_api_url': storage_api_url,
+        }
+        url = url
+        async with (
+            run_client('streamable-http', url, headers) as client,
+            run_client('streamable-http', url, headers) as client2,
+            run_client('streamable-http', url, headers) as client3,
+        ):
+            await assert_basic_setup(server, client)
+            await assert_basic_setup(server, client2)
+            await assert_basic_setup(server, client3)
+            await assert_mcp_tool_call(client)
+            await assert_mcp_tool_call(client2)
+            await assert_mcp_tool_call(client3)
+            assert client.session != client2.session
+            assert client.session != client3.session
+            assert client2.session != client3.session
+
+
+@pytest.mark.asyncio
+async def test_http_server_header_and_sse_client(
+    run_server_remote: AsyncContextServerRemoteRunner,
+    run_client: AsyncContextClientRunner,
+    assert_basic_setup: Callable[[FastMCP, Client], Awaitable[None]],
+    assert_mcp_tool_call: Callable[[Client], Awaitable[None]],
+    storage_api_token: str,
+    workspace_schema: str,
+    storage_api_url: str,
+):
+
+    config = Config.from_dict(
+        {
+            'transport': 'streamable-http',
+            'storage_api_url': storage_api_url,
+        }
+    )
+
+    server = create_server(config)
+    async with run_server_remote(server, 'streamable-http', random.randint(8000, 9000)) as url:
+        headers = {
+            'storage_token': storage_api_token,
+            'workspace_schema': workspace_schema,
+        }
+        url = url
+        url2 = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
+        async with (
+            run_client('streamable-http', url, headers) as client,
+            run_client('streamable-http', url2, None) as client2,
+        ):
+            await assert_basic_setup(server, client)
+            await assert_basic_setup(server, client2)
+            await assert_mcp_tool_call(client)
+            await assert_mcp_tool_call(client2)
+            assert client.session != client2.session
