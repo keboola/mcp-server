@@ -16,6 +16,46 @@ from keboola_mcp_server.config import Config
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import ComponentConfiguration
 
+AsyncContextServerRemoteRunner = Callable[
+    [FastMCP, Literal['sse', 'streamable-http'], int], _AsyncGeneratorContextManager[str]
+]
+
+
+LOG = logging.getLogger(__name__)
+
+
+@pytest.fixture
+def run_server_remote() -> AsyncContextServerRemoteRunner:
+    """
+    Run the server in a async context manager which will ensure that the server is properly closed after the test.
+    The server is created with the given transport and port.
+    :yield: The url of the server.
+    """
+
+    @asynccontextmanager
+    async def _run_server_remote(
+        server: FastMCP, transport: Literal['sse', 'streamable-http'], port: int = 8000
+    ) -> AsyncGenerator[str, None]:
+        proc = Process(target=lambda: asyncio.run(server.run_async(transport=transport, port=port)))
+        proc.start()
+        if transport == 'sse':
+            url = f'http://127.0.0.1:{port}/sse'
+        else:
+            url = f'http://127.0.0.1:{port}/mcp'
+
+        await asyncio.sleep(1.0)  # wait for the server to start
+        try:
+            yield url
+        except Exception as e:
+            proc.terminate()
+            proc.join()
+            raise e
+        finally:
+            proc.terminate()
+            proc.join()
+
+    return _run_server_remote
+
 
 
 @pytest.fixture
