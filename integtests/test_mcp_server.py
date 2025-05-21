@@ -209,3 +209,38 @@ async def test_sse_setup(
         async with run_client('sse', sse_url, None) as client:
             await assert_basic_setup(server, client)
             await assert_mcp_tool_call(client)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('use_header', [True, False])
+async def test_http_setup(
+    use_header: bool,
+    run_server_remote: AsyncContextServerRemoteRunner,
+    run_client: AsyncContextClientRunner,
+    assert_basic_setup: Callable[[FastMCP, Client], Awaitable[None]],
+    assert_mcp_tool_call: Callable[[Client], Awaitable[None]],
+    storage_api_token: str,
+    workspace_schema: str,
+    storage_api_url: str,
+):
+
+    config = Config.from_dict(
+        {
+            'storage_api_url': storage_api_url,
+            'transport': 'streamable-http',
+        }
+    )
+
+    server = create_server(config)
+    async with run_server_remote(server, 'streamable-http', random.randint(8000, 9000)) as url:
+        # if use_header is True, we use the headers to pass the storage_token and workspace_schema,
+        if use_header:
+            headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
+            url = url
+        else:
+            headers = None
+            url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
+
+        async with run_client('streamable-http', url, headers) as client:
+            await assert_basic_setup(server, client)
+            await assert_mcp_tool_call(client)
