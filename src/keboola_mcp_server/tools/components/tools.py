@@ -363,36 +363,32 @@ async def create_sql_transformation(
     LOG.info(f'Creating new transformation configuration: {name} for component: {transformation_id}.')
     # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_transformation_configuration = cast(
-            JsonDict,
-            await client.storage_client.post(
-                endpoint=endpoint,
-                data={
-                    'name': name,
-                    'description': description,
-                    'configuration': transformation_configuration_payload.model_dump(),
-                },
-            )
+    new_raw_transformation_configuration = cast(
+        JsonDict,
+        await client.storage_client.post(
+            endpoint=endpoint,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': transformation_configuration_payload.model_dump(),
+            },
         )
+    )
 
-        component = await _get_component_details(client=client, component_id=transformation_id)
-        new_transformation_configuration = ComponentConfigurationResponse.model_validate(
-            new_raw_transformation_configuration |
-            {
-                'component_id': transformation_id,
-                'component': Component.from_component_detail(component),
-            }
-        )
+    component = await _get_component_details(client=client, component_id=transformation_id)
+    new_transformation_configuration = ComponentConfigurationResponse.model_validate(
+        new_raw_transformation_configuration |
+        {
+            'component_id': transformation_id,
+            'component': Component.from_component_detail(component),
+        }
+    )
 
-        LOG.info(
-            f'Created new transformation "{transformation_id}" with configuration id '
-            f'"{new_transformation_configuration.configuration_id}".'
-        )
-        return new_transformation_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new transformation configuration: {e}')
-        raise e
+    LOG.info(
+        f'Created new transformation "{transformation_id}" with configuration id '
+        f'"{new_transformation_configuration.configuration_id}".'
+    )
+    return new_transformation_configuration
 
 
 @tool_errors()
@@ -455,36 +451,30 @@ async def update_sql_transformation_configuration(
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    try:
-        LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
-        updated_raw_configuration = await client.storage_client.configuration_update(
-            component_id=sql_transformation_id,
-            configuration_id=configuration_id,
-            configuration=updated_configuration,
-            change_description=change_description,
-            updated_description=updated_description if updated_description else None,
-            is_disabled=is_disabled,
-        )
+    LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+    updated_raw_configuration = await client.storage_client.configuration_update(
+        component_id=sql_transformation_id,
+        configuration_id=configuration_id,
+        configuration=updated_configuration,
+        change_description=change_description,
+        updated_description=updated_description if updated_description else None,
+        is_disabled=is_disabled,
+    )
 
-        transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
-        updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
-            updated_raw_configuration |
-            {
-                'component_id': transformation.component_id,
-                'component': Component.from_component_detail(transformation),
-            }
-        )
+    transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
+    updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
+        updated_raw_configuration |
+        {
+            'component_id': transformation.component_id,
+            'component': Component.from_component_detail(transformation),
+        }
+    )
 
-        LOG.info(
-            f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
-            f'component: {updated_transformation_configuration.component_id}.'
-        )
-        return updated_transformation_configuration
-    except Exception as e:
-        LOG.exception(
-            f'Error when updating transformation {sql_transformation_id} with configuration {configuration_id}: {e}'
-        )
-        raise e
+    LOG.info(
+        f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
+        f'component: {updated_transformation_configuration.component_id}.'
+    )
+    return updated_transformation_configuration
 
 
 @tool_errors()
@@ -551,33 +541,29 @@ async def create_component_root_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_configuration = await client.storage_client.create_component_root_configuration(
-            component_id=component_id,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': configuration_payload,
-            },
-            branch_id=client.storage_client_sync._branch_id,
-        )
+    new_raw_configuration = await client.storage_client.create_component_root_configuration(
+        component_id=component_id,
+        data={
+            'name': name,
+            'description': description,
+            'configuration': configuration_payload,
+        },
+        branch_id=client.storage_client_sync._branch_id,
+    )
 
-        new_configuration = ComponentRootConfiguration(
-            **new_raw_configuration,
-            component_id=component_id,
-            storage=new_raw_configuration['configuration'].get('storage'),
-            parameters=new_raw_configuration['configuration'].get('parameters'),
-        )
+    new_configuration = ComponentRootConfiguration(
+        **new_raw_configuration,
+        component_id=component_id,
+        storage=new_raw_configuration['configuration'].get('storage'),
+        parameters=new_raw_configuration['configuration'].get('parameters'),
+    )
 
-        LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
-            f'"{new_configuration.configuration_id}".'
-        )
+    LOG.info(
+        f'Created new configuration for component "{component_id}" with configuration id '
+        f'"{new_configuration.configuration_id}".'
+    )
 
-        return new_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
-        raise e
+    return new_configuration
 
 
 @tool_errors()
@@ -655,34 +641,30 @@ async def create_component_row_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_configuration = await client.storage_client.create_component_row_configuration(
-            component_id=component_id,
-            config_id=configuration_id,
-            branch_id=client.storage_client_sync._branch_id,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': configuration_payload,
-            },
-        )
+    new_raw_configuration = await client.storage_client.create_component_row_configuration(
+        component_id=component_id,
+        config_id=configuration_id,
+        branch_id=client.storage_client_sync._branch_id,
+        data={
+            'name': name,
+            'description': description,
+            'configuration': configuration_payload,
+        },
+    )
 
-        new_configuration = ComponentRowConfiguration(
-            **new_raw_configuration,
-            component_id=component_id,
-            storage=new_raw_configuration['configuration'].get('storage'),
-            parameters=new_raw_configuration['configuration'].get('parameters'),
-        )
+    new_configuration = ComponentRowConfiguration(
+        **new_raw_configuration,
+        component_id=component_id,
+        storage=new_raw_configuration['configuration'].get('storage'),
+        parameters=new_raw_configuration['configuration'].get('parameters'),
+    )
 
-        LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
-            f'"{new_configuration.configuration_id}".'
-        )
+    LOG.info(
+        f'Created new configuration for component "{component_id}" with configuration id '
+        f'"{new_configuration.configuration_id}".'
+    )
 
-        return new_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
-        raise e
+    return new_configuration
 
 
 @tool_errors()
@@ -762,35 +744,31 @@ async def update_component_root_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_configuration = await client.storage_client.update_component_root_configuration(
-            component_id=component_id,
-            config_id=configuration_id,
-            branch_id=client.storage_client_sync._branch_id,
-            data={
-                'name': name,
-                'description': description,
-                'changeDescription': change_description,
-                'configuration': configuration_payload,
-            },
-        )
+    new_raw_configuration = await client.storage_client.update_component_root_configuration(
+        component_id=component_id,
+        config_id=configuration_id,
+        branch_id=client.storage_client_sync._branch_id,
+        data={
+            'name': name,
+            'description': description,
+            'changeDescription': change_description,
+            'configuration': configuration_payload,
+        },
+    )
 
-        new_configuration = ComponentRootConfiguration(
-            **new_raw_configuration,
-            component_id=component_id,
-            storage=new_raw_configuration['configuration'].get('storage'),
-            parameters=new_raw_configuration['configuration'].get('parameters'),
-        )
+    new_configuration = ComponentRootConfiguration(
+        **new_raw_configuration,
+        component_id=component_id,
+        storage=new_raw_configuration['configuration'].get('storage'),
+        parameters=new_raw_configuration['configuration'].get('parameters'),
+    )
 
-        LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
-            f'"{new_configuration.configuration_id}".'
-        )
+    LOG.info(
+        f'Created new configuration for component "{component_id}" with configuration id '
+        f'"{new_configuration.configuration_id}".'
+    )
 
-        return new_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
-        raise e
+    return new_configuration
 
 
 @tool_errors()
@@ -880,37 +858,32 @@ async def update_component_row_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_configuration = await client.storage_client.update_component_row_configuration(
-            component_id=component_id,
-            config_id=configuration_id,
-            configuration_row_id=configuration_row_id,
-            branch_id=client.storage_client_sync._branch_id,
-            data={
-                'name': name,
-                'description': description,
-                'changeDescription': change_description,
-                'configuration': configuration_payload,
-            },
-        )
+    new_raw_configuration = await client.storage_client.update_component_row_configuration(
+        component_id=component_id,
+        config_id=configuration_id,
+        configuration_row_id=configuration_row_id,
+        branch_id=client.storage_client_sync._branch_id,
+        data={
+            'name': name,
+            'description': description,
+            'changeDescription': change_description,
+            'configuration': configuration_payload,
+        },
+    )
 
-        new_configuration = ComponentRowConfiguration(
-            **new_raw_configuration,
-            component_id=component_id,
-            storage=new_raw_configuration['configuration'].get('storage'),
-            parameters=new_raw_configuration['configuration'].get('parameters'),
-        )
+    new_configuration = ComponentRowConfiguration(
+        **new_raw_configuration,
+        component_id=component_id,
+        storage=new_raw_configuration['configuration'].get('storage'),
+        parameters=new_raw_configuration['configuration'].get('parameters'),
+    )
 
-        LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
-            f'"{new_configuration.configuration_id}".'
-        )
+    LOG.info(
+        f'Created new configuration for component "{component_id}" with configuration id '
+        f'"{new_configuration.configuration_id}".'
+    )
 
-        return new_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
-        raise e
-
+    return new_configuration
 
 @tool_errors()
 async def get_component_configuration_examples(
