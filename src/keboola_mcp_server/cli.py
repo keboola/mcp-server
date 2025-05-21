@@ -93,5 +93,6 @@ def main(args: Optional[list[str]] = None) -> None:
     import asyncio
     asyncio.run(run_server(args))
 
+
 if __name__ == '__main__':
     main()
