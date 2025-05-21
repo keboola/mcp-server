@@ -62,9 +62,6 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(create_data_app)
     LOG.info('Added tool: create_data_app.')
 
-    mcp.add_tool(_start_data_app)
-    LOG.info('Added tool: _start_data_app.')
-
     LOG.info('Component tools initialized.')
 
 
@@ -340,80 +337,6 @@ async def create_sql_transformation(
         raise e
 
 
-async def _get_data_context(ctx: Context) -> Dict[str, Any]:
-    """
-    Get context about available data in the Keboola project.
-    
-    Args:
-        ctx: The MCP server context
-        
-    Returns:
-        Dictionary containing information about available data
-    """
-    try:
-        # Get available buckets and tables
-        buckets = await retrieve_buckets(ctx)
-        data_context = {
-            'buckets': [],
-            'tables': [],
-            'sql_dialect': await get_sql_dialect(ctx)
-        }
-        
-        # For each bucket, get tables and sample data
-        for bucket in buckets:
-            bucket_info = {
-                'id': bucket.bucket_id,
-                'name': bucket.bucket_name,
-                'description': bucket.bucket_description,
-                'tables': []
-            }
-            
-            # Get tables in  bucket
-            tables = await retrieve_bucket_tables(ctx, bucket.bucket_id)
-            for table in tables:
-                try:
-                    # Get a sample of the table data
-                    sample_data = await query_table(
-                        ctx,
-                        table_id=table.table_id,
-                        limit=5,
-                        columns=[]
-                    )
-                    
-                    # Get table info
-                    table_info = {
-                        'id': table.table_id,
-                        'name': table.table_name,
-                        'description': table.table_description,
-                        'columns': list(sample_data[0].keys()) if sample_data else [],
-                        'sample_rows': [
-                            {k: str(v) for k, v in row.items()} 
-                            for row in sample_data
-                        ] if sample_data else []
-                    }
-                    bucket_info['tables'].append(table_info)
-                except Exception as e:
-                    LOG.warning(f"Could not get sample data for table {table.table_id}: {e}")
-                    bucket_info['tables'].append({
-                        'id': table.table_id,
-                        'name': table.table_name,
-                        'description': table.table_description,
-                        'columns': [],
-                        'sample_rows': []
-                    })
-            
-            data_context['buckets'].append(bucket_info)
-            
-        return data_context
-        
-    except Exception as e:
-        LOG.error(f"Error getting data context: {e}")
-        return {
-            'buckets': [],
-            'tables': [],
-            'sql_dialect': None
-        }
-
 
 async def _generate_data_app_script(
     ctx: Context, 
@@ -432,18 +355,12 @@ async def _generate_data_app_script(
         
     Returns:
         List of script lines
-    """
-    # Get data context from Keboola project
-    data_context = await _get_data_context(ctx)
-    
+    """    
     # Create a prompt for Claude that includes data context
     # TODO: Make sure libraries that need to be used but are not in the list below are added to packages
     # Use: - If any libraries are missing, add them to the packages list in config
 
     prompt = f"""Generate a Streamlit script for a data app named '{name}' that {description}.
-
-Available Data Context:
-{data_context}
 
 User Query: {user_query if user_query else 'No specific query provided'}
 
@@ -487,22 +404,19 @@ Please provide only the Python code, no explanations. The code should:
 - Use proper Keboola data access patterns"""
 
     # Use Claude to generate the data app
-    try:
-        response = await ctx.generate(prompt)
-        if not response or not isinstance(response, str):
-            raise ValueError("Failed to generate data app from Claude")
-            
-        script_lines = [
-            line.strip() 
-            for line in response.split('\n') 
-            if line.strip() and not line.strip().startswith('```')
-        ]
+    response = await ctx.generate(prompt)
+    if not response or not isinstance(response, str):
+        raise ValueError("Failed to generate data app from Claude")
         
-        return script_lines
-        
-    except Exception as e:
-        LOG.error(f"Error generating with Claude. Error: {e}")
-        raise RuntimeError(f"Failed to generate data app script: {e}") from e
+    script_lines = [
+        line.strip() 
+        for line in response.split('\n') 
+        if line.strip() and not line.strip().startswith('```')
+    ]
+    
+    return script_lines
+    
+
 
 
 async def create_data_app(
@@ -649,16 +563,5 @@ async def create_data_app(
     except Exception as e:
         LOG.exception(f'Error when creating new data app configuration: {e}')
         raise e
-
-async def _start_data_app(ctx: Context, data_app_id: str) -> None:
-    """
-    Start a data app using the Keboola API.
-    
-    Args:
-        ctx: The MCP server context
-    """
-    # TODO: Implement
-    pass
-
 
 ############################## End of component tools #########################################
