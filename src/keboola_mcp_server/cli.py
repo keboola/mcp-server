@@ -1,12 +1,13 @@
 """Command-line interface for the Keboola MCP server."""
 
 import argparse
+import asyncio
 import logging
 import sys
 from typing import Optional
 
-from .config import Config
-from .server import create_server
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.server import create_server
 
 LOG = logging.getLogger(__name__)
 
@@ -90,7 +91,6 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
 
 def main(args: Optional[list[str]] = None) -> None:
-    import asyncio
     asyncio.run(run_server(args))
 
 
