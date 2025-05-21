@@ -1,10 +1,10 @@
 """Keboola Storage API client wrapper."""
 
+import importlib.metadata
 import logging
 from typing import Any, Mapping, Optional, Union, cast
 
 import httpx
-from kbcstorage.client import Client as SyncStorageClient
 from pydantic import BaseModel, Field
 
 LOG = logging.getLogger(__name__)
@@ -55,10 +55,33 @@ class KeboolaClient:
         ai_service_api_url = f'{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
 
         # Initialize clients for individual services
-        self.storage_client_sync = SyncStorageClient(storage_api_url, self.token)
-        self.storage_client = AsyncStorageClient.create(root_url=storage_api_url, token=self.token)
-        self.jobs_queue_client = JobsQueueClient.create(queue_api_url, self.token)
-        self.ai_service_client = AIServiceClient.create(root_url=ai_service_api_url, token=self.token)
+        self.storage_client = AsyncStorageClient.create(
+            root_url=storage_api_url, token=self.token, headers=self._get_headers()
+        )
+        self.jobs_queue_client = JobsQueueClient.create(
+            root_url=queue_api_url, token=self.token, headers=self._get_headers()
+        )
+        self.ai_service_client = AIServiceClient.create(
+            root_url=ai_service_api_url, token=self.token, headers=self._get_headers()
+        )
+
+    @classmethod
+    def _get_user_agent(cls) -> str:
+        """
+        :return: User agent string.
+        """
+        try:
+            version = importlib.metadata.version('keboola-mcp-server')
+        except importlib.metadata.PackageNotFoundError:
+            version = 'NA'
+        return f'Keboola MCP Server/{version}'
+
+    @classmethod
+    def _get_headers(cls) -> dict[str, Any]:
+        """
+        :return: Additional headers for the requests, namely the user agent.
+        """
+        return {'User-Agent': cls._get_user_agent()}
 
 
 class RawKeboolaClient:
@@ -276,17 +299,29 @@ class AsyncStorageClient(KeboolaServiceClient):
         return self._branch_id
 
     @classmethod
-    def create(cls, root_url: str, token: str, version: str = 'v2', branch_id: str = 'default') -> 'AsyncStorageClient':
+    def create(
+        cls,
+        root_url: str,
+        token: str,
+        version: str = 'v2',
+        branch_id: str = 'default',
+        headers: dict[str, Any] | None = None,
+    ) -> 'AsyncStorageClient':
         """
         Creates an AsyncStorageClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token
         :param version: The version of the API to use (default: 'v2')
+        :param headers: Additional headers for the requests
         :return: A new instance of AsyncStorageClient
         """
         return cls(
-            raw_client=RawKeboolaClient(base_api_url=f'{root_url}/{version}/storage', api_token=token),
+            raw_client=RawKeboolaClient(
+                base_api_url=f'{root_url}/{version}/storage',
+                api_token=token,
+                headers=headers,
+            ),
             branch_id=branch_id,
         )
 
@@ -402,15 +437,18 @@ class JobsQueueClient(KeboolaServiceClient):
     """
 
     @classmethod
-    def create(cls, root_url: str, token: str) -> 'JobsQueueClient':
+    def create(
+        cls, root_url: str, token: str, headers: dict[str, Any] | None = None
+    ) -> 'JobsQueueClient':
         """
         Creates a JobsQueue client.
 
         :param root_url: Root url of API. e.g. "https://queue.keboola.com/"
         :param token: A key for the Storage API. Can be found in the storage console
+        :param headers: Additional headers for the requests
         :return: A new instance of JobsQueueClient
         """
-        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
+        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers))
 
     async def get_job_detail(self, job_id: str) -> JsonDict:
         """
@@ -536,15 +574,18 @@ class AIServiceClient(KeboolaServiceClient):
     """
 
     @classmethod
-    def create(cls, root_url: str, token: str) -> 'AIServiceClient':
+    def create(
+        cls, root_url: str, token: str, headers: dict[str, Any] | None = None
+    ) -> 'AIServiceClient':
         """
         Creates an AIServiceClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the AI service API
         :param token: The Keboola Storage API token
+        :param headers: Additional headers for the requests
         :return: A new instance of AIServiceClient
         """
-        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
+        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers))
 
     async def get_component_detail(self, component_id: str) -> JsonDict:
         """
