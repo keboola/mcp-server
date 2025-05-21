@@ -1,9 +1,9 @@
 import datetime
 import logging
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
@@ -87,6 +87,8 @@ class JobListItem(BaseModel):
         default=None,
     )
 
+    model_config = ConfigDict(extra='forbid')
+
 
 class JobDetail(JobListItem):
     """Represents a detailed job with all available information."""
@@ -129,6 +131,8 @@ class JobDetail(JobListItem):
         default=None,
     )
 
+    model_config = ConfigDict(extra='forbid')
+
     @field_validator('result', mode='before')
     @classmethod
     def validate_result_field(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
@@ -143,97 +147,71 @@ class JobDetail(JobListItem):
         return current_value
 
 
+class JobListResponse(BaseModel):
+    jobs: list[JobListItem]
+    model_config = ConfigDict(extra='forbid')
+
+
 # End of Job Base Models ########################################
 
 # MCP tools ########################################
 
-JOB_STATUS = Literal['waiting', 'processing', 'success', 'error', 'created']
-SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
-SORT_ORDER_VALUES = Literal['asc', 'desc']
-
-
-# The Parameter Optional annotation is not working with MCP and when the bot tries to call the tool with appropriate
-# parameters, it raises `Invalid type for parameter 'status' in tool retrieve_jobs`, either bot cannot use the tool or
-# mcp parsing the parameters is not working. So we need to use Annotated[JOB_STATUS, ...] = None instead of
-# Optional[JOB_STATUS] = None despite having type check errors in the code.
+# Simply using the standard dict for the first parameter
 @tool_errors()
 async def retrieve_jobs(
-    ctx: Annotated[
-        Context,
-        Field(exclude=True)  # ensures it's not included in the tool JSON schema
-    ],
-    status: Annotated[
-        JOB_STATUS | None,
-        Field(description='Optional status to filter jobs by.')
-    ] = None,
-    component_id: Annotated[
-        str | None,
-        Field(description='Optional component ID to filter jobs.')
-    ] = None,
-    config_id: Annotated[
-        str | None,
-        Field(description='Optional configuration ID to filter jobs.')
-    ] = None,
-    limit: Annotated[
-        int,
-        Field(description='Max jobs to return (1-500).')
-    ] = 100,
-    offset: Annotated[
-        int,
-        Field(description='Offset for pagination.')
-    ] = 0,
-    sort_by: Annotated[
-        SORT_BY_VALUES,
-        Field(description='Field to sort jobs by.')
-    ] = 'startTime',
-    sort_order: Annotated[
-        SORT_ORDER_VALUES,
-        Field(description='Sort order: asc or desc.')
-    ] = 'desc',
-) -> Annotated[
-    list[JobListItem],
-    Field(description='List of job summaries.'),
-]:
+        component_id: str,
+        config_id: str,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        status: str,
+        ctx: Context
+) -> JobListResponse:
     """
-    Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
-    filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
+    Retrieves jobs in the project, optionally filtered by status, component ID, or configuration ID.
 
     USAGE:
-    - Use when you want to list jobs for a given component_id and optionally for given config_id.
-    - Use when you want to list all jobs in the project or filter them by status.
+    - Use when you want to see jobs in the project, optionally filtered by various criteria.
 
     EXAMPLES:
-    - If status = "error", only jobs with status "error" will be listed.
-    - If status = None, then all jobs with arbitrary status will be listed.
-    - If component_id = "123" and config_id = "456", then the jobs for the component with id "123" and configuration
-      with id "456" will be listed.
-    - If limit = 100 and offset = 0, the first 100 jobs will be listed.
-    - If limit = 100 and offset = 100, the second 100 jobs will be listed.
-    - If sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
+    - user_input: `give me all jobs`
+        - returns all jobs in the project
+    - user_input: `list me all successful jobs`
+        - set status to "success"
+        - returns all successful jobs in the project
+    - user_input: `give me jobs for component ID 'component-123'`
+        - set component_id to 'component-123'
+        - returns all jobs for that component
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
+    # Process empty strings as None for API compatibility
+    status_param = status if status else None
+    component_id_param = component_id if component_id else None
+    config_id_param = config_id if config_id else None
+
+    # Validate sort_by and sort_order
+    valid_sort_by = ['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
+    valid_sort_order = ['asc', 'desc']
+
+    sort_by_param = sort_by if sort_by in valid_sort_by else 'startTime'
+    sort_order_param = sort_order if sort_order in valid_sort_order else 'desc'
+
     raw_jobs = await client.jobs_queue_client.search_jobs_by(
-        component_id=component_id,
-        config_id=config_id,
+        status=status_param,
+        component_id=component_id_param,
+        config_id=config_id_param,
         limit=limit,
         offset=offset,
-        status=[status] if status else None,
-        sort_by=sort_by,
-        sort_order=sort_order,
+        sort_by=sort_by_param,
+        sort_order=sort_order_param,
     )
-
-    return [JobListItem.model_validate(job) for job in raw_jobs]
+    return JobListResponse(jobs=[JobListItem.model_validate(j) for j in raw_jobs])
 
 
 @tool_errors()
-async def get_job_detail(
-    job_id: Annotated[
-        str,
-        Field(description='The unique identifier of the job whose details should be retrieved.'),
-    ],
-    ctx: Context,
-) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
+async def get_job_detail(job_id: str, ctx: Context) -> JobDetail:
     """
     Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.
@@ -249,14 +227,7 @@ async def get_job_detail(
 
 
 @tool_errors()
-async def start_job(
-    ctx: Context,
-    component_id: Annotated[
-        str,
-        Field(description='The ID of the component or transformation for which to start a job.'),
-    ],
-    configuration_id: Annotated[str, Field(description='The ID of the configuration for which to start a job.')],
-) -> Annotated[JobDetail, Field(description='The newly started job details.')]:
+async def start_job(component_id: str, configuration_id: str, ctx: Context) -> JobDetail:
     """
     Starts a new job for a given component or transformation.
     """

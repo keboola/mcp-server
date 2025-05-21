@@ -473,6 +473,6 @@ async def test_retrieve_jobs(
         sort_order='desc',
     )
 
-    assert result == []
+    assert result.jobs == []
 
     keboola_client.jobs_queue_client.search_jobs_by.assert_called_once()
