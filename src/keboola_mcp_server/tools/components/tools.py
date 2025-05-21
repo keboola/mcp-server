@@ -885,6 +885,7 @@ async def update_component_row_configuration(
 
     return new_configuration
 
+
 @tool_errors()
 async def get_component_configuration_examples(
     ctx: Context,
