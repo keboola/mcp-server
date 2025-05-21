@@ -34,7 +34,7 @@ class KeboolaClient:
     def __init__(
         self,
         storage_api_token: str,
-        storage_api_url: str = 'https://connection.keboola.com',
+        storage_api_url: str,
     ) -> None:
         """
         Initialize the client.

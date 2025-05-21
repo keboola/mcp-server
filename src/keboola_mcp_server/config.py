@@ -8,25 +8,17 @@ from typing import Mapping, Optional
 
 LOG = logging.getLogger(__name__)
 
-STORAGE_TOKEN_KEY = 'storage_token'
-
 
 @dataclass(frozen=True)
 class Config:
     """Server configuration."""
 
+    storage_api_url: Optional[str] = None
+    """The URL to the Storage API."""
     storage_token: Optional[str] = None
-    """Storage token to access the storage API using the MCP tools, required.
-    None when the server is accessed remotely."""
+    """The token to access the storage API using the MCP tools."""
     workspace_schema: Optional[str] = None
-    """Workspace schema to access the buckets, tables in the storage and execute sql queries over them, not required.
-    None when the server is accessed remotely."""
-    storage_api_url: str = 'https://connection.keboola.com'
-    """Storage API URL to access the storage API of the current stack."""
-    log_level: str = 'INFO'
-    """Logging level to use for the server."""
-    transport: str = 'stdio'
-    """Transport to use for the server. Possible values: `stdio`, `sse`, `streamable-http`."""
+    """Workspace schema to access the buckets, tables and execute sql queries."""
 
     @classmethod
     def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, str]:
@@ -46,20 +38,6 @@ class Config:
         or their uppercase variant prefixed with 'KBC_'.
         """
         return cls(**cls._read_options(d))
-
-    @staticmethod
-    def required_fields() -> list[str]:
-        required_fields = [STORAGE_TOKEN_KEY]
-        return required_fields
-
-    @staticmethod
-    def contains_required_fields(params: Mapping[str, str]) -> bool:
-        required_fields = Config.required_fields()
-        kbc_required_fields = [f'KBC_{field.upper()}' for field in required_fields]
-        return all(
-            any(field in params for field in disjunctive_fields)
-            for disjunctive_fields in zip(required_fields, kbc_required_fields)
-        )
 
     def replace_by(self, d: Mapping[str, str]) -> 'Config':
         """

@@ -1,7 +1,7 @@
 import pytest
+from fastmcp import Context
 from kbcstorage.client import Client as SyncStorageClient
-from mcp.server.fastmcp import Context
-from mcp.server.session import ServerSession
+from mcp.shared.session import BaseSession
 
 from keboola_mcp_server.client import (
     AIServiceClient,
@@ -42,8 +42,7 @@ def workspace_manager(mocker) -> WorkspaceManager:
 def empty_context(mocker) -> Context:
     """Creates the mocked `mcp.server.fastmcp.Context` instance with the `ServerSession` and empty state."""
     ctx = mocker.MagicMock(Context)
-    ctx.session = (session := mocker.MagicMock(ServerSession))
-    # We set the user session state as it is done in the @with_session_state decorator
+    ctx.session = (session := mocker.MagicMock(BaseSession))
     type(session).state = (state := mocker.PropertyMock())
     state.return_value = {}
     return ctx
