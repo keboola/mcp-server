@@ -1,6 +1,5 @@
 
 from typing import Any, Callable
-from unittest.mock import call
 
 import pytest
 from mcp.server.fastmcp import Context
@@ -236,7 +235,7 @@ async def test_get_component_configuration_details(
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_configuration)
-    keboola_client.storage_client.get = mocker.AsyncMock(side_effect=[{'components': []}, mock_metadata])
+    keboola_client.storage_client.get = mocker.AsyncMock(return_value=mock_metadata)
 
     result = await get_component_configuration_details(
         component_id='keboola.ex-aws-s3', configuration_id='123', ctx=context
@@ -257,13 +256,11 @@ async def test_get_component_configuration_details(
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=mock_component['id'])
 
-    keboola_client.storage_client.get.assert_has_calls(calls=[
-        call('', params={'exclude': 'componentDetails'}),
-        call(endpoint=f'branch/{mock_branch_id}/'
-                      f'components/{mock_component["id"]}/'
-                      f'configs/{mock_configuration["id"]}/'
-                      'metadata')
-    ])
+    keboola_client.storage_client.get.assert_called_once_with(
+        endpoint=f'branch/{mock_branch_id}/'
+                 f'components/{mock_component["id"]}/'
+                 f'configs/{mock_configuration["id"]}/'
+                 'metadata')
 
 
 @pytest.mark.parametrize(
