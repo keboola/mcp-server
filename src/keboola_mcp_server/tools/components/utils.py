@@ -2,7 +2,6 @@ import logging
 from typing import Any, Optional, Sequence, Union, cast, get_args
 
 from httpx import HTTPStatusError
-from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.tools.components.model import (
@@ -12,17 +11,20 @@ from keboola_mcp_server.tools.components.model import (
     ComponentWithConfigurations,
     ReducedComponent,
     ReducedComponentConfiguration,
+    TransformationConfiguration,
 )
 
 LOG = logging.getLogger(__name__)
 
 
-def _handle_component_types(
+def handle_component_types(
     types: Optional[Union[ComponentType, Sequence[ComponentType]]],
 ) -> Sequence[ComponentType]:
     """
     Utility function to handle the component types [extractors, writers, applications, all]
-    If the types include "all", it will be removed and the remaining types will be returned.
+    argument passed to the tools.
+    If the `types` is None or empty, all component types are returned.
+    If the `types` is a string, it is converted to a list containing the single type.
     :param types: The component types/type to process.
     :return: The processed component types.
     """
@@ -179,60 +181,15 @@ def _get_sql_transformation_id_from_sql_dialect(
         raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
 
 
-class TransformationConfiguration(BaseModel):
-    """
-    Utility class to create the transformation configuration, a schema for the transformation configuration in the API.
-    Currently, the storage configuration uses only input and output tables, excluding files, etc.
-    """
-
-    class Parameters(BaseModel):
-        """The parameters for the transformation."""
-
-        class Block(BaseModel):
-            """The block for the transformation."""
-
-            class Code(BaseModel):
-                """The code for the transformation block."""
-
-                name: str = Field(description='The name of the current code script')
-                script: list[str] = Field(description='List of current code statements')
-
-            name: str = Field(description='The name of the current block')
-            codes: list[Code] = Field(description='The code scripts')
-
-        blocks: list[Block] = Field(description='The blocks for the transformation')
-
-    class Storage(BaseModel):
-        """The storage configuration for the transformation. For now it stores only input and output tables."""
-
-        class Destination(BaseModel):
-            """Tables' destinations for the transformation. Either input or output tables."""
-
-            class Table(BaseModel):
-                """The table used in the transformation"""
-
-                destination: Optional[str] = Field(description='The destination table name', default=None)
-                source: Optional[str] = Field(description='The source table name', default=None)
-
-            tables: list[Table] = Field(description='The tables used in the transformation', default=[])
-
-        input: Destination = Field(description='The input tables for the transformation', default=Destination())
-        output: Destination = Field(description='The output tables for the transformation', default=Destination())
-
-    parameters: Parameters = Field(description='The parameters for the transformation')
-    storage: Storage = Field(description='The storage configuration for the transformation')
-
-
-def _get_transformation_configuration(
+def create_transformation_definition(
     statements: Sequence[str], transformation_name: str, output_tables: Sequence[str]
 ) -> TransformationConfiguration:
     """
-    Utility function to set the transformation configuration from code statements.
-    It creates the expected configuration for the transformation, parameters and storage.
+    Creates the transformation configuration definition from code statements.
     :param statements: The code statements (sql for now)
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
-    :return: dictionary with parameters and storage following the TransformationConfiguration schema
+    :return: The transformation configuration as TransformationConfiguration object
     """
     # init Storage Configuration with empty input and output tables
     storage = TransformationConfiguration.Storage()

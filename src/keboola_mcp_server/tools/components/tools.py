@@ -9,10 +9,10 @@ from keboola_mcp_server.tools.components.model import ComponentConfiguration, Co
 from keboola_mcp_server.tools.components.utils import (
     _get_component_details,
     _get_sql_transformation_id_from_sql_dialect,
-    _get_transformation_configuration,
-    _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
+    create_transformation_definition,
+    handle_component_types,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 
@@ -62,13 +62,15 @@ async def retrieve_components_configurations(
     component_types: Annotated[
         Sequence[ComponentType],
         Field(
-            description='List of component types to filter by. If none, return all components.',
+            description='List of component types to filter by. If None or empty, return all components.',
         ),
     ] = tuple(),
     component_ids: Annotated[
         Sequence[str],
         Field(
-            description='List of component IDs to retrieve configurations for. If none, return all components.',
+            description=(
+                'List of component IDs to retrieve configurations for. If None or empty, return all components.'
+            ),
         ),
     ] = tuple(),
 ) -> Annotated[
@@ -102,7 +104,7 @@ async def retrieve_components_configurations(
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
     if not component_ids:
         client = KeboolaClient.from_state(ctx.session.state)
-        component_types = _handle_component_types(component_types)  # if none, return all types
+        component_types = handle_component_types(component_types)  # if none, return all types
         return await _retrieve_components_configurations_by_types(client, component_types)
     # If component IDs are provided, retrieve component configurations by IDs
     else:
@@ -288,7 +290,7 @@ async def create_sql_transformation(
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage(input and output tables)
-    transformation_configuration_payload = _get_transformation_configuration(
+    transformation_configuration_payload = create_transformation_definition(
         statements=sql_statements, transformation_name=name, output_tables=created_table_names
     )
 

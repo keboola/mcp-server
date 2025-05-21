@@ -2,11 +2,10 @@ from typing import Sequence, Union
 
 import pytest
 
-from keboola_mcp_server.tools.components.model import ComponentType
+from keboola_mcp_server.tools.components.model import ComponentType, TransformationConfiguration
 from keboola_mcp_server.tools.components.utils import (
-    TransformationConfiguration,
-    _get_transformation_configuration,
-    _handle_component_types,
+    create_transformation_definition,
+    handle_component_types,
 )
 
 
@@ -24,7 +23,7 @@ def test_handle_component_types(
     expected: list[ComponentType],
 ):
     """Test list_component_configurations tool with core component."""
-    assert _handle_component_types(component_type) == expected
+    assert handle_component_types(component_type) == expected
 
 
 @pytest.mark.parametrize(
@@ -53,16 +52,16 @@ def test_handle_component_types(
         ),
     ],
 )
-def test_get_transformation_configuration(
+def test_create_transformation_definition(
     sql_statements: list[str],
     created_table_names: list[str],
     transformation_name: str,
     expected_bucket_id: str,
 ):
-    """Test get_transformation_configuration tool which should return the correct transformation configuration
+    """Test create_transformation_definition function which should return the correct transformation configuration
     given the sql statement created_table_names and transformation_name."""
 
-    configuration = _get_transformation_configuration(
+    configuration = create_transformation_definition(
         statements=sql_statements,
         transformation_name=transformation_name,
         output_tables=created_table_names,
