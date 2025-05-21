@@ -41,8 +41,6 @@ tests = [
 ]
 dev = [
     "tox ~= 4.23",
-    "build ~= 1.2",
-    "wheel ~= 0.45",
 ]
 
 [project.scripts]
