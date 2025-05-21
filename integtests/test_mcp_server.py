@@ -184,3 +184,28 @@ async def test_stdio_setup(
     async with Client(server) as client:
         await assert_basic_setup(server, client)
         await assert_mcp_tool_call(client)
+
+
+@pytest.mark.asyncio
+async def test_sse_setup(
+    run_server_remote: AsyncContextServerRemoteRunner,
+    run_client: AsyncContextClientRunner,
+    assert_basic_setup: Callable[[FastMCP, Client], Awaitable[None]],
+    assert_mcp_tool_call: Callable[[Client], Awaitable[None]],
+    storage_api_token: str,
+    workspace_schema: str,
+    storage_api_url: str,
+):
+    config = Config.from_dict(
+        {
+            'storage_api_url': storage_api_url,
+            'transport': 'sse',
+        }
+    )
+
+    server = create_server(config)
+    async with run_server_remote(server, 'sse', random.randint(8000, 9000)) as url:
+        sse_url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
+        async with run_client('sse', sse_url, None) as client:
+            await assert_basic_setup(server, client)
+            await assert_mcp_tool_call(client)
