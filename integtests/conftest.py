@@ -8,12 +8,12 @@ from typing import Any, Generator
 
 import pytest
 from dotenv import load_dotenv
+from fastmcp import Context
 from kbcstorage.client import Client as SyncStorageClient
-from mcp.server.fastmcp import Context
+from mcp.server.session import ServerSession
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.mcp import StatefulServerSession
-from keboola_mcp_server.tools.sql import WorkspaceManager
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -64,12 +64,12 @@ class ProjectDef:
     configs: list[ConfigDef]
 
 
-def _keboola_client() -> KeboolaClient:
+def _storage_client() -> SyncStorageClient:
     storage_api_url = os.getenv(STORAGE_API_URL_ENV_VAR)
     storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
     assert storage_api_url, f'{STORAGE_API_URL_ENV_VAR} must be set'
     assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
-    return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
+    return SyncStorageClient(storage_api_url, storage_api_token)
 
 
 @pytest.fixture(scope='session')
@@ -164,7 +164,7 @@ def keboola_project(env_file_loaded: bool) -> Generator[ProjectDef, Any, None]:
     After the tests, the project is cleaned up.
     """
     # Cannot use keboola_client fixture because it is function-scoped
-    storage_client = _keboola_client().storage_client_sync
+    storage_client = _storage_client()
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
     LOG.info(f'Setting up Keboola project with ID={project_id}')
@@ -219,7 +219,11 @@ def configs(keboola_project: ProjectDef) -> list[ConfigDef]:
 
 @pytest.fixture
 def keboola_client(env_file_loaded: bool) -> KeboolaClient:
-    return _keboola_client()
+    storage_api_url = os.getenv(STORAGE_API_URL_ENV_VAR)
+    storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
+    assert storage_api_url, f'{STORAGE_API_URL_ENV_VAR} must be set'
+    assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
+    return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
 
 
 @pytest.fixture
@@ -237,7 +241,8 @@ def mcp_context(
     MCP context containing the Keboola client and workspace manager.
     """
     client_context = mocker.MagicMock(Context)
-    client_context.session = mocker.MagicMock(StatefulServerSession)
+    client_context.session = mocker.MagicMock(ServerSession)
+    # We set the user session state as it is done in the @with_session_state decorator
     client_context.session.state = {
         KeboolaClient.STATE_KEY: keboola_client,
         WorkspaceManager.STATE_KEY: workspace_manager,

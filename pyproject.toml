@@ -4,15 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "0.18.1"
+version = "0.19.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    "mcp[cli] == 1.6.0",
-    "kbcstorage ~= 0.9",
+    "fastmcp ~= 2.2",
     "httpx ~= 0.28",
     "google-cloud-bigquery ~= 3.31",
 ]
@@ -38,6 +37,9 @@ tests = [
     "pytest-datadir ~= 1.6.1",
     "python-dotenv ~= 1.1",
     "pytest-mock ~= 3.14",
+]
+integtests = [
+    "kbcstorage ~= 0.9",
 ]
 dev = [
     "tox ~= 4.23",
@@ -112,6 +114,7 @@ commands = [
 
 [tool.tox.env.integtests]
 description = "Run integration tests"
+extras = ["tests", "integtests"]
 pass_env = [
     "INTEGTEST_STORAGE_API_URL",
     "INTEGTEST_STORAGE_TOKEN",

@@ -1,183 +1,165 @@
 """
-This is the extension of mcp.server.FastMCP and mcp.server.Server classes that allows to attach the "state"
-to the SSE session. The state is created by the state factory function that can be plugged in to the MCP server,
-and that creates a state which contains arbitrary objects keyed by string identifiers. The factory is given the
-query parameters from the HTTP request that initiates the SSE connection.
-
-Example:
-def factory(params: HttpRequestParams) -> SessionState:
-    return { 'sapi_client': KeboolaClient(params['storage_token']) }
-
-mcp = KeboolaMcpServer(name='SAPI Connector', session_state_factory=factory)
-
-@mcp.tool()
-def list_all_buckets(ctx: Context):
-    client = ctx.session.state['sapi_client']
-    return client.storage_client.buckets.list()
-
-mcp.run(transport='sse')
-
-Issues:
-  * The current implementation of FastMCP does not support sending `Context` to the registered
-    resources' functions. The parameter is passed only to the registered tools.
+This module overrides FastMCP.add_tool() to improve conversion of tool function docstrings
+into tool descriptions.
+It also provides a decorator that MCP tool functions can use to inject session state into their Context parameter.
 """
 
+import inspect
 import logging
 import os
 import textwrap
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from typing import Any, Callable
+from dataclasses import dataclass
+from functools import wraps
+from typing import Any
 
-import anyio
-import mcp.types as types
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp import ServerSession, stdio_server
-from mcp.server import FastMCP, Server
-from mcp.server.lowlevel.server import LifespanResultT
-from mcp.server.models import InitializationOptions
-from mcp.server.sse import SseServerTransport
-from mcp.types import AnyFunction
+from fastmcp import Context, FastMCP
+from fastmcp.server.dependencies import get_http_request
+from fastmcp.utilities.types import find_kwarg_by_type
+from mcp.types import AnyFunction, ToolAnnotations
+from starlette.requests import Request
+
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
-SessionParams = dict[str, str]
-SessionState = dict[str, Any]
-SessionStateFactory = Callable[[SessionParams], SessionState]
 
+@dataclass
+class ServerState:
+    config: Config
 
-def _default_session_state_factory(params: SessionParams) -> SessionState:
-    return params
-
-
-class StatefulServerSession(ServerSession):
-    def __init__(
-        self,
-        read_stream: MemoryObjectReceiveStream[types.JSONRPCMessage | Exception],
-        write_stream: MemoryObjectSendStream[types.JSONRPCMessage],
-        init_options: InitializationOptions,
-        state: SessionState | None = None,
-    ) -> None:
-        super().__init__(read_stream, write_stream, init_options)
-        self._state = state or {}
-
-    @property
-    def state(self) -> SessionState:
-        return self._state
-
-
-class _KeboolaServer(Server):
-    def __init__(
-        self,
-        name: str,
-        version: str | None = None,
-        instructions: str | None = None,
-        lifespan: Callable[['Server'], AbstractAsyncContextManager[LifespanResultT]] | None = None,
-    ) -> None:
-        super().__init__(name, version=version, instructions=instructions, lifespan=lifespan)
-
-    async def run(
-        self,
-        read_stream: MemoryObjectReceiveStream[types.JSONRPCMessage | Exception],
-        write_stream: MemoryObjectSendStream[types.JSONRPCMessage],
-        initialization_options: InitializationOptions,
-        # When False, exceptions are returned as messages to the client.
-        # When True, exceptions are raised, which will cause the server to shut down
-        # but also make tracing exceptions much easier during testing and when using
-        # in-process servers.
-        raise_exceptions: bool = False,
-        state: SessionState | None = None,
-    ):
-        async with AsyncExitStack() as stack:
-            lifespan_context = await stack.enter_async_context(self.lifespan(self))
-            session = await stack.enter_async_context(
-                StatefulServerSession(read_stream, write_stream, initialization_options, state)
-            )
-
-            async with anyio.create_task_group() as tg:
-                async for message in session.incoming_messages:
-                    LOG.debug(f'Received message: {message}')
-
-                    tg.start_soon(
-                        self._handle_message,
-                        message,
-                        session,
-                        lifespan_context,
-                        raise_exceptions,
-                    )
+    @classmethod
+    def from_context(cls, ctx: Context) -> 'ServerState':
+        server_state = ctx.request_context.lifespan_context
+        if not isinstance(server_state, ServerState):
+            raise ValueError('ServerState is not available in the context.')
+        return server_state
 
 
 class KeboolaMcpServer(FastMCP):
-    def __init__(
-        self,
-        name: str | None = None,
-        instructions: str | None = None,
-        *,
-        session_state_factory: SessionStateFactory | None = None,
-        **settings: Any,
-    ) -> None:
-        super().__init__(name, instructions, **settings)
-        self._mcp_server = _KeboolaServer(
-            name=self._mcp_server.name,
-            instructions=self._mcp_server.instructions,
-            lifespan=self._mcp_server.lifespan,
-        )
-        self._setup_handlers()
-        self._session_state_factory = session_state_factory or _default_session_state_factory
-
-    async def run_stdio_async(self) -> None:
-        """Run the server using stdio transport."""
-        async with stdio_server() as (read_stream, write_stream):
-            await self._mcp_server.run(
-                read_stream,
-                write_stream,
-                initialization_options=self._mcp_server.create_initialization_options(),
-                state=self._session_state_factory(dict(os.environ)),
-            )
-
-    async def run_sse_async(self) -> None:
-        """Run the server using SSE transport."""
-        import uvicorn
-        from starlette.applications import Starlette
-        from starlette.requests import Request
-        from starlette.routing import Mount, Route
-
-        sse = SseServerTransport('/messages/')
-
-        async def handle_sse(request: Request):
-            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-                await self._mcp_server.run(
-                    streams[0],
-                    streams[1],
-                    initialization_options=self._mcp_server.create_initialization_options(),
-                    state=self._session_state_factory(dict(request.query_params)),
-                )
-
-        starlette_app = Starlette(
-            debug=self.settings.debug,
-            routes=[
-                Route('/sse', endpoint=handle_sse),
-                Mount('/messages/', app=sse.handle_post_message),
-                # TODO: add endpoints for health-check and info
-            ],
-        )
-
-        config = uvicorn.Config(
-            starlette_app,
-            host=self.settings.host,
-            port=self.settings.port,
-            log_level=self.settings.log_level.lower(),
-        )
-        server = uvicorn.Server(config)
-        await server.serve()
 
     def add_tool(
         self,
         fn: AnyFunction,
         name: str | None = None,
         description: str | None = None,
+        tags: set[str] | None = None,
+        annotations: ToolAnnotations | dict[str, Any] | None = None,
     ) -> None:
+        """Applies `textwrap.dedent()` function to the tool's docstring, if no explicit description is provided."""
         super().add_tool(
             fn=fn,
             name=name,
             description=description or textwrap.dedent(fn.__doc__ or '').strip(),
+            tags=tags,
+            annotations=annotations,
         )
+
+
+def _create_session_state(config: Config) -> dict[str, Any]:
+    """Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state."""
+    LOG.info(f'Creating SessionState from config: {config}.')
+
+    state: dict[str, Any] = {}
+    try:
+        if not config.storage_token:
+            raise ValueError('Storage API token is not provided.')
+        if not config.storage_api_url:
+            raise ValueError('Storage API URL is not provided.')
+        client = KeboolaClient(config.storage_token, config.storage_api_url)
+        state[KeboolaClient.STATE_KEY] = client
+        LOG.info('Successfully initialized Storage API client.')
+    except Exception as e:
+        LOG.error(f'Failed to initialize Keboola client: {e}')
+        raise
+
+    try:
+        if not config.workspace_schema:
+            raise ValueError('Workspace schema is not provided.')
+        workspace_manager = WorkspaceManager(client, config.workspace_schema)
+        state[WorkspaceManager.STATE_KEY] = workspace_manager
+        LOG.info('Successfully initialized Storage API Workspace manager.')
+    except Exception as e:
+        LOG.error(f'Failed to initialize Storage API Workspace manager: {e}')
+        raise
+
+    return state
+
+
+def _get_http_request() -> Request | None:
+    try:
+        return get_http_request()
+    except RuntimeError:
+        return None
+
+
+def with_session_state() -> AnyFunction:
+    """
+    Decorator that injects the session state into the Context parameter of a tool function.
+
+    This decorator dynamically inserts a session state object into the `Context` parameter of a tool function.
+    The session state contains instances of `KeboolaClient` and `WorkspaceManager`. These are initialized using
+    the MCP server configuration, which is composed from the following parameter sources:
+
+    * Initial configuration obtained from CLI parameters when starting the server
+    * Environment variables
+    * HTTP headers
+    * URL query parameters
+
+    Note: HTTP headers and URL query parameters are only used when the server runs on HTTP-based transport.
+
+    Usage example:
+    ```python
+    @with_session_state()
+    def tool(ctx: Context, ...):
+        client = KeboolaClient.from_state(ctx.session.state)
+        manager = WorkspaceManager.from_state(ctx.session.state)
+    ```
+    """
+    def _wrapper(fn: AnyFunction) -> AnyFunction:
+        """
+        :param fn: The tool function to decorate.
+        """
+
+        @wraps(fn)
+        async def _inject_session_state(*args, **kwargs) -> Any:
+            """
+            Injects the session state into the Context parameter of the tool function. The injection is executed
+            by the MCP server when the annotated tool function is called.
+            :param args: Positional arguments of the tool function
+            :param kwargs: Keyword arguments of the tool function
+            :raises TypeError: If no Context argument is found in the function parameters
+            :returns: Result of the tool function
+            """
+            # finds the Context type argument name in the function parameters
+            ctx_kwarg = find_kwarg_by_type(fn, Context)
+            if ctx_kwarg is None:
+                raise TypeError(
+                    'Context argument is required, add "ctx: Context" parameter to the function parameters.'
+                )
+            # convert positional args to kwargs using inspect.signature in case context is passed as positional arg
+            updated_kwargs = inspect.signature(fn).bind(*args, **kwargs).arguments
+            ctx = updated_kwargs.get(ctx_kwarg) if ctx_kwarg else None
+
+            if not isinstance(ctx, Context):
+                raise TypeError(f'The "ctx" argument must be of type Context, got {type(ctx)}.')
+
+            if not getattr(ctx.session, 'state', None):
+                # This is here to allow mocking the context.session.state in tests.
+                config = ServerState.from_context(ctx).config
+                config = config.replace_by(os.environ)
+                if http_rq := _get_http_request():
+                    config = config.replace_by(http_rq.headers)
+                    config = config.replace_by(http_rq.query_params)
+
+                # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
+                #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
+                state = _create_session_state(config)
+                ctx.session.state = state
+
+            return await fn(*args, **kwargs)
+
+        return _inject_session_state
+
+    return _wrapper

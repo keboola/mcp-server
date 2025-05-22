@@ -57,14 +57,9 @@ class TestConfig:
     def test_defaults(self) -> None:
         config = Config()
         assert config.storage_token is None
-        assert config.storage_api_url == 'https://connection.keboola.com'
+        assert config.storage_api_url is None
         assert config.workspace_schema is None
 
     def test_no_token_password_in_repr(self) -> None:
         config = Config(storage_token='foo')
-        assert str(config) == (
-            'Config('
-            "storage_token='****', "
-            "storage_api_url='https://connection.keboola.com', "
-            'workspace_schema=None)'
-        )
+        assert str(config) == "Config(storage_api_url=None, storage_token='****', workspace_schema=None)"

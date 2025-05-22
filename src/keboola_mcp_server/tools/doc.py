@@ -1,11 +1,12 @@
 import logging
 from typing import Annotated
 
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.mcp import with_session_state
 
 LOG = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class DocsAnswer(BaseModel):
 
 
 @tool_errors()
+@with_session_state()
 async def docs_query(
     ctx: Context,
     query: Annotated[str, Field(description='Natural language query to search for in the documentation.')],

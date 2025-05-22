@@ -360,7 +360,7 @@ With the basic setup, you can use `uv run tox` to run tests and check code style
 Recommended setup:
 
 ```bash
-uv sync --extra dev --extra tests --extra codestyle
+uv sync --extra dev --extra tests --extra integtests --extra codestyle
 ```
 
 With the recommended setup, packages for testing and code style checking will be installed which allows IDEs like
