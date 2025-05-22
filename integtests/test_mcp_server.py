@@ -7,17 +7,20 @@ from multiprocessing import Process
 from typing import AsyncGenerator, Awaitable, Callable, Literal
 
 import pytest
-from fastmcp import Client, FastMCP
+from fastmcp import Client, Context, FastMCP
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from mcp.types import TextContent
 
 from integtests.conftest import ConfigDef
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
+from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import ComponentConfiguration
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 AsyncContextServerRemoteRunner = Callable[
-    [FastMCP, Literal['sse', 'streamable-http'], int], _AsyncGeneratorContextManager[str]
+    [FastMCP, Literal['sse', 'streamable-http']], _AsyncGeneratorContextManager[str]
 ]
 AsyncContextClientRunner = Callable[
     [Literal['sse', 'streamable-http'], str, dict[str, str] | None], _AsyncGeneratorContextManager[Client]
@@ -29,25 +32,30 @@ LOG = logging.getLogger(__name__)
 
 @pytest.fixture
 def run_server_remote() -> AsyncContextServerRemoteRunner:
-    """
-    Run the server in a async context manager which will ensure that the server is properly closed after the test.
-    The server is created with the given transport and port.
-    :yield: The url of the server.
-    """
+    """fixture returning a _run_server_remote function"""
 
     @asynccontextmanager
     async def _run_server_remote(
-        server: FastMCP, transport: Literal['sse', 'streamable-http'], port: int = 8000
+        server: FastMCP, transport: Literal['sse', 'streamable-http']
     ) -> AsyncGenerator[str, None]:
+        """
+        Run the server in a async context manager which will ensure that the server is properly closed after the test.
+        The server is created with the given transport and port.
+        :yield: The url of the server.
+        """
+
+        port = random.randint(8000, 9000)
         proc = Process(target=lambda: asyncio.run(server.run_async(transport=transport, port=port)))
         proc.start()
+
         if transport == 'sse':
             url = f'http://127.0.0.1:{port}/sse'
         else:
             url = f'http://127.0.0.1:{port}/mcp'
 
-        await asyncio.sleep(1.0)  # wait for the server to start
+        LOG.info(f'Running server on {url} with transport {transport}')
         try:
+            await asyncio.sleep(1.0)  # wait for the server to start
             yield url
         except Exception as e:
             proc.terminate()
@@ -76,8 +84,8 @@ def run_client() -> AsyncContextClientRunner:
             transport_explicit = SSETransport(url=url)
         else:
             transport_explicit = StreamableHttpTransport(url=url, headers=headers)
-        client_explicit = Client(transport_explicit)
 
+        client_explicit = Client(transport_explicit)
         exception_from_client = None
 
         LOG.info(f'Running client connecting to {url} expecting `{transport}` server transport.')
@@ -90,7 +98,8 @@ def run_client() -> AsyncContextClientRunner:
 
         del client_explicit
         if exception_from_client:
-            # we need to raise the exception from the client TaskGroup otherwise it will inform about task group error
+            # we need to raise the exception from the client TaskGroup otherwise it will inform only
+            # about task group error
             raise exception_from_client
 
     return _run_client
@@ -174,7 +183,6 @@ async def test_stdio_setup(
         'storage_token': storage_api_token,
         'workspace_schema': workspace_schema,
         'storage_api_url': storage_api_url,
-        'transport': 'stdio',
     }
     config = Config.from_dict(setup)
 
@@ -199,12 +207,11 @@ async def test_sse_setup(
     config = Config.from_dict(
         {
             'storage_api_url': storage_api_url,
-            'transport': 'sse',
         }
     )
 
     server = create_server(config)
-    async with run_server_remote(server, 'sse', random.randint(8000, 9000)) as url:
+    async with run_server_remote(server, 'sse') as url:
         sse_url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
         async with run_client('sse', sse_url, None) as client:
             await assert_basic_setup(server, client)
@@ -224,19 +231,18 @@ async def test_http_setup(
     storage_api_url: str,
 ):
 
+    # test that storage api is set in the server init
     config = Config.from_dict(
         {
             'storage_api_url': storage_api_url,
-            'transport': 'streamable-http',
         }
     )
 
     server = create_server(config)
-    async with run_server_remote(server, 'streamable-http', random.randint(8000, 9000)) as url:
+    async with run_server_remote(server, 'streamable-http') as url:
         # if use_header is True, we use the headers to pass the storage_token and workspace_schema,
         if use_header:
             headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
-            url = url
         else:
             headers = None
             url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
@@ -257,15 +263,11 @@ async def test_http_multiple_clients(
     storage_api_url: str,
 ):
 
-    config = Config.from_dict(
-        {
-            'transport': 'streamable-http',
-            # we pass empty dict and test if it is set from the headers
-        }
-    )
+    # we pass empty dict and test if it is set from the headers
+    config = Config.from_dict({})
 
     server = create_server(config)
-    async with run_server_remote(server, 'streamable-http', random.randint(8000, 9000)) as url:
+    async with run_server_remote(server, 'streamable-http') as url:
         headers = {
             'storage_token': storage_api_token,
             'workspace_schema': workspace_schema,
@@ -273,23 +275,63 @@ async def test_http_multiple_clients(
         }
         url = url
         async with (
-            run_client('streamable-http', url, headers) as client,
-            run_client('streamable-http', url, headers) as client2,
-            run_client('streamable-http', url, headers) as client3,
+            run_client('streamable-http', url, headers) as client_1,
+            run_client('streamable-http', url, headers) as client_2,
+            run_client('streamable-http', url, headers) as client_3,
         ):
-            await assert_basic_setup(server, client)
-            await assert_basic_setup(server, client2)
-            await assert_basic_setup(server, client3)
-            await assert_mcp_tool_call(client)
-            await assert_mcp_tool_call(client2)
-            await assert_mcp_tool_call(client3)
-            assert client.session != client2.session
-            assert client.session != client3.session
-            assert client2.session != client3.session
+            await assert_basic_setup(server, client_1)
+            await assert_basic_setup(server, client_2)
+            await assert_basic_setup(server, client_3)
+            await assert_mcp_tool_call(client_1)
+            await assert_mcp_tool_call(client_2)
+            await assert_mcp_tool_call(client_3)
 
 
 @pytest.mark.asyncio
-async def test_http_server_header_and_sse_client(
+async def test_http_multiple_clients_with_different_headers(
+    run_server_remote: AsyncContextServerRemoteRunner,
+    run_client: AsyncContextClientRunner,
+    assert_basic_setup: Callable[[FastMCP, Client], Awaitable[None]],
+    storage_api_url: str,
+):
+    """
+    Test that the server can handle multiple clients with different headers and checks the values of the headers.
+    """
+
+    config = Config.from_dict({'storage_api_url': storage_api_url})
+
+    headers = {
+        'client_1': {'storage_token': 'client_1_storage_token', 'workspace_schema': 'client_1_workspace_schema'},
+        'client_2': {'storage_token': 'client_2_storage_token', 'workspace_schema': 'client_2_workspace_schema'},
+    }
+
+    @with_session_state()
+    async def assessed_function(ctx: Context, which_client: str) -> str:
+        storage_token = KeboolaClient.from_state(ctx.session.state).token
+        workspace_schema = WorkspaceManager.from_state(ctx.session.state)._workspace_schema
+        assert which_client in headers.keys()
+        assert storage_token == headers[which_client]['storage_token']
+        assert workspace_schema == headers[which_client]['workspace_schema']
+        return f'{which_client}'
+
+    server = create_server(config)
+    server.add_tool(assessed_function)
+    async with run_server_remote(server, 'streamable-http') as url:
+        async with (
+            run_client('streamable-http', url, headers['client_1']) as client_1,
+            run_client('streamable-http', url, headers['client_2']) as client_2,
+        ):
+            await assert_basic_setup(server, client_1)
+            await assert_basic_setup(server, client_2)
+            ret_1 = await client_1.call_tool('assessed_function', {'which_client': 'client_1'})
+            ret_2 = await client_2.call_tool('assessed_function', {'which_client': 'client_2'})
+            assert isinstance(ret_1[0], TextContent) and isinstance(ret_2[0], TextContent)
+            assert ret_1[0].text == 'client_1'
+            assert ret_2[0].text == 'client_2'
+
+
+@pytest.mark.asyncio
+async def test_http_server_header_and_query_params_client(
     run_server_remote: AsyncContextServerRemoteRunner,
     run_client: AsyncContextClientRunner,
     assert_basic_setup: Callable[[FastMCP, Client], Awaitable[None]],
@@ -299,27 +341,18 @@ async def test_http_server_header_and_sse_client(
     storage_api_url: str,
 ):
 
-    config = Config.from_dict(
-        {
-            'transport': 'streamable-http',
-            'storage_api_url': storage_api_url,
-        }
-    )
+    config = Config.from_dict({'storage_api_url': storage_api_url})
 
     server = create_server(config)
-    async with run_server_remote(server, 'streamable-http', random.randint(8000, 9000)) as url:
-        headers = {
-            'storage_token': storage_api_token,
-            'workspace_schema': workspace_schema,
-        }
-        url = url
-        url2 = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
+    async with run_server_remote(server, 'streamable-http') as url:
+        headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
+        url_params = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
         async with (
-            run_client('streamable-http', url, headers) as client,
-            run_client('streamable-http', url2, None) as client2,
+            run_client('streamable-http', url, headers) as client_1,
+            run_client('streamable-http', url_params, None) as client_2,
         ):
-            await assert_basic_setup(server, client)
-            await assert_basic_setup(server, client2)
-            await assert_mcp_tool_call(client)
-            await assert_mcp_tool_call(client2)
-            assert client.session != client2.session
+            await assert_basic_setup(server, client_1)
+            await assert_basic_setup(server, client_2)
+            await assert_mcp_tool_call(client_1)
+            await assert_mcp_tool_call(client_2)
+            assert client_1.session != client_2.session
