@@ -312,7 +312,7 @@ async def test_create_transformation_configuration(
         {
             **configuration,
             'component_id': expected_component_id,
-            'component': {**component, 'flags': ['flag1', 'flag2']},
+            'component': {**component}
         }
     )
 
