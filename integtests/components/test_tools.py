@@ -16,7 +16,7 @@ LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_get_component_configuration_details(mcp_context: Context, configs: list[ConfigDef]):
+async def test_get_component_configuration(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `get_component_configuration` returns a `ComponentConfigurationOutput` instance."""
 
     for config in configs:
