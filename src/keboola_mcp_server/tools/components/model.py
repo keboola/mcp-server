@@ -295,11 +295,11 @@ class ComponentConfigurationMetadata(BaseModel):
         """
         Create a ComponentConfigurationMetadata instance from a ComponentConfigurationResponse instance.
         """
-        root_configuration: ComponentConfigurationResponseBase = configuration
+        root_configuration = ComponentConfigurationResponseBase.model_validate(configuration.model_dump())
         row_configurations = None
         if configuration.rows:
             row_configurations = [
-                ComponentConfigurationResponse.model_validate(row) for row in configuration.rows if row is not None
+                ComponentConfigurationResponseBase.model_validate(row) for row in configuration.rows if row is not None
             ]
         return cls(root_configuration=root_configuration, row_configurations=row_configurations)
 
