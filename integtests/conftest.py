@@ -157,9 +157,7 @@ def _create_configs(storage_client: SyncStorageClient) -> list[ConfigDef]:
 
 
 @pytest.fixture(scope='session')
-def keboola_project(
-    env_file_loaded: bool
-) -> Generator[ProjectDef, Any, None]:
+def keboola_project(env_file_loaded: bool) -> Generator[ProjectDef, Any, None]:
     """
     Sets up a Keboola project with items needed for integration tests,
     such as buckets, tables and configurations.
@@ -200,9 +198,7 @@ def keboola_project(
         storage_client.buckets.delete(bucket_id, force=True)
 
     for config in configs:
-        LOG.info(
-            f'Deleting config with component ID={config.component_id} and config ID={config.configuration_id}'
-        )
+        LOG.info(f'Deleting config with component ID={config.component_id} and config ID={config.configuration_id}')
         storage_client.configurations.delete(config.component_id, config.configuration_id)
 
 

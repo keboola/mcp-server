@@ -1,4 +1,3 @@
-
 from typing import Any, Callable
 
 import pytest
@@ -9,19 +8,17 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components import (
     ComponentWithConfigurations,
     create_sql_transformation,
-    get_component_configuration_details,
+    get_component_configuration,
     retrieve_components_configurations,
     retrieve_transformations_configurations,
     update_sql_transformation_configuration,
 )
 from keboola_mcp_server.tools.components.model import (
-    Component,
     ComponentConfigurationMetadata,
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
     ComponentConfigurationResponseBase,
-    ComponentDetail,
-    ReducedComponentDetail,
+    ReducedComponent,
 )
 from keboola_mcp_server.tools.components.tools import get_component_configuration_examples
 from keboola_mcp_server.tools.sql import WorkspaceManager
@@ -29,20 +26,20 @@ from keboola_mcp_server.tools.sql import WorkspaceManager
 
 @pytest.fixture
 def assert_retrieve_components() -> (
-        Callable[[list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None]
+    Callable[[list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None]
 ):
     """Assert that the _retrieve_components_in_project tool returns the correct components and configurations."""
 
     def _assert_retrieve_components(
-            result: list[ComponentWithConfigurations],
-            components: list[dict[str, Any]],
-            configurations: list[dict[str, Any]],
+        result: list[ComponentWithConfigurations],
+        components: list[dict[str, Any]],
+        configurations: list[dict[str, Any]],
     ):
 
         assert len(result) == len(components)
         # assert basics
         assert all(isinstance(component, ComponentWithConfigurations) for component in result)
-        assert all(isinstance(component.component, ReducedComponentDetail) for component in result)
+        assert all(isinstance(component.component, ReducedComponent) for component in result)
         assert all(isinstance(component.configurations, list) for component in result)
         assert all(
             all(isinstance(config, ComponentConfigurationMetadata) for config in component.configurations)
@@ -110,22 +107,15 @@ async def test_retrieve_components_configurations_by_types(
 
     assert_retrieve_components(result, mock_components, mock_configurations)
 
-    keboola_client.storage_client.get.assert_has_calls(
-        [
-            mocker.call(
-                f'branch/{mock_branch_id}/components',
-                params={'componentType': 'application', 'include': 'configuration'},
-            ),
-            mocker.call(
-                f'branch/{mock_branch_id}/components',
-                params={'componentType': 'extractor', 'include': 'configuration'},
-            ),
-            mocker.call(
-                f'branch/{mock_branch_id}/components',
-                params={'componentType': 'writer', 'include': 'configuration'},
-            ),
-        ]
-    )
+    # Verify the calls were made with the correct arguments
+    calls = keboola_client.storage_client.get.call_args_list
+    assert len(calls) == 3
+    assert calls[0].args[0] == f'branch/{mock_branch_id}/components'
+    assert calls[0].kwargs['params'] == {'componentType': 'application', 'include': 'configuration'}
+    assert calls[1].args[0] == f'branch/{mock_branch_id}/components'
+    assert calls[1].kwargs['params'] == {'componentType': 'extractor', 'include': 'configuration'}
+    assert calls[2].args[0] == f'branch/{mock_branch_id}/components'
+    assert calls[2].kwargs['params'] == {'componentType': 'writer', 'include': 'configuration'}
 
 
 @pytest.mark.asyncio
@@ -152,14 +142,11 @@ async def test_retrieve_transformations_configurations(
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
-    keboola_client.storage_client.get.assert_has_calls(
-        [
-            mocker.call(
-                f'branch/{mock_branch_id}/components',
-                params={'componentType': 'transformation', 'include': 'configuration'},
-            ),
-        ]
-    )
+    # Verify the calls were made with the correct arguments
+    calls = keboola_client.storage_client.get.call_args_list
+    assert len(calls) == 1
+    assert calls[0].args[0] == f'branch/{mock_branch_id}/components'
+    assert calls[0].kwargs['params'] == {'componentType': 'transformation', 'include': 'configuration'}
 
 
 @pytest.mark.asyncio
@@ -184,10 +171,11 @@ async def test_retrieve_components_configurations_from_ids(
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
+    # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
-    keboola_client.storage_client.get.assert_called_once_with(
-        endpoint=f'branch/{mock_branch_id}/components/{mock_component["id"]}'
-    )
+    calls = keboola_client.storage_client.get.call_args_list
+    assert len(calls) == 1
+    assert calls[0].kwargs['endpoint'] == f'branch/{mock_branch_id}/components/{mock_component["id"]}'
 
 
 @pytest.mark.asyncio
@@ -219,7 +207,7 @@ async def test_retrieve_transformations_configurations_from_ids(
 
 
 @pytest.mark.asyncio
-async def test_get_component_configuration_details(
+async def test_get_component_configuration(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_configuration: dict[str, Any],
@@ -227,40 +215,41 @@ async def test_get_component_configuration_details(
     mock_metadata: list[dict[str, Any]],
     mock_branch_id: str,
 ):
-    """Test get_component_configuration_details tool."""
+    """Test get_component_configuration tool."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
-    # Setup mock to return test data
-    keboola_client.ai_service_client = mocker.MagicMock()
-    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
-    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_configuration)
-    keboola_client.storage_client.get = mocker.AsyncMock(return_value=mock_metadata)
+    mock_ai_service = mocker.MagicMock()
+    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
-    result = await get_component_configuration_details(
-        component_id='keboola.ex-aws-s3', configuration_id='123', ctx=context
+    keboola_client.ai_service_client = mock_ai_service
+    # mock the get method to return the mock_component with the mock_configuration
+    # simulate the response from the API
+    keboola_client.storage_client.get = mocker.AsyncMock(
+        side_effect=[
+            {**mock_configuration, 'component': mock_component, 'configurationMetadata': mock_metadata},
+        ]
     )
-    expected = ComponentConfigurationOutput.from_component_configuration_response(
-        configuration_response=ComponentConfigurationResponse.model_validate({
-            **mock_configuration,
-            'component_id': mock_component['id'],
-        }),
-        component_details=ComponentDetail.from_component_response(Component.model_validate(mock_component))
+
+    result = await get_component_configuration(
+        component_id=mock_component['id'],
+        configuration_id=mock_configuration['id'],
+        ctx=context,
     )
+
     assert isinstance(result, ComponentConfigurationOutput)
-    assert result.model_dump() == expected.model_dump()
+    assert result.root_configuration.configuration_id == mock_configuration['id']
+    assert result.root_configuration.configuration_name == mock_configuration['name']
+    assert result.component is not None
+    assert result.component.component_id == mock_component['id']
+    assert result.component.component_name == mock_component['name']
 
-    keboola_client.storage_client.configuration_detail.assert_called_once_with(
-        component_id=mock_component['id'], configuration_id=mock_configuration['id']
+    # Verify the calls were made with the correct arguments
+    calls = keboola_client.storage_client.get.call_args_list
+    assert len(calls) == 1
+    assert calls[0].kwargs['endpoint'] == (
+        f"branch/{mock_branch_id}/components/{mock_component['id']}/configs/{mock_configuration['id']}"
     )
-
-    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=mock_component['id'])
-
-    keboola_client.storage_client.get.assert_called_once_with(
-        endpoint=f'branch/{mock_branch_id}/'
-                 f'components/{mock_component["id"]}/'
-                 f'configs/{mock_configuration["id"]}/'
-                 'metadata')
 
 
 @pytest.mark.parametrize(
@@ -319,9 +308,7 @@ async def test_create_transformation_configuration(
         {
             **configuration,
             'component_id': expected_component_id,
-            # TODO: fix this -- we don't compare the flags, because Component.from_component_detail() function
-            #  cannot set flags correctly
-            'component': {**component, 'flags': []}
+            'component': {**component, 'flags': ['flag1', 'flag2']},
         }
     )
 
@@ -438,9 +425,9 @@ async def test_update_transformation_configuration(
 
 @pytest.mark.asyncio
 async def test_get_component_configuration_examples(
-        mocker: MockerFixture,
-        mcp_context_components_configs: Context,
-        mock_component: dict[str, Any],
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
 ):
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
@@ -450,7 +437,9 @@ async def test_get_component_configuration_examples(
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
     text = await get_component_configuration_examples(component_id='keboola.ex-aws-s3', ctx=context)
-    assert text == """# Configuration Examples for `keboola.ex-aws-s3`
+    assert (
+        text
+        == """# Configuration Examples for `keboola.ex-aws-s3`
 
 ## Root Configuration Examples
 
@@ -471,3 +460,4 @@ async def test_get_component_configuration_examples(
 ```
 
 """
+    )

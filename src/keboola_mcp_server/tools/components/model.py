@@ -9,7 +9,8 @@ AllComponentTypes = Union[ComponentType, TransformationType]
 
 class ReducedComponent(BaseModel):
     """
-    A Reduced Component containing reduced information about the Keboola Component used in a list or comprehensive view.
+    A Reduced Component containing basic information about the Keboola Component and its capabilities.
+    This model is used in list views or when only basic component information is needed.
     """
 
     component_id: str = Field(
@@ -37,6 +38,47 @@ class ReducedComponent(BaseModel):
         default_factory=list,
         description='List of developer portal flags.',
     )
+
+    # Capability flags derived from flags
+    is_row_based: bool = Field(
+        default=False,
+        description='Whether the component is row-based (e.g. have configuration rows) or not.',
+    )
+
+    has_table_input_mapping: bool = Field(
+        default=False,
+        description='Whether the component configuration has table input mapping or not.',
+    )
+
+    has_table_output_mapping: bool = Field(
+        default=False,
+        description='Whether the component configuration has table output mapping or not.',
+    )
+
+    has_file_input_mapping: bool = Field(
+        default=False,
+        description='Whether the component configuration has file input mapping or not.',
+    )
+
+    has_file_output_mapping: bool = Field(
+        default=False,
+        description='Whether the component configuration has file output mapping or not.',
+    )
+
+    has_oauth: bool = Field(
+        default=False,
+        description='Whether the component configuration requires OAuth authorization or not.',
+    )
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Set capability flags based on flags
+        self.is_row_based = 'genericDockerUI-rows' in self.flags
+        self.has_table_input_mapping = 'genericDockerUI-tableInput' in self.flags
+        self.has_table_output_mapping = 'genericDockerUI-tableOutput' in self.flags
+        self.has_file_input_mapping = 'genericDockerUI-fileInput' in self.flags
+        self.has_file_output_mapping = 'genericDockerUI-fileOutput' in self.flags
+        self.has_oauth = 'genericDockerUI-authorization' in self.flags
 
 
 class ComponentConfigurationResponseBase(BaseModel):
@@ -96,6 +138,11 @@ class ComponentConfigurationResponseBase(BaseModel):
 
 
 class Component(ReducedComponent):
+    """
+    A Component containing detailed information about the Keboola Component, including its capabilities,
+    documentation, and configuration schemas.
+    """
+
     component_categories: list[str] = Field(
         default_factory=list,
         description='The categories the component belongs to.',
@@ -128,26 +175,6 @@ class Component(ReducedComponent):
         serialization_alias='configurationRowSchema',
     )
 
-    @classmethod
-    def from_component_detail(cls, component_detail: 'ComponentDetail') -> 'Component':
-        """
-        Create a Component instance from a ComponentDetail instance.
-
-        This is the inverse operation of ComponentDetail.from_component_response.
-        """
-        return cls(
-            component_id=component_detail.component_id,
-            component_name=component_detail.component_name,
-            component_type=component_detail.component_type,
-            # TODO: fix this -- Use empty flags list since we can't reliably reconstruct them from ComponentDetail
-            flags=[],
-            component_categories=component_detail.component_categories,
-            documentation_url=component_detail.documentation_url,
-            documentation=component_detail.documentation,
-            configuration_schema=component_detail.root_configuration_schema,
-            configuration_row_schema=component_detail.row_configuration_schema,
-        )
-
 
 class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
     """
@@ -171,124 +198,14 @@ class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
         serialization_alias='configurationMetadata',
     )
     component: Optional[Component] = Field(
-        description='The Keboola component.',
-        validation_alias=AliasChoices('component'),
-        serialization_alias='component',
+        description='The component this configuration belongs to',
         default=None,
     )
-
-
-# ### Tool input/output models
-
-
-class ReducedComponentDetail(BaseModel):
-    component_id: str = Field(
-        description='The ID of the component',
-    )
-    component_name: str = Field(
-        description='The name of the component',
-    )
-    component_type: str = Field(
-        description='The type of the component',
-    )
-
-    is_row_based: bool = Field(
-        default=False,
-        description='Whether the component is row-based (e.g. have configuration rows) or not.',
-    )
-
-    has_table_input_mapping: bool = Field(
-        default=False,
-        description='Whether the component configuration has table input mapping or not.',
-    )
-    has_table_output_mapping: bool = Field(
-        default=False,
-        description='Whether the component configuration has table output mapping or not.',
-    )
-    has_file_input_mapping: bool = Field(
-        default=False,
-        description='Whether the component configuration has file input mapping or not.',
-    )
-    has_file_output_mapping: bool = Field(
-        default=False,
-        description='Whether the component configuration has file output mapping or not.',
-    )
-
-    has_oauth: bool = Field(
-        default=False,
-        description='Whether the component configuration requires OAuth authorization or not.',
-    )
-
-    @classmethod
-    def from_component_response(cls, component: ReducedComponent) -> 'ReducedComponentDetail':
-        """
-        Create a ComponentDetail instance from a Component instance.
-        """
-
-        is_row_based = 'genericDockerUI-rows' in component.flags
-        has_table_input_mapping = 'genericDockerUI-tableInput' in component.flags
-        has_table_output_mapping = 'genericDockerUI-tableOutput' in component.flags
-        has_file_input_mapping = 'genericDockerUI-fileInput' in component.flags
-        has_file_output_mapping = 'genericDockerUI-fileOutput' in component.flags
-        has_oauth = 'genericDockerUI-authorization' in component.flags
-
-        return cls(
-            component_id=component.component_id,
-            component_name=component.component_name,
-            component_type=component.component_type,
-            is_row_based=is_row_based,
-            has_table_input_mapping=has_table_input_mapping,
-            has_table_output_mapping=has_table_output_mapping,
-            has_file_input_mapping=has_file_input_mapping,
-            has_file_output_mapping=has_file_output_mapping,
-            has_oauth=has_oauth,
-        )
-
-
-class ComponentDetail(ReducedComponentDetail):
-    """
-    Detailed information about a Keboola Component, containing all the relevant details.
-    """
-
-    component_categories: list[str] = Field(
-        default_factory=list,
-        description='The categories the component belongs to.',
-        serialization_alias='categories',
-    )
-    documentation_url: Optional[str] = Field(
-        default=None,
-        description='The url where the documentation can be found.',
-    )
-    documentation: Optional[str] = Field(
-        default=None,
-        description='The documentation of the component.',
-        serialization_alias='documentation',
-    )
-    root_configuration_schema: Optional[dict[str, Any]] = Field(
-        default=None,
-        description='The configuration schema of the component root configuration.',
-    )
-    row_configuration_schema: Optional[dict[str, Any]] = Field(
-        default=None,
-        description='The configuration schema of the component row configuration.',
-    )
-
-    @classmethod
-    def from_component_response(cls, component: Component) -> 'ComponentDetail':
-        core_details = ReducedComponentDetail.from_component_response(component)
-        return cls(
-            component_categories=component.component_categories,
-            documentation_url=component.documentation_url,
-            documentation=component.documentation,
-            root_configuration_schema=component.configuration_schema,
-            row_configuration_schema=component.configuration_row_schema,
-            **core_details.model_dump(),
-        )
 
 
 class ComponentRowConfiguration(ComponentConfigurationResponseBase):
     """
-    Detailed information about a Keboola Component Configuration, containing all the relevant details.
+    Detailed information about a Keboola Component Row Configuration.
     """
 
     version: int = Field(description='The version of the component configuration')
@@ -298,7 +215,11 @@ class ComponentRowConfiguration(ComponentConfigurationResponseBase):
         'file input mapping defined.',
         default=None,
     )
-    parameters: dict[str, Any] = Field(description='The user parameters, adhering to the row configuration schema')
+    row_configuration: dict[str, Any] = Field(
+        description='The row configuration, adhering to the row configuration schema',
+        validation_alias=AliasChoices('row_configuration', 'rowConfiguration', 'row-configuration'),
+        serialization_alias='rowConfiguration',
+    )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
         default=[],
@@ -311,7 +232,7 @@ class ComponentRowConfiguration(ComponentConfigurationResponseBase):
 
 class ComponentRootConfiguration(ComponentConfigurationResponseBase):
     """
-    Detailed information about a Keboola Component Configuration, containing all the relevant details.
+    Detailed information about a Keboola Component Root Configuration.
     """
 
     version: int = Field(description='The version of the component configuration')
@@ -321,12 +242,24 @@ class ComponentRootConfiguration(ComponentConfigurationResponseBase):
         'file input mapping defined',
         default=None,
     )
-    parameters: dict[str, Any] = Field(
-        description='The component configuration parameters, adhering to the root configuration schema'
+    root_configuration: dict[str, Any] = Field(
+        description='The root configuration, adhering to the root configuration schema',
+    )
+    configuration_metadata: list[dict[str, Any]] = Field(
+        description='The metadata of the component configuration',
+        default=[],
+        validation_alias=AliasChoices(
+            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
+        ),
+        serialization_alias='configurationMetadata',
     )
 
 
 class ComponentConfigurationOutput(BaseModel):
+    """
+    Output model for component configuration, containing the root configuration and optional row configurations.
+    """
+
     root_configuration: ComponentRootConfiguration = Field(
         description='The root configuration of the component configuration'
     )
@@ -334,52 +267,23 @@ class ComponentConfigurationOutput(BaseModel):
         description='The row configurations of the component configuration',
         default=None,
     )
-    component_details: Optional[ComponentDetail] = Field(
-        description='Details of the component including documentation and configuration schemas',
+    component: Optional[Component] = Field(
+        description='The component this configuration belongs to',
         default=None,
     )
 
-    @classmethod
-    def from_component_configuration_response(
-        cls,
-        configuration_response: ComponentConfigurationResponse,
-        component_details: Optional[ComponentDetail] = None,
-    ) -> 'ComponentConfigurationOutput':
-        """
-        Create a ComponentConfigurationOutput instance from a ComponentConfigurationResponse instance.
-        """
-
-        root_configuration = ComponentRootConfiguration(
-            **configuration_response.model_dump(exclude={'configuration'}),
-            parameters=configuration_response.configuration.get('parameters', {}),
-            storage=configuration_response.configuration.get('storage'),
-        )
-        row_configurations = []
-        for row in configuration_response.rows or []:
-            if row is None:
-                continue
-
-            row_configuration = ComponentRowConfiguration(
-                **row,
-                component_id=configuration_response.component_id,
-                parameters=row.get('configuration', {}).get('parameters', {}),
-                storage=row.get('configuration', {}).get('storage'),
-            )
-            row_configurations.append(row_configuration)
-
-        return cls(
-            root_configuration=root_configuration,
-            row_configurations=row_configurations,
-            component_details=component_details,
-        )
-
 
 class ComponentConfigurationMetadata(BaseModel):
+    """
+    Metadata model for component configuration, containing the root configuration metadata and optional
+    row configurations metadata.
+    """
+
     root_configuration: ComponentConfigurationResponseBase = Field(
         description='The root configuration metadata of the component configuration'
     )
     row_configurations: Optional[list[ComponentConfigurationResponseBase]] = Field(
-        description='The row configuration metadata of the component configuration',
+        description='The row configurations metadata of the component configuration',
         default=None,
     )
 
@@ -404,7 +308,7 @@ class ComponentWithConfigurations(BaseModel):
     Grouping of a Keboola Component and its associated configurations metadata.
     """
 
-    component: ReducedComponentDetail = Field(description='The Keboola component.')
+    component: ReducedComponent = Field(description='The Keboola component.')
     configurations: List[ComponentConfigurationMetadata] = Field(
-        description='The list of component configuration metadata for the given component.'
+        description='The list of configurations metadata associated with the component.',
     )
