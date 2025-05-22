@@ -2,23 +2,22 @@ import json
 import logging
 from typing import Annotated, Any, Optional, Sequence, cast
 
-from httpx import HTTPStatusError
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.components.model import (
+    Component,
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
-    ComponentDetail,
     ComponentRootConfiguration,
     ComponentRowConfiguration,
     ComponentType,
     ComponentWithConfigurations,
 )
 from keboola_mcp_server.tools.components.utils import (
-    _get_component_details,
+    _get_component,
     _get_sql_transformation_id_from_sql_dialect,
     _get_transformation_configuration,
     _handle_component_types,
@@ -37,14 +36,14 @@ LOG = logging.getLogger(__name__)
 # providing the same functionality as described in the original tool names.
 RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_component_configurations'
 RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
-GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME: str = 'get_component_configuration_details'
+GET_COMPONENT_CONFIGURATION_TOOL_NAME: str = 'get_component_configuration'
 
 
 def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
 
-    mcp.add_tool(get_component_configuration_details, name=GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME)
-    LOG.info(f'Added tool: {GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME}.')
+    mcp.add_tool(get_component_configuration, name=GET_COMPONENT_CONFIGURATION_TOOL_NAME)
+    LOG.info(f'Added tool: {GET_COMPONENT_CONFIGURATION_TOOL_NAME}.')
 
     mcp.add_tool(retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME)
     LOG.info(f'Added tool: {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME}.')
@@ -61,8 +60,8 @@ def add_component_tools(mcp: FastMCP) -> None:
     mcp.add_tool(update_sql_transformation_configuration)
     LOG.info(f'Added tool: {update_sql_transformation_configuration.__name__}.')
 
-    mcp.add_tool(get_component_detail)
-    LOG.info(f'Added tool: {get_component_detail.__name__}.')
+    mcp.add_tool(get_component)
+    LOG.info(f'Added tool: {get_component.__name__}.')
 
     mcp.add_tool(create_component_root_configuration)
     LOG.info(f'Added tool: {create_component_root_configuration.__name__}.')
@@ -111,7 +110,7 @@ async def retrieve_components_configurations(
 ]:
     """
     Retrieves configurations of components present in the project,
-    optionally filtered by component types or specific component IDs
+    optionally filtered by component types or specific component IDs.
     If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
     component_types.
 
@@ -187,96 +186,100 @@ async def retrieve_transformations_configurations(
 
 
 @tool_errors()
-async def get_component_detail(
+async def get_component(
     ctx: Context,
-    component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
+    component_id: Annotated[str, Field(description='ID of the component/transformation')],
 ) -> Annotated[
-    ComponentDetail,
+    Component,
     Field(
-        description='Detailed information about a Keboola component.',
+        description='The component.',
     ),
 ]:
     """
-    Gets detailed information about a specific Keboola component given component ID.
+    Gets information about a specific component given its ID.
+
     USAGE:
-        - Use when you want to see the details of a specific component to get its documentation, configuration schemas
-        ,etc. Especially in situation when the users asks to create or update a component configuration.
-        This tool is mainly for internal use by the agent.
+        - Use when you want to see the details of a specific component to get its documentation, configuration schemas,
+          etc. Especially in situation when the users asks to create or update a component configuration.
+          This tool is mainly for internal use by the agent.
+
     EXAMPLES:
         - user_input: `Create a generic extractor configuration for x`
             -> Set the component_id if you know it or find the component_id by find_component_id
                or docs use tool and set it
-            -> returns the details of the component/transformation configuration pair
+            -> returns the component
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    component = await _get_component_details(component_id=component_id, client=client)
-    return ComponentDetail.from_component_response(component)
+    return await _get_component(component_id=component_id, client=client)
 
 
 @tool_errors()
-async def get_component_configuration_details(
-    component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
+async def get_component_configuration(
+    component_id: Annotated[str, Field(description='ID of the component/transformation')],
     configuration_id: Annotated[
         str,
         Field(
-            description='Unique identifier of the Keboola component/transformation configuration you want details '
-            'about',
+            description='ID of the component/transformation configuration',
         ),
     ],
     ctx: Context,
 ) -> Annotated[
     ComponentConfigurationOutput,
     Field(
-        description='Detailed information about a Keboola component/transformation and its configuration.',
+        description='The component/transformation and its configuration.',
     ),
 ]:
     """
-    Gets detailed information about a specific Keboola component configuration given component/transformation ID and
-    configuration ID.
+    Gets information about a specific component/transformation configuration.
 
     USAGE:
-    - Use when you want to see the details of a specific component/transformation configuration.
+    - Use when you want to see the configuration of a specific component/transformation.
 
     EXAMPLES:
     - user_input: `give me details about this configuration`
         - set component_id and configuration_id to the specific component/transformation ID and configuration ID
           if you know it
-        - returns the details of the component/transformation configuration pair
+        - returns the component/transformation configuration pair
     """
-
     client = KeboolaClient.from_state(ctx.session.state)
-
-    # Get Component Details
-    component = await _get_component_details(client=client, component_id=component_id)
-    # Get Configuration Details
-    raw_configuration = await client.storage_client.configuration_detail(
-        component_id=component_id, configuration_id=configuration_id
+    component = await _get_component(client=client, component_id=component_id)
+    raw_configuration = cast(
+        JsonDict,
+        await client.storage_client.get(
+            endpoint=f'branch/{client.storage_client.branch_id}/components/{component_id}/configs/{configuration_id}'
+        ),
     )
-    LOG.info(f'Retrieved configuration details for {component_id} component with configuration {configuration_id}.')
-
-    # Get Configuration Metadata if exists
-    endpoint = (
-        f'branch/{client.storage_client.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
-    )
-    r_metadata = await client.storage_client.get(endpoint=endpoint)
-    if r_metadata:
-        LOG.info(
-            f'Retrieved configuration metadata for {component_id} component with configuration {configuration_id}.'
-        )
-    else:
-        LOG.info(f'No metadata found for {component_id} component with configuration {configuration_id}.')
-    # Create Component Configuration Detail Object
     configuration_response = ComponentConfigurationResponse.model_validate(
-        {
-            **raw_configuration,
-            'component_id': component_id,
-            'metadata': r_metadata,
-        }
+        {**raw_configuration, 'component_id': component_id}
     )
-    # Create Component Configuration Output Object
-    return ComponentConfigurationOutput.from_component_configuration_response(
-        configuration_response,
-        ComponentDetail.from_component_response(component))
+
+    # Create root configuration
+    root_configuration = ComponentRootConfiguration(
+        **configuration_response.model_dump(exclude={'configuration'}),
+        root_configuration=configuration_response.configuration.get('parameters', {}),
+        storage=configuration_response.configuration.get('storage'),
+    )
+
+    # Create row configurations if they exist
+    row_configurations = None
+    if configuration_response.rows:
+        row_configurations = []
+        for row in configuration_response.rows:
+            if row is None:
+                continue
+            row_configuration = ComponentRowConfiguration(
+                **row,
+                component_id=configuration_response.component_id,
+                row_configuration=row.get('configuration', {}).get('parameters', {}),
+                storage=row.get('configuration', {}).get('storage'),
+            )
+            row_configurations.append(row_configuration)
+
+    return ComponentConfigurationOutput(
+        root_configuration=root_configuration,
+        row_configurations=row_configurations,
+        component=component,
+    )
 
 
 @tool_errors()
@@ -366,32 +369,36 @@ async def create_sql_transformation(
     LOG.info(f'Creating new transformation configuration: {name} for component: {transformation_id}.')
     # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
-    new_raw_transformation_configuration = cast(
-        JsonDict,
-        await client.storage_client.post(
-            endpoint=endpoint,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': transformation_configuration_payload.model_dump(),
-            },
+    try:
+        new_raw_transformation_configuration = cast(
+            JsonDict,
+            await client.storage_client.post(
+                endpoint=endpoint,
+                data={
+                    'name': name,
+                    'description': description,
+                    'configuration': transformation_configuration_payload.model_dump(),
+                },
+            ),
         )
-    )
 
-    component = await _get_component_details(client=client, component_id=transformation_id)
-    new_transformation_configuration = ComponentConfigurationResponse.model_validate(
-        new_raw_transformation_configuration |
-        {
-            'component_id': transformation_id,
-            'component': component,
-        }
-    )
+        component = await _get_component(client=client, component_id=transformation_id)
+        new_transformation_configuration = ComponentConfigurationResponse.model_validate(
+            new_raw_transformation_configuration
+            | {
+                'component_id': transformation_id,
+                'component': component,
+            }
+        )
 
-    LOG.info(
-        f'Created new transformation "{transformation_id}" with configuration id '
-        f'"{new_transformation_configuration.configuration_id}".'
-    )
-    return new_transformation_configuration
+        LOG.info(
+            f'Created new transformation "{transformation_id}" with configuration id '
+            f'"{new_transformation_configuration.configuration_id}".'
+        )
+        return new_transformation_configuration
+    except Exception as e:
+        LOG.exception(f'Error when creating new transformation configuration: {e}')
+        raise e
 
 
 @tool_errors()
@@ -399,12 +406,12 @@ async def update_sql_transformation_configuration(
     ctx: Context,
     configuration_id: Annotated[
         str,
-        Field(description='Unique identifier of the Keboola transformation configuration you want to update'),
+        Field(description='ID of the transformation configuration to update'),
     ],
     change_description: Annotated[
         str,
         Field(
-            description='Detailed description of the new changes to the transformation configuration.',
+            description='Description of the changes made to the transformation configuration.',
         ),
     ],
     updated_configuration: Annotated[
@@ -419,7 +426,7 @@ async def update_sql_transformation_configuration(
     updated_description: Annotated[
         str,
         Field(
-            description='Updated existing transformation description reflecting the changes made in the behavior of '
+            description='Updated transformation description reflecting the changes made in the behavior of '
             'the transformation. If no behavior changes are made, empty string preserves the original description.',
         ),
     ] = '',
@@ -454,30 +461,36 @@ async def update_sql_transformation_configuration(
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
-    updated_raw_configuration = await client.storage_client.configuration_update(
-        component_id=sql_transformation_id,
-        configuration_id=configuration_id,
-        configuration=updated_configuration,
-        change_description=change_description,
-        updated_description=updated_description if updated_description else None,
-        is_disabled=is_disabled,
-    )
+    try:
+        LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+        updated_raw_configuration = await client.storage_client.configuration_update(
+            component_id=sql_transformation_id,
+            configuration_id=configuration_id,
+            configuration=updated_configuration,
+            change_description=change_description,
+            updated_description=updated_description if updated_description else None,
+            is_disabled=is_disabled,
+        )
 
-    transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
-    updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
-        updated_raw_configuration |
-        {
-            'component_id': transformation.component_id,
-            'component': transformation,
-        }
-    )
+        transformation = await _get_component(client=client, component_id=sql_transformation_id)
+        updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
+            updated_raw_configuration
+            | {
+                'component_id': transformation.component_id,
+                'component': transformation,
+            }
+        )
 
-    LOG.info(
-        f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
-        f'component: {updated_transformation_configuration.component_id}.'
-    )
-    return updated_transformation_configuration
+        LOG.info(
+            f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
+            f'component: {updated_transformation_configuration.component_id}.'
+        )
+        return updated_transformation_configuration
+    except Exception as e:
+        LOG.exception(
+            f'Error when updating transformation {sql_transformation_id} with configuration {configuration_id}: {e}'
+        )
+        raise e
 
 
 @tool_errors()
@@ -519,23 +532,24 @@ async def create_component_root_configuration(
 ) -> Annotated[
     ComponentRootConfiguration,
     Field(
-        description='Created component root configuration object,',
+        description='Created component root configuration.',
     ),
 ]:
     """
     Creates a component configuration using the specified name, component ID, configuration JSON, and description.
+
     CONSIDERATIONS:
         The root_configuration JSON object must follow the root_configuration_schema of the specified component.
         It can also adhere to the appropriate configuration examples if available.
 
     USAGE:
         - Use when you want to create a new root configuration for a specific component.
+
     EXAMPLES:
         - user_input: `Create a new configuration for component X with these settings`
             -> set the component_id and configuration parameters accordingly
             -> returns the created component configuration if successful.
     """
-
     client = KeboolaClient.from_state(ctx.session.state)
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
@@ -544,29 +558,33 @@ async def create_component_root_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.create_component_root_configuration(
-        component_id=component_id,
-        data={
-            'name': name,
-            'description': description,
-            'configuration': configuration_payload,
-        },
-        branch_id=client.storage_client_sync._branch_id,
-    )
+    try:
+        new_raw_configuration = await client.storage_client.create_component_root_configuration(
+            component_id=component_id,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': configuration_payload,
+            },
+            branch_id=client.storage_client_sync._branch_id,
+        )
 
-    new_configuration = ComponentRootConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
+        new_configuration = ComponentRootConfiguration(
+            **new_raw_configuration,
+            component_id=component_id,
+            storage=new_raw_configuration['configuration'].get('storage'),
+            parameters=new_raw_configuration['configuration'].get('parameters'),
+        )
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
-    )
+        LOG.info(
+            f'Created new configuration for component "{component_id}" with configuration id '
+            f'"{new_configuration.configuration_id}".'
+        )
 
-    return new_configuration
+        return new_configuration
+    except Exception as e:
+        LOG.exception(f'Error when creating new component configuration: {e}')
+        raise e
 
 
 @tool_errors()
@@ -614,7 +632,7 @@ async def create_component_row_configuration(
 ) -> Annotated[
     ComponentRowConfiguration,
     Field(
-        description='Created component row configuration object,',
+        description='Created component row configuration.',
     ),
 ]:
     """
@@ -626,13 +644,13 @@ async def create_component_row_configuration(
         It can also adhere to the appropriate configuration examples if available.
 
     USAGE:
-        - Use when you want to create a new root configuration for a specific component.
+        - Use when you want to create a new row configuration for a specific component configuration.
+
     EXAMPLES:
         - user_input: `Create a new configuration for component X with these settings`
-            -> set the component_id and configuration parameters accordingly
+            -> set the component_id, configuration_id and configuration parameters accordingly
             -> returns the created component configuration if successful.
     """
-
     client = KeboolaClient.from_state(ctx.session.state)
 
     LOG.info(
@@ -644,30 +662,34 @@ async def create_component_row_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.create_component_row_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        branch_id=client.storage_client_sync._branch_id,
-        data={
-            'name': name,
-            'description': description,
-            'configuration': configuration_payload,
-        },
-    )
+    try:
+        new_raw_configuration = await client.storage_client.create_component_row_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            branch_id=client.storage_client_sync._branch_id,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': configuration_payload,
+            },
+        )
 
-    new_configuration = ComponentRowConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
+        new_configuration = ComponentRowConfiguration(
+            **new_raw_configuration,
+            component_id=component_id,
+            storage=new_raw_configuration['configuration'].get('storage'),
+            parameters=new_raw_configuration['configuration'].get('parameters'),
+        )
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
-    )
+        LOG.info(
+            f'Created new configuration for component "{component_id}" with configuration id '
+            f'"{new_configuration.configuration_id}".'
+        )
 
-    return new_configuration
+        return new_configuration
+    except Exception as e:
+        LOG.exception(f'Error when creating new component configuration: {e}')
+        raise e
 
 
 @tool_errors()
@@ -722,23 +744,25 @@ async def update_component_root_configuration(
 ) -> Annotated[
     ComponentRootConfiguration,
     Field(
-        description='Created component root configuration object,',
+        description='Updated component root configuration.',
     ),
 ]:
     """
     Updates a specific component configuration using given by component ID, and configuration ID.
+
     CONSIDERATIONS:
         The root_configuration JSON object must follow the root_configuration_schema of the specified component.
         It can also adhere to the appropriate configuration examples if available.
+
     USAGE:
         - Use when you want to update a root configuration of a specific component.
+
     EXAMPLES:
         - user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
             -> set the component_id, configuration_id and configuration parameters accordingly.
             -> set the change_description to the description of the change made to the component configuration.
-            -> returns the created component configuration if successful.
+            -> returns the updated component configuration if successful.
     """
-
     client = KeboolaClient.from_state(ctx.session.state)
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
@@ -747,31 +771,35 @@ async def update_component_root_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.update_component_root_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        branch_id=client.storage_client_sync._branch_id,
-        data={
-            'name': name,
-            'description': description,
-            'changeDescription': change_description,
-            'configuration': configuration_payload,
-        },
-    )
+    try:
+        new_raw_configuration = await client.storage_client.update_component_root_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            branch_id=client.storage_client_sync._branch_id,
+            data={
+                'name': name,
+                'description': description,
+                'changeDescription': change_description,
+                'configuration': configuration_payload,
+            },
+        )
 
-    new_configuration = ComponentRootConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
+        new_configuration = ComponentRootConfiguration(
+            **new_raw_configuration,
+            component_id=component_id,
+            storage=new_raw_configuration['configuration'].get('storage'),
+            parameters=new_raw_configuration['configuration'].get('parameters'),
+        )
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
-    )
+        LOG.info(
+            f'Updated configuration for component "{component_id}" with configuration id '
+            f'"{new_configuration.configuration_id}".'
+        )
 
-    return new_configuration
+        return new_configuration
+    except Exception as e:
+        LOG.exception(f'Error when updating component configuration: {e}')
+        raise e
 
 
 @tool_errors()
@@ -831,7 +859,7 @@ async def update_component_row_configuration(
 ) -> Annotated[
     ComponentRowConfiguration,
     Field(
-        description='Created component row configuration object,',
+        description='Updated component row configuration.',
     ),
 ]:
     """
@@ -844,12 +872,12 @@ async def update_component_row_configuration(
 
     USAGE:
         - Use when you want to update a row configuration for a specific component and configuration.
+
     EXAMPLES:
         - user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
             -> set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
-            -> returns the created component configuration if successful.
+            -> returns the updated component configuration if successful.
     """
-
     client = KeboolaClient.from_state(ctx.session.state)
 
     LOG.info(
@@ -861,32 +889,36 @@ async def update_component_row_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.update_component_row_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        configuration_row_id=configuration_row_id,
-        branch_id=client.storage_client_sync._branch_id,
-        data={
-            'name': name,
-            'description': description,
-            'changeDescription': change_description,
-            'configuration': configuration_payload,
-        },
-    )
+    try:
+        new_raw_configuration = await client.storage_client.update_component_row_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            configuration_row_id=configuration_row_id,
+            branch_id=client.storage_client_sync._branch_id,
+            data={
+                'name': name,
+                'description': description,
+                'changeDescription': change_description,
+                'configuration': configuration_payload,
+            },
+        )
 
-    new_configuration = ComponentRowConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
+        new_configuration = ComponentRowConfiguration(
+            **new_raw_configuration,
+            component_id=component_id,
+            storage=new_raw_configuration['configuration'].get('storage'),
+            parameters=new_raw_configuration['configuration'].get('parameters'),
+        )
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
-    )
+        LOG.info(
+            f'Updated configuration for component "{component_id}" with configuration id '
+            f'"{new_configuration.configuration_id}".'
+        )
 
-    return new_configuration
+        return new_configuration
+    except Exception as e:
+        LOG.exception(f'Error when updating component configuration: {e}')
+        raise e
 
 
 @tool_errors()
@@ -905,21 +937,18 @@ async def get_component_configuration_examples(
     ),
 ]:
     """
-    Retrieves sample configuration examples for a specific component from a JSONL file.
+    Retrieves sample configuration examples for a specific component.
+
     USAGE:
         - Use when you want to see example configurations for a specific component.
+
     EXAMPLES:
         - user_input: `Show me example configurations for component X`
             -> set the component_id parameter accordingly
             -> returns a markdown formatted string with configuration examples
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    try:
-        raw_component = await client.ai_service_client.get_component_detail(component_id)
-    except HTTPStatusError:
-        LOG.exception(f'Error when getting component details: {component_id}')
-        return ''
-
+    raw_component = await client.ai_service_client.get_component_detail(component_id)
     root_examples = raw_component.get('rootConfigurationExamples') or []
     row_examples = raw_component.get('rowConfigurationExamples') or []
 
@@ -927,12 +956,12 @@ async def get_component_configuration_examples(
 
     if root_examples:
         markdown += '## Root Configuration Examples\n\n'
-        for i, example in enumerate(root_examples, 1):
+        for i, example in enumerate(root_examples, start=1):
             markdown += f'{i}. Root Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
     if row_examples:
         markdown += '## Row Configuration Examples\n\n'
-        for i, example in enumerate(row_examples, 1):
+        for i, example in enumerate(row_examples, start=1):
             markdown += f'{i}. Row Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
     return markdown
@@ -950,8 +979,10 @@ async def find_component_id(
 ) -> list[SuggestedComponent]:
     """
     Returns list of component IDs that match the given query.
+
     USAGE:
         - Use when you want to find the component for a specific purpose.
+
     EXAMPLES:
         - user_input: `I am looking for a salesforce extractor component`
             -> returns a list of component IDs that match the query, ordered by relevance/best match.

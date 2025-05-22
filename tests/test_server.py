@@ -2,7 +2,7 @@ import pytest
 
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components import (
-    GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
+    GET_COMPONENT_CONFIGURATION_TOOL_NAME,
     RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
 )
@@ -20,9 +20,9 @@ class TestServer:
             'docs_query',
             'find_component_id',
             'get_bucket_detail',
-            GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
+            'get_component',
+            GET_COMPONENT_CONFIGURATION_TOOL_NAME,
             'get_component_configuration_examples',
-            'get_component_detail',
             'get_job_detail',
             'get_sql_dialect',
             'get_table_detail',
