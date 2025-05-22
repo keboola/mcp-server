@@ -191,7 +191,7 @@ class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
     )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
-        default=[],
+        default_factory=list,
         validation_alias=AliasChoices(
             'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
         ),
@@ -222,7 +222,7 @@ class ComponentRowConfiguration(ComponentConfigurationResponseBase):
     )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
-        default=[],
+        default_factory=list,
         validation_alias=AliasChoices(
             'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
         ),
@@ -247,7 +247,7 @@ class ComponentRootConfiguration(ComponentConfigurationResponseBase):
     )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
-        default=list,
+        default_factory=list,
         validation_alias=AliasChoices(
             'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
         ),

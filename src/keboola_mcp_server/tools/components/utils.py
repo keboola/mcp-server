@@ -234,10 +234,10 @@ class TransformationConfiguration(BaseModel):
                 destination: Optional[str] = Field(description='The destination table name', default=None)
                 source: Optional[str] = Field(description='The source table name', default=None)
 
-            tables: list[Table] = Field(description='The tables used in the transformation', default=[])
+            tables: list[Table] = Field(description='The tables used in the transformation', default_factory=list)
 
-        input: Destination = Field(description='The input tables for the transformation', default=Destination())
-        output: Destination = Field(description='The output tables for the transformation', default=Destination())
+        input: Destination = Field(description='The input tables for the transformation', default_factory=Destination)
+        output: Destination = Field(description='The output tables for the transformation', default_factory=Destination)
 
     parameters: Parameters = Field(description='The parameters for the transformation')
     storage: Storage = Field(description='The storage configuration for the transformation')
