@@ -2,6 +2,7 @@
 
 import importlib.metadata
 import logging
+import os
 from typing import Any, Mapping, Optional, Union, cast
 
 import httpx
@@ -16,7 +17,7 @@ JsonStruct = Union[JsonDict, JsonList]
 
 
 class KeboolaClient:
-    """Helper class to interact with Keboola Storage API and Job Queue API."""
+    """Class holding clients for Keboola APIs: Storage API, Job Queue API, and AI Service."""
 
     STATE_KEY = 'sapi_client'
     # Prefixes for the storage and queue API URLs, we do not use http:// or https:// here since we split the storage
@@ -74,7 +75,9 @@ class KeboolaClient:
             version = importlib.metadata.version('keboola-mcp-server')
         except importlib.metadata.PackageNotFoundError:
             version = 'NA'
-        return f'Keboola MCP Server/{version}'
+
+        app_env = os.getenv('APP_ENV', 'local')
+        return f'Keboola MCP Server/{version} app_env={app_env}'
 
     @classmethod
     def _get_headers(cls) -> dict[str, Any]:
