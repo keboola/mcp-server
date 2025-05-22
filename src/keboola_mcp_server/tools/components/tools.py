@@ -3,6 +3,7 @@ import logging
 from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context, FastMCP
+from httpx import HTTPStatusError
 from pydantic import Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
@@ -967,7 +968,12 @@ async def get_component_configuration_examples(
             -> returns a markdown formatted string with configuration examples
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    raw_component = await client.ai_service_client.get_component_detail(component_id)
+    try:
+        raw_component = await client.ai_service_client.get_component_detail(component_id)
+    except HTTPStatusError:
+        LOG.exception(f'Error when getting component details: {component_id}')
+        return ''
+
     root_examples = raw_component.get('rootConfigurationExamples') or []
     row_examples = raw_component.get('rowConfigurationExamples') or []
 
