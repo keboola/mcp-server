@@ -12,7 +12,6 @@ license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
     "fastmcp ~= 2.2",
-    "kbcstorage ~= 0.9",
     "httpx ~= 0.28",
     "google-cloud-bigquery ~= 3.31",
 ]
@@ -38,6 +37,9 @@ tests = [
     "pytest-datadir ~= 1.6.1",
     "python-dotenv ~= 1.1",
     "pytest-mock ~= 3.14",
+]
+integtests = [
+    "kbcstorage ~= 0.9",
 ]
 dev = [
     "tox ~= 4.23",
@@ -111,6 +113,7 @@ commands = [
 
 [tool.tox.env.integtests]
 description = "Run integration tests"
+extras = ["tests", "integtests"]
 pass_env = [
     "INTEGTEST_STORAGE_API_URL",
     "INTEGTEST_STORAGE_TOKEN",
