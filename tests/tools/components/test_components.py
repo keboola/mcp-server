@@ -108,6 +108,7 @@ async def test_retrieve_components_configurations_by_types(
     assert_retrieve_components(result, mock_components, mock_configurations)
 
     # Verify the calls were made with the correct arguments
+    # TODO: use `assert_has_calls`
     calls = keboola_client.storage_client.get.call_args_list
     assert len(calls) == 3
     assert calls[0].args[0] == f'branch/{mock_branch_id}/components'
@@ -143,6 +144,7 @@ async def test_retrieve_transformations_configurations(
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
     # Verify the calls were made with the correct arguments
+    # TODO: use `assert_has_calls`
     calls = keboola_client.storage_client.get.call_args_list
     assert len(calls) == 1
     assert calls[0].args[0] == f'branch/{mock_branch_id}/components'
@@ -174,6 +176,7 @@ async def test_retrieve_components_configurations_from_ids(
     # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
     calls = keboola_client.storage_client.get.call_args_list
+    # TODO: use `assert_has_calls`
     assert len(calls) == 1
     assert calls[0].kwargs['endpoint'] == f'branch/{mock_branch_id}/components/{mock_component["id"]}'
 
@@ -246,6 +249,7 @@ async def test_get_component_configuration(
 
     # Verify the calls were made with the correct arguments
     calls = keboola_client.storage_client.get.call_args_list
+    # TODO: use `assert_has_calls`
     assert len(calls) == 1
     assert calls[0].kwargs['endpoint'] == (
         f"branch/{mock_branch_id}/components/{mock_component['id']}/configs/{mock_configuration['id']}"
