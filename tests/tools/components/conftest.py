@@ -79,6 +79,8 @@ def mock_component() -> dict[str, Any]:
         'configurationSchema': {},
         'configurationDescription': 'Extract data from AWS S3',
         'emptyConfiguration': {},
+        'rootConfigurationExamples': [{'foo': 'root'}],
+        'rowConfigurationExamples': [{'foo': 'row'}],
     }
 
 

@@ -1,12 +1,14 @@
+import json
 import logging
 from typing import Annotated, Any, Optional, Sequence, cast
 
+from httpx import HTTPStatusError
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
+from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.components.model import (
-    Component,
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
     ComponentDetail,
@@ -86,6 +88,7 @@ def add_component_tools(mcp: FastMCP) -> None:
 # tools #########################################
 
 
+@tool_errors()
 async def retrieve_components_configurations(
     ctx: Context,
     component_types: Annotated[
@@ -140,6 +143,7 @@ async def retrieve_components_configurations(
         return await _retrieve_components_configurations_by_ids(client, component_ids)
 
 
+@tool_errors()
 async def retrieve_transformations_configurations(
     ctx: Context,
     transformation_ids: Annotated[
@@ -182,6 +186,7 @@ async def retrieve_transformations_configurations(
         return await _retrieve_components_configurations_by_ids(client, transformation_ids)
 
 
+@tool_errors()
 async def get_component_detail(
     ctx: Context,
     component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
@@ -204,9 +209,11 @@ async def get_component_detail(
             -> returns the details of the component/transformation configuration pair
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    return await _get_component_details(component_id=component_id, client=client)
+    component = await _get_component_details(component_id=component_id, client=client)
+    return ComponentDetail.from_component_response(component)
 
 
+@tool_errors()
 async def get_component_configuration_details(
     component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
     configuration_id: Annotated[
@@ -267,9 +274,12 @@ async def get_component_configuration_details(
         }
     )
     # Create Component Configuration Output Object
-    return ComponentConfigurationOutput.from_component_configuration_response(configuration_response, component)
+    return ComponentConfigurationOutput.from_component_configuration_response(
+        configuration_response,
+        ComponentDetail.from_component_response(component))
 
 
+@tool_errors()
 async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
@@ -356,38 +366,35 @@ async def create_sql_transformation(
     LOG.info(f'Creating new transformation configuration: {name} for component: {transformation_id}.')
     # Try to create the new transformation configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_transformation_configuration = cast(
-            JsonDict,
-            await client.storage_client.post(
-                endpoint=endpoint,
-                data={
-                    'name': name,
-                    'description': description,
-                    'configuration': transformation_configuration_payload.model_dump(),
-                },
-            )
+    new_raw_transformation_configuration = cast(
+        JsonDict,
+        await client.storage_client.post(
+            endpoint=endpoint,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': transformation_configuration_payload.model_dump(),
+            },
         )
+    )
 
-        component = await _get_component_details(client=client, component_id=transformation_id)
-        new_transformation_configuration = ComponentConfigurationResponse.model_validate(
-            new_raw_transformation_configuration |
-            {
-                'component_id': transformation_id,
-                'component': Component.from_component_detail(component),
-            }
-        )
+    component = await _get_component_details(client=client, component_id=transformation_id)
+    new_transformation_configuration = ComponentConfigurationResponse.model_validate(
+        new_raw_transformation_configuration |
+        {
+            'component_id': transformation_id,
+            'component': component,
+        }
+    )
 
-        LOG.info(
-            f'Created new transformation "{transformation_id}" with configuration id '
-            f'"{new_transformation_configuration.configuration_id}".'
-        )
-        return new_transformation_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new transformation configuration: {e}')
-        raise e
+    LOG.info(
+        f'Created new transformation "{transformation_id}" with configuration id '
+        f'"{new_transformation_configuration.configuration_id}".'
+    )
+    return new_transformation_configuration
 
 
+@tool_errors()
 async def update_sql_transformation_configuration(
     ctx: Context,
     configuration_id: Annotated[
@@ -447,38 +454,33 @@ async def update_sql_transformation_configuration(
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    try:
-        LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
-        updated_raw_configuration = await client.storage_client.configuration_update(
-            component_id=sql_transformation_id,
-            configuration_id=configuration_id,
-            configuration=updated_configuration,
-            change_description=change_description,
-            updated_description=updated_description if updated_description else None,
-            is_disabled=is_disabled,
-        )
+    LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+    updated_raw_configuration = await client.storage_client.configuration_update(
+        component_id=sql_transformation_id,
+        configuration_id=configuration_id,
+        configuration=updated_configuration,
+        change_description=change_description,
+        updated_description=updated_description if updated_description else None,
+        is_disabled=is_disabled,
+    )
 
-        transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
-        updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
-            updated_raw_configuration |
-            {
-                'component_id': transformation.component_id,
-                'component': Component.from_component_detail(transformation),
-            }
-        )
+    transformation = await _get_component_details(client=client, component_id=sql_transformation_id)
+    updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
+        updated_raw_configuration |
+        {
+            'component_id': transformation.component_id,
+            'component': transformation,
+        }
+    )
 
-        LOG.info(
-            f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
-            f'component: {updated_transformation_configuration.component_id}.'
-        )
-        return updated_transformation_configuration
-    except Exception as e:
-        LOG.exception(
-            f'Error when updating transformation {sql_transformation_id} with configuration {configuration_id}: {e}'
-        )
-        raise e
+    LOG.info(
+        f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
+        f'component: {updated_transformation_configuration.component_id}.'
+    )
+    return updated_transformation_configuration
 
 
+@tool_errors()
 async def create_component_root_configuration(
     ctx: Context,
     name: Annotated[
@@ -542,35 +544,32 @@ async def create_component_root_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_configuration = await client.storage_client.create_component_root_configuration(
-            component_id=component_id,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': configuration_payload,
-            },
-            branch_id=client.storage_client_sync._branch_id,
-        )
+    new_raw_configuration = await client.storage_client.create_component_root_configuration(
+        component_id=component_id,
+        data={
+            'name': name,
+            'description': description,
+            'configuration': configuration_payload,
+        },
+        branch_id=client.storage_client_sync._branch_id,
+    )
 
-        new_configuration = ComponentRootConfiguration(
-            **new_raw_configuration,
-            component_id=component_id,
-            storage=new_raw_configuration['configuration'].get('storage'),
-            parameters=new_raw_configuration['configuration'].get('parameters'),
-        )
+    new_configuration = ComponentRootConfiguration(
+        **new_raw_configuration,
+        component_id=component_id,
+        storage=new_raw_configuration['configuration'].get('storage'),
+        parameters=new_raw_configuration['configuration'].get('parameters'),
+    )
 
-        LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
-            f'"{new_configuration.configuration_id}".'
-        )
+    LOG.info(
+        f'Created new configuration for component "{component_id}" with configuration id '
+        f'"{new_configuration.configuration_id}".'
+    )
 
-        return new_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
-        raise e
+    return new_configuration
 
 
+@tool_errors()
 async def create_component_row_configuration(
     ctx: Context,
     name: Annotated[
@@ -645,36 +644,33 @@ async def create_component_row_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_configuration = await client.storage_client.create_component_row_configuration(
-            component_id=component_id,
-            config_id=configuration_id,
-            branch_id=client.storage_client_sync._branch_id,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': configuration_payload,
-            },
-        )
+    new_raw_configuration = await client.storage_client.create_component_row_configuration(
+        component_id=component_id,
+        config_id=configuration_id,
+        branch_id=client.storage_client_sync._branch_id,
+        data={
+            'name': name,
+            'description': description,
+            'configuration': configuration_payload,
+        },
+    )
 
-        new_configuration = ComponentRowConfiguration(
-            **new_raw_configuration,
-            component_id=component_id,
-            storage=new_raw_configuration['configuration'].get('storage'),
-            parameters=new_raw_configuration['configuration'].get('parameters'),
-        )
+    new_configuration = ComponentRowConfiguration(
+        **new_raw_configuration,
+        component_id=component_id,
+        storage=new_raw_configuration['configuration'].get('storage'),
+        parameters=new_raw_configuration['configuration'].get('parameters'),
+    )
 
-        LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
-            f'"{new_configuration.configuration_id}".'
-        )
+    LOG.info(
+        f'Created new configuration for component "{component_id}" with configuration id '
+        f'"{new_configuration.configuration_id}".'
+    )
 
-        return new_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
-        raise e
+    return new_configuration
 
 
+@tool_errors()
 async def update_component_root_configuration(
     ctx: Context,
     name: Annotated[
@@ -751,37 +747,34 @@ async def update_component_root_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_configuration = await client.storage_client.update_component_root_configuration(
-            component_id=component_id,
-            config_id=configuration_id,
-            branch_id=client.storage_client_sync._branch_id,
-            data={
-                'name': name,
-                'description': description,
-                'changeDescription': change_description,
-                'configuration': configuration_payload,
-            },
-        )
+    new_raw_configuration = await client.storage_client.update_component_root_configuration(
+        component_id=component_id,
+        config_id=configuration_id,
+        branch_id=client.storage_client_sync._branch_id,
+        data={
+            'name': name,
+            'description': description,
+            'changeDescription': change_description,
+            'configuration': configuration_payload,
+        },
+    )
 
-        new_configuration = ComponentRootConfiguration(
-            **new_raw_configuration,
-            component_id=component_id,
-            storage=new_raw_configuration['configuration'].get('storage'),
-            parameters=new_raw_configuration['configuration'].get('parameters'),
-        )
+    new_configuration = ComponentRootConfiguration(
+        **new_raw_configuration,
+        component_id=component_id,
+        storage=new_raw_configuration['configuration'].get('storage'),
+        parameters=new_raw_configuration['configuration'].get('parameters'),
+    )
 
-        LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
-            f'"{new_configuration.configuration_id}".'
-        )
+    LOG.info(
+        f'Created new configuration for component "{component_id}" with configuration id '
+        f'"{new_configuration.configuration_id}".'
+    )
 
-        return new_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
-        raise e
+    return new_configuration
 
 
+@tool_errors()
 async def update_component_row_configuration(
     ctx: Context,
     name: Annotated[
@@ -868,38 +861,35 @@ async def update_component_row_configuration(
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
-    try:
-        new_raw_configuration = await client.storage_client.update_component_row_configuration(
-            component_id=component_id,
-            config_id=configuration_id,
-            configuration_row_id=configuration_row_id,
-            branch_id=client.storage_client_sync._branch_id,
-            data={
-                'name': name,
-                'description': description,
-                'changeDescription': change_description,
-                'configuration': configuration_payload,
-            },
-        )
+    new_raw_configuration = await client.storage_client.update_component_row_configuration(
+        component_id=component_id,
+        config_id=configuration_id,
+        configuration_row_id=configuration_row_id,
+        branch_id=client.storage_client_sync._branch_id,
+        data={
+            'name': name,
+            'description': description,
+            'changeDescription': change_description,
+            'configuration': configuration_payload,
+        },
+    )
 
-        new_configuration = ComponentRowConfiguration(
-            **new_raw_configuration,
-            component_id=component_id,
-            storage=new_raw_configuration['configuration'].get('storage'),
-            parameters=new_raw_configuration['configuration'].get('parameters'),
-        )
+    new_configuration = ComponentRowConfiguration(
+        **new_raw_configuration,
+        component_id=component_id,
+        storage=new_raw_configuration['configuration'].get('storage'),
+        parameters=new_raw_configuration['configuration'].get('parameters'),
+    )
 
-        LOG.info(
-            f'Created new configuration for component "{component_id}" with configuration id '
-            f'"{new_configuration.configuration_id}".'
-        )
+    LOG.info(
+        f'Created new configuration for component "{component_id}" with configuration id '
+        f'"{new_configuration.configuration_id}".'
+    )
 
-        return new_configuration
-    except Exception as e:
-        LOG.exception(f'Error when creating new component configuration: {e}')
-        raise e
+    return new_configuration
 
 
+@tool_errors()
 async def get_component_configuration_examples(
     ctx: Context,
     component_id: Annotated[
@@ -923,47 +913,32 @@ async def get_component_configuration_examples(
             -> set the component_id parameter accordingly
             -> returns a markdown formatted string with configuration examples
     """
-    import json
-    from pathlib import Path
+    client = KeboolaClient.from_state(ctx.session.state)
+    try:
+        raw_component = await client.ai_service_client.get_component_detail(component_id)
+    except HTTPStatusError:
+        LOG.exception(f'Error when getting component details: {component_id}')
+        return ''
 
-    # Construct the path to the JSONL file TODO: fix the path somehow
-    jsonl_path = Path(__file__).parent.parent.parent / 'json-schemas/output' / f'sample_data_{component_id}.jsonl'
+    root_examples = raw_component.get('rootConfigurationExamples') or []
+    row_examples = raw_component.get('rowConfigurationExamples') or []
 
-    if not jsonl_path.exists():
-        return f'No configuration examples found for component {component_id}'
+    markdown = f'# Configuration Examples for `{component_id}`\n\n'
 
-    # Read and parse the JSONL file
-    examples = []
-    with open(jsonl_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:  # Skip empty lines
-                continue
-            try:
-                data = json.loads(line)
-                if data.get('component_id') == component_id and data.get('config_example'):
-                    example = {
-                        'config_example': data['config_example'],
-                        'config_row_example': data['config_row_example'],
-                    }
-                    examples.append(example)
-            except json.JSONDecodeError:
-                continue  # Skip lines that are not valid JSON
+    if root_examples:
+        markdown += '## Root Configuration Examples\n\n'
+        for i, example in enumerate(root_examples, 1):
+            markdown += f'{i}. Root Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
-    if not examples:
-        return f'No configuration examples found for component {component_id}'
-
-    # Format the examples as a markdown list
-    markdown = 'Configuration examples\n\n'
-    for i, example in enumerate(examples, 1):
-        markdown += f"{i}. Configuration:\n```json\n{json.dumps(example['config_example'], indent=2)}\n```\n"
-        if example['config_row_example']:
-            markdown += f"   Configuration Row:\n```json\n{json.dumps(example['config_row_example'], indent=2)}\n```\n"
-        markdown += '\n'
+    if row_examples:
+        markdown += '## Row Configuration Examples\n\n'
+        for i, example in enumerate(row_examples, 1):
+            markdown += f'{i}. Row Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
     return markdown
 
 
+@tool_errors()
 async def find_component_id(
     ctx: Context,
     query: Annotated[

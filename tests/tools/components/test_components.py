@@ -1,6 +1,5 @@
 
 from typing import Any, Callable
-from unittest.mock import call
 
 import pytest
 from mcp.server.fastmcp import Context
@@ -24,6 +23,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentDetail,
     ReducedComponentDetail,
 )
+from keboola_mcp_server.tools.components.tools import get_component_configuration_examples
 from keboola_mcp_server.tools.sql import WorkspaceManager
 
 
@@ -235,7 +235,7 @@ async def test_get_component_configuration_details(
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_configuration)
-    keboola_client.storage_client.get = mocker.AsyncMock(side_effect=[{'components': []}, mock_metadata])
+    keboola_client.storage_client.get = mocker.AsyncMock(return_value=mock_metadata)
 
     result = await get_component_configuration_details(
         component_id='keboola.ex-aws-s3', configuration_id='123', ctx=context
@@ -256,13 +256,11 @@ async def test_get_component_configuration_details(
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=mock_component['id'])
 
-    keboola_client.storage_client.get.assert_has_calls(calls=[
-        call('', params={'exclude': 'componentDetails'}),
-        call(endpoint=f'branch/{mock_branch_id}/'
-                      f'components/{mock_component["id"]}/'
-                      f'configs/{mock_configuration["id"]}/'
-                      'metadata')
-    ])
+    keboola_client.storage_client.get.assert_called_once_with(
+        endpoint=f'branch/{mock_branch_id}/'
+                 f'components/{mock_component["id"]}/'
+                 f'configs/{mock_configuration["id"]}/'
+                 'metadata')
 
 
 @pytest.mark.parametrize(
@@ -321,9 +319,7 @@ async def test_create_transformation_configuration(
         {
             **configuration,
             'component_id': expected_component_id,
-            # TODO: fix this -- we don't compare the flags, because Component.from_component_detail() function
-            #  cannot set flags correctly
-            'component': {**component, 'flags': []}
+            'component': {**component}
         }
     )
 
@@ -436,3 +432,40 @@ async def test_update_transformation_configuration(
         updated_description=None,
         is_disabled=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_get_component_configuration_examples(
+        mocker: MockerFixture,
+        mcp_context_components_configs: Context,
+        mock_component: dict[str, Any],
+):
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    # Setup mock to return test data
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+
+    text = await get_component_configuration_examples(component_id='keboola.ex-aws-s3', ctx=context)
+    assert text == """# Configuration Examples for `keboola.ex-aws-s3`
+
+## Root Configuration Examples
+
+1. Root Configuration:
+```json
+{
+  "foo": "root"
+}
+```
+
+## Row Configuration Examples
+
+1. Row Configuration:
+```json
+{
+  "foo": "row"
+}
+```
+
+"""
