@@ -325,7 +325,8 @@ async def test_http_multiple_clients_with_different_headers(
             await assert_basic_setup(server, client_2)
             ret_1 = await client_1.call_tool('assessed_function', {'which_client': 'client_1'})
             ret_2 = await client_2.call_tool('assessed_function', {'which_client': 'client_2'})
-            assert isinstance(ret_1[0], TextContent) and isinstance(ret_2[0], TextContent)
+            assert isinstance(ret_1[0], TextContent)
+            assert isinstance(ret_2[0], TextContent)
             assert ret_1[0].text == 'client_1'
             assert ret_2[0].text == 'client_2'
 
