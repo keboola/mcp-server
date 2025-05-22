@@ -5,9 +5,9 @@ from typing import Annotated, Any, Optional, Sequence, cast
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
-<<<<<<< HEAD
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentConfigurationOutput,
@@ -17,11 +17,6 @@ from keboola_mcp_server.tools.components.model import (
     ComponentType,
     ComponentWithConfigurations,
 )
-=======
-from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools.components.model import ComponentConfiguration, ComponentType, ComponentWithConfigurations
->>>>>>> main
 from keboola_mcp_server.tools.components.utils import (
     _get_component,
     _get_sql_transformation_id_from_sql_dialect,
@@ -92,12 +87,9 @@ def add_component_tools(mcp: FastMCP) -> None:
 
 # tools #########################################
 
-<<<<<<< HEAD
 
 @tool_errors()
-=======
 @with_session_state()
->>>>>>> main
 async def retrieve_components_configurations(
     ctx: Context,
     component_types: Annotated[
@@ -152,11 +144,8 @@ async def retrieve_components_configurations(
         return await _retrieve_components_configurations_by_ids(client, component_ids)
 
 
-<<<<<<< HEAD
 @tool_errors()
-=======
 @with_session_state()
->>>>>>> main
 async def retrieve_transformations_configurations(
     ctx: Context,
     transformation_ids: Annotated[
@@ -199,8 +188,8 @@ async def retrieve_transformations_configurations(
         return await _retrieve_components_configurations_by_ids(client, transformation_ids)
 
 
-<<<<<<< HEAD
 @tool_errors()
+@with_session_state()
 async def get_component(
     ctx: Context,
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
@@ -229,13 +218,9 @@ async def get_component(
 
 
 @tool_errors()
+@with_session_state()
 async def get_component_configuration(
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-=======
-@with_session_state()
-async def get_component_configuration_details(
-    component_id: Annotated[str, Field(description='Unique identifier of the Keboola component/transformation')],
->>>>>>> main
     configuration_id: Annotated[
         str,
         Field(
@@ -275,7 +260,8 @@ async def get_component_configuration_details(
 
     # Create root configuration
     root_configuration = ComponentRootConfiguration.model_validate(
-        configuration_response.model_dump() | {
+        configuration_response.model_dump()
+        | {
             'parameters': configuration_response.configuration.get('parameters', {}),
             'storage': configuration_response.configuration.get('storage'),
         }
@@ -289,7 +275,8 @@ async def get_component_configuration_details(
             if row is None:
                 continue
             row_configuration = ComponentRowConfiguration.model_validate(
-                row | {
+                row
+                | {
                     'component_id': configuration_response.component_id,
                     'parameters': row.get('configuration', {}).get('parameters', {}),
                     'storage': row.get('configuration', {}).get('storage'),
@@ -297,7 +284,6 @@ async def get_component_configuration_details(
             )
             row_configurations.append(row_configuration)
 
-<<<<<<< HEAD
     return ComponentConfigurationOutput(
         root_configuration=root_configuration,
         row_configurations=row_configurations,
@@ -306,9 +292,7 @@ async def get_component_configuration_details(
 
 
 @tool_errors()
-=======
 @with_session_state()
->>>>>>> main
 async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
@@ -427,11 +411,8 @@ async def create_sql_transformation(
         raise e
 
 
-<<<<<<< HEAD
 @tool_errors()
-=======
 @with_session_state()
->>>>>>> main
 async def update_sql_transformation_configuration(
     ctx: Context,
     configuration_id: Annotated[
@@ -598,7 +579,7 @@ async def create_component_root_configuration(
                 'description': description,
                 'configuration': configuration_payload,
             },
-            branch_id=client.storage_client_sync._branch_id,
+            branch_id=client.storage_client.branch_id,
         )
 
         new_configuration = ComponentRootConfiguration(
@@ -620,6 +601,7 @@ async def create_component_root_configuration(
 
 
 @tool_errors()
+@with_session_state()
 async def create_component_row_configuration(
     ctx: Context,
     name: Annotated[
@@ -700,7 +682,7 @@ async def create_component_row_configuration(
         new_raw_configuration = await client.storage_client.create_component_row_configuration(
             component_id=component_id,
             config_id=configuration_id,
-            branch_id=client.storage_client_sync._branch_id,
+            branch_id=client.storage_client.branch_id,
             data={
                 'name': name,
                 'description': description,
@@ -727,6 +709,7 @@ async def create_component_row_configuration(
 
 
 @tool_errors()
+@with_session_state()
 async def update_component_root_configuration(
     ctx: Context,
     name: Annotated[
@@ -811,7 +794,7 @@ async def update_component_root_configuration(
         new_raw_configuration = await client.storage_client.update_component_root_configuration(
             component_id=component_id,
             config_id=configuration_id,
-            branch_id=client.storage_client_sync._branch_id,
+            branch_id=client.storage_client.branch_id,
             data={
                 'name': name,
                 'description': description,
@@ -839,6 +822,7 @@ async def update_component_root_configuration(
 
 
 @tool_errors()
+@with_session_state()
 async def update_component_row_configuration(
     ctx: Context,
     name: Annotated[
@@ -931,7 +915,7 @@ async def update_component_row_configuration(
             component_id=component_id,
             config_id=configuration_id,
             configuration_row_id=configuration_row_id,
-            branch_id=client.storage_client_sync._branch_id,
+            branch_id=client.storage_client.branch_id,
             data={
                 'name': name,
                 'description': description,
@@ -959,6 +943,7 @@ async def update_component_row_configuration(
 
 
 @tool_errors()
+@with_session_state()
 async def get_component_configuration_examples(
     ctx: Context,
     component_id: Annotated[
@@ -1005,6 +990,7 @@ async def get_component_configuration_examples(
 
 
 @tool_errors()
+@with_session_state()
 async def find_component_id(
     ctx: Context,
     query: Annotated[
