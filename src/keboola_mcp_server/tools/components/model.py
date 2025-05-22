@@ -257,7 +257,8 @@ class ComponentRootConfiguration(ComponentConfigurationResponseBase):
 
 class ComponentConfigurationOutput(BaseModel):
     """
-    Output model for component configuration, containing the root configuration and optional row configurations.
+    The MCP tools' output model for component configuration, containing the root configuration and optional
+    row configurations.
     """
 
     root_configuration: ComponentRootConfiguration = Field(
