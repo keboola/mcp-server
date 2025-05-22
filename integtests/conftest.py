@@ -98,6 +98,10 @@ def _keboola_client(storage_api_token: str, storage_api_url: str) -> KeboolaClie
     return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
 
 
+def _storage_client(storage_api_url: str, storage_api_token: str) -> SyncStorageClient:
+    return SyncStorageClient(storage_api_url, storage_api_token)
+
+
 @pytest.fixture(scope='session')
 def shared_datadir_ro() -> Path:
     """
@@ -183,7 +187,7 @@ def keboola_project(
     After the tests, the project is cleaned up.
     """
     # Cannot use keboola_client fixture because it is function-scoped
-    storage_client = _keboola_client(storage_api_token, storage_api_url).storage_client_sync
+    storage_client = _storage_client(storage_api_url, storage_api_token)
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
     LOG.info(f'Setting up Keboola project with ID={project_id}')
@@ -239,10 +243,8 @@ def configs(keboola_project: ProjectDef) -> list[ConfigDef]:
 
 
 @pytest.fixture
-def keboola_client(
-    env_file_loaded: bool, storage_api_token: str, storage_api_url: str
-) -> KeboolaClient:
-    return _keboola_client(storage_api_token, storage_api_url)
+def keboola_client(storage_api_token: str, storage_api_url: str) -> KeboolaClient:
+    return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
 
 
 @pytest.fixture
