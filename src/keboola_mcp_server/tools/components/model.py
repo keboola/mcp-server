@@ -247,7 +247,7 @@ class ComponentRootConfiguration(ComponentConfigurationResponseBase):
     )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
-        default=[],
+        default=list,
         validation_alias=AliasChoices(
             'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
         ),
