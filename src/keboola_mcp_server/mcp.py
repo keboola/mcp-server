@@ -37,6 +37,7 @@ from mcp.server.lowlevel.server import LifespanResultT
 from mcp.server.models import InitializationOptions
 from mcp.server.sse import SseServerTransport
 from mcp.types import AnyFunction
+from starlette.responses import Response, JSONResponse
 
 LOG = logging.getLogger(__name__)
 
@@ -152,11 +153,15 @@ class KeboolaMcpServer(FastMCP):
                     state=self._session_state_factory(dict(request.query_params)),
                 )
 
+        async def health_check(request: Request):
+            return JSONResponse({})
+
         starlette_app = Starlette(
             debug=self.settings.debug,
             routes=[
                 Route('/sse', endpoint=handle_sse),
                 Mount('/messages/', app=sse.handle_post_message),
+                Route('/health-check', endpoint=health_check),
                 # TODO: add endpoints for health-check and info
             ],
         )
