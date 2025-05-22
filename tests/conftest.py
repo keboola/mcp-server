@@ -1,6 +1,6 @@
 import pytest
-from kbcstorage.client import Client as SyncStorageClient
-from mcp.server.fastmcp import Context
+from fastmcp import Context
+from mcp.shared.session import BaseSession
 
 from keboola_mcp_server.client import (
     AIServiceClient,
@@ -9,21 +9,20 @@ from keboola_mcp_server.client import (
     KeboolaClient,
     RawKeboolaClient,
 )
-from keboola_mcp_server.mcp import StatefulServerSession
-from keboola_mcp_server.tools.sql import WorkspaceManager
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
 @pytest.fixture
 def keboola_client(mocker) -> KeboolaClient:
     """Creates mocked `KeboolaClient` instance with mocked sub-clients."""
     client = mocker.MagicMock(KeboolaClient)
-    # Mock synchronous client
-    client.storage_client_sync = mocker.MagicMock(SyncStorageClient)
-    # Mock asynchronous clients
+
+    # Mock API clients
     client.storage_client = mocker.MagicMock(AsyncStorageClient)
     client.storage_client.branch_id = 'default'
     client.jobs_queue_client = mocker.MagicMock(JobsQueueClient)
     client.ai_service_client = mocker.MagicMock(AIServiceClient)
+
     # Mock the underlying api_client for async clients if needed for deeper testing
     client.storage_client.api_client = mocker.MagicMock(RawKeboolaClient)
     client.jobs_queue_client.api_client = mocker.MagicMock(RawKeboolaClient)
@@ -40,9 +39,9 @@ def workspace_manager(mocker) -> WorkspaceManager:
 
 @pytest.fixture
 def empty_context(mocker) -> Context:
-    """Creates the mocked `mcp.server.fastmcp.Context` instance with the `StatefulServerSession` and empty state."""
+    """Creates the mocked `mcp.server.fastmcp.Context` instance with the `ServerSession` and empty state."""
     ctx = mocker.MagicMock(Context)
-    ctx.session = (session := mocker.MagicMock(StatefulServerSession))
+    ctx.session = (session := mocker.MagicMock(BaseSession))
     type(session).state = (state := mocker.PropertyMock())
     state.return_value = {}
     return ctx

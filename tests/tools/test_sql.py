@@ -10,13 +10,12 @@ from pydantic import TypeAdapter
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.sql import (
+from keboola_mcp_server.tools.sql import get_sql_dialect, query_table
+from keboola_mcp_server.tools.workspace import (
     QueryResult,
     SqlSelectData,
     TableFqn,
     WorkspaceManager,
-    get_sql_dialect,
-    query_table,
 )
 
 
@@ -269,9 +268,9 @@ class TestWorkspaceManagerBigQuery:
     )
     async def test_execute_query(self, query: str, expected: QueryResult, context: Context, mocker: MockerFixture):
         # disable BigQuery's Client's constructor to avoid Google authentication
-        bq_client = mocker.patch('keboola_mcp_server.tools.sql.Client.__init__')
+        bq_client = mocker.patch('keboola_mcp_server.tools.workspace.Client.__init__')
         bq_client.return_value = None
-        bq_query = mocker.patch('keboola_mcp_server.tools.sql.Client.query')
+        bq_query = mocker.patch('keboola_mcp_server.tools.workspace.Client.query')
         bq_query.return_value = (bq_job := mocker.MagicMock(QueryJob))
         bq_job.result.return_value = (bq_rows := mocker.MagicMock(RowIterator))
         if expected.is_ok:
