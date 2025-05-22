@@ -8,12 +8,12 @@ from typing import Any, Generator
 
 import pytest
 from dotenv import load_dotenv
+from fastmcp import Context
 from kbcstorage.client import Client as SyncStorageClient
-from mcp.server.fastmcp import Context
+from mcp.server.session import ServerSession
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.mcp import StatefulServerSession
-from keboola_mcp_server.tools.sql import WorkspaceManager
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -245,7 +245,8 @@ def mcp_context(
     MCP context containing the Keboola client and workspace manager.
     """
     client_context = mocker.MagicMock(Context)
-    client_context.session = mocker.MagicMock(StatefulServerSession)
+    client_context.session = mocker.MagicMock(ServerSession)
+    # We set the user session state as it is done in the @with_session_state decorator
     client_context.session.state = {
         KeboolaClient.STATE_KEY: keboola_client,
         WorkspaceManager.STATE_KEY: workspace_manager,

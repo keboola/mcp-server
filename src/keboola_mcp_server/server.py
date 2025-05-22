@@ -1,54 +1,55 @@
 """MCP server implementation for Keboola Connection."""
 
 import logging
-from typing import Optional
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Callable, Optional
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
-from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import KeboolaMcpServer, SessionParams, SessionState, SessionStateFactory
+from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
-from keboola_mcp_server.tools.sql import WorkspaceManager, add_sql_tools
+from keboola_mcp_server.tools.sql import add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
 
 LOG = logging.getLogger(__name__)
 
 
-def _create_session_state_factory(config: Optional[Config] = None) -> SessionStateFactory:
-    def _(params: SessionParams) -> SessionState:
-        LOG.info(f'Creating SessionState for params: {params.keys()}.')
+def create_keboola_lifespan(
+    config: Config | None = None,
+) -> Callable[[FastMCP[ServerState]], AbstractAsyncContextManager[ServerState]]:
+    @asynccontextmanager
+    async def keboola_lifespan(server: FastMCP) -> AsyncIterator[ServerState]:
+        """
+        Manage Keboola server lifecycle
 
-        if not config:
-            cfg = Config.from_dict(params)
-        else:
-            cfg = config.replace_by(params)
+        This method is called when the server starts, initializes the server state and returns it within a
+        context manager. The lifespan state is accessible accross the whole server as well as within the tools as
+        `context.life_span`. When the server shuts down, it cleans up the server state.
 
-        LOG.info(f'Creating SessionState from config: {cfg}.')
+        :param server: FastMCP server instance
 
-        state: SessionState = {}
-        # Create Keboola client instance
+        Usage:
+        def tool(ctx: Context):
+            ... = ctx.request_context.life_span.config # ctx.life_span is type of ServerState
+
+        Ideas:
+        - it could handle OAuth token, client access, Reddis database connection for storing sessions, access
+        to the Relational DB, etc.
+        """
+        # init server state
+        init_config = config or Config()
+        server_state = ServerState(config=init_config)
         try:
-            client = KeboolaClient(cfg.storage_token, cfg.storage_api_url)
-            state[KeboolaClient.STATE_KEY] = client
-            LOG.info('Successfully initialized Storage API client.')
-        except Exception as e:
-            LOG.error(f'Failed to initialize Keboola client: {e}')
-            raise
 
-        try:
-            workspace_manager = WorkspaceManager(client, cfg.workspace_schema)
-            state[WorkspaceManager.STATE_KEY] = workspace_manager
-            LOG.info('Successfully initialized Storage API Workspace manager.')
-        except Exception as e:
-            LOG.error(f'Failed to initialize Storage API Workspace manager: {e}')
-            raise
+            yield server_state
+        finally:
+            pass
 
-        return state
-
-    return _
+    return keboola_lifespan
 
 
 def create_server(config: Optional[Config] = None) -> FastMCP:
@@ -60,8 +61,8 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     Returns:
         Configured FastMCP server instance
     """
-    # Initialize FastMCP server with system instructions
-    mcp = KeboolaMcpServer('Keboola Explorer', session_state_factory=_create_session_state_factory(config))
+    # Initialize FastMCP server with system lifespan
+    mcp = KeboolaMcpServer(name='Keboola Explorer', lifespan=create_keboola_lifespan(config))
 
     add_component_tools(mcp)
     add_doc_tools(mcp)

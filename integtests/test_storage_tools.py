@@ -1,7 +1,7 @@
 import csv
 
 import pytest
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 
 from integtests.conftest import BucketDef, TableDef
 from keboola_mcp_server.tools.storage import (

@@ -16,7 +16,7 @@ from keboola_mcp_server.tools.components import (
     retrieve_transformations_configurations,
     update_sql_transformation_configuration,
 )
-from keboola_mcp_server.tools.sql import WorkspaceManager
+from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ async def test_retrieve_components_configurations_by_types(
         side_effect=[[{**component, 'configurations': mock_configurations}] for component in mock_components]
     )
 
-    result = await retrieve_components_configurations(context, component_types=[])
+    result = await retrieve_components_configurations(ctx=context, component_types=[])
 
     assert_retrieve_components(result, mock_components, mock_configurations)
 

@@ -13,18 +13,21 @@ LOG = logging.getLogger(__name__)
 class Config:
     """Server configuration."""
 
+    storage_api_url: Optional[str] = None
+    """The URL to the Storage API."""
     storage_token: Optional[str] = None
-    storage_api_url: str = 'https://connection.keboola.com'
+    """The token to access the storage API using the MCP tools."""
     workspace_schema: Optional[str] = None
+    """Workspace schema to access the buckets, tables and execute sql queries."""
 
     @classmethod
     def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, str]:
         options: dict[str, str] = {}
         for f in dataclasses.fields(cls):
             if f.name in d:
-                options[f.name] = d.get(f.name)
+                options[f.name] = d[f.name]
             elif (dict_name := f'KBC_{f.name.upper()}') in d:
-                options[f.name] = d.get(dict_name)
+                options[f.name] = d[dict_name]
         return options
 
     @classmethod
