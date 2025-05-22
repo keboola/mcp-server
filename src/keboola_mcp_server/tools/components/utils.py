@@ -10,7 +10,6 @@ from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentConfigurationMetadata,
     ComponentConfigurationResponse,
-    ComponentDetail,
     ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
@@ -148,24 +147,22 @@ async def _retrieve_components_configurations_by_ids(
 async def _get_component_details(
     client: KeboolaClient,
     component_id: str,
-) -> ComponentDetail:
+) -> Component:
     """
-    Utility function to retrieve the component details by component ID, used in tools:
-    - get_component_configuration_details
+    Retrieve component details by component ID.
 
     First tries to get component details from the AI service catalog. If the component
-    is not found (404) or returns empty data (private components), falls back to using the
+    is not found (404) or returns empty data (private components), it falls back to using the
     Storage API endpoint.
 
-    :param component_id: The ID of the Keboola component/transformation you want details about
-    :param client: The Keboola client
-    :return: The component details
+    :param component_id: ID of the Keboola component/transformation to get details for
+    :param client: Keboola client instance
+    :return: Component instance containing the component information
     """
-    component_info: Component
     try:
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
-        component_info = Component.model_validate(raw_component)
+        return Component.model_validate(raw_component)
     except HTTPStatusError as e:
         if e.response.status_code == 404:
             LOG.info(
@@ -176,12 +173,10 @@ async def _get_component_details(
             endpoint = f'branch/{client.storage_client.branch_id}/components/{component_id}'
             raw_component = await client.storage_client.get(endpoint=endpoint)
             LOG.info(f'Retrieved component details for component {component_id} from Storage API.')
-            component_info = Component.model_validate(raw_component)
+            return Component.model_validate(raw_component)
         else:
             # If it's not a 404, re-raise the error
             raise
-
-    return ComponentDetail.from_component_response(component_info)
 
 
 def _get_sql_transformation_id_from_sql_dialect(

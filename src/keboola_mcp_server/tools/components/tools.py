@@ -8,7 +8,6 @@ from pydantic import Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.components.model import (
-    Component,
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
     ComponentDetail,
@@ -209,7 +208,8 @@ async def get_component_detail(
             -> returns the details of the component/transformation configuration pair
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    return await _get_component_details(component_id=component_id, client=client)
+    component = await _get_component_details(component_id=component_id, client=client)
+    return ComponentDetail.from_component_response(component)
 
 
 @tool_errors()
@@ -273,7 +273,9 @@ async def get_component_configuration_details(
         }
     )
     # Create Component Configuration Output Object
-    return ComponentConfigurationOutput.from_component_configuration_response(configuration_response, component)
+    return ComponentConfigurationOutput.from_component_configuration_response(
+        configuration_response,
+        ComponentDetail.from_component_response(component))
 
 
 @tool_errors()
@@ -380,7 +382,7 @@ async def create_sql_transformation(
         new_raw_transformation_configuration |
         {
             'component_id': transformation_id,
-            'component': Component.from_component_detail(component),
+            'component': component,
         }
     )
 
@@ -466,7 +468,7 @@ async def update_sql_transformation_configuration(
         updated_raw_configuration |
         {
             'component_id': transformation.component_id,
-            'component': Component.from_component_detail(transformation),
+            'component': transformation,
         }
     )
 

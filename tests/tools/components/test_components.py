@@ -319,9 +319,7 @@ async def test_create_transformation_configuration(
         {
             **configuration,
             'component_id': expected_component_id,
-            # TODO: fix this -- we don't compare the flags, because Component.from_component_detail() function
-            #  cannot set flags correctly
-            'component': {**component, 'flags': []}
+            'component': {**component}
         }
     )
 
