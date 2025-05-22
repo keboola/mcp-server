@@ -7,7 +7,7 @@ from integtests.conftest import ConfigDef
 from keboola_mcp_server.tools.components import (
     ComponentType,
     ComponentWithConfigurations,
-    get_component_configuration_details,
+    get_component_configuration,
     retrieve_components_configurations,
 )
 from keboola_mcp_server.tools.components.model import ComponentConfigurationOutput
@@ -17,23 +17,24 @@ LOG = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 async def test_get_component_configuration_details(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_component_configuration_details` returns a `ComponentConfiguration` instance."""
+    """Tests that `get_component_configuration` returns a `ComponentConfigurationOutput` instance."""
 
     for config in configs:
         assert config.configuration_id is not None
 
-        result = await get_component_configuration_details(
+        result = await get_component_configuration(
             component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context
         )
 
         assert isinstance(result, ComponentConfigurationOutput)
-        assert result.component_details is not None
-        assert result.component_details.component_id == config.component_id
-        assert result.component_details.component_type is not None
-        assert result.component_details.component_name is not None
+        assert result.component is not None
+        assert result.component.component_id == config.component_id
+        assert result.component.component_type is not None
+        assert result.component.component_name is not None
 
         assert result.root_configuration is not None
         assert result.root_configuration.configuration_id == config.configuration_id
+        assert result.root_configuration.component_id == config.component_id
 
 
 @pytest.mark.asyncio
