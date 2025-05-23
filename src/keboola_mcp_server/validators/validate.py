@@ -53,7 +53,7 @@ def validate_storage_jsonschema(storage: JsonStruct) -> JsonStruct:
     return storage
 
 
-def validate_storage_pydantic(storage: JsonStruct) -> JsonStruct:
+def validate_storage_pydantic(storage: dict[str, Any]) -> dict[str, Any]:
     """
     Validate the storage configuration using pydantic.
     """
