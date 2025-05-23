@@ -5,37 +5,36 @@ from mcp.server.fastmcp import Context
 
 from integtests.conftest import ConfigDef
 from keboola_mcp_server.tools.components import (
-    ComponentConfiguration,
     ComponentType,
     ComponentWithConfigurations,
-    get_component_configuration_details,
+    get_component_configuration,
     retrieve_components_configurations,
 )
+from keboola_mcp_server.tools.components.model import ComponentConfigurationOutput
 
 LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_get_component_configuration_details(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_component_configuration_details` returns a `ComponentConfiguration` instance."""
+async def test_get_component_configuration(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_component_configuration` returns a `ComponentConfigurationOutput` instance."""
 
     for config in configs:
         assert config.configuration_id is not None
 
-        result = await get_component_configuration_details(
+        result = await get_component_configuration(
             component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context
         )
 
-        assert isinstance(result, ComponentConfiguration)
-        assert result.component_id == config.component_id
-        assert result.configuration_id == config.configuration_id
-
-        assert result.configuration is not None
+        assert isinstance(result, ComponentConfigurationOutput)
         assert result.component is not None
-
         assert result.component.component_id == config.component_id
         assert result.component.component_type is not None
         assert result.component.component_name is not None
+
+        assert result.root_configuration is not None
+        assert result.root_configuration.configuration_id == config.configuration_id
+        assert result.root_configuration.component_id == config.component_id
 
 
 @pytest.mark.asyncio
@@ -58,7 +57,7 @@ async def test_retrieve_components_by_ids(mcp_context: Context, configs: list[Co
 
         # Check that configurations belong to this component
         for config in item.configurations:
-            assert config.component_id == item.component.component_id
+            assert config.root_configuration.component_id == item.component.component_id
 
 
 @pytest.mark.asyncio

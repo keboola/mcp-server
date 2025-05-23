@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-      - 'v*-dev.*'
 
 env:
   SERVICE_IMAGE_NAME: "keboola/mcp-server"

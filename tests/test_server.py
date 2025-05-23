@@ -16,7 +16,7 @@ from keboola_mcp_server.server import (
     create_server,
 )
 from keboola_mcp_server.tools.components import (
-    GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
+    GET_COMPONENT_CONFIGURATION_TOOL_NAME,
     RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
 )
@@ -29,10 +29,15 @@ class TestServer:
         server = create_server()
         tools = await server.get_tools()
         assert sorted(tool.name for tool in tools.values()) == [
+            'create_component_root_configuration',
+            'create_component_row_configuration',
             'create_sql_transformation',
             'docs_query',
+            'find_component_id',
             'get_bucket_detail',
-            GET_COMPONENT_CONFIGURATION_DETAILS_TOOL_NAME,
+            'get_component',
+            GET_COMPONENT_CONFIGURATION_TOOL_NAME,
+            'get_component_configuration_examples',
             'get_job_detail',
             'get_sql_dialect',
             'get_table_detail',
@@ -45,6 +50,8 @@ class TestServer:
             'start_job',
             'update_bucket_description',
             'update_column_description',
+            'update_component_root_configuration',
+            'update_component_row_configuration',
             'update_sql_transformation_configuration',
             'update_table_description',
         ]
