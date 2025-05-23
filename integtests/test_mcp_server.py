@@ -9,7 +9,7 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.tools.components.model import ComponentConfiguration
+from keboola_mcp_server.tools.components.model import ComponentConfigurationOutput
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
@@ -228,11 +228,10 @@ async def _assert_basic_setup(server: FastMCP, client: Client):
 
 
 async def _assert_get_component_details_tool_call(client: Client, config: ConfigDef):
-    _component_details_tool_name = 'get_component_details'
     assert config.configuration_id is not None
 
     tool_result = await client.call_tool(
-        _component_details_tool_name,
+        'get_component_configuration',
         {'configuration_id': config.configuration_id, 'component_id': config.component_id},
     )
 
@@ -243,14 +242,14 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     component_str = tool_result_content.text
     component_json = json.loads(component_str)
 
-    component_config = ComponentConfiguration.model_validate(component_json)
-    assert isinstance(component_config, ComponentConfiguration)
-    assert component_config.component_id == config.component_id
-    assert component_config.configuration_id == config.configuration_id
-
-    assert component_config.configuration is not None
+    component_config = ComponentConfigurationOutput.model_validate(component_json)
+    assert isinstance(component_config, ComponentConfigurationOutput)
     assert component_config.component is not None
-
     assert component_config.component.component_id == config.component_id
     assert component_config.component.component_type is not None
     assert component_config.component.component_name is not None
+
+    assert component_config.root_configuration is not None
+    assert component_config.root_configuration.configuration_id == config.configuration_id
+
+    assert component_config.row_configurations is None

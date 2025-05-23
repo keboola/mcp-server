@@ -79,6 +79,8 @@ def mock_component() -> dict[str, Any]:
         'configurationSchema': {},
         'configurationDescription': 'Extract data from AWS S3',
         'emptyConfiguration': {},
+        'rootConfigurationExamples': [{'foo': 'root'}],
+        'rowConfigurationExamples': [{'foo': 'row'}],
     }
 
 
@@ -94,7 +96,7 @@ def mock_configuration() -> dict[str, Any]:
         'isDeleted': False,
         'version': 1,
         'configuration': {},
-        'rows': [{'id': '1', 'name': 'Row 1'}, {'id': '2', 'name': 'Row 2'}],
+        'rows': [{'id': '1', 'name': 'Row 1', 'version': 1}, {'id': '2', 'name': 'Row 2', 'version': 1}],
     }
 
 

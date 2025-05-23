@@ -175,15 +175,14 @@ async def get_table_detail(
     raw_table = await client.storage_client.table_detail(table_id)
     raw_columns = cast(list[str], raw_table.get('columns', []))
     column_info = [
-        TableColumnInfo(name=col, quoted_name=await workspace_manager.get_quoted_name(col))
-        for col in raw_columns
+        TableColumnInfo(name=col, quoted_name=await workspace_manager.get_quoted_name(col)) for col in raw_columns
     ]
 
     table_fqn = await workspace_manager.get_table_fqn(raw_table)
 
     return TableDetail.model_validate(
-        raw_table |
-        {
+        raw_table
+        | {
             'columns': column_info,
             'fully_qualified_name': table_fqn.identifier if table_fqn else None,
         }
@@ -248,9 +247,7 @@ async def update_table_description(
     }
     response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     raw_metadata = cast(list[JsonDict], response.get('metadata', []))
-    description_entry = next(
-        entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION.value
-    )
+    description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION.value)
 
     return UpdateDescriptionResponse.model_validate(description_entry)
 
@@ -286,9 +283,7 @@ async def update_column_description(
     response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
     description_entry = next(
-        entry
-        for entry in column_metadata.get(column_name, [])
-        if entry.get('key') == MetadataField.DESCRIPTION.value
+        entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION.value
     )
 
     return UpdateDescriptionResponse.model_validate(description_entry)

@@ -8,10 +8,11 @@ from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
+    ComponentConfigurationMetadata,
+    ComponentConfigurationResponse,
     ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
-    ReducedComponentConfiguration,
 )
 
 LOG = logging.getLogger(__name__)
@@ -21,8 +22,9 @@ def _handle_component_types(
     types: Optional[Union[ComponentType, Sequence[ComponentType]]],
 ) -> Sequence[ComponentType]:
     """
-    Utility function to handle the component types [extractors, writers, applications, all]
+    Utility function to handle the component types [extractors, writers, applications, all].
     If the types include "all", it will be removed and the remaining types will be returned.
+
     :param types: The component types/type to process.
     :return: The processed component types.
     """
@@ -37,43 +39,52 @@ async def _retrieve_components_configurations_by_types(
     client: KeboolaClient, component_types: Sequence[AllComponentTypes]
 ) -> list[ComponentWithConfigurations]:
     """
-    Utility function to retrieve components with configurations by types - used in tools:
+    Utility function to retrieve components with configurations by types.
+
+    Used in tools:
     - retrieve_components_configurations
     - retrieve_transformation_configurations
+
     :param client: The Keboola client
     :param component_types: The component types/type to retrieve
-    :return: a list of items, each containing a component and its associated configurations
+    :return: A list of items, each containing a component and its associated configurations
     """
-
     endpoint = f'branch/{client.storage_client.branch_id}/components'
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
 
-    raw_components_with_configurations = []
-    for type in component_types:
-        # retrieve components by type with configurations
+    components_with_configurations = []
+
+    for _type in component_types:
         params = {
             'include': 'configuration',
-            'componentType': type,
+            'componentType': _type,
         }
         raw_components_with_configurations_by_type = cast(
             list[dict[str, Any]], await client.storage_client.get(endpoint, params=params)
         )
         # extend the list with the raw components with configurations
-        raw_components_with_configurations.extend(raw_components_with_configurations_by_type)
-
-    # build components with configurations list, each item contains a component and its associated configurations
-    components_with_configurations = [
-        ComponentWithConfigurations(
-            component=ReducedComponent.model_validate(raw_component),
-            configurations=[
-                ReducedComponentConfiguration.model_validate({**raw_configuration, 'component_id': raw_component['id']})
+        # TODO: ugly, refactor
+        for raw_component in raw_components_with_configurations_by_type:
+            # build components with configurations list, each item contains a component and its
+            # associated configurations
+            raw_configuration_responses = [
+                ComponentConfigurationResponse.model_validate(
+                    {**raw_configuration, 'component_id': raw_component['id']}
+                )
                 for raw_configuration in raw_component.get('configurations', [])
-            ],
-        )
-        for raw_component in raw_components_with_configurations
-    ]
+            ]
+            configurations_metadata = [
+                ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
+                for raw_response in raw_configuration_responses
+            ]
 
-    # perform logging
+            components_with_configurations.append(
+                ComponentWithConfigurations(
+                    component=ReducedComponent.model_validate(raw_component),
+                    configurations=configurations_metadata,
+                )
+            )
+
     total_configurations = sum(len(component.configurations) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
@@ -86,18 +97,21 @@ async def _retrieve_components_configurations_by_ids(
     client: KeboolaClient, component_ids: Sequence[str]
 ) -> list[ComponentWithConfigurations]:
     """
-    Utility function to retrieve components with configurations by component IDs - used in tools:
+    Utility function to retrieve components with configurations by component IDs.
+
+    Used in tools:
     - retrieve_components_configurations
     - retrieve_transformation_configurations
+
     :param client: The Keboola client
     :param component_ids: The component IDs to retrieve
-    :return: a list of items, each containing a component and its associated configurations
+    :return: A list of items, each containing a component and its associated configurations
     """
     components_with_configurations = []
     for component_id in component_ids:
         # retrieve configurations for component ids
         raw_configurations = await client.storage_client.configuration_list(component_id=component_id)
-        # retrieve component details
+        # retrieve components
         raw_component = cast(
             JsonDict,
             await client.storage_client.get(
@@ -105,19 +119,22 @@ async def _retrieve_components_configurations_by_ids(
             ),
         )
         # build component configurations list grouped by components
+        raw_configuration_responses = [
+            ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
+            for raw_configuration in raw_configurations
+        ]
+        configurations_metadata = [
+            ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
+            for raw_response in raw_configuration_responses
+        ]
+
         components_with_configurations.append(
             ComponentWithConfigurations(
                 component=ReducedComponent.model_validate(raw_component),
-                configurations=[
-                    ReducedComponentConfiguration.model_validate(
-                        raw_configuration | {'component_id': raw_component['id']}
-                    )
-                    for raw_configuration in raw_configurations
-                ],
+                configurations=configurations_metadata,
             )
         )
 
-    # perform logging
     total_configurations = sum(len(component.configurations) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
@@ -126,25 +143,27 @@ async def _retrieve_components_configurations_by_ids(
     return components_with_configurations
 
 
-async def _get_component_details(
+async def _get_component(
     client: KeboolaClient,
     component_id: str,
 ) -> Component:
     """
-    Utility function to retrieve the component details by component ID, used in tools:
-    - get_component_configuration_details
+    Utility function to retrieve a component by ID.
 
-    First tries to get component details from the AI service catalog. If the component
+    First tries to get component from the AI service catalog. If the component
     is not found (404) or returns empty data (private components), falls back to using the
     Storage API endpoint.
 
-    :param component_id: The ID of the Keboola component/transformation you want details about
+    Used in tools:
+    - get_component_configuration_details
+
     :param client: The Keboola client
-    :return: The component details
+    :param component_id: The ID of the component to retrieve
+    :return: The component
     """
     try:
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
-        LOG.info(f'Retrieved component details for component {component_id} from AI service catalog.')
+        LOG.info(f'Retrieved component {component_id} from AI service catalog.')
         return Component.model_validate(raw_component)
     except HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -155,7 +174,7 @@ async def _get_component_details(
 
             endpoint = f'branch/{client.storage_client.branch_id}/components/{component_id}'
             raw_component = await client.storage_client.get(endpoint=endpoint)
-            LOG.info(f'Retrieved component details for component {component_id} from Storage API.')
+            LOG.info(f'Retrieved component {component_id} from Storage API.')
             return Component.model_validate(raw_component)
         else:
             # If it's not a 404, re-raise the error
@@ -167,6 +186,7 @@ def _get_sql_transformation_id_from_sql_dialect(
 ) -> str:
     """
     Utility function to retrieve the SQL transformation ID from the given SQL dialect.
+
     :param sql_dialect: The SQL dialect
     :return: The SQL transformation ID
     :raises ValueError: If the SQL dialect is not supported
@@ -214,10 +234,10 @@ class TransformationConfiguration(BaseModel):
                 destination: Optional[str] = Field(description='The destination table name', default=None)
                 source: Optional[str] = Field(description='The source table name', default=None)
 
-            tables: list[Table] = Field(description='The tables used in the transformation', default=[])
+            tables: list[Table] = Field(description='The tables used in the transformation', default_factory=list)
 
-        input: Destination = Field(description='The input tables for the transformation', default=Destination())
-        output: Destination = Field(description='The output tables for the transformation', default=Destination())
+        input: Destination = Field(description='The input tables for the transformation', default_factory=Destination)
+        output: Destination = Field(description='The output tables for the transformation', default_factory=Destination)
 
     parameters: Parameters = Field(description='The parameters for the transformation')
     storage: Storage = Field(description='The storage configuration for the transformation')
@@ -229,12 +249,12 @@ def _get_transformation_configuration(
     """
     Utility function to set the transformation configuration from code statements.
     It creates the expected configuration for the transformation, parameters and storage.
+
     :param statements: The code statements (sql for now)
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
-    :return: dictionary with parameters and storage following the TransformationConfiguration schema
+    :return: Dictionary with parameters and storage following the TransformationConfiguration schema
     """
-    # init Storage Configuration with empty input and output tables
     storage = TransformationConfiguration.Storage()
     # build parameters configuration out of code statements
     parameters = TransformationConfiguration.Parameters(
