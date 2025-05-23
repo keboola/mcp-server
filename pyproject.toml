@@ -14,6 +14,7 @@ dependencies = [
     "fastmcp ~= 2.2",
     "httpx ~= 0.28",
     "google-cloud-bigquery ~= 3.31",
+    "ddtrace ~= 3.0",
 ]
 
 [project.optional-dependencies]
