@@ -505,6 +505,7 @@ async def update_sql_transformation_configuration(
 
 
 @tool_errors()
+@with_session_state()
 async def create_component_root_configuration(
     ctx: Context,
     name: Annotated[
