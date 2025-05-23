@@ -410,14 +410,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         Updates a component configuration.
 
-        :param component_id: The id of the component
-        :param configuration_id: The id of the configuration
-        :param configuration: The updated configuration dictionary
-        :param change_description: The description of the modification to the configuration
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :param configuration: The updated configuration dictionary.
+        :param change_description: The description of the modification to the configuration.
         :param updated_description: The entire description of the updated configuration, if None, the original
-            description is preserved
-        :param is_disabled: Whether the configuration should be disabled
-        :return: The response from the API call - updated configuration or raise an error
+            description is preserved.
+        :param is_disabled: Whether the configuration should be disabled.
+        :return: The SAPI call response - updated configuration or raise an error.
         """
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
 
@@ -438,16 +438,18 @@ class AsyncStorageClient(KeboolaServiceClient):
         data: dict[str, Any],
         component_id: str,
         branch_id: str = 'default',
-    ) -> dict[str, Any]:
+    ) -> JsonDict:
         """
         Creates a new configuration for a component.
 
-        :param data: The configuration data to create
-        :param component_id: The ID of the component
-        :param branch_id: The ID of the branch (default: 'default')
-        :return: Dictionary with created configuration details
+        :param data: The configuration data to create.
+        :param component_id: The ID of the component.
+        :param branch_id: The ID of the branch (default: 'default').
+        :return: The SAPI call response - created configuration or raise an error.
         """
-        return await self.post(endpoint=f'branch/{branch_id}/components/{component_id}/configs', data=data)
+        return cast(JsonDict, await self.post(
+            endpoint=f'branch/{branch_id}/components/{component_id}/configs',
+            data=data))
 
     async def create_component_row_configuration(
         self,
@@ -455,19 +457,19 @@ class AsyncStorageClient(KeboolaServiceClient):
         component_id: str,
         config_id: str,
         branch_id: str = 'default',
-    ) -> dict[str, Any]:
+    ) -> JsonDict:
         """
         Creates a new row configuration for a component configuration.
 
-        :param data: The configuration data to create row configuration
-        :param component_id: The ID of the component
-        :param config_id: The ID of the configuration
-        :param branch_id: The ID of the branch (default: 'default')
+        :param data: The configuration data to create row configuration.
+        :param component_id: The ID of the component.
+        :param config_id: The ID of the configuration.
+        :param branch_id: The ID of the branch (default: 'default').
+        :return: The SAPI call response - created row configuration or raise an error.
         """
-        return await self.post(
+        return cast(JsonDict, await self.post(
             endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}/rows',
-            data=data,
-        )
+            data=data))
 
     async def update_component_root_configuration(
         self,
@@ -475,19 +477,19 @@ class AsyncStorageClient(KeboolaServiceClient):
         component_id: str,
         config_id: str,
         branch_id: str = 'default',
-    ) -> dict[str, Any]:
+    ) -> JsonDict:
         """
         Updates a component configuration.
 
-        :param data: The configuration data to update
-        :param component_id: The ID of the component
-        :param config_id: The ID of the configuration
-        :param branch_id: The ID of the branch (default: 'default')
+        :param data: The configuration data to update.
+        :param component_id: The ID of the component.
+        :param config_id: The ID of the configuration.
+        :param branch_id: The ID of the branch (default: 'default').
+        :return: The SAPI call response - updated configuration or raise an error.
         """
-        return await self.put(
+        return cast(JsonDict, await self.put(
             endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}',
-            data=data,
-        )
+            data=data))
 
     async def update_component_row_configuration(
         self,
@@ -496,20 +498,20 @@ class AsyncStorageClient(KeboolaServiceClient):
         config_id: str,
         configuration_row_id: str,
         branch_id: str = 'default',
-    ) -> dict[str, Any]:
+    ) -> JsonDict:
         """
         Updates a row configuration for a component configuration.
 
-        :param data: The configuration data to update row configuration
-        :param component_id: The ID of the component
-        :param config_id: The ID of the configuration
-        :param configuration_row_id: The ID of the row
-        :param branch_id: The ID of the branch (default: 'default')
+        :param data: The configuration data to update row configuration.
+        :param component_id: The ID of the component.
+        :param config_id: The ID of the configuration.
+        :param configuration_row_id: The ID of the row.
+        :param branch_id: The ID of the branch (default: 'default').
+        :return: The SAPI call response - updated row configuration or raise an error.
         """
-        return await self.put(
+        return cast(JsonDict, await self.put(
             endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}',
-            data=data,
-        )
+            data=data))
 
 
 class JobsQueueClient(KeboolaServiceClient):
@@ -524,10 +526,10 @@ class JobsQueueClient(KeboolaServiceClient):
         """
         Creates a JobsQueue client.
 
-        :param root_url: Root url of API. e.g. "https://queue.keboola.com/"
-        :param token: A key for the Storage API. Can be found in the storage console
-        :param headers: Additional headers for the requests
-        :return: A new instance of JobsQueueClient
+        :param root_url: Root url of API. e.g. "https://queue.keboola.com/".
+        :param token: A key for the Storage API. Can be found in the storage console.
+        :param headers: Additional headers for the requests.
+        :return: A new instance of JobsQueueClient.
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers))
 
@@ -535,8 +537,8 @@ class JobsQueueClient(KeboolaServiceClient):
         """
         Retrieves information about a given job.
 
-        :param job_id: The id of the job
-        :return: Job details as dictionary
+        :param job_id: The id of the job.
+        :return: Job details as dictionary.
         """
 
         return cast(JsonDict, await self.get(endpoint=f'jobs/{job_id}'))
@@ -554,14 +556,14 @@ class JobsQueueClient(KeboolaServiceClient):
         """
         Searches for jobs based on the provided parameters.
 
-        :param component_id: The id of the component
-        :param config_id: The id of the configuration
-        :param status: The status of the jobs to filter by
-        :param limit: The number of jobs to return
-        :param offset: The offset of the jobs to return
-        :param sort_by: The field to sort the jobs by
-        :param sort_order: The order to sort the jobs by
-        :return: Dictionary containing matching jobs
+        :param component_id: The id of the component.
+        :param config_id: The id of the configuration.
+        :param status: The status of the jobs to filter by.
+        :param limit: The number of jobs to return.
+        :param offset: The offset of the jobs to return.
+        :param sort_by: The field to sort the jobs by.
+        :param sort_order: The order to sort the jobs by.
+        :return: Dictionary containing matching jobs.
         """
         params = {
             'componentId': component_id,
@@ -583,9 +585,9 @@ class JobsQueueClient(KeboolaServiceClient):
         """
         Creates a new job.
 
-        :param component_id: The id of the component
-        :param configuration_id: The id of the configuration
-        :return: The response from the API call - created job or raise an error
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :return: The response from the API call - created job or raise an error.
         """
         payload = {
             'component': component_id,
@@ -598,8 +600,8 @@ class JobsQueueClient(KeboolaServiceClient):
         """
         Searches for jobs based on the provided parameters.
 
-        :param params: The parameters to search for
-        :return: Dictionary containing matching jobs
+        :param params: The parameters to search for.
+        :return: Dictionary containing matching jobs.
 
         Parameters (copied from the API docs):
             - id str/list[str]: Search jobs by id
@@ -664,7 +666,7 @@ class ComponentSuggestionResponse(BaseModel):
 
 
 class AIServiceClient(KeboolaServiceClient):
-    """Class handling endpoints for interacting with the Keboola AI Service."""
+    """Async client for Keboola AI Service."""
 
     @classmethod
     def create(
@@ -673,10 +675,10 @@ class AIServiceClient(KeboolaServiceClient):
         """
         Creates an AIServiceClient from a Keboola Storage API token.
 
-        :param root_url: The root URL of the AI service API
-        :param token: The Keboola Storage API token
-        :param headers: Additional headers for the requests
-        :return: A new instance of AIServiceClient
+        :param root_url: The root URL of the AI service API.
+        :param token: The Keboola Storage API token.
+        :param headers: Additional headers for the requests.
+        :return: A new instance of AIServiceClient.
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers))
 
@@ -684,8 +686,8 @@ class AIServiceClient(KeboolaServiceClient):
         """
         Retrieves information about a given component.
 
-        :param component_id: The id of the component
-        :return: Component details as dictionary
+        :param component_id: The id of the component.
+        :return: Component details as dictionary.
         """
         return cast(JsonDict, await self.get(endpoint=f'docs/components/{component_id}'))
 
@@ -693,6 +695,7 @@ class AIServiceClient(KeboolaServiceClient):
         """
         Answers a question using the Keboola documentation as a source.
         :param query: The query to answer.
+        :return: Response containing the answer and source URLs.
         """
         response = await self.raw_client.post(
             endpoint='docs/question',
@@ -706,6 +709,7 @@ class AIServiceClient(KeboolaServiceClient):
         """
         Provides list of component suggestions based on natural language query.
         :param query: The query to answer.
+        :return: Response containing the list of suggested component IDs, their score and source.
         """
         response = await self.raw_client.post(
             endpoint='suggest/component',
