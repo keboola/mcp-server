@@ -246,7 +246,7 @@ async def get_component_configuration(
         ),
     )
     configuration_response = ComponentConfigurationResponse.model_validate(
-        {**raw_configuration, 'component_id': component_id}
+        raw_configuration | {'component_id': component_id}
     )
 
     # Create root configuration
