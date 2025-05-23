@@ -14,8 +14,8 @@ dependencies = [
     "fastmcp ~= 2.2",
     "httpx ~= 0.28",
     "google-cloud-bigquery ~= 3.31",
+    "jsonschema~=4.23",
 ]
-
 [project.optional-dependencies]
 codestyle = [
     "black ~= 25.1",
