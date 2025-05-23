@@ -81,19 +81,19 @@ class ProjectDef:
 
 
 @pytest.fixture(scope='session')
-def env_file_preloaded() -> bool:
+def env_file_loaded() -> bool:
     return load_dotenv()
 
 
 @pytest.fixture(scope='session')
-def env_file_loaded(
-    env_file_preloaded: bool, storage_api_token: str, storage_api_url: str, workspace_schema: str
+def env_init(
+    env_file_loaded: bool, storage_api_token: str, storage_api_url: str, workspace_schema: str
 ) -> bool:
     # We reset the development environment variables to the values of the integtest environment variables.
     os.environ[DEV_STORAGE_API_URL_ENV_VAR] = storage_api_url
     os.environ[DEV_STORAGE_TOKEN_ENV_VAR] = storage_api_token
     os.environ[DEV_WORKSPACE_SCHEMA_ENV_VAR] = workspace_schema
-    return env_file_preloaded
+    return env_file_loaded
 
 
 def _data_dir() -> Path:
@@ -101,21 +101,21 @@ def _data_dir() -> Path:
 
 
 @pytest.fixture(scope='session')
-def storage_api_url(env_file_preloaded: bool) -> str:
+def storage_api_url(env_file_loaded: bool) -> str:
     storage_api_url = os.getenv(STORAGE_API_URL_ENV_VAR)
     assert storage_api_url, f'{STORAGE_API_URL_ENV_VAR} must be set'
     return storage_api_url
 
 
 @pytest.fixture(scope='session')
-def storage_api_token(env_file_preloaded: bool) -> str:
+def storage_api_token(env_file_loaded: bool) -> str:
     storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
     assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
     return storage_api_token
 
 
 @pytest.fixture(scope='session')
-def workspace_schema(env_file_preloaded: bool) -> str:
+def workspace_schema(env_file_loaded: bool) -> str:
     workspace_schema = os.getenv(WORKSPACE_SCHEMA_ENV_VAR)
     assert workspace_schema, f'{WORKSPACE_SCHEMA_ENV_VAR} must be set'
     return workspace_schema
@@ -206,7 +206,7 @@ def _create_configs(storage_client: SyncStorageClient) -> list[ConfigDef]:
 
 @pytest.fixture(scope='session')
 def keboola_project(
-    env_file_loaded: bool, storage_api_token: str, storage_api_url: str
+    env_init: bool, storage_api_token: str, storage_api_url: str
 ) -> Generator[ProjectDef, Any, None]:
     """
     Sets up a Keboola project with items needed for integration tests,
