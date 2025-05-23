@@ -648,9 +648,9 @@ class DocsQuestionResponse(BaseModel):
 class SuggestedComponent(BaseModel):
     """The AI service response to a /docs/suggest-component request."""
 
-    component_id: str = Field(description='Text of the answer to a component suggestion query.', alias='componentId')
-    score: float = Field(description='Score of the component suggestion query.')
-    source: str = Field(description='Source of the component suggestion result.')
+    component_id: str = Field(description='The component ID.', alias='componentId')
+    score: float = Field(description='Score of the component suggestion.')
+    source: str = Field(description='Source of the component suggestion.')
 
 
 class ComponentSuggestionResponse(BaseModel):
