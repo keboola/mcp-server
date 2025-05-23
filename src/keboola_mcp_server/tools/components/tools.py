@@ -16,6 +16,7 @@ from keboola_mcp_server.tools.components.utils import (
     _retrieve_components_configurations_by_types,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.validators.validate import validate_storage_pydantic
 
 LOG = logging.getLogger(__name__)
 
@@ -396,6 +397,10 @@ async def update_sql_transformation_configuration(
 
     try:
         LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+
+        if storage := updated_configuration.get('storage'):
+            updated_configuration['storage'] = validate_storage_pydantic(storage)
+
         updated_raw_configuration = await client.storage_client.configuration_update(
             component_id=sql_transformation_id,
             configuration_id=configuration_id,
