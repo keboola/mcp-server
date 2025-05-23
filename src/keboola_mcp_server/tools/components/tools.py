@@ -580,7 +580,6 @@ async def create_component_root_configuration(
                 'description': description,
                 'configuration': configuration_payload,
             },
-            branch_id=client.storage_client.branch_id,
         )
 
         new_configuration = ComponentRootConfiguration(
@@ -683,7 +682,6 @@ async def create_component_row_configuration(
         new_raw_configuration = await client.storage_client.create_component_row_configuration(
             component_id=component_id,
             config_id=configuration_id,
-            branch_id=client.storage_client.branch_id,
             data={
                 'name': name,
                 'description': description,
@@ -795,7 +793,6 @@ async def update_component_root_configuration(
         new_raw_configuration = await client.storage_client.update_component_root_configuration(
             component_id=component_id,
             config_id=configuration_id,
-            branch_id=client.storage_client.branch_id,
             data={
                 'name': name,
                 'description': description,
@@ -916,7 +913,6 @@ async def update_component_row_configuration(
             component_id=component_id,
             config_id=configuration_id,
             configuration_row_id=configuration_row_id,
-            branch_id=client.storage_client.branch_id,
             data={
                 'name': name,
                 'description': description,

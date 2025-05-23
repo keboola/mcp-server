@@ -316,6 +316,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token
         :param version: The version of the API to use (default: 'v2')
+        :param branch_id: The id of the branch
         :param headers: Additional headers for the requests
         :return: A new instance of AsyncStorageClient
         """
@@ -437,18 +438,16 @@ class AsyncStorageClient(KeboolaServiceClient):
         self,
         data: dict[str, Any],
         component_id: str,
-        branch_id: str = 'default',
     ) -> JsonDict:
         """
         Creates a new configuration for a component.
 
         :param data: The configuration data to create.
         :param component_id: The ID of the component.
-        :param branch_id: The ID of the branch (default: 'default').
         :return: The SAPI call response - created configuration or raise an error.
         """
         return cast(JsonDict, await self.post(
-            endpoint=f'branch/{branch_id}/components/{component_id}/configs',
+            endpoint=f'branch/{self.branch_id}/components/{component_id}/configs',
             data=data))
 
     async def create_component_row_configuration(
@@ -456,7 +455,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         data: dict[str, Any],
         component_id: str,
         config_id: str,
-        branch_id: str = 'default',
     ) -> JsonDict:
         """
         Creates a new row configuration for a component configuration.
@@ -464,11 +462,10 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param data: The configuration data to create row configuration.
         :param component_id: The ID of the component.
         :param config_id: The ID of the configuration.
-        :param branch_id: The ID of the branch (default: 'default').
         :return: The SAPI call response - created row configuration or raise an error.
         """
         return cast(JsonDict, await self.post(
-            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}/rows',
+            endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
             data=data))
 
     async def update_component_root_configuration(
@@ -476,7 +473,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         data: dict[str, Any],
         component_id: str,
         config_id: str,
-        branch_id: str = 'default',
     ) -> JsonDict:
         """
         Updates a component configuration.
@@ -484,11 +480,10 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param data: The configuration data to update.
         :param component_id: The ID of the component.
         :param config_id: The ID of the configuration.
-        :param branch_id: The ID of the branch (default: 'default').
         :return: The SAPI call response - updated configuration or raise an error.
         """
         return cast(JsonDict, await self.put(
-            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}',
+            endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}',
             data=data))
 
     async def update_component_row_configuration(
@@ -497,7 +492,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         component_id: str,
         config_id: str,
         configuration_row_id: str,
-        branch_id: str = 'default',
     ) -> JsonDict:
         """
         Updates a row configuration for a component configuration.
@@ -506,11 +500,11 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param component_id: The ID of the component.
         :param config_id: The ID of the configuration.
         :param configuration_row_id: The ID of the row.
-        :param branch_id: The ID of the branch (default: 'default').
         :return: The SAPI call response - updated row configuration or raise an error.
         """
         return cast(JsonDict, await self.put(
-            endpoint=f'branch/{branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}',
+            endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}'
+                     f'/rows/{configuration_row_id}',
             data=data))
 
 
