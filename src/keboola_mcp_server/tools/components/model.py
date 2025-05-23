@@ -215,10 +215,8 @@ class ComponentRowConfiguration(ComponentConfigurationResponseBase):
         'file input mapping defined.',
         default=None,
     )
-    row_configuration: dict[str, Any] = Field(
-        description='The row configuration, adhering to the row configuration schema',
-        validation_alias=AliasChoices('row_configuration', 'rowConfiguration', 'row-configuration'),
-        serialization_alias='rowConfiguration',
+    parameters: dict[str, Any] = Field(
+        description='The user parameters, adhering to the row configuration schema',
     )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
@@ -242,8 +240,8 @@ class ComponentRootConfiguration(ComponentConfigurationResponseBase):
         'file input mapping defined',
         default=None,
     )
-    root_configuration: dict[str, Any] = Field(
-        description='The root configuration, adhering to the root configuration schema',
+    parameters: dict[str, Any] = Field(
+        description='The component configuration parameters, adhering to the root configuration schema',
     )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the component configuration',
