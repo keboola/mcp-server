@@ -194,12 +194,7 @@ async def retrieve_transformations_configurations(
 async def get_component(
     ctx: Context,
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-) -> Annotated[
-    Component,
-    Field(
-        description='The component.',
-    ),
-]:
+) -> Annotated[Component, Field(description='The component.')]:
     """
     Gets information about a specific component given its ID.
 
@@ -229,12 +224,7 @@ async def get_component_configuration(
         ),
     ],
     ctx: Context,
-) -> Annotated[
-    ComponentConfigurationOutput,
-    Field(
-        description='The component/transformation and its configuration.',
-    ),
-]:
+) -> Annotated[ComponentConfigurationOutput, Field(description='The component/transformation and its configuration.')]:
     """
     Gets information about a specific component/transformation configuration.
 
@@ -329,12 +319,7 @@ async def create_sql_transformation(
             ),
         ),
     ] = tuple(),
-) -> Annotated[
-    ComponentConfigurationResponse,
-    Field(
-        description='Newly created SQL Transformation Configuration.',
-    ),
-]:
+) -> Annotated[ComponentConfigurationResponse, Field(description='Newly created SQL Transformation Configuration.')]:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
     description, and optionally a list of created table names if and only if they are generated within the SQL
@@ -444,12 +429,7 @@ async def update_sql_transformation_configuration(
             description='Whether to disable the transformation configuration. Default is False.',
         ),
     ] = False,
-) -> Annotated[
-    ComponentConfigurationResponse,
-    Field(
-        description='Updated transformation configuration.',
-    ),
-]:
+) -> Annotated[ComponentConfigurationResponse, Field(description='Updated transformation configuration.')]:
     """
     Updates an existing SQL transformation configuration, optionally updating the description and disabling the
     configuration.
@@ -532,12 +512,7 @@ async def create_component_root_configuration(
             ),
         ),
     ] = None,
-) -> Annotated[
-    ComponentRootConfiguration,
-    Field(
-        description='Created component root configuration.',
-    ),
-]:
+) -> Annotated[ComponentRootConfiguration, Field(description='Created component root configuration.')]:
     """
     Creates a component configuration using the specified name, component ID, configuration JSON, and description.
 
@@ -630,12 +605,7 @@ async def create_component_row_configuration(
             ),
         ),
     ] = None,
-) -> Annotated[
-    ComponentRowConfiguration,
-    Field(
-        description='Created component row configuration.',
-    ),
-]:
+) -> Annotated[ComponentRowConfiguration, Field(description='Created component row configuration.')]:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
     component ID, configuration JSON, and description.
@@ -740,12 +710,7 @@ async def update_component_root_configuration(
             ),
         ),
     ] = None,
-) -> Annotated[
-    ComponentRootConfiguration,
-    Field(
-        description='Updated component root configuration.',
-    ),
-]:
+) -> Annotated[ComponentRootConfiguration, Field(description='Updated component root configuration.')]:
     """
     Updates a specific component configuration using given by component ID, and configuration ID.
 
@@ -853,12 +818,7 @@ async def update_component_row_configuration(
             ),
         ),
     ] = None,
-) -> Annotated[
-    ComponentRowConfiguration,
-    Field(
-        description='Updated component row configuration.',
-    ),
-]:
+) -> Annotated[ComponentRowConfiguration, Field(description='Updated component row configuration.')]:
     """
     Updates a specific component configuration row in the specified configuration_id, using the specified name,
     component ID, configuration JSON, and description.
