@@ -20,7 +20,20 @@ from keboola_mcp_server.tools.jobs import add_job_tools
 from keboola_mcp_server.tools.sql import add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
 
+# Import ddtrace to ensure auto-patching is applied
+import ddtrace
+from ddtrace import patch_all, tracer
+
 LOG = logging.getLogger(__name__)
+
+# Ensure automatic instrumentation is enabled
+try:
+    patch_all()
+    LOG.info(f"DDTrace auto-patching enabled, version: {ddtrace.__version__}")
+    LOG.debug(f"DDTrace tracer enabled: {tracer.enabled}")
+except Exception as e:
+    LOG.warning(f"DDTrace patching failed: {e}")
+
 _MCP_VERSION = distribution('mcp').version
 _FASTMCP_VERSION = distribution('fastmcp').version
 _VERSION = distribution('keboola_mcp_server').version
