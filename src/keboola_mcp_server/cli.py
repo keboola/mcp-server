@@ -38,9 +38,12 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         default='INFO',
         help='Logging level',
     )
-    parser.add_argument('--api-url', default='https://connection.keboola.com', help='Keboola Storage API URL.')
-    parser.add_argument('--storage-token', help='Keboola Storage API token.')
-    parser.add_argument('--workspace-schema', help='Keboola Storage API workspace schema.')
+    parser.add_argument(
+        '--api-url', default='https://connection.keboola.com', metavar='URL', help='Keboola Storage API URL.')
+    parser.add_argument('--storage-token', metavar='STR', help='Keboola Storage API token.')
+    parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
+    parser.add_argument('--host', default='0.0.0.0', metavar='STR', help='The host to listen on.')
+    parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
 
     return parser.parse_args(args)
 
@@ -71,7 +74,11 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         # Create and run server
         LOG.info(f'Creating server with config: {config}')
         keboola_mcp_server = create_server(config)
-        await keboola_mcp_server.run_async(transport=parsed_args.transport)
+        if parsed_args.transport == 'stdio':
+            await keboola_mcp_server.run_async(transport=parsed_args.transport)
+        else:
+            await keboola_mcp_server.run_async(
+                transport=parsed_args.transport, host=parsed_args.host, port=parsed_args.port)
     except Exception as e:
         LOG.exception(f'Server failed: {e}')
         sys.exit(1)
