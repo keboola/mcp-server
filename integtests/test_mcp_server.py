@@ -1,4 +1,5 @@
 import json
+
 import pytest
 from fastmcp import Client, Context, FastMCP
 from mcp.types import TextContent
@@ -204,7 +205,6 @@ async def test_http_server_header_and_query_params_client(
             await _assert_get_component_details_tool_call(client_2, component_config)
 
 
-
 async def _assert_basic_setup(server: FastMCP, client: Client):
     server_tools = await server.get_tools()
     server_prompts = await server.get_prompts()
@@ -225,6 +225,7 @@ async def _assert_basic_setup(server: FastMCP, client: Client):
     assert all(
         expected == ret_resource.name for expected, ret_resource in zip(server_resources.keys(), client_resources)
     )
+
 
 async def _assert_get_component_details_tool_call(client: Client, config: ConfigDef):
     _component_details_tool_name = 'get_component_details'
