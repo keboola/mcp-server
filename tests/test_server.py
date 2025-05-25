@@ -28,9 +28,11 @@ class TestServer:
     async def test_list_tools(self):
         server = create_server()
         tools = await server.get_tools()
+        print(sorted(tool.name for tool in tools.values()))
         assert sorted(tool.name for tool in tools.values()) == [
             'create_component_root_configuration',
             'create_component_row_configuration',
+            'create_flow',
             'create_sql_transformation',
             'docs_query',
             'find_component_id',
@@ -38,6 +40,7 @@ class TestServer:
             'get_component',
             GET_COMPONENT_CONFIGURATION_TOOL_NAME,
             'get_component_configuration_examples',
+            'get_flow_detail',
             'get_job_detail',
             'get_sql_dialect',
             'get_table_detail',
@@ -45,6 +48,7 @@ class TestServer:
             'retrieve_bucket_tables',
             'retrieve_buckets',
             RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
+            'retrieve_flows',
             'retrieve_jobs',
             RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
             'start_job',
@@ -52,6 +56,7 @@ class TestServer:
             'update_column_description',
             'update_component_root_configuration',
             'update_component_row_configuration',
+            'update_flow',
             'update_sql_transformation_configuration',
             'update_table_description',
         ]
