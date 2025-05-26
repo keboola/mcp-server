@@ -333,7 +333,7 @@ What buckets and tables are in my Keboola project?
 | | `get_component_configuration` | Gets information about a specific component/transformation configuration |
 | | `get_component_configuration_examples` | Retrieves sample configuration examples for a specific component |
 | | `retrieve_component_configurations` | Retrieves configurations of components present in the project |
-| | `retrieve_transformations` | Retrieves transformations configurations in the project |
+| | `retrieve_transformations` | Retrieves transformation configurations in the project |
 | | `update_component_root_configuration` | Updates a specific component configuration |
 | | `update_component_row_configuration` | Updates a specific component configuration row |
 | | `update_sql_transformation_configuration` | Updates an existing SQL transformation configuration |
