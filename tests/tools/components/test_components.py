@@ -260,7 +260,7 @@ async def test_get_component_configuration(
     ('sql_dialect', 'expected_component_id', 'expected_configuration_id'),
     [
         ('Snowflake', 'keboola.snowflake-transformation', '1234'),
-        ('BigQuery', 'keboola.bigquery-transformation', '5678'),
+        ('BigQuery', 'keboola.google-bigquery-transformation', '5678'),
     ],
 )
 @pytest.mark.asyncio
@@ -375,7 +375,7 @@ async def test_create_transformation_configuration_fail(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('sql_dialect', 'expected_component_id'),
-    [('Snowflake', 'keboola.snowflake-transformation'), ('BigQuery', 'keboola.bigquery-transformation')],
+    [('Snowflake', 'keboola.snowflake-transformation'), ('BigQuery', 'keboola.google-bigquery-transformation')],
 )
 async def test_update_transformation_configuration(
     mocker: MockerFixture,
