@@ -58,7 +58,7 @@ class ConfigurationValidationError(Exception):
         return (
             'Please check the configuration json schema.\n'
             'Fix the errors in your configuration to follow the schema.\n'
-            f'{additional_instructions}' # serves for RootConfiguration vs RowConfiguration
+            f'{additional_instructions}'  # serves for RootConfiguration vs RowConfiguration
         )
 
 
