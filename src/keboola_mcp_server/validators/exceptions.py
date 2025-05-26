@@ -20,10 +20,10 @@ class ConfigurationValidationError(Exception):
 
     def __init__(
         self,
-        original_exception: Optional[Exception] = None,
-        initial_error_message: Optional[str] = None,
-        input_data: Optional[JsonStruct] = None,
-        json_schema: Optional[JsonStruct] = None,
+        original_exception: Optional[Exception],
+        initial_error_message: Optional[str],
+        input_data: Optional[JsonStruct],
+        json_schema: Optional[JsonStruct],
     ):
         """
         Creates error message as follows:
@@ -34,7 +34,8 @@ class ConfigurationValidationError(Exception):
         If json_schema is provided, then it is added to the error message.
         """
         prev_error_message = (str(original_exception) + '\n\n') if original_exception else ''
-        error_message = prev_error_message + (initial_error_message or self._ERROR_MESSAGE)
+        initial_error_message = initial_error_message or self._ERROR_MESSAGE
+        error_message = prev_error_message + initial_error_message
         if input_data:
             error_message += self._INPUT_DATA.format(input_data=input_data)
         if json_schema:
@@ -45,8 +46,8 @@ class ConfigurationValidationError(Exception):
     def from_exception(
         cls,
         original_exception: Exception,
-        input_data: Optional[JsonStruct] = None,
-        json_schema: Optional[JsonStruct] = None,
+        input_data: Optional[JsonStruct],
+        json_schema: Optional[JsonStruct],
     ):
         return cls(
             original_exception, initial_error_message=cls._ERROR_MESSAGE, input_data=input_data, json_schema=json_schema
@@ -57,27 +58,13 @@ class ConfigurationValidationError(Exception):
         return (
             'Please check the configuration json schema.\n'
             'Fix the errors in your configuration to follow the schema.\n'
-            f'{additional_instructions}'
+            f'{additional_instructions}' # serves for RootConfiguration vs RowConfiguration
         )
 
 
 class JsonValidationError(ConfigurationValidationError):
 
     _ERROR_MESSAGE = 'The provided json configuration is not a valid json.\n'
-
-    def __init__(
-        self,
-        original_exception: Exception,
-        input_data: Optional[JsonStruct] = None,
-        json_schema: Optional[JsonStruct] = None,
-        error_message: Optional[str] = None,
-    ):
-        super().__init__(
-            original_exception,
-            initial_error_message=error_message or self._ERROR_MESSAGE,
-            input_data=input_data,
-            json_schema=json_schema,
-        )
 
     @staticmethod
     def recovery_instructions(additional_instructions: str = '') -> str:
@@ -87,20 +74,6 @@ class JsonValidationError(ConfigurationValidationError):
 class StorageConfigurationValidationError(ConfigurationValidationError):
 
     _ERROR_MESSAGE = 'The provided storage json configuration is not conforming to the storage json schema.\n'
-
-    def __init__(
-        self,
-        original_exception: Exception,
-        input_data: Optional[JsonStruct] = None,
-        json_schema: Optional[JsonStruct] = None,
-        error_message: Optional[str] = None,
-    ):
-        super().__init__(
-            original_exception,
-            initial_error_message=error_message or self._ERROR_MESSAGE,
-            input_data=input_data,
-            json_schema=json_schema,
-        )
 
     @staticmethod
     def recovery_instructions(additional_instructions: str = '') -> str:
