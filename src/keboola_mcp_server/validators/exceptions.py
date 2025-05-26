@@ -92,14 +92,14 @@ class StorageConfigurationValidationError(ConfigurationValidationError):
         )
 
 
-class ParameterConfigurationValidationError(ConfigurationValidationError):
+class ParameterRootConfigurationValidationError(ConfigurationValidationError):
 
     _ERROR_MESSAGE_WITH_COMPONENT_ID = (
-        'The provided parameter json configuration is not conforming to the parameter json schema for component id: '
-        '"{component_id}".\n'
+        'The provided root parameter configuration json is not conforming to the root parameter json schema for '
+        'component id: "{component_id}".\n'
     )
     _ERROR_MESSAGE = (
-        'The provided parameter json configuration is not conforming to the parameter json schema.\n'
+        'The provided root parameter configuration json is not conforming to the root parameter json schema.\n'
     )
 
     @classmethod
@@ -126,7 +126,27 @@ class ParameterConfigurationValidationError(ConfigurationValidationError):
     def recovery_instructions(additional_instructions: str = '') -> str:
         return (
             '\n'
-            'Please check the parameter json schema.\n'
-            'Fix the errors in your parameter configuration to follow the schema.\n'
+            'Please check the parameter root json schema.\n'
+            'Fix the errors in your parameter root configuration to follow the schema.\n'
+            f'{additional_instructions}'
+        )
+
+
+class ParameterRowConfigurationValidationError(ParameterRootConfigurationValidationError):
+
+    _ERROR_MESSAGE_WITH_COMPONENT_ID = (
+        'The provided row parameter configuration json is not conforming to the row parameter json schema for '
+        'component id: "{component_id}".\n'
+    )
+    _ERROR_MESSAGE = (
+        'The provided row parameter configuration json is not conforming to the row parameter json schema.\n'
+    )
+
+    @staticmethod
+    def recovery_instructions(additional_instructions: str = '') -> str:
+        return (
+            '\n'
+            'Please check the parameter row json schema.\n'
+            'Fix the errors in your parameter row configuration to follow the schema.\n'
             f'{additional_instructions}'
         )
