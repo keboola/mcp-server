@@ -14,6 +14,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentWithConfigurations,
     ReducedComponent,
 )
+from keboola_mcp_server.validators import validate_root_parameters, validate_row_parameters, validate_storage
 
 LOG = logging.getLogger(__name__)
 
@@ -282,3 +283,57 @@ def _get_transformation_configuration(
             for out_table in output_tables
         ]
     return TransformationConfiguration(parameters=parameters, storage=storage)
+
+
+async def validate_root_configurations(
+    client: KeboolaClient,
+    storage: Optional[JsonDict],
+    parameters: Optional[JsonDict],
+    component_id: str,
+) -> JsonDict:
+    """
+    Utility function to validate the configurations.
+
+    :param storage: The storage configuration if provided it will be validated
+    :param parameters: The parameters configuration if provided it will be validated
+    :param component_id: The ID of the component
+    :return: True if the configurations are valid, False otherwise
+    """
+    LOG.info(f'Validating root configurations for component {component_id}.')
+    if storage:
+        storage = validate_storage(storage)
+    if parameters:
+        component = await _get_component(client, component_id)
+        schema = component.configuration_schema
+        if schema:
+            parameters = validate_root_parameters(parameters, component_id, schema)
+        else:
+            LOG.warning(f'No root parameter schema provided for component {component_id}, skipping validation.')
+    return {'storage': storage, 'parameters': parameters}
+
+
+async def validate_row_configurations(
+    client: KeboolaClient,
+    storage: Optional[JsonDict],
+    row_parameters: Optional[JsonDict],
+    component_id: str,
+) -> JsonDict:
+    """
+    Utility function to validate the row configurations.
+
+    :param storage: The storage configuration if provided it will be validated
+    :param row_parameters: The row parameters configuration if provided it will be validated
+    :param component_id: The ID of the component
+    :return: True if the configurations are valid, False otherwise
+    """
+    LOG.info(f'Validating row configurations for component {component_id}.')
+    if storage:
+        storage = validate_storage(storage)
+    if row_parameters:
+        component = await _get_component(client, component_id)
+        schema = component.configuration_row_schema
+        if schema:
+            row_parameters = validate_row_parameters(row_parameters, component_id, schema)
+        else:
+            LOG.warning(f'No row parameter schema provided for component {component_id}, skipping validation.')
+    return {'storage': storage, 'row_parameters': row_parameters}
