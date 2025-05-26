@@ -32,11 +32,15 @@ def add_job_tools(mcp: FastMCP) -> None:
 # Job Base Models ########################################
 
 JOB_STATUS = Literal[
-    'waiting',
-    'processing',
-    'success',
-    'error',
-    'created',
+    'waiting',      # job is waiting for other jobs to finish
+    'processing',   # job is being executed
+    'success',      # job finished successfully
+    'error',        # job finished with error
+    'created',      # job is created but not started executing
+    'warning',      # job finished but one of its child jobs failed
+    'terminating',  # user requested to abort the job
+    'cancelled',    # job was aborted before execution began
+    'terminated',   # job was aborted during execution
 ]
 
 
