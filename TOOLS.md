@@ -301,7 +301,7 @@ Creates a component configuration using the specified name, component ID, config
 CONSIDERATIONS:
 - The configuration JSON object must follow the root_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the root_configuration_schema,
-which is available via the component_detail tool.
+  which is available via the component_detail tool.
 - The configuration JSON object should adhere to the component's configuration examples if found.
 
 USAGE:
@@ -309,8 +309,8 @@ USAGE:
 
 EXAMPLES:
 - user_input: `Create a new configuration for component X with these settings`
-- set the component_id and configuration parameters accordingly
-- returns the created component configuration if successful.
+    - set the component_id and configuration parameters accordingly
+    - returns the created component configuration if successful.
 
 
 **Input JSON Schema**:
@@ -333,6 +333,7 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
+      "additionalProperties": true,
       "description": "The component configuration parameters, adhering to the root_configuration_schema",
       "title": "Parameters",
       "type": "object"
@@ -340,6 +341,7 @@ EXAMPLES:
     "storage": {
       "anyOf": [
         {
+          "additionalProperties": true,
           "type": "object"
         },
         {
@@ -372,7 +374,7 @@ component ID, configuration JSON, and description.
 CONSIDERATIONS:
 - The configuration JSON object must follow the row_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the row_configuration_schema,
-which is available via the component_detail tool.
+  which is available via the component_detail tool.
 - The configuration JSON object should adhere to the component's configuration examples if found.
 
 USAGE:
@@ -380,8 +382,8 @@ USAGE:
 
 EXAMPLES:
 - user_input: `Create a new configuration for component X with these settings`
-- set the component_id, configuration_id and configuration parameters accordingly
-- returns the created component configuration if successful.
+    - set the component_id, configuration_id and configuration parameters accordingly
+    - returns the created component configuration if successful.
 
 
 **Input JSON Schema**:
@@ -409,6 +411,7 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
+      "additionalProperties": true,
       "description": "The component row configuration parameters, adhering to the row_configuration_schema",
       "title": "Parameters",
       "type": "object"
@@ -416,6 +419,7 @@ EXAMPLES:
     "storage": {
       "anyOf": [
         {
+          "additionalProperties": true,
           "type": "object"
         },
         {
@@ -462,11 +466,11 @@ USAGE:
 
 EXAMPLES:
 - user_input: `Can you save me the SQL query you generated as a new transformation?`
-- set the sql_statements to the query, and set other parameters accordingly.
-- returns the created SQL transformation configuration if successful.
+    - set the sql_statements to the query, and set other parameters accordingly.
+    - returns the created SQL transformation configuration if successful.
 - user_input: `Generate me an SQL transformation which [USER INTENT]`
-- set the sql_statements to the query based on the [USER INTENT], and set other parameters accordingly.
-- returns the created SQL transformation configuration if successful.
+    - set the sql_statements to the query based on the [USER INTENT], and set other parameters accordingly.
+    - returns the created SQL transformation configuration if successful.
 
 
 **Input JSON Schema**:
@@ -522,7 +526,7 @@ USAGE:
 
 EXAMPLES:
 - user_input: `I am looking for a salesforce extractor component`
-- returns a list of component IDs that match the query, ordered by relevance/best match.
+    - returns a list of component IDs that match the query, ordered by relevance/best match.
 
 
 **Input JSON Schema**:
@@ -551,14 +555,14 @@ Gets information about a specific component given its ID.
 
 USAGE:
 - Use when you want to see the details of a specific component to get its documentation, configuration schemas,
-etc. Especially in situation when the users asks to create or update a component configuration.
-This tool is mainly for internal use by the agent.
+  etc. Especially in situation when the users asks to create or update a component configuration.
+  This tool is mainly for internal use by the agent.
 
 EXAMPLES:
 - user_input: `Create a generic extractor configuration for x`
-- Set the component_id if you know it or find the component_id by find_component_id
-or docs use tool and set it
-- returns the component
+    - Set the component_id if you know it or find the component_id by find_component_id
+      or docs use tool and set it
+    - returns the component
 
 
 **Input JSON Schema**:
@@ -590,9 +594,9 @@ USAGE:
 
 EXAMPLES:
 - user_input: `give me details about this configuration`
-- set component_id and configuration_id to the specific component/transformation ID and configuration ID
-if you know it
-- returns the component/transformation configuration pair
+    - set component_id and configuration_id to the specific component/transformation ID and configuration ID
+      if you know it
+    - returns the component/transformation configuration pair
 
 
 **Input JSON Schema**:
@@ -630,8 +634,8 @@ USAGE:
 
 EXAMPLES:
 - user_input: `Show me example configurations for component X`
-- set the component_id parameter accordingly
-- returns a markdown formatted string with configuration examples
+    - set the component_id parameter accordingly
+    - returns a markdown formatted string with configuration examples
 
 
 **Input JSON Schema**:
@@ -667,16 +671,16 @@ USAGE:
 
 EXAMPLES:
 - user_input: `give me all components (in the project)`
-- returns all components configurations in the project
+    - returns all components configurations in the project
 - user_input: `list me all extractor components (in the project)`
-- set types to ["extractor"]
-- returns all extractor components configurations in the project
+    - set types to ["extractor"]
+    - returns all extractor components configurations in the project
 - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-- set component_ids to list of identifiers accordingly if you know them
-- returns all configurations for the given components in the project
+    - set component_ids to list of identifiers accordingly if you know them
+    - returns all configurations for the given components in the project
 - user_input: `give me configurations for 'specified-id'`
-- set component_ids to ['specified-id']
-- returns the configurations of the component with ID 'specified-id'
+    - set component_ids to ['specified-id']
+    - returns the configurations of the component with ID 'specified-id'
 
 
 **Input JSON Schema**:
@@ -724,14 +728,14 @@ USAGE:
 
 EXAMPLES:
 - user_input: `give me all transformations`
-- returns all transformation configurations in the project
+    - returns all transformation configurations in the project
 - user_input: `give me configurations for following transformation/s` | `give me configurations for
-this transformation`
+  this transformation`
 - set transformation_ids to list of identifiers accordingly if you know the IDs
-- returns all transformation configurations for the given transformations IDs
+    - returns all transformation configurations for the given transformations IDs
 - user_input: `list me transformations for this transformation component 'specified-id'`
-- set transformation_ids to ['specified-id']
-- returns the transformation configurations with ID 'specified-id'
+    - set transformation_ids to ['specified-id']
+    - returns the transformation configurations with ID 'specified-id'
 
 
 **Input JSON Schema**:
@@ -762,7 +766,7 @@ Updates a specific component configuration using given by component ID, and conf
 CONSIDERATIONS:
 - The configuration JSON object must follow the root_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the root_configuration_schema,
-which is available via the component_detail tool.
+  which is available via the component_detail tool.
 - The configuration JSON object should adhere to the component's configuration examples if found
 
 USAGE:
@@ -770,9 +774,9 @@ USAGE:
 
 EXAMPLES:
 - user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
-- set the component_id, configuration_id and configuration parameters accordingly.
-- set the change_description to the description of the change made to the component configuration.
-- returns the updated component configuration if successful.
+    - set the component_id, configuration_id and configuration parameters accordingly.
+    - set the change_description to the description of the change made to the component configuration.
+    - returns the updated component configuration if successful.
 
 
 **Input JSON Schema**:
@@ -805,6 +809,7 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
+      "additionalProperties": true,
       "description": "The component configuration parameters, adhering to the root_configuration_schema schema",
       "title": "Parameters",
       "type": "object"
@@ -812,6 +817,7 @@ EXAMPLES:
     "storage": {
       "anyOf": [
         {
+          "additionalProperties": true,
           "type": "object"
         },
         {
@@ -846,15 +852,15 @@ component ID, configuration JSON, and description.
 CONSIDERATIONS:
 - The configuration JSON object must follow the row_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the row_configuration_schema,
-which is available via the component_detail tool.
+  which is available via the component_detail tool.
 
 USAGE:
 - Use when you want to update a row configuration for a specific component and configuration.
 
 EXAMPLES:
 - user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
-- set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
-- returns the updated component configuration if successful.
+    - set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
+    - returns the updated component configuration if successful.
 
 
 **Input JSON Schema**:
@@ -892,6 +898,7 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
+      "additionalProperties": true,
       "description": "The component row configuration parameters, adhering to the row_configuration_schema",
       "title": "Parameters",
       "type": "object"
@@ -899,6 +906,7 @@ EXAMPLES:
     "storage": {
       "anyOf": [
         {
+          "additionalProperties": true,
           "type": "object"
         },
         {
@@ -938,9 +946,9 @@ CONSIDERATIONS:
 
 EXAMPLES:
 - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
-- set the transformation_id and configuration_id accordingly and update configuration parameters based on
-the [USER INTENT]
-- returns the updated transformation configuration if successful.
+    - set the transformation_id and configuration_id accordingly and update configuration parameters based on
+      the [USER INTENT]
+    - returns the updated transformation configuration if successful.
 
 
 **Input JSON Schema**:
@@ -958,6 +966,7 @@ the [USER INTENT]
       "type": "string"
     },
     "updated_configuration": {
+      "additionalProperties": true,
       "description": "Updated transformation configuration JSON object containing both updated settings applied and all existing settings preserved.",
       "title": "Updated Configuration",
       "type": "object"
