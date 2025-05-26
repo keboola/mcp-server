@@ -325,11 +325,18 @@ What buckets and tables are in my Keboola project?
 | | `update_table_description` | Updates the description of a table |
 | **SQL** | `query_table` | Executes custom SQL queries against your data |
 | | `get_sql_dialect` | Identifies whether your workspace uses Snowflake or BigQuery SQL dialect |
-| **Component** | `retrieve_components` | Lists all available extractors, writers, and applications |
-| | `get_component_details` | Retrieves detailed configuration information for a specific component |
-| | `retrieve_transformations` | Returns all transformation configurations in your project |
-| | `create_sql_transformation` | Creates a new SQL transformation with custom queries |
-| | `update_sql_transformation` | Updates an existing SQL transformation configuration, sql query, description or disables the configuration |
+| **Component** | `create_component_root_configuration` | Creates a component configuration with custom parameters |
+| | `create_component_row_configuration` | Creates a component configuration row with custom parameters |
+| | `create_sql_transformation` | Creates an SQL transformation with custom queries |
+| | `find_component_id` | Returns list of component IDs that match the given query |
+| | `get_component` | Gets information about a specific component given its ID |
+| | `get_component_configuration` | Gets information about a specific component/transformation configuration |
+| | `get_component_configuration_examples` | Retrieves sample configuration examples for a specific component |
+| | `retrieve_component_configurations` | Retrieves configurations of components present in the project |
+| | `retrieve_transformations` | Retrieves transformation configurations in the project |
+| | `update_component_root_configuration` | Updates a specific component configuration |
+| | `update_component_row_configuration` | Updates a specific component configuration row |
+| | `update_sql_transformation_configuration` | Updates an existing SQL transformation configuration |
 | **Job** | `retrieve_jobs` | Lists and filters jobs by status, component, or configuration |
 | | `get_job_detail` | Returns comprehensive details about a specific job |
 | | `start_job` | Triggers a component or transformation job to run |
