@@ -27,6 +27,7 @@ from keboola_mcp_server.tools.components.utils import (
     _retrieve_components_configurations_by_types,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.validators.exceptions import JsonValidationError, StorageConfigurationValidationError
 from keboola_mcp_server.validators.validate import validate_storage_pydantic
 
 LOG = logging.getLogger(__name__)
@@ -476,7 +477,11 @@ async def update_sql_transformation_configuration(
     return updated_transformation_configuration
 
 
-@tool_errors()
+@tool_errors(
+    recovery_instructions={
+        StorageConfigurationValidationError: StorageConfigurationValidationError.recovery_instructions()
+    }
+)
 @with_session_state()
 async def create_component_root_configuration(
     ctx: Context,
@@ -564,7 +569,11 @@ async def create_component_root_configuration(
     return new_configuration
 
 
-@tool_errors()
+@tool_errors(
+    recovery_instructions={
+        StorageConfigurationValidationError: StorageConfigurationValidationError.recovery_instructions()
+    }
+)
 @with_session_state()
 async def create_component_row_configuration(
     ctx: Context,
@@ -663,7 +672,11 @@ async def create_component_row_configuration(
     return new_configuration
 
 
-@tool_errors()
+@tool_errors(
+    recovery_instructions={
+        StorageConfigurationValidationError: StorageConfigurationValidationError.recovery_instructions()
+    }
+)
 @with_session_state()
 async def update_component_root_configuration(
     ctx: Context,
@@ -767,7 +780,11 @@ async def update_component_root_configuration(
     return new_configuration
 
 
-@tool_errors()
+@tool_errors(
+    recovery_instructions={
+        StorageConfigurationValidationError: StorageConfigurationValidationError.recovery_instructions()
+    }
+)
 @with_session_state()
 async def update_component_row_configuration(
     ctx: Context,
