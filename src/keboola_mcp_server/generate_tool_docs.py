@@ -119,7 +119,6 @@ class ToolDocumentationGenerator:
         if hasattr(tool, 'model_json_schema'):
             f.write('\n**Input JSON Schema**:\n')
             f.write('```json\n')
-            # breakpoint()
             f.write(json.dumps(tool.parameters, indent=2))
             f.write('\n```\n')
         else:
