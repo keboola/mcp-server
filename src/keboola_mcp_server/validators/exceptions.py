@@ -49,7 +49,10 @@ class ConfigurationValidationError(Exception):
         json_schema: Optional[JsonStruct] = None,
     ):
         return cls(
-            original_exception, initial_error_message=cls._ERROR_MESSAGE, input_data=input_data, json_schema=json_schema
+            original_exception,
+            initial_error_message=None,
+            input_data=input_data,
+            json_schema=json_schema,
         )
 
     @staticmethod
@@ -81,7 +84,11 @@ class JsonValidationError(ConfigurationValidationError):
 
     @staticmethod
     def recovery_instructions(additional_instructions: str = '') -> str:
-        return '\n' 'Please provide a valid json configuration.\n' f'{additional_instructions}'
+        return (
+            '\n'
+            'Please provide a valid json configuration.\n'
+            f'{additional_instructions}'
+        )
 
 
 class StorageConfigurationValidationError(ConfigurationValidationError):
@@ -93,11 +100,10 @@ class StorageConfigurationValidationError(ConfigurationValidationError):
         original_exception: Exception,
         input_data: Optional[JsonStruct] = None,
         json_schema: Optional[JsonStruct] = None,
-        error_message: Optional[str] = None,
     ):
         super().__init__(
             original_exception,
-            initial_error_message=error_message or self._ERROR_MESSAGE,
+            initial_error_message=self._ERROR_MESSAGE,
             input_data=input_data,
             json_schema=json_schema,
         )
@@ -108,5 +114,52 @@ class StorageConfigurationValidationError(ConfigurationValidationError):
             '\n'
             'Please check the storage configuration json schema.\n'
             'Fix the errors in your storage configuration to follow the schema.\n'
+            f'{additional_instructions}'
+        )
+
+
+class ParameterConfigurationValidationError(ConfigurationValidationError):
+
+    _ERROR_MESSAGE = (
+        'The provided parameter json configuration is not conforming to the parameter json schema for component id: '
+        '"{component_id}".\n'
+    )
+
+    def __init__(
+        self,
+        original_exception: Exception,
+        input_data: Optional[JsonStruct] = None,
+        json_schema: Optional[JsonStruct] = None,
+        component_id: Optional[str] = None,
+    ):
+        super().__init__(
+            original_exception,
+            initial_error_message=self._ERROR_MESSAGE.format(component_id=component_id),
+            input_data=input_data,
+            json_schema=json_schema,
+        )
+
+    @classmethod
+    def from_component_id(
+        cls,
+        *,
+        component_id: str,
+        original_exception: Exception,
+        input_data: Optional[JsonStruct] = None,
+        json_schema: Optional[JsonStruct] = None,
+    ):
+        return cls(
+            original_exception=original_exception,
+            input_data=input_data,
+            json_schema=json_schema,
+            component_id=component_id,
+        )
+
+    @staticmethod
+    def recovery_instructions(additional_instructions: str = '') -> str:
+        return (
+            '\n'
+            'Please check the parameter json schema.\n'
+            'Fix the errors in your parameter configuration to follow the schema.\n'
             f'{additional_instructions}'
         )
