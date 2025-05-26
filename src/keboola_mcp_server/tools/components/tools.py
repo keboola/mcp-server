@@ -25,10 +25,11 @@ from keboola_mcp_server.tools.components.utils import (
     _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
+    validate_root_configurations,
+    validate_row_configurations,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 from keboola_mcp_server.validators.exceptions import StorageConfigurationValidationError
-from keboola_mcp_server.validators.validate import validate_storage
 
 LOG = logging.getLogger(__name__)
 
@@ -540,11 +541,10 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    storage = validate_storage(storage) if storage else None
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
+    configuration_payload = await validate_root_configurations(
+        client=client, storage=storage, parameters=parameters, component_id=component_id
+    )
+
     new_raw_configuration = await client.storage_client.create_component_root_configuration(
         component_id=component_id,
         data={
@@ -642,9 +642,10 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    storage = validate_storage(storage) if storage else None
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
+    configuration_payload = await validate_row_configurations(
+        client=client, storage=storage, row_parameters=parameters, component_id=component_id
+    )
+
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     new_raw_configuration = await client.storage_client.create_component_row_configuration(
@@ -749,9 +750,10 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage = validate_storage(storage) if storage else None
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
+    configuration_payload = await validate_root_configurations(
+        client=client, storage=storage, parameters=parameters, component_id=component_id
+    )
+
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     new_raw_configuration = await client.storage_client.update_component_root_configuration(
@@ -863,9 +865,10 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage = validate_storage(storage) if storage else None
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
+    configuration_payload = await validate_row_configurations(
+        client=client, storage=storage, row_parameters=parameters, component_id=component_id
+    )
+
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
     new_raw_configuration = await client.storage_client.update_component_row_configuration(
