@@ -6,14 +6,15 @@ import json
 import logging
 from enum import Enum
 from importlib import resources
-from typing import Any, Optional
+from typing import Any
 
 import jsonschema
 
 from keboola_mcp_server.client import JsonDict
 from keboola_mcp_server.validators.exceptions import (
     JsonValidationError,
-    ParameterConfigurationValidationError,
+    ParameterRootConfigurationValidationError,
+    ParameterRowConfigurationValidationError,
     StorageConfigurationValidationError,
 )
 from keboola_mcp_server.validators.storage_schema import StorageSchema
@@ -35,25 +36,39 @@ def validate_storage(storage: JsonDict) -> JsonDict:
     schema = _load_schema(ConfigurationSchemaResourceName.STORAGE)
     try:
         _validate_json_against_schema(json_data=storage, schema=schema)
+        LOG.info('Storage configuration is valid.')
         return storage
     except jsonschema.ValidationError as e:
         LOG.exception(f'Storage configuration does not conform to the schema: {e}')
         raise StorageConfigurationValidationError.from_exception(e, input_data=storage, json_schema=schema)
 
 
-def validate_parameters(parameters: JsonDict, component_id: str, schema: Optional[JsonDict] = None) -> JsonDict:
+def validate_root_parameters(parameters: JsonDict, component_id: str, schema: JsonDict) -> JsonDict:
     """
     Validate the parameters configuration using jsonschema.
     """
-    if not schema:
-        LOG.warning(f'No Parameter schema provided for component {component_id}, skipping validation.')
-        return parameters
     try:
         _validate_json_against_schema(json_data=parameters, schema=schema)
+        LOG.info('Root parameters configuration is valid.')
         return parameters
     except jsonschema.ValidationError as e:
         LOG.exception(f'Parameter configuration for component {component_id} does not conform to the schema: {e}')
-        raise ParameterConfigurationValidationError.from_exception(
+        raise ParameterRootConfigurationValidationError.from_exception(
+            e, input_data=parameters, json_schema=schema, component_id=component_id
+        )
+
+
+def validate_row_parameters(parameters: JsonDict, component_id: str, schema: JsonDict) -> JsonDict:
+    """
+    Validate the parameters configuration using jsonschema.
+    """
+    try:
+        _validate_json_against_schema(json_data=parameters, schema=schema)
+        LOG.info('Row parameters configuration is valid.')
+        return parameters
+    except jsonschema.ValidationError as e:
+        LOG.exception(f'Parameter configuration for component {component_id} does not conform to the schema: {e}')
+        raise ParameterRowConfigurationValidationError.from_exception(
             e, input_data=parameters, json_schema=schema, component_id=component_id
         )
 
