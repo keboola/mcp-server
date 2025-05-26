@@ -10,7 +10,7 @@ from typing import Any, Optional
 import jsonschema
 
 from keboola_mcp_server.client import JsonPrimitive, JsonStruct
-from keboola_mcp_server.validators.exceptions import StorageConfigurationValidationError
+from keboola_mcp_server.validators.exceptions import JsonValidationError, StorageConfigurationValidationError
 from keboola_mcp_server.validators.storage_schema import StorageSchema
 
 RESOURCES_PATH = 'keboola_mcp_server.resources'
@@ -70,9 +70,11 @@ def _validate_json_against_schema(json_data: JsonStruct, schema: dict[str, Any])
     try:
         jsonschema.validate(instance=json_data, schema=schema)
         return True
+    except json.JSONDecodeError as e:
+        raise JsonValidationError.from_exception(e, input_data=json_data, json_schema=schema)
     except jsonschema.ValidationError as e:
         raise StorageConfigurationValidationError.from_exception(e, input_data=json_data, json_schema=schema)
-    except (json.JSONDecodeError, Exception) as e:
+    except Exception as e:
         raise e
 
 
