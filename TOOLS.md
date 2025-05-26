@@ -1049,7 +1049,11 @@ EXAMPLES:
         "processing",
         "success",
         "error",
-        "created"
+        "created",
+        "warning",
+        "terminating",
+        "cancelled",
+        "terminated"
       ],
       "title": "Status",
       "type": "string"
