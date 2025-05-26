@@ -27,7 +27,7 @@ from keboola_mcp_server.tools.components.utils import (
     _retrieve_components_configurations_by_types,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
-from keboola_mcp_server.validators.exceptions import JsonValidationError, StorageConfigurationValidationError
+from keboola_mcp_server.validators.exceptions import StorageConfigurationValidationError
 from keboola_mcp_server.validators.validate import validate_storage_pydantic
 
 LOG = logging.getLogger(__name__)

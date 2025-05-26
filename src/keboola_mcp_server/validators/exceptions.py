@@ -51,14 +51,15 @@ class ConfigurationValidationError(Exception):
         return cls(
             original_exception, initial_error_message=cls._ERROR_MESSAGE, input_data=input_data, json_schema=json_schema
         )
-    
+
     @staticmethod
     def recovery_instructions(additional_instructions: str = '') -> str:
         return (
             'Please check the configuration json schema.\n'
             'Fix the errors in your configuration to follow the schema.\n'
             f'{additional_instructions}'
-        )    
+        )
+
 
 class JsonValidationError(ConfigurationValidationError):
 
@@ -77,14 +78,11 @@ class JsonValidationError(ConfigurationValidationError):
             input_data=input_data,
             json_schema=json_schema,
         )
-    
+
     @staticmethod
     def recovery_instructions(additional_instructions: str = '') -> str:
-        return (
-            '\n'
-            'Please provide a valid json configuration.\n'
-            f'{additional_instructions}'
-        )    
+        return '\n' 'Please provide a valid json configuration.\n' f'{additional_instructions}'
+
 
 class StorageConfigurationValidationError(ConfigurationValidationError):
 
@@ -111,4 +109,4 @@ class StorageConfigurationValidationError(ConfigurationValidationError):
             'Please check the storage configuration json schema.\n'
             'Fix the errors in your storage configuration to follow the schema.\n'
             f'{additional_instructions}'
-        )    
+        )

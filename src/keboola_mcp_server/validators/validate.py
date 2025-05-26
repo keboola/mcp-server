@@ -23,9 +23,11 @@ class ConfigurationSchemaResourceName(str, Enum):
 def validate_configuration_jsonschema(configuration: JsonStruct) -> JsonStruct:
     """
     Validate the configuration using jsonschema.
+    :param configuration: The configuration to validate.
+    :return: The validated configuration.
     """
     assert isinstance(configuration, dict)
-    if storage := _find_value_by_key(configuration, 'storage'):
+    if (storage := _find_value_by_key(configuration, 'storage')):
         assert isinstance(storage, dict)
         # validate storage when no exception is raised we can assume that the storage is valid
         _ = validate_storage_jsonschema(storage)
@@ -35,9 +37,11 @@ def validate_configuration_jsonschema(configuration: JsonStruct) -> JsonStruct:
 def validate_configuration_pydantic(configuration: JsonStruct) -> JsonStruct:
     """
     Validate the configuration using pydantic.
+    :param configuration: The configuration to validate.
+    :return: The validated configuration.
     """
     assert isinstance(configuration, dict)
-    if storage := _find_value_by_key(configuration, 'storage'):
+    if (storage := _find_value_by_key(configuration, 'storage')):
         assert isinstance(storage, dict)
         # validate storage when no exception is raised we can assume that the storage is valid
         _ = validate_storage_pydantic(storage)
