@@ -7,5 +7,4 @@ from keboola_mcp_server.validators.validate import (
     validate_root_parameters,
     validate_row_parameters,
     validate_storage,
-    validate_storage_using_model,
 )

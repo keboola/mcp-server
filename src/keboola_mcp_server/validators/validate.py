@@ -17,7 +17,6 @@ from keboola_mcp_server.validators.exceptions import (
     ParameterRowConfigurationValidationError,
     StorageConfigurationValidationError,
 )
-from keboola_mcp_server.validators.storage_schema import StorageSchema
 
 LOG = logging.getLogger(__name__)
 
@@ -70,19 +69,6 @@ def validate_row_parameters(parameters: JsonDict, component_id: str, schema: Jso
         LOG.exception(f'Parameter configuration for component {component_id} does not conform to the schema: {e}')
         raise ParameterRowConfigurationValidationError.from_exception(
             e, input_data=parameters, json_schema=schema, component_id=component_id
-        )
-
-
-def validate_storage_using_model(storage: JsonDict) -> JsonDict:
-    """
-    Validate the storage configuration using pydantic.
-    """
-    try:
-        return StorageSchema.model_validate(storage).model_dump()
-    except jsonschema.ValidationError as e:
-        LOG.exception(f'Storage configuration does not conform to the schema: {e}')
-        raise StorageConfigurationValidationError.from_exception(
-            e, input_data=storage, json_schema=StorageSchema.model_json_schema()
         )
 
 
