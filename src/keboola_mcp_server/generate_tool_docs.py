@@ -119,8 +119,7 @@ class ToolDocumentationGenerator:
         if hasattr(tool, 'model_json_schema'):
             f.write('\n**Input JSON Schema**:\n')
             f.write('```json\n')
-            # breakpoint()
-            f.write(json.dumps(tool.parameters, indent=2))
+            f.write(json.dumps(tool.inputSchema, indent=2))
             f.write('\n```\n')
         else:
             f.write('No JSON schema available for this tool.\n')
@@ -137,6 +136,7 @@ def setup_tool_categorizer():
     categorizer.add_category(ToolCategory('Component Tools', re.compile(r'(component|transformation)')))
     categorizer.add_category(ToolCategory('Jobs Tools', re.compile(r'job', re.IGNORECASE)))
     categorizer.add_category(ToolCategory('Documentation Tools', re.compile(r'docs', re.IGNORECASE)))
+    # catch-all category should be last
     categorizer.add_category(ToolCategory('Other Tools', re.compile(r'.+', re.IGNORECASE)))
 
     return categorizer
