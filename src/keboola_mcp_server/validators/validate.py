@@ -6,12 +6,16 @@ import json
 import logging
 from enum import Enum
 from importlib import resources
-from typing import Any
+from typing import Any, Optional
 
 import jsonschema
 
 from keboola_mcp_server.client import JsonDict
-from keboola_mcp_server.validators.exceptions import JsonValidationError, StorageConfigurationValidationError
+from keboola_mcp_server.validators.exceptions import (
+    JsonValidationError,
+    ParameterConfigurationValidationError,
+    StorageConfigurationValidationError,
+)
 from keboola_mcp_server.validators.storage_schema import StorageSchema
 
 LOG = logging.getLogger(__name__)
@@ -29,8 +33,29 @@ def validate_storage(storage: JsonDict) -> JsonDict:
     Validate the storage configuration using jsonschema.
     """
     schema = _load_schema(ConfigurationSchemaResourceName.STORAGE)
-    _validate_json_against_schema(json_data=storage, schema=schema)
-    return storage
+    try:
+        _validate_json_against_schema(json_data=storage, schema=schema)
+        return storage
+    except jsonschema.ValidationError as e:
+        LOG.exception(f'Storage configuration does not conform to the schema: {e}')
+        raise StorageConfigurationValidationError.from_exception(e, input_data=storage, json_schema=schema)
+
+
+def validate_parameters(parameters: JsonDict, component_id: str, schema: Optional[JsonDict] = None) -> JsonDict:
+    """
+    Validate the parameters configuration using jsonschema.
+    """
+    if not schema:
+        LOG.warning(f'No Parameter schema provided for component {component_id}, skipping validation.')
+        return parameters
+    try:
+        _validate_json_against_schema(json_data=parameters, schema=schema)
+        return parameters
+    except jsonschema.ValidationError as e:
+        LOG.exception(f'Parameter configuration for component {component_id} does not conform to the schema: {e}')
+        raise ParameterConfigurationValidationError.from_exception(
+            e, input_data=parameters, json_schema=schema, component_id=component_id
+        )
 
 
 def validate_storage_using_model(storage: JsonDict) -> JsonDict:
@@ -40,6 +65,7 @@ def validate_storage_using_model(storage: JsonDict) -> JsonDict:
     try:
         return StorageSchema.model_validate(storage).model_dump()
     except jsonschema.ValidationError as e:
+        LOG.exception(f'Storage configuration does not conform to the schema: {e}')
         raise StorageConfigurationValidationError.from_exception(
             e, input_data=storage, json_schema=StorageSchema.model_json_schema()
         )
@@ -51,11 +77,17 @@ def _validate_json_against_schema(json_data: JsonDict, schema: dict[str, Any]) -
         jsonschema.validate(instance=json_data, schema=schema)
         return True
     except json.JSONDecodeError as e:
+        LOG.exception(f'Provided JSON is not valid json: {e}')
         raise JsonValidationError.from_exception(e, input_data=json_data, json_schema=None)
+    except jsonschema.SchemaError as e:
+        LOG.error(f'Schema is not valid json: {e}')
+        raise e  # this is not an Agent error, the schema is not valid json
     except jsonschema.ValidationError as e:
-        raise StorageConfigurationValidationError.from_exception(e, input_data=json_data, json_schema=schema)
+        LOG.exception(f'Configuration JSON object does not conform to the schema: {e}')
+        raise e  # We want to throw this error to the upper functions to handle this case
     except Exception as e:
-        raise e
+        LOG.error(f'Unexpected error occurred while validating JSON against schema: {e}')
+        raise e  # we want to throw other errors to the upper functions
 
 
 def _load_schema(json_schema_name: ConfigurationSchemaResourceName) -> dict[str, Any]:
@@ -63,8 +95,8 @@ def _load_schema(json_schema_name: ConfigurationSchemaResourceName) -> dict[str,
         with resources.files(RESOURCES_PATH).joinpath(json_schema_name.value).open('r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
-        LOG.exception(f'Schema {json_schema_name.value} not found in the resources.')
+        LOG.error(f'Schema {json_schema_name.value} not found in the resources.')
         raise FileNotFoundError(f'Schema {json_schema_name.value} not found in the resources.')
     except json.JSONDecodeError as e:
-        LOG.exception(f'Schema {json_schema_name.value} is not valid json: {e}')
+        LOG.error(f'Schema {json_schema_name.value} is not valid json: {e}')
         raise e  # in this case it is not Agent error, the schema is not valid json
