@@ -517,10 +517,10 @@ async def create_component_root_configuration(
     Creates a component configuration using the specified name, component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-    The configuration JSON object must follow the root_configuration_schema of the specified component.
-    Make sure the configuration parameters always adhere to the root_configuration_schema,
+    - The configuration JSON object must follow the root_configuration_schema of the specified component.
+    - Make sure the configuration parameters always adhere to the root_configuration_schema,
     which is available via the component_detail tool.
-    The configuration JSON object should adhere to the component's configuration examples if found.
+    - The configuration JSON object should adhere to the component's configuration examples if found.
 
     USAGE:
     - Use when you want to create a new root configuration for a specific component.
@@ -611,10 +611,10 @@ async def create_component_row_configuration(
     component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-    The configuration JSON object must follow the row_configuration_schema of the specified component.
-    Make sure the configuration parameters always adhere to the row_configuration_schema,
+    - The configuration JSON object must follow the row_configuration_schema of the specified component.
+    - Make sure the configuration parameters always adhere to the row_configuration_schema,
     which is available via the component_detail tool.
-    The configuration JSON object should adhere to the component's configuration examples if found.
+    - The configuration JSON object should adhere to the component's configuration examples if found.
 
     USAGE:
     - Use when you want to create a new row configuration for a specific component configuration.
@@ -715,10 +715,10 @@ async def update_component_root_configuration(
     Updates a specific component configuration using given by component ID, and configuration ID.
 
     CONSIDERATIONS:
-    The configuration JSON object must follow the root_configuration_schema of the specified component.
-    Make sure the configuration parameters always adhere to the root_configuration_schema,
+    - The configuration JSON object must follow the root_configuration_schema of the specified component.
+    - Make sure the configuration parameters always adhere to the root_configuration_schema,
     which is available via the component_detail tool.
-    The configuration JSON object should adhere to the component's configuration examples if found
+    - The configuration JSON object should adhere to the component's configuration examples if found
 
     USAGE:
     - Use when you want to update a root configuration of a specific component.
@@ -824,8 +824,8 @@ async def update_component_row_configuration(
     component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-    The configuration JSON object must follow the row_configuration_schema of the specified component.
-    Make sure the configuration parameters always adhere to the row_configuration_schema,
+    - The configuration JSON object must follow the row_configuration_schema of the specified component.
+    - Make sure the configuration parameters always adhere to the row_configuration_schema,
     which is available via the component_detail tool.
 
     USAGE:
