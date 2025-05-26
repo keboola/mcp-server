@@ -28,7 +28,7 @@ from keboola_mcp_server.tools.components.utils import (
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 from keboola_mcp_server.validators.exceptions import StorageConfigurationValidationError
-from keboola_mcp_server.validators.validate import validate_storage_pydantic
+from keboola_mcp_server.validators.validate import validate_storage
 
 LOG = logging.getLogger(__name__)
 
@@ -540,7 +540,7 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    storage = validate_storage_pydantic(storage) if storage else None
+    storage = validate_storage(storage) if storage else None
     configuration_payload = {'storage': storage, 'parameters': parameters}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
@@ -642,7 +642,7 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    storage = validate_storage_pydantic(storage) if storage else None
+    storage = validate_storage(storage) if storage else None
     configuration_payload = {'storage': storage, 'parameters': parameters}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
@@ -749,7 +749,7 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage = validate_storage_pydantic(storage) if storage else None
+    storage = validate_storage(storage) if storage else None
     configuration_payload = {'storage': storage, 'parameters': parameters}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
@@ -863,7 +863,7 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage = validate_storage_pydantic(storage) if storage else None
+    storage = validate_storage(storage) if storage else None
     configuration_payload = {'storage': storage, 'parameters': parameters}
     # TODO validate parameters
     # Try to create the new configuration and return the new object if successful
