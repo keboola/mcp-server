@@ -51,7 +51,40 @@ class ConfigurationValidationError(Exception):
         return cls(
             original_exception, initial_error_message=cls._ERROR_MESSAGE, input_data=input_data, json_schema=json_schema
         )
+    
+    @staticmethod
+    def recovery_instructions(additional_instructions: str = '') -> str:
+        return (
+            'Please check the configuration json schema.\n'
+            'Fix the errors in your configuration to follow the schema.\n'
+            f'{additional_instructions}'
+        )    
 
+class JsonValidationError(ConfigurationValidationError):
+
+    _ERROR_MESSAGE = 'The provided json configuration is not a valid json.\n'
+
+    def __init__(
+        self,
+        original_exception: Exception,
+        input_data: Optional[JsonStruct] = None,
+        json_schema: Optional[JsonStruct] = None,
+        error_message: Optional[str] = None,
+    ):
+        super().__init__(
+            original_exception,
+            initial_error_message=error_message or self._ERROR_MESSAGE,
+            input_data=input_data,
+            json_schema=json_schema,
+        )
+    
+    @staticmethod
+    def recovery_instructions(additional_instructions: str = '') -> str:
+        return (
+            '\n'
+            'Please provide a valid json configuration.\n'
+            f'{additional_instructions}'
+        )    
 
 class StorageConfigurationValidationError(ConfigurationValidationError):
 
@@ -70,3 +103,12 @@ class StorageConfigurationValidationError(ConfigurationValidationError):
             input_data=input_data,
             json_schema=json_schema,
         )
+
+    @staticmethod
+    def recovery_instructions(additional_instructions: str = '') -> str:
+        return (
+            '\n'
+            'Please check the storage configuration json schema.\n'
+            'Fix the errors in your storage configuration to follow the schema.\n'
+            f'{additional_instructions}'
+        )    
