@@ -5,62 +5,54 @@ Exceptions for the validators.
 from typing import Optional
 
 from keboola_mcp_server.client import JsonStruct
-from keboola_mcp_server.errors import ToolException
 
 
-class ConfigurationValidationError(ToolException):
+class ConfigurationValidationError(Exception):
     """
     Exception raised when a schema validation error occurs.
     """
 
-    _RECOVERY_INSTRUCTION = 'The provided json is not conforming to the json schema. Please fix the json and try again.'
-
-    _RECOVERY_INSTRUCTION_WITH_INPUT_JSON = '{previous_instructions}\n' 'Your input:\n' '{input}' '\n\n'
-
-    _RECOVERY_INSTRUCTION_WITH_SCHEMA = (
-        '{previous_instructions}\n'
-        'Please follow the json schema provided below when creating the json.\n'
-        'Json schema:\n'
-        '{schema}'
-        '\n\n'
+    _ERROR_MESSAGE = (
+        'The provided json configuration is not conforming to the corresponding configuration json schema.\n'
     )
+    _INPUT_DATA = 'Input json configuration: \n{input_data}\n\n'
+    _JSON_SCHEMA = 'Json schema: \n{json_schema}\n\n'
+
 
     def __init__(
         self,
         original_exception: Exception,
-        recovery_instruction: Optional[str] = None,
-        input_json: Optional[JsonStruct] = None,
-        schema: Optional[JsonStruct] = None,
+        input_data: Optional[JsonStruct] = None,
+        json_schema: Optional[JsonStruct] = None,
+        error_message: Optional[str] = None,
     ):
+        error_message = str(original_exception) + '\n\n' + (error_message or self._ERROR_MESSAGE)
+        if input_data:
+            error_message += self._INPUT_DATA.format(input_data=input_data)
+        if json_schema:
+            error_message += self._JSON_SCHEMA.format(json_schema=json_schema)
+        super().__init__(error_message)
 
-        recovery_instruction = recovery_instruction or self._RECOVERY_INSTRUCTION
-        if input_json:
-            recovery_instruction = self._RECOVERY_INSTRUCTION_WITH_INPUT_JSON.format(
-                previous_instructions=recovery_instruction, input=input_json
-            )
-
-        if schema:
-            recovery_instruction = self._RECOVERY_INSTRUCTION_WITH_SCHEMA.format(
-                previous_instructions=recovery_instruction, schema=schema
-            )
-
-        super().__init__(original_exception, recovery_instruction=recovery_instruction)
+    @classmethod
+    def from_exception(
+        cls,
+        original_exception: Exception,
+        input_data: Optional[JsonStruct] = None,
+        json_schema: Optional[JsonStruct] = None,
+    ):
+        return cls(original_exception, input_data, json_schema, cls._ERROR_MESSAGE)
 
 
 class StorageConfigurationValidationError(ConfigurationValidationError):
 
-    _RECOVERY_INSTRUCTION = (
-        'The storage configuration does not match the json schema. Please fix the storage configuration and try again.'
-        '\n\n'
-        'You may use appropriate tools to see examples of the storage configuration.\n'
-    )
+    _ERROR_MESSAGE = 'The provided storage json configuration is not conforming to the storage json schema.\n'
 
     def __init__(
-        self, original_exception: Exception, input: Optional[JsonStruct] = None, schema: Optional[JsonStruct] = None
+        self,
+        original_exception: Exception,
+        input_data: Optional[JsonStruct] = None,
+        json_schema: Optional[JsonStruct] = None,
     ):
-        super().__init__(
-            original_exception,
-            recovery_instruction=self._RECOVERY_INSTRUCTION,
-            input_json=input,
-            schema=schema,
-        )
+        super().__init__(original_exception, input_data, json_schema, self._ERROR_MESSAGE)
+    
+
