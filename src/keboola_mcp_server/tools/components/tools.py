@@ -103,17 +103,17 @@ async def retrieve_components_configurations(
     - Use when you want to see components configurations in the project for given component_ids.
 
     EXAMPLES:
-        - user_input: `give me all components (in the project)`
-            -> returns all components configurations in the project
-        - user_input: `list me all extractor components (in the project)`
-            -> set types to ["extractor"]
-            -> returns all extractor components configurations in the project
-        - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-            -> set component_ids to list of identifiers accordingly if you know them
-            -> returns all configurations for the given components in the project
-        - user_input: `give me configurations for 'specified-id'`
-            -> set component_ids to ['specified-id']
-            -> returns the configurations of the component with ID 'specified-id'
+    - user_input: `give me all components (in the project)`
+        - returns all components configurations in the project
+    - user_input: `list me all extractor components (in the project)`
+        - set types to ["extractor"]
+        - returns all extractor components configurations in the project
+    - user_input: `give me configurations for following component/s` | `give me configurations for this component`
+        - set component_ids to list of identifiers accordingly if you know them
+        - returns all configurations for the given components in the project
+    - user_input: `give me configurations for 'specified-id'`
+        - set component_ids to ['specified-id']
+        - returns the configurations of the component with ID 'specified-id'
     """
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
     if not component_ids:
@@ -154,7 +154,7 @@ async def retrieve_transformations_configurations(
         - returns all transformation configurations in the project
     - user_input: `give me configurations for following transformation/s` | `give me configurations for
       this transformation`
-        - set transformation_ids to list of identifiers accordingly if you know the IDs
+    - set transformation_ids to list of identifiers accordingly if you know the IDs
         - returns all transformation configurations for the given transformations IDs
     - user_input: `list me transformations for this transformation component 'specified-id'`
         - set transformation_ids to ['specified-id']
@@ -180,15 +180,15 @@ async def get_component(
     Gets information about a specific component given its ID.
 
     USAGE:
-        - Use when you want to see the details of a specific component to get its documentation, configuration schemas,
-          etc. Especially in situation when the users asks to create or update a component configuration.
-          This tool is mainly for internal use by the agent.
+    - Use when you want to see the details of a specific component to get its documentation, configuration schemas,
+      etc. Especially in situation when the users asks to create or update a component configuration.
+      This tool is mainly for internal use by the agent.
 
     EXAMPLES:
-        - user_input: `Create a generic extractor configuration for x`
-            -> Set the component_id if you know it or find the component_id by find_component_id
-               or docs use tool and set it
-            -> returns the component
+    - user_input: `Create a generic extractor configuration for x`
+        - Set the component_id if you know it or find the component_id by find_component_id
+          or docs use tool and set it
+        - returns the component
     """
     client = KeboolaClient.from_state(ctx.session.state)
     return await _get_component(component_id=component_id, client=client)
@@ -498,18 +498,18 @@ async def create_component_root_configuration(
     Creates a component configuration using the specified name, component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-        The configuration JSON object must follow the root_configuration_schema of the specified component.
-        Make sure the configuration parameters always adhere to the root_configuration_schema,
-        which is available via the component_detail tool.
-        The configuration JSON object should adhere to the component's configuration examples if found.
+    - The configuration JSON object must follow the root_configuration_schema of the specified component.
+    - Make sure the configuration parameters always adhere to the root_configuration_schema,
+      which is available via the component_detail tool.
+    - The configuration JSON object should adhere to the component's configuration examples if found.
 
     USAGE:
-        - Use when you want to create a new root configuration for a specific component.
+    - Use when you want to create a new root configuration for a specific component.
 
     EXAMPLES:
-        - user_input: `Create a new configuration for component X with these settings`
-            -> set the component_id and configuration parameters accordingly
-            -> returns the created component configuration if successful.
+    - user_input: `Create a new configuration for component X with these settings`
+        - set the component_id and configuration parameters accordingly
+        - returns the created component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
@@ -592,18 +592,18 @@ async def create_component_row_configuration(
     component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-        The configuration JSON object must follow the row_configuration_schema of the specified component.
-        Make sure the configuration parameters always adhere to the row_configuration_schema,
-        which is available via the component_detail tool.
-        The configuration JSON object should adhere to the component's configuration examples if found.
+    - The configuration JSON object must follow the row_configuration_schema of the specified component.
+    - Make sure the configuration parameters always adhere to the row_configuration_schema,
+      which is available via the component_detail tool.
+    - The configuration JSON object should adhere to the component's configuration examples if found.
 
     USAGE:
-        - Use when you want to create a new row configuration for a specific component configuration.
+    - Use when you want to create a new row configuration for a specific component configuration.
 
     EXAMPLES:
-        - user_input: `Create a new configuration for component X with these settings`
-            -> set the component_id, configuration_id and configuration parameters accordingly
-            -> returns the created component configuration if successful.
+    - user_input: `Create a new configuration for component X with these settings`
+        - set the component_id, configuration_id and configuration parameters accordingly
+        - returns the created component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
@@ -698,19 +698,19 @@ async def update_component_root_configuration(
     Updates a specific component configuration using given by component ID, and configuration ID.
 
     CONSIDERATIONS:
-        The configuration JSON object must follow the root_configuration_schema of the specified component.
-        Make sure the configuration parameters always adhere to the root_configuration_schema,
-        which is available via the component_detail tool.
-        The configuration JSON object should adhere to the component's configuration examples if found
+    - The configuration JSON object must follow the root_configuration_schema of the specified component.
+    - Make sure the configuration parameters always adhere to the root_configuration_schema,
+      which is available via the component_detail tool.
+    - The configuration JSON object should adhere to the component's configuration examples if found
 
     USAGE:
-        - Use when you want to update a root configuration of a specific component.
+    - Use when you want to update a root configuration of a specific component.
 
     EXAMPLES:
-        - user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
-            -> set the component_id, configuration_id and configuration parameters accordingly.
-            -> set the change_description to the description of the change made to the component configuration.
-            -> returns the updated component configuration if successful.
+    - user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
+        - set the component_id, configuration_id and configuration parameters accordingly.
+        - set the change_description to the description of the change made to the component configuration.
+        - returns the updated component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
@@ -809,17 +809,17 @@ async def update_component_row_configuration(
     component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
-        The configuration JSON object must follow the row_configuration_schema of the specified component.
-        Make sure the configuration parameters always adhere to the row_configuration_schema,
-        which is available via the component_detail tool.
+    - The configuration JSON object must follow the row_configuration_schema of the specified component.
+    - Make sure the configuration parameters always adhere to the row_configuration_schema,
+      which is available via the component_detail tool.
 
     USAGE:
-        - Use when you want to update a row configuration for a specific component and configuration.
+    - Use when you want to update a row configuration for a specific component and configuration.
 
     EXAMPLES:
-        - user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
-            -> set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
-            -> returns the updated component configuration if successful.
+    - user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
+        - set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
+        - returns the updated component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
@@ -880,12 +880,12 @@ async def get_component_configuration_examples(
     Retrieves sample configuration examples for a specific component.
 
     USAGE:
-        - Use when you want to see example configurations for a specific component.
+    - Use when you want to see example configurations for a specific component.
 
     EXAMPLES:
-        - user_input: `Show me example configurations for component X`
-            -> set the component_id parameter accordingly
-            -> returns a markdown formatted string with configuration examples
+    - user_input: `Show me example configurations for component X`
+        - set the component_id parameter accordingly
+        - returns a markdown formatted string with configuration examples
     """
     client = KeboolaClient.from_state(ctx.session.state)
     try:
@@ -927,11 +927,11 @@ async def find_component_id(
     Returns list of component IDs that match the given query.
 
     USAGE:
-        - Use when you want to find the component for a specific purpose.
+    - Use when you want to find the component for a specific purpose.
 
     EXAMPLES:
-        - user_input: `I am looking for a salesforce extractor component`
-            -> returns a list of component IDs that match the query, ordered by relevance/best match.
+    - user_input: `I am looking for a salesforce extractor component`
+        - returns a list of component IDs that match the query, ordered by relevance/best match.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     suggestion_response = await client.ai_service_client.suggest_component(query)

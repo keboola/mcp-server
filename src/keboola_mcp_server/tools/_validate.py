@@ -145,13 +145,14 @@ def _validate_json_against_schema(
     except jsonschema.ValidationError as e:
         raise RecoverableValidationError.create_from_values(e, invalid_json=json_data, initial_message=initial_message)
     except jsonschema.SchemaError as e:
-        LOG.error(
+        err_msg = (
             f'The validation schema is not valid: {e} \n'
             f'initial_message: {initial_message}\n'
             f'schema: {schema}\n'
             f'json_data: {json_data}'
         )
-        raise e  # this is not an Agent error, the schema is not valid
+        LOG.error(f'{err_msg}')
+        raise jsonschema.SchemaError(f'{e}\n{err_msg}')  # this is not an Agent error, the schema is not valid
     except Exception as e:
         raise e  # unsupported error
 

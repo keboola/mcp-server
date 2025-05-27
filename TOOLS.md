@@ -17,15 +17,22 @@ This document provides details about the tools available in the Keboola MCP serv
 - [query_table](#query_table): Executes an SQL SELECT query to get the data from the underlying database.
 
 ### Component Tools
+- [create_component_root_configuration](#create_component_root_configuration): Creates a component configuration using the specified name, component ID, configuration JSON, and description.
+- [create_component_row_configuration](#create_component_row_configuration): Creates a component configuration row in the specified configuration_id, using the specified name,
+component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and optionally a list of created table names if and only if they are generated within the SQL
 statements.
-- [get_component_details](#get_component_details): Gets detailed information about a specific Keboola component configuration given component/transformation ID and
-configuration ID.
-- [retrieve_components](#retrieve_components): Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
-If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
-component_types.
+- [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
+- [get_component](#get_component): Gets information about a specific component given its ID.
+- [get_component_configuration](#get_component_configuration): Gets information about a specific component/transformation configuration.
+- [get_component_configuration_examples](#get_component_configuration_examples): Retrieves sample configuration examples for a specific component.
+- [retrieve_component_configurations](#retrieve_component_configurations): Retrieves configurations of components present in the project,
+optionally filtered by component types or specific component IDs.
 - [retrieve_transformations](#retrieve_transformations): Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
+- [update_component_root_configuration](#update_component_root_configuration): Updates a specific component configuration using given by component ID, and configuration ID.
+- [update_component_row_configuration](#update_component_row_configuration): Updates a specific component configuration row in the specified configuration_id, using the specified name,
+component ID, configuration JSON, and description.
 - [update_sql_transformation_configuration](#update_sql_transformation_configuration): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
 configuration.
 
@@ -62,7 +69,6 @@ Gets detailed information about a specific bucket.
   "required": [
     "bucket_id"
   ],
-  "title": "get_bucket_detailArguments",
   "type": "object"
 }
 ```
@@ -88,7 +94,6 @@ Gets detailed information about a specific table including its DB identifier and
   "required": [
     "table_id"
   ],
-  "title": "get_table_detailArguments",
   "type": "object"
 }
 ```
@@ -114,7 +119,6 @@ Retrieves all tables in a specific bucket with their basic information.
   "required": [
     "bucket_id"
   ],
-  "title": "retrieve_bucket_tablesArguments",
   "type": "object"
 }
 ```
@@ -131,7 +135,6 @@ Retrieves information about all buckets in the project.
 ```json
 {
   "properties": {},
-  "title": "retrieve_bucketsArguments",
   "type": "object"
 }
 ```
@@ -163,7 +166,6 @@ Update the description for a given Keboola bucket.
     "bucket_id",
     "description"
   ],
-  "title": "update_bucket_descriptionArguments",
   "type": "object"
 }
 ```
@@ -201,7 +203,6 @@ Update the description for a given column in a Keboola table.
     "column_name",
     "description"
   ],
-  "title": "update_column_descriptionArguments",
   "type": "object"
 }
 ```
@@ -233,7 +234,6 @@ Update the description for a given Keboola table.
     "table_id",
     "description"
   ],
-  "title": "update_table_descriptionArguments",
   "type": "object"
 }
 ```
@@ -252,7 +252,6 @@ Gets the name of the SQL dialect used by Keboola project's underlying database.
 ```json
 {
   "properties": {},
-  "title": "get_sql_dialectArguments",
   "type": "object"
 }
 ```
@@ -286,7 +285,6 @@ Executes an SQL SELECT query to get the data from the underlying database.
   "required": [
     "sql_query"
   ],
-  "title": "query_tableArguments",
   "type": "object"
 }
 ```
@@ -294,6 +292,157 @@ Executes an SQL SELECT query to get the data from the underlying database.
 ---
 
 # Component Tools
+<a name="create_component_root_configuration"></a>
+## create_component_root_configuration
+**Description**:
+
+Creates a component configuration using the specified name, component ID, configuration JSON, and description.
+
+CONSIDERATIONS:
+- The configuration JSON object must follow the root_configuration_schema of the specified component.
+- Make sure the configuration parameters always adhere to the root_configuration_schema,
+  which is available via the component_detail tool.
+- The configuration JSON object should adhere to the component's configuration examples if found.
+
+USAGE:
+- Use when you want to create a new root configuration for a specific component.
+
+EXAMPLES:
+- user_input: `Create a new configuration for component X with these settings`
+    - set the component_id and configuration parameters accordingly
+    - returns the created component configuration if successful.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "title": "Description",
+      "type": "string"
+    },
+    "component_id": {
+      "description": "The ID of the component for which to create the configuration.",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "parameters": {
+      "additionalProperties": true,
+      "description": "The component configuration parameters, adhering to the root_configuration_schema",
+      "title": "Parameters",
+      "type": "object"
+    },
+    "storage": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
+      "title": "Storage"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "component_id",
+    "parameters"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="create_component_row_configuration"></a>
+## create_component_row_configuration
+**Description**:
+
+Creates a component configuration row in the specified configuration_id, using the specified name,
+component ID, configuration JSON, and description.
+
+CONSIDERATIONS:
+- The configuration JSON object must follow the row_configuration_schema of the specified component.
+- Make sure the configuration parameters always adhere to the row_configuration_schema,
+  which is available via the component_detail tool.
+- The configuration JSON object should adhere to the component's configuration examples if found.
+
+USAGE:
+- Use when you want to create a new row configuration for a specific component configuration.
+
+EXAMPLES:
+- user_input: `Create a new configuration for component X with these settings`
+    - set the component_id, configuration_id and configuration parameters accordingly
+    - returns the created component configuration if successful.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "title": "Description",
+      "type": "string"
+    },
+    "component_id": {
+      "description": "The ID of the component for which to create the configuration.",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the configuration for which to create the configuration row.",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "parameters": {
+      "additionalProperties": true,
+      "description": "The component row configuration parameters, adhering to the row_configuration_schema",
+      "title": "Parameters",
+      "type": "object"
+    },
+    "storage": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
+      "title": "Storage"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "component_id",
+    "configuration_id",
+    "parameters"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="create_sql_transformation"></a>
 ## create_sql_transformation
 **Description**:
@@ -361,27 +510,59 @@ EXAMPLES:
     "description",
     "sql_statements"
   ],
-  "title": "create_sql_transformationArguments",
   "type": "object"
 }
 ```
 
 ---
-<a name="get_component_details"></a>
-## get_component_details
+<a name="find_component_id"></a>
+## find_component_id
 **Description**:
 
-Gets detailed information about a specific Keboola component configuration given component/transformation ID and
-configuration ID.
+Returns list of component IDs that match the given query.
 
 USAGE:
-- Use when you want to see the details of a specific component/transformation configuration.
+- Use when you want to find the component for a specific purpose.
 
 EXAMPLES:
-- user_input: `give me details about this configuration`
-    - set component_id and configuration_id to the specific component/transformation ID and configuration ID
-      if you know it
-    - returns the details of the component/transformation configuration pair
+- user_input: `I am looking for a salesforce extractor component`
+    - returns a list of component IDs that match the query, ordered by relevance/best match.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "query": {
+      "description": "Natural language query to find the requested component.",
+      "title": "Query",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_component"></a>
+## get_component
+**Description**:
+
+Gets information about a specific component given its ID.
+
+USAGE:
+- Use when you want to see the details of a specific component to get its documentation, configuration schemas,
+  etc. Especially in situation when the users asks to create or update a component configuration.
+  This tool is mainly for internal use by the agent.
+
+EXAMPLES:
+- user_input: `Create a generic extractor configuration for x`
+    - Set the component_id if you know it or find the component_id by find_component_id
+      or docs use tool and set it
+    - returns the component
 
 
 **Input JSON Schema**:
@@ -389,12 +570,46 @@ EXAMPLES:
 {
   "properties": {
     "component_id": {
-      "description": "Unique identifier of the Keboola component/transformation",
+      "description": "ID of the component/transformation",
+      "title": "Component Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "component_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_component_configuration"></a>
+## get_component_configuration
+**Description**:
+
+Gets information about a specific component/transformation configuration.
+
+USAGE:
+- Use when you want to see the configuration of a specific component/transformation.
+
+EXAMPLES:
+- user_input: `give me details about this configuration`
+    - set component_id and configuration_id to the specific component/transformation ID and configuration ID
+      if you know it
+    - returns the component/transformation configuration pair
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "component_id": {
+      "description": "ID of the component/transformation",
       "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
-      "description": "Unique identifier of the Keboola component/transformation configuration you want details about",
+      "description": "ID of the component/transformation configuration",
       "title": "Configuration Id",
       "type": "string"
     }
@@ -403,17 +618,50 @@ EXAMPLES:
     "component_id",
     "configuration_id"
   ],
-  "title": "get_component_configuration_detailsArguments",
   "type": "object"
 }
 ```
 
 ---
-<a name="retrieve_components"></a>
-## retrieve_components
+<a name="get_component_configuration_examples"></a>
+## get_component_configuration_examples
 **Description**:
 
-Retrieves components configurations in the project, optionally filtered by component types or specific component IDs
+Retrieves sample configuration examples for a specific component.
+
+USAGE:
+- Use when you want to see example configurations for a specific component.
+
+EXAMPLES:
+- user_input: `Show me example configurations for component X`
+    - set the component_id parameter accordingly
+    - returns a markdown formatted string with configuration examples
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "component_id": {
+      "description": "The ID of the component to get configuration examples for.",
+      "title": "Component Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "component_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="retrieve_component_configurations"></a>
+## retrieve_component_configurations
+**Description**:
+
+Retrieves configurations of components present in the project,
+optionally filtered by component types or specific component IDs.
 If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
 component_types.
 
@@ -422,14 +670,14 @@ USAGE:
 - Use when you want to see components configurations in the project for given component_ids.
 
 EXAMPLES:
-- user_input: `give me all components`
+- user_input: `give me all components (in the project)`
     - returns all components configurations in the project
-- user_input: `list me all extractor components`
+- user_input: `list me all extractor components (in the project)`
     - set types to ["extractor"]
     - returns all extractor components configurations in the project
 - user_input: `give me configurations for following component/s` | `give me configurations for this component`
     - set component_ids to list of identifiers accordingly if you know them
-    - returns all configurations for the given components
+    - returns all configurations for the given components in the project
 - user_input: `give me configurations for 'specified-id'`
     - set component_ids to ['specified-id']
     - returns the configurations of the component with ID 'specified-id'
@@ -463,7 +711,6 @@ EXAMPLES:
       "type": "array"
     }
   },
-  "title": "retrieve_components_configurationsArguments",
   "type": "object"
 }
 ```
@@ -484,7 +731,7 @@ EXAMPLES:
     - returns all transformation configurations in the project
 - user_input: `give me configurations for following transformation/s` | `give me configurations for
   this transformation`
-    - set transformation_ids to list of identifiers accordingly if you know the IDs
+- set transformation_ids to list of identifiers accordingly if you know the IDs
     - returns all transformation configurations for the given transformations IDs
 - user_input: `list me transformations for this transformation component 'specified-id'`
     - set transformation_ids to ['specified-id']
@@ -505,7 +752,181 @@ EXAMPLES:
       "type": "array"
     }
   },
-  "title": "retrieve_transformations_configurationsArguments",
+  "type": "object"
+}
+```
+
+---
+<a name="update_component_root_configuration"></a>
+## update_component_root_configuration
+**Description**:
+
+Updates a specific component configuration using given by component ID, and configuration ID.
+
+CONSIDERATIONS:
+- The configuration JSON object must follow the root_configuration_schema of the specified component.
+- Make sure the configuration parameters always adhere to the root_configuration_schema,
+  which is available via the component_detail tool.
+- The configuration JSON object should adhere to the component's configuration examples if found
+
+USAGE:
+- Use when you want to update a root configuration of a specific component.
+
+EXAMPLES:
+- user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
+    - set the component_id, configuration_id and configuration parameters accordingly.
+    - set the change_description to the description of the change made to the component configuration.
+    - returns the updated component configuration if successful.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "title": "Description",
+      "type": "string"
+    },
+    "change_description": {
+      "description": "Description of the change made to the component configuration.",
+      "title": "Change Description",
+      "type": "string"
+    },
+    "component_id": {
+      "description": "The ID of the component which you'd like to update",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the configuration which you'd like to update.",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "parameters": {
+      "additionalProperties": true,
+      "description": "The component configuration parameters, adhering to the root_configuration_schema schema",
+      "title": "Parameters",
+      "type": "object"
+    },
+    "storage": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined",
+      "title": "Storage"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "change_description",
+    "component_id",
+    "configuration_id",
+    "parameters"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="update_component_row_configuration"></a>
+## update_component_row_configuration
+**Description**:
+
+Updates a specific component configuration row in the specified configuration_id, using the specified name,
+component ID, configuration JSON, and description.
+
+CONSIDERATIONS:
+- The configuration JSON object must follow the row_configuration_schema of the specified component.
+- Make sure the configuration parameters always adhere to the row_configuration_schema,
+  which is available via the component_detail tool.
+
+USAGE:
+- Use when you want to update a row configuration for a specific component and configuration.
+
+EXAMPLES:
+- user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
+    - set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
+    - returns the updated component configuration if successful.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "title": "Description",
+      "type": "string"
+    },
+    "change_description": {
+      "description": "Description of the change made to the component configuration.",
+      "title": "Change Description",
+      "type": "string"
+    },
+    "component_id": {
+      "description": "The ID of the component which you'd like to update",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the configuration which you'd like to update.",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "configuration_row_id": {
+      "description": "The ID of the configuration row which you'd like to update.",
+      "title": "Configuration Row Id",
+      "type": "string"
+    },
+    "parameters": {
+      "additionalProperties": true,
+      "description": "The component row configuration parameters, adhering to the row_configuration_schema",
+      "title": "Parameters",
+      "type": "object"
+    },
+    "storage": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
+      "title": "Storage"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "change_description",
+    "component_id",
+    "configuration_id",
+    "configuration_row_id",
+    "parameters"
+  ],
   "type": "object"
 }
 ```
@@ -535,23 +956,24 @@ EXAMPLES:
 {
   "properties": {
     "configuration_id": {
-      "description": "Unique identifier of the Keboola transformation configuration you want to update",
+      "description": "ID of the transformation configuration to update",
       "title": "Configuration Id",
       "type": "string"
     },
     "change_description": {
-      "description": "Detailed description of the new changes to the transformation configuration.",
+      "description": "Description of the changes made to the transformation configuration.",
       "title": "Change Description",
       "type": "string"
     },
     "updated_configuration": {
+      "additionalProperties": true,
       "description": "Updated transformation configuration JSON object containing both updated settings applied and all existing settings preserved.",
       "title": "Updated Configuration",
       "type": "object"
     },
     "updated_description": {
       "default": "",
-      "description": "Updated existing transformation description reflecting the changes made in the behavior of the transformation. If no behavior changes are made, empty string preserves the original description.",
+      "description": "Updated transformation description reflecting the changes made in the behavior of the transformation. If no behavior changes are made, empty string preserves the original description.",
       "title": "Updated Description",
       "type": "string"
     },
@@ -567,7 +989,6 @@ EXAMPLES:
     "change_description",
     "updated_configuration"
   ],
-  "title": "update_sql_transformation_configurationArguments",
   "type": "object"
 }
 ```
@@ -599,7 +1020,6 @@ EXAMPLES:
   "required": [
     "job_id"
   ],
-  "title": "get_job_detailArguments",
   "type": "object"
 }
 ```
@@ -638,7 +1058,11 @@ EXAMPLES:
         "processing",
         "success",
         "error",
-        "created"
+        "created",
+        "warning",
+        "terminating",
+        "cancelled",
+        "terminated"
       ],
       "title": "Status",
       "type": "string"
@@ -694,7 +1118,6 @@ EXAMPLES:
       "type": "string"
     }
   },
-  "title": "retrieve_jobsArguments",
   "type": "object"
 }
 ```
@@ -726,7 +1149,6 @@ Starts a new job for a given component or transformation.
     "component_id",
     "configuration_id"
   ],
-  "title": "start_jobArguments",
   "type": "object"
 }
 ```
@@ -754,7 +1176,6 @@ Answers a question using the Keboola documentation as a source.
   "required": [
     "query"
   ],
-  "title": "docs_queryArguments",
   "type": "object"
 }
 ```
