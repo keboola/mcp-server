@@ -23,6 +23,14 @@ class ConfigurationSchemaResourceName(str, Enum):
 
 
 STORAGE_VALIDATION_INITIAL_MESSAGE = 'The provided storage configuration input does not follow the storage schema.\n'
+ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
+    'The provided Root parameters configuration input does not follow the Root parameter json schema for component '
+    'id: {component_id}.\n'
+)
+ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
+    'The provided Row parameters configuration input does not follow the Row parameter json schema for component '
+    'id: {component_id}.\n'
+)
 
 
 class RecoverableValidationError(jsonschema.ValidationError):
@@ -95,6 +103,36 @@ def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -
         initial_message=initial_message or STORAGE_VALIDATION_INITIAL_MESSAGE,
     )
     return storage
+
+
+def validate_root_parameters(
+    parameters: JsonDict, component_id: str, schema: JsonDict, initial_message: Optional[str] = None
+) -> JsonDict:
+    """
+    Validate the parameters configuration using jsonschema.
+    """
+    parameters = {'parameters': parameters.get('parameters', parameters)}
+    _validate_json_against_schema(
+        json_data=parameters,
+        schema=schema,
+        initial_message=initial_message or ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id),
+    )
+    return parameters
+
+
+def validate_row_parameters(
+    parameters: JsonDict, component_id: str, schema: JsonDict, initial_message: Optional[str] = None
+) -> JsonDict:
+    """
+    Validate the parameters row configuration using jsonschema.
+    """
+    parameters = {'parameters': parameters.get('parameters', parameters)}
+    _validate_json_against_schema(
+        json_data=parameters,
+        schema=schema,
+        initial_message=initial_message or ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id),
+    )
+    return parameters
 
 
 def _validate_json_against_schema(
