@@ -28,7 +28,6 @@ class TestServer:
     async def test_list_tools(self):
         server = create_server()
         tools = await server.get_tools()
-        print(sorted(tool.name for tool in tools.values()))
         assert sorted(tool.name for tool in tools.values()) == [
             'create_component_root_configuration',
             'create_component_row_configuration',
