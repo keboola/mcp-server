@@ -194,7 +194,7 @@ def _get_sql_transformation_id_from_sql_dialect(
     if sql_dialect.lower() == 'snowflake':
         return 'keboola.snowflake-transformation'
     elif sql_dialect.lower() == 'bigquery':
-        return 'keboola.bigquery-transformation'
+        return 'keboola.google-bigquery-transformation'
     else:
         raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
 
