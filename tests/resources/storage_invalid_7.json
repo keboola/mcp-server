@@ -1,0 +1,11 @@
+{
+    "storage": {
+      "output": {
+        "files": [
+          {
+            "tags": ["foo"]
+          }
+        ]
+      }
+    }
+  }
