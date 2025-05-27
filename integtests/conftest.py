@@ -351,7 +351,7 @@ def run_client() -> AsyncContextClientRunner:
         :return: The Client connected to the remote server.
         """
         if transport == 'sse':
-            transport_explicit = SSETransport(url=url)
+            transport_explicit = SSETransport(url=url, headers=headers)
         else:
             transport_explicit = StreamableHttpTransport(url=url, headers=headers)
 

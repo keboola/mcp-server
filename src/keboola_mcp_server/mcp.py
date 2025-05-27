@@ -151,7 +151,8 @@ def with_session_state() -> AnyFunction:
                 config = config.replace_by(os.environ)
                 if http_rq := _get_http_request():
                     config = config.replace_by(http_rq.headers)
-                    config = config.replace_by(http_rq.query_params)
+                    if config.accept_secrets_in_url:
+                        config = config.replace_by(http_rq.query_params)
 
                 # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
                 #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
