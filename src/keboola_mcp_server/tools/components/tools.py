@@ -29,11 +29,6 @@ from keboola_mcp_server.tools.components.utils import (
     validate_row_configurations,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
-from keboola_mcp_server.validators.exceptions import (
-    ParameterRootConfigurationValidationError,
-    ParameterRowConfigurationValidationError,
-    StorageConfigurationValidationError,
-)
 
 LOG = logging.getLogger(__name__)
 
@@ -482,12 +477,7 @@ async def update_sql_transformation_configuration(
     return updated_transformation_configuration
 
 
-@tool_errors(
-    recovery_instructions={
-        StorageConfigurationValidationError: StorageConfigurationValidationError.recovery_instructions(),
-        ParameterRootConfigurationValidationError: ParameterRootConfigurationValidationError.recovery_instructions(),
-    }
-)
+@tool_errors()
 @with_session_state()
 async def create_component_root_configuration(
     ctx: Context,
@@ -574,12 +564,7 @@ async def create_component_root_configuration(
     return new_configuration
 
 
-@tool_errors(
-    recovery_instructions={
-        StorageConfigurationValidationError: StorageConfigurationValidationError.recovery_instructions(),
-        ParameterRowConfigurationValidationError: ParameterRowConfigurationValidationError.recovery_instructions(),
-    }
-)
+@tool_errors()
 @with_session_state()
 async def create_component_row_configuration(
     ctx: Context,
@@ -679,12 +664,7 @@ async def create_component_row_configuration(
     return new_configuration
 
 
-@tool_errors(
-    recovery_instructions={
-        StorageConfigurationValidationError: StorageConfigurationValidationError.recovery_instructions(),
-        ParameterRootConfigurationValidationError: ParameterRootConfigurationValidationError.recovery_instructions(),
-    }
-)
+@tool_errors()
 @with_session_state()
 async def update_component_root_configuration(
     ctx: Context,
@@ -789,12 +769,7 @@ async def update_component_root_configuration(
     return new_configuration
 
 
-@tool_errors(
-    recovery_instructions={
-        StorageConfigurationValidationError: StorageConfigurationValidationError.recovery_instructions(),
-        ParameterRowConfigurationValidationError: ParameterRowConfigurationValidationError.recovery_instructions(),
-    }
-)
+@tool_errors()
 @with_session_state()
 async def update_component_row_configuration(
     ctx: Context,
