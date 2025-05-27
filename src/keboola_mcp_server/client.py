@@ -97,13 +97,20 @@ class RawKeboolaClient:
     and can be used to implement high-level functions in clients for individual services.
     """
 
-    def __init__(self, base_api_url: str, api_token: str, headers: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        base_api_url: str,
+        api_token: str,
+        headers: dict[str, Any] | None = None,
+        timeout: httpx.Timeout | None = None,
+    ) -> None:
         self.base_api_url = base_api_url
         self.headers = {
             'X-StorageApi-Token': api_token,
             'Content-Type': 'application/json',
             'Accept-encoding': 'gzip',
         }
+        self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
         if headers:
             self.headers.update(headers)
 
@@ -122,7 +129,7 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.get(
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
@@ -146,7 +153,7 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
@@ -170,7 +177,7 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.put(
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
@@ -192,7 +199,7 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.delete(
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
@@ -448,9 +455,9 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param component_id: The ID of the component.
         :return: The SAPI call response - created configuration or raise an error.
         """
-        return cast(JsonDict, await self.post(
-            endpoint=f'branch/{self.branch_id}/components/{component_id}/configs',
-            data=data))
+        return cast(
+            JsonDict, await self.post(endpoint=f'branch/{self.branch_id}/components/{component_id}/configs', data=data)
+        )
 
     async def create_component_row_configuration(
         self,
@@ -466,9 +473,12 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param config_id: The ID of the configuration.
         :return: The SAPI call response - created row configuration or raise an error.
         """
-        return cast(JsonDict, await self.post(
-            endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
-            data=data))
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows', data=data
+            ),
+        )
 
     async def update_component_root_configuration(
         self,
@@ -484,9 +494,12 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param config_id: The ID of the configuration.
         :return: The SAPI call response - updated configuration or raise an error.
         """
-        return cast(JsonDict, await self.put(
-            endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}',
-            data=data))
+        return cast(
+            JsonDict,
+            await self.put(
+                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}', data=data
+            ),
+        )
 
     async def update_component_row_configuration(
         self,
@@ -504,10 +517,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_row_id: The ID of the row.
         :return: The SAPI call response - updated row configuration or raise an error.
         """
-        return cast(JsonDict, await self.put(
-            endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}'
-                     f'/rows/{configuration_row_id}',
-            data=data))
+        return cast(
+            JsonDict,
+            await self.put(
+                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}'
+                f'/rows/{configuration_row_id}',
+                data=data,
+            ),
+        )
 
     async def create_flow_configuration(
             self,
@@ -594,9 +611,7 @@ class JobsQueueClient(KeboolaServiceClient):
     """
 
     @classmethod
-    def create(
-        cls, root_url: str, token: str, headers: dict[str, Any] | None = None
-    ) -> 'JobsQueueClient':
+    def create(cls, root_url: str, token: str, headers: dict[str, Any] | None = None) -> 'JobsQueueClient':
         """
         Creates a JobsQueue client.
 
@@ -743,9 +758,7 @@ class AIServiceClient(KeboolaServiceClient):
     """Async client for Keboola AI Service."""
 
     @classmethod
-    def create(
-        cls, root_url: str, token: str, headers: dict[str, Any] | None = None
-    ) -> 'AIServiceClient':
+    def create(cls, root_url: str, token: str, headers: dict[str, Any] | None = None) -> 'AIServiceClient':
         """
         Creates an AIServiceClient from a Keboola Storage API token.
 
