@@ -25,6 +25,7 @@ from keboola_mcp_server.tools.components.utils import (
     _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
+    validate_storage_configuration,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 
@@ -32,23 +33,11 @@ LOG = logging.getLogger(__name__)
 
 # Add component tools to the MCP server #########################################
 
-# Regarding the conventional naming of entity models for components and their associated configurations,
-# we also unified and shortened function names to make them more intuitive and consistent for both users and LLMs.
-# These tool names now reflect their conventional usage, removing redundant parts for users while still
-# providing the same functionality as described in the original tool names.
-RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_component_configurations'
 RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
-GET_COMPONENT_CONFIGURATION_TOOL_NAME: str = 'get_component_configuration'
 
 
 def add_component_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-
-    mcp.add_tool(get_component_configuration, name=GET_COMPONENT_CONFIGURATION_TOOL_NAME)
-    LOG.info(f'Added tool: {GET_COMPONENT_CONFIGURATION_TOOL_NAME}.')
-
-    mcp.add_tool(retrieve_components_configurations, name=RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME)
-    LOG.info(f'Added tool: {RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME}.')
 
     mcp.add_tool(
         retrieve_transformations_configurations,
@@ -56,32 +45,23 @@ def add_component_tools(mcp: FastMCP) -> None:
     )
     LOG.info(f'Added tool: {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME}.')
 
-    mcp.add_tool(create_sql_transformation)
-    LOG.info(f'Added tool: {create_sql_transformation.__name__}.')
+    tools = [
+        get_component_configuration,
+        retrieve_components_configurations,
+        create_sql_transformation,
+        update_sql_transformation_configuration,
+        get_component,
+        create_component_root_configuration,
+        create_component_row_configuration,
+        update_component_root_configuration,
+        update_component_row_configuration,
+        get_component_configuration_examples,
+        find_component_id,
+    ]
 
-    mcp.add_tool(update_sql_transformation_configuration)
-    LOG.info(f'Added tool: {update_sql_transformation_configuration.__name__}.')
-
-    mcp.add_tool(get_component)
-    LOG.info(f'Added tool: {get_component.__name__}.')
-
-    mcp.add_tool(create_component_root_configuration)
-    LOG.info(f'Added tool: {create_component_root_configuration.__name__}.')
-
-    mcp.add_tool(create_component_row_configuration)
-    LOG.info(f'Added tool: {create_component_row_configuration.__name__}.')
-
-    mcp.add_tool(update_component_root_configuration)
-    LOG.info(f'Added tool: {update_component_root_configuration.__name__}.')
-
-    mcp.add_tool(update_component_row_configuration)
-    LOG.info(f'Added tool: {update_component_row_configuration.__name__}.')
-
-    mcp.add_tool(get_component_configuration_examples)
-    LOG.info(f'Added tool: {get_component_configuration_examples.__name__}.')
-
-    mcp.add_tool(find_component_id)
-    LOG.info(f'Added tool: {find_component_id.__name__}.')
+    for tool in tools:
+        mcp.add_tool(tool)
+        LOG.info(f'Added tool: {tool.__name__}.')
 
     LOG.info('Component tools initialized.')
 
@@ -534,17 +514,19 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.create_component_root_configuration(
-        component_id=component_id,
-        data={
-            'name': name,
-            'description': description,
-            'configuration': configuration_payload,
-        },
+    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
+    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+
+    new_raw_configuration = cast(
+        dict[str, Any],
+        await client.storage_client.create_component_root_configuration(
+            component_id=component_id,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': configuration_payload,
+            },
+        ),
     )
 
     new_configuration = ComponentRootConfiguration(
@@ -631,18 +613,20 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.create_component_row_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        data={
-            'name': name,
-            'description': description,
-            'configuration': configuration_payload,
-        },
+    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
+    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+
+    new_raw_configuration = cast(
+        dict[str, Any],
+        await client.storage_client.create_component_row_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': configuration_payload,
+            },
+        ),
     )
 
     new_configuration = ComponentRowConfiguration(
@@ -733,19 +717,21 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.update_component_root_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        data={
-            'name': name,
-            'description': description,
-            'changeDescription': change_description,
-            'configuration': configuration_payload,
-        },
+    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
+    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+
+    new_raw_configuration = cast(
+        dict[str, Any],
+        await client.storage_client.update_component_root_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            data={
+                'name': name,
+                'description': description,
+                'changeDescription': change_description,
+                'configuration': configuration_payload,
+            },
+        ),
     )
 
     new_configuration = ComponentRootConfiguration(
@@ -842,21 +828,22 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
+    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
+    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.update_component_row_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        configuration_row_id=configuration_row_id,
-        data={
-            'name': name,
-            'description': description,
-            'changeDescription': change_description,
-            'configuration': configuration_payload,
-        },
+    new_raw_configuration = cast(
+        dict[str, Any],
+        await client.storage_client.update_component_row_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            configuration_row_id=configuration_row_id,
+            data={
+                'name': name,
+                'description': description,
+                'changeDescription': change_description,
+                'configuration': configuration_payload,
+            },
+        ),
     )
 
     new_configuration = ComponentRowConfiguration(
@@ -910,6 +897,8 @@ async def get_component_configuration_examples(
 
     root_examples = raw_component.get('rootConfigurationExamples') or []
     row_examples = raw_component.get('rowConfigurationExamples') or []
+    assert isinstance(root_examples, list)  # pylance check
+    assert isinstance(row_examples, list)  # pylance check
 
     markdown = f'# Configuration Examples for `{component_id}`\n\n'
 

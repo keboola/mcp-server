@@ -1,0 +1,702 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "storage": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "object",
+          "properties": {
+            "read_only_storage_access": {
+              "type": "boolean"
+            },
+            "tables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "description": "Table identifier in Storage"
+                  },
+                  "source_branch_id": {
+                    "type": "string",
+                    "description": "Source branch ID"
+                  },
+                  "source_search": {
+                    "type": "object",
+                    "description": "Deprecated, use 'source' instead",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "Search key"
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "Search value"
+                      }
+                    },
+                    "required": ["key", "value"]
+                  },
+                  "destination": {
+                    "type": "string",
+                    "description": "Destination table name in component"
+                  },
+                  "days": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Deprecated, use 'changed_since' instead"
+                  },
+                  "changed_since": {
+                    "type": "string",
+                    "description": "Filter by last change date"
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Columns to include"
+                  },
+                  "column_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "description": "Source column name"
+                        },
+                        "type": {
+                          "type": "string",
+                          "description": "Column data type"
+                        },
+                        "destination": {
+                          "type": "string",
+                          "description": "Destination column name"
+                        },
+                        "length": {
+                          "type": ["string", "null"],
+                          "description": "Column length"
+                        },
+                        "nullable": {
+                          "type": "boolean",
+                          "description": "Whether column is nullable"
+                        },
+                        "convert_empty_values_to_null": {
+                          "type": "boolean",
+                          "description": "Convert empty values to NULL"
+                        },
+                        "compression": {
+                          "type": "string",
+                          "description": "Column compression"
+                        }
+                      },
+                      "required": ["source"]
+                    }
+                  },
+                  "where_column": {
+                    "type": "string",
+                    "description": "Column to filter on"
+                  },
+                  "where_values": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Values to filter by"
+                  },
+                  "where_operator": {
+                    "type": "string",
+                    "enum": ["eq", "ne"],
+                    "default": "eq",
+                    "description": "Operator for filtering"
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "description": "Limit number of rows"
+                  },
+                  "overwrite": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to overwrite existing data"
+                  },
+                  "use_view": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to use view"
+                  },
+                  "keep_internal_timestamp_column": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether to keep internal timestamp column"
+                  }
+                },
+                "oneOf": [
+                  {
+                    "required": ["source"]
+                  },
+                  {
+                    "required": ["source_search"]
+                  }
+                ],
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "where_column": { "type": "string", "minLength": 1 }
+                      },
+                      "required": ["where_column"]
+                    },
+                    "then": {
+                      "required": ["where_values"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "where_values": { "type": "array", "minItems": 1 }
+                      },
+                      "required": ["where_values"]
+                    },
+                    "then": {
+                      "required": ["where_column"],
+                      "properties": {
+                        "where_column": { "type": "string", "minLength": 1 }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "file_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "List of file IDs to download"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Deprecated, use 'source.tags' instead"
+                  },
+                  "source": {
+                    "type": "object",
+                    "properties": {
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "Tag name"
+                            },
+                            "match": {
+                              "type": "string",
+                              "enum": ["include", "exclude"],
+                              "default": "include",
+                              "description": "Whether to include or exclude files with this tag"
+                            }
+                          },
+                          "required": ["name"]
+                        }
+                      }
+                    }
+                  },
+                  "query": {
+                    "type": "string",
+                    "description": "Query to filter files, deprecated, use any of 'changed_since', 'file_ids', 'source.tags' instead."
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "description": "Limit number of files"
+                  },
+                  "overwrite": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether to overwrite existing files"
+                  },
+                  "processed_tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "List of processed tags, deprecated, use changed_since instead"
+                  },
+                  "changed_since": {
+                    "type": "string",
+                    "description": "Filter by last change date or 'adaptive' for dynamic filtering"
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "query": { "type": "string" }
+                      }
+                    },
+                    "then": {
+                      "not": {
+                        "required": ["changed_since"]
+                      }
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "file_ids": { "type": "array", "minItems": 1 }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "overwrite": { "type": "boolean" },
+                        "processed_tags": { "type": "array" }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "default_bucket": {
+              "type": "string",
+              "description": "Default bucket for output tables"
+            },
+            "data_type_support": {
+              "type": "string",
+              "enum": ["authoritative", "hints", "none"],
+              "description": "Level of data type support"
+            },
+            "table_modifications": {
+              "type": "string",
+              "enum": ["none", "non-destructive", "all"],
+              "description": "Allowed table modifications"
+            },
+            "treat_values_as_null": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Values to treat as NULL"
+            },
+            "tables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "destination": {
+                    "type": "string",
+                    "description": "Destination table identifier in Storage"
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "Source table name in component"
+                  },
+                  "incremental": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to perform incremental load"
+                  },
+                  "primary_key": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Primary key columns, deprecated, use 'schema' instead"
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Columns to include, deprecated, use 'schema' instead"
+                  },
+                  "distribution_key": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Distribution key columns"
+                  },
+                  "delete_where_column": {
+                    "type": "string",
+                    "description": "Column to filter deletions on, deprecated, use 'delete_where' instead"
+                  },
+                  "delete_where_values": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Values to filter deletions by, deprecated, use 'delete_where' instead"
+                  },
+                  "delete_where_operator": {
+                    "type": "string",
+                    "enum": ["eq", "ne"],
+                    "default": "eq",
+                    "description": "Operator for deletion filtering, deprecated, use 'delete_where' instead"
+                  },
+                  "delete_where": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "changed_since": {
+                          "type": "string",
+                          "description": "Filter by changes since date"
+                        },
+                        "changed_until": {
+                          "type": "string",
+                          "description": "Filter by changes until date"
+                        },
+                        "where_filters": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "column": {
+                                "type": "string",
+                                "description": "Column to filter on"
+                              },
+                              "operator": {
+                                "type": "string",
+                                "enum": ["eq", "ne"],
+                                "default": "eq",
+                                "description": "Filter operator"
+                              },
+                              "values_from_set": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Values to filter by"
+                              },
+                              "values_from_workspace": {
+                                "type": "object",
+                                "properties": {
+                                  "workspace_id": {
+                                    "type": "string",
+                                    "description": "Workspace ID"
+                                  },
+                                  "table": {
+                                    "type": "string",
+                                    "description": "Table name"
+                                  },
+                                  "column": {
+                                    "type": "string",
+                                    "description": "Column name"
+                                  }
+                                },
+                                "required": ["table"]
+                              },
+                              "values_from_storage": {
+                                "type": "object",
+                                "properties": {
+                                  "bucket_id": {
+                                    "type": "string",
+                                    "description": "Bucket ID"
+                                  },
+                                  "table": {
+                                    "type": "string",
+                                    "description": "Table name"
+                                  },
+                                  "column": {
+                                    "type": "string",
+                                    "description": "Column name"
+                                  }
+                                },
+                                "required": ["bucket_id", "table"]
+                              }
+                            },
+                            "required": ["column"],
+                            "oneOf": [
+                              {
+                                "required": ["values_from_set"]
+                              },
+                              {
+                                "required": ["values_from_workspace"]
+                              },
+                              {
+                                "required": ["values_from_storage"]
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "oneOf": [
+                        {
+                          "required": ["changed_since"]
+                        },
+                        {
+                          "required": ["changed_until"]
+                        },
+                        {
+                          "required": ["where_filters"]
+                        }
+                      ]
+                    }
+                  },
+                  "delimiter": {
+                    "type": "string",
+                    "default": ",",
+                    "description": "CSV delimiter"
+                  },
+                  "enclosure": {
+                    "type": "string",
+                    "default": "\"",
+                    "description": "CSV enclosure"
+                  },
+                  "metadata": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "description": "Metadata key"
+                        },
+                        "value": {
+                          "type": "string",
+                          "description": "Metadata value"
+                        }
+                      }
+                    }
+                  },
+                  "column_metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "description": "Column metadata key"
+                          },
+                          "value": {
+                            "type": "string",
+                            "description": "Column metadata value"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "write_always": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to always write the table"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Table tags"
+                  },
+                  "manifest_type": {
+                    "type": "string",
+                    "description": "Manifest type"
+                  },
+                  "has_header": {
+                    "type": "boolean",
+                    "description": "Whether the table has a header row"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Table description"
+                  },
+                  "table_metadata": {
+                    "type": "object",
+                    "description": "Table metadata"
+                  },
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "description": "Column name"
+                        },
+                        "data_type": {
+                          "type": "object",
+                          "properties": {
+                            "base": {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "description": "Base data type"
+                                },
+                                "length": {
+                                  "type": "string",
+                                  "description": "Type length"
+                                },
+                                "default": {
+                                  "type": "string",
+                                  "description": "Default value"
+                                }
+                              },
+                              "required": ["type"]
+                            }
+                          },
+                          "required": ["base"],
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "description": "Backend-specific data type"
+                              },
+                              "length": {
+                                "type": "string",
+                                "description": "Type length"
+                              },
+                              "default": {
+                                "type": "string",
+                                "description": "Default value"
+                              }
+                            },
+                            "required": ["type"]
+                          }
+                        },
+                        "nullable": {
+                          "type": "boolean",
+                          "default": true,
+                          "description": "Whether column is nullable"
+                        },
+                        "primary_key": {
+                          "type": "boolean",
+                          "default": false,
+                          "description": "Whether column is part of primary key"
+                        },
+                        "distribution_key": {
+                          "type": "boolean",
+                          "default": false,
+                          "description": "Whether column is part of distribution key"
+                        },
+                        "description": {
+                          "type": "string",
+                          "description": "Column description"
+                        },
+                        "metadata": {
+                          "type": "object",
+                          "description": "Column metadata"
+                        }
+                      },
+                      "required": ["name"]
+                    }
+                  }
+                },
+                "required": ["destination", "source"],
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "delete_where_column": { "type": "string", "minLength": 1 }
+                      },
+                      "required": ["delete_where_column"]
+                    },
+                    "then": {
+                      "required": ["delete_where_values"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "schema": { "type": "array", "minItems": 1 }
+                      },
+                      "required": ["schema"]
+                    },
+                    "then": {
+                      "not": {
+                        "anyOf": [
+                          { "required": ["columns"] },
+                          { "required": ["metadata"] },
+                          { "required": ["column_metadata"] },
+                          { "required": ["primary_key"] },
+                          { "required": ["distribution_key"] }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "File tags"
+                  },
+                  "is_public": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether the file is public, deprecated"
+                  },
+                  "is_permanent": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether the file is permanent"
+                  },
+                  "is_encrypted": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether the file is encrypted, deprecated"
+                  },
+                  "notify": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to notify about the file, deprecated"
+                  }
+                },
+                "required": ["source"]
+              }
+            },
+            "table_files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Table file tags"
+                  },
+                  "is_permanent": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether the table file is permanent"
+                  }
+                },
+                "required": ["source", "destination"]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} 
