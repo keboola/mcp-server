@@ -573,6 +573,10 @@ async def generate_project_descriptions(
             'all': 'Provide comprehensive descriptions for both buckets and tables.'
         }.get(focus_area, 'Provide comprehensive descriptions for both buckets and tables.')
 
+        # Pre-calculate conditional sections to avoid long lines
+        bucket_tech_section = technical_section if focus_area in ['buckets', 'all'] else ''
+        table_tech_section = technical_section if focus_area in ['tables', 'all'] else ''
+
         return [
             Message(
                 role='user',
@@ -595,7 +599,7 @@ For each bucket, provide:
 • **Purpose**: Business purpose and data category
 • **Contents**: Types of tables and data contained
 • **Use Cases**: How this data is typically used
-• **Data Sources**: Where the data originates from{technical_section if focus_area in ['buckets', 'all'] else ''}
+• **Data Sources**: Where the data originates from{bucket_tech_section}
 
 ## Table Descriptions
 For each table, provide:
@@ -604,11 +608,7 @@ For each table, provide:
 • **Key Columns**: Most important fields and their meanings
 • **Data Quality**: Completeness, accuracy, and freshness indicators
 • **Relationships**: How it connects to other tables
-• **Business Value**: Why this data matters and how it's used{
-    technical_section if focus_area in ['tables', 'all'] else ''}
-
-
-
+• **Business Value**: Why this data matters and how it's used{table_tech_section}
 
 ## Summary
 • Overall data architecture insights
