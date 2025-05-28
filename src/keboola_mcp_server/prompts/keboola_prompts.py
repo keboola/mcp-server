@@ -530,8 +530,8 @@ Please create detailed, professional documentation using actual project data inc
 @with_session_state()
 async def generate_project_descriptions(
     ctx: Context,
-    focus_area: str = Field(default='all', description="Focus area: 'buckets', 'tables', or 'all'"),
-    include_technical_details: bool = Field(default=True, description='Include technical metadata and schemas')
+    focus_area: str = 'all',
+    include_technical_details: bool = True
 ) -> List[Message]:
     """
     Generate comprehensive descriptions for all tables and buckets in a Keboola project.
