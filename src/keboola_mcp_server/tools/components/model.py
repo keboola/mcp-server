@@ -37,7 +37,8 @@ class ReducedComponent(BaseModel):
     component_flags: list[str] = Field(
         default_factory=list,
         description='List of developer portal flags.',
-        validation_alias=AliasChoices('flags', 'component_flags', 'componentFlags', 'component-flags')
+        validation_alias=AliasChoices('flags', 'component_flags', 'componentFlags', 'component-flags'),
+        serialization_alias='componentFlags'
     )
 
     # Capability flags derived from component_flags
