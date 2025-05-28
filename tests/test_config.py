@@ -18,8 +18,20 @@ class TestConfig:
                 Config(storage_token='foo', workspace_schema='bar'),
             ),
             (
+                {'X-Storage_Token': 'foo', 'KBC_WORKSPACE_SCHEMA': 'bar'},
+                Config(storage_token='foo', workspace_schema='bar'),
+            ),
+            (
+                {'X-StorageApi_Token': 'foo', 'KBC_WORKSPACE_SCHEMA': 'bar'},
+                Config(storage_token='foo', workspace_schema='bar'),
+            ),
+            (
                 {'foo': 'bar', 'storage_api_url': 'http://nowhere'},
                 Config(storage_api_url='http://nowhere'),
+            ),
+            (
+                {'accept_secrets_in_url': 'true'},
+                Config(accept_secrets_in_url=True),
             ),
         ],
     )
@@ -59,7 +71,9 @@ class TestConfig:
         assert config.storage_token is None
         assert config.storage_api_url is None
         assert config.workspace_schema is None
+        assert config.accept_secrets_in_url is None
 
     def test_no_token_password_in_repr(self) -> None:
         config = Config(storage_token='foo')
-        assert str(config) == "Config(storage_api_url=None, storage_token='****', workspace_schema=None)"
+        assert str(config) == ("Config(storage_api_url=None, storage_token='****', workspace_schema=None, "
+                               'accept_secrets_in_url=None)')
