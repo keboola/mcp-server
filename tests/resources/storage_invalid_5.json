@@ -1,0 +1,11 @@
+{
+    "storage": {
+      "output": {
+        "tables": [
+          {
+            "destination": "out.c-main.data"
+          }
+        ]
+      }
+    }
+  }

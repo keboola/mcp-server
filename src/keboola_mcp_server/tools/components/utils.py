@@ -5,6 +5,7 @@ from httpx import HTTPStatusError
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.tools._validate import validate_storage
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
@@ -282,3 +283,24 @@ def _get_transformation_configuration(
             for out_table in output_tables
         ]
     return TransformationConfiguration(parameters=parameters, storage=storage)
+
+
+STORAGE_VALIDATION_INITIAL_MESSAGE = 'The provided storage configuration input does not follow the storage schema.\n'
+
+
+def validate_storage_configuration(
+    storage: Optional[JsonDict],
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """Utility function to validate the storage configuration.
+    :param storage: The storage configuration to validate
+    :param initial_message: The initial message to include in the error message
+    :returns: The validated storage configuration normalized to {"storage" : {...}}
+    """
+    normalized_storage = {'storage': (storage.get('storage', storage) if storage else storage)}
+    if not storage:
+        LOG.warning('No storage configuration provided, skipping validation.')
+        return normalized_storage
+    initial_message = initial_message or ''
+    initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
+    return validate_storage(normalized_storage, initial_message)

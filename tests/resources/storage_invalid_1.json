@@ -1,0 +1,11 @@
+{
+    "storage": {
+      "input": {
+        "tables": [
+          {
+            "destination": "my_table"
+          }
+        ]
+      }
+    } 
+  }

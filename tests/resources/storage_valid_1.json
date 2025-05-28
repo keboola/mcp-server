@@ -1,0 +1,23 @@
+{
+    "storage": {
+      "output": {
+        "tables": [
+          {
+            "source": "local_table",
+            "destination": "out.c-main.data",
+            "delete_where": [
+              {
+                "where_filters": [
+                  {
+                    "column": "status",
+                    "operator": "eq",
+                    "values_from_set": ["inactive", "deleted"]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }

@@ -1,0 +1,14 @@
+{
+    "storage": {
+      "input": {
+        "tables": [
+          {
+            "source": "in.c-main.data",
+            "where_column": "id",
+            "where_values": ["1"],
+            "where_operator": "gt"
+          }
+        ]
+      }
+    }
+  }
