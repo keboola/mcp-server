@@ -93,7 +93,6 @@ class RecoverableValidationError(jsonschema.ValidationError):
 def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
     """
     Validate the storage configuration using jsonschema.
-
     """
     schema = _load_schema(ConfigurationSchemaResourceName.STORAGE)
     expected_input_data = {'storage': storage.get('storage', storage)}
@@ -105,34 +104,22 @@ def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -
     return storage
 
 
-def validate_root_parameters(
-    parameters: JsonDict, component_id: str, schema: JsonDict, initial_message: Optional[str] = None
-) -> JsonDict:
+def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
     """
     Validate the parameters configuration using jsonschema.
+    :parameters: json data to validate
+    :schema: json schema to validate against (root or row parameter configuration schema)
+    :initial_message: initial message to include in the error message
+    :returns: The validated parameters configuration normalized to {"parameters" : {...}}
     """
-    parameters = {'parameters': parameters.get('parameters', parameters)}
+    expected_parameters = parameters.get('parameters', parameters)
+    assert isinstance(expected_parameters, dict)
     _validate_json_against_schema(
-        json_data=parameters,
+        json_data=expected_parameters,
         schema=schema,
-        initial_message=initial_message or ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id),
+        initial_message=initial_message,
     )
-    return parameters
-
-
-def validate_row_parameters(
-    parameters: JsonDict, component_id: str, schema: JsonDict, initial_message: Optional[str] = None
-) -> JsonDict:
-    """
-    Validate the parameters row configuration using jsonschema.
-    """
-    parameters = {'parameters': parameters.get('parameters', parameters)}
-    _validate_json_against_schema(
-        json_data=parameters,
-        schema=schema,
-        initial_message=initial_message or ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id),
-    )
-    return parameters
+    return {'parameters': expected_parameters}
 
 
 def _validate_json_against_schema(
@@ -146,13 +133,15 @@ def _validate_json_against_schema(
         raise RecoverableValidationError.create_from_values(e, invalid_json=json_data, initial_message=initial_message)
     except jsonschema.SchemaError as e:
         err_msg = (
-            f'The validation schema is not valid: {e} \n'
+            f'The validation schema is not valid, skipping the validation: {e} \n'
             f'initial_message: {initial_message}\n'
             f'schema: {schema}\n'
             f'json_data: {json_data}'
         )
         LOG.error(f'{err_msg}')
-        raise jsonschema.SchemaError(f'{e}\n{err_msg}')  # this is not an Agent error, the schema is not valid
+        # this is not an Agent error, the schema is not valid, we do not know how to validate
+        # the provided json, we will return True and expect the json is correct.
+        return True
     except Exception as e:
         raise e  # unsupported error
 
