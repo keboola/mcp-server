@@ -1,6 +1,6 @@
 """Keboola-specific prompts for the MCP server."""
 
-from typing import List
+from typing import List, Optional
 
 from fastmcp import Context
 from fastmcp.prompts import Message
@@ -68,6 +68,502 @@ Please provide a comprehensive analysis with specific examples and FQIDs from th
             Message(
                 role="user",
                 content=f"Error generating project analysis prompt: {str(e)}"
+            )
+        ]
+
+
+@with_session_state()
+async def project_health_check(ctx: Context) -> List[Message]:
+    """
+    Generate a comprehensive health check analysis for the entire Keboola project.
+    
+    This one-click prompt analyzes project health, identifies issues, and provides recommendations.
+    """
+    try:
+        client = KeboolaClient.from_state(ctx.session.state)
+        storage_api_url = client.storage_client.raw_client.base_api_url
+        
+        return [
+            Message(
+                role="user",
+                content=f"""Perform a comprehensive health check of this Keboola project and identify any issues, risks, or optimization opportunities.
+
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
+
+**Health Check Areas:**
+
+## 1. Component Health
+• Analyze all components for errors, warnings, or performance issues
+• Check component configurations for best practices
+• Identify unused or redundant components
+• Review component update status and versions
+
+## 2. Data Quality Assessment
+• Examine tables for data completeness and consistency
+• Identify tables with potential data quality issues
+• Check for empty tables or tables with unusual patterns
+• Analyze data freshness and update frequencies
+
+## 3. Performance Analysis
+• Identify slow-running transformations or jobs
+• Check for resource-intensive operations
+• Analyze job execution patterns and bottlenecks
+• Review storage usage and optimization opportunities
+
+## 4. Security & Access Review
+• Review bucket and table permissions
+• Check for potential security vulnerabilities
+• Analyze token usage and access patterns
+• Identify overprivileged configurations
+
+## 5. Cost Optimization
+• Identify cost optimization opportunities
+• Review storage usage and retention policies
+• Analyze job execution efficiency
+• Suggest resource optimization strategies
+
+## 6. Recommendations
+• Prioritized list of issues to address
+• Quick wins for immediate improvement
+• Long-term optimization strategies
+• Best practices implementation suggestions
+
+Please provide specific findings with component/table FQIDs and actionable recommendations."""
+            )
+        ]
+    except Exception as e:
+        return [
+            Message(
+                role="user",
+                content=f"Error generating project health check prompt: {str(e)}"
+            )
+        ]
+
+
+@with_session_state()
+async def data_quality_assessment(ctx: Context) -> List[Message]:
+    """
+    Generate a comprehensive data quality assessment for all project data.
+    
+    One-click analysis of data quality across all buckets and tables.
+    """
+    try:
+        client = KeboolaClient.from_state(ctx.session.state)
+        storage_api_url = client.storage_client.raw_client.base_api_url
+        
+        return [
+            Message(
+                role="user",
+                content=f"""Conduct a comprehensive data quality assessment across all data in this Keboola project.
+
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
+
+**Data Quality Analysis:**
+
+## 1. Completeness Analysis
+• Identify tables with missing or null values
+• Calculate completeness percentages for key columns
+• Flag tables with significant data gaps
+• Analyze data volume trends and anomalies
+
+## 2. Consistency Checks
+• Check for data format inconsistencies
+• Identify duplicate records across tables
+• Analyze referential integrity between related tables
+• Flag inconsistent naming conventions
+
+## 3. Accuracy Assessment
+• Identify potential data accuracy issues
+• Check for outliers and anomalous values
+• Analyze data validation patterns
+• Review data transformation logic for accuracy
+
+## 4. Timeliness Evaluation
+• Assess data freshness across all tables
+• Identify stale or outdated data
+• Review data update frequencies
+• Flag tables with irregular update patterns
+
+## 5. Data Profiling Summary
+• Statistical overview of each table
+• Data type distribution and usage
+• Value distribution analysis
+• Schema evolution and changes
+
+## 6. Quality Scores & Recommendations
+• Overall quality score for each table
+• Prioritized list of data quality issues
+• Specific improvement recommendations
+• Data governance suggestions
+
+Please analyze the actual project data and provide specific findings with table FQIDs, metrics, and actionable recommendations."""
+            )
+        ]
+    except Exception as e:
+        return [
+            Message(
+                role="user",
+                content=f"Error generating data quality assessment prompt: {str(e)}"
+            )
+        ]
+
+
+@with_session_state()
+async def security_audit(ctx: Context) -> List[Message]:
+    """
+    Generate a security audit for the Keboola project.
+    
+    One-click security assessment covering permissions, access, and best practices.
+    """
+    try:
+        client = KeboolaClient.from_state(ctx.session.state)
+        storage_api_url = client.storage_client.raw_client.base_api_url
+        
+        return [
+            Message(
+                role="user",
+                content=f"""Perform a comprehensive security audit of this Keboola project to identify potential vulnerabilities and security best practice violations.
+
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
+
+**Security Audit Areas:**
+
+## 1. Access Control Review
+• Analyze bucket and table permissions
+• Identify overly permissive access settings
+• Review token usage and scopes
+• Check for unused or stale access credentials
+
+## 2. Data Privacy Assessment
+• Identify tables containing sensitive or PII data
+• Review data encryption and protection measures
+• Check for proper data masking in non-production environments
+• Analyze data retention and deletion policies
+
+## 3. Component Security
+• Review component configurations for security issues
+• Check for hardcoded credentials or sensitive information
+• Analyze external connection security
+• Verify secure communication protocols
+
+## 4. Compliance Check
+• Review adherence to data governance policies
+• Check for GDPR/data protection compliance
+• Analyze audit trail and logging capabilities
+• Verify backup and disaster recovery measures
+
+## 5. Network & Infrastructure Security
+• Review API access patterns and restrictions
+• Check for suspicious or anomalous access attempts
+• Analyze IP whitelisting and access controls
+• Review integration security with external systems
+
+## 6. Security Recommendations
+• Critical security issues requiring immediate attention
+• Medium-priority security improvements
+• Security best practices implementation
+• Compliance enhancement suggestions
+
+Please provide specific findings with component/bucket FQIDs and prioritized security recommendations."""
+            )
+        ]
+    except Exception as e:
+        return [
+            Message(
+                role="user",
+                content=f"Error generating security audit prompt: {str(e)}"
+            )
+        ]
+
+
+@with_session_state()
+async def performance_optimization_analysis(ctx: Context) -> List[Message]:
+    """
+    Generate a performance analysis and optimization recommendations.
+    
+    One-click performance audit identifying bottlenecks and optimization opportunities.
+    """
+    try:
+        client = KeboolaClient.from_state(ctx.session.state)
+        storage_api_url = client.storage_client.raw_client.base_api_url
+        
+        return [
+            Message(
+                role="user",
+                content=f"""Analyze the performance characteristics of this Keboola project and identify optimization opportunities.
+
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
+
+**Performance Analysis Areas:**
+
+## 1. Job Execution Performance
+• Identify slow-running transformations and extractions
+• Analyze job execution patterns and frequencies
+• Check for failed or frequently retried jobs
+• Review job queue efficiency and resource utilization
+
+## 2. SQL Query Optimization
+• Analyze transformation SQL for performance issues
+• Identify queries with potential optimization opportunities
+• Check for inefficient joins, subqueries, or aggregations
+• Review indexing strategies and table design
+
+## 3. Data Pipeline Efficiency
+• Analyze end-to-end pipeline execution times
+• Identify bottlenecks in data flow
+• Review parallel processing opportunities
+• Check for unnecessary data movement or duplication
+
+## 4. Storage Optimization
+• Analyze table sizes and growth patterns
+• Identify opportunities for data archiving or compression
+• Review partitioning and clustering strategies
+• Check for unused or redundant data storage
+
+## 5. Resource Utilization
+• Review compute resource allocation and usage
+• Analyze memory and processing requirements
+• Check for resource contention or conflicts
+• Identify cost-performance optimization opportunities
+
+## 6. Optimization Recommendations
+• High-impact performance improvements
+• Quick wins for immediate performance gains
+• Long-term optimization strategies
+• Resource allocation recommendations
+
+Please analyze actual project performance data and provide specific recommendations with component FQIDs and expected performance improvements."""
+            )
+        ]
+    except Exception as e:
+        return [
+            Message(
+                role="user",
+                content=f"Error generating performance optimization analysis prompt: {str(e)}"
+            )
+        ]
+
+
+@with_session_state()
+async def component_usage_summary(ctx: Context) -> List[Message]:
+    """
+    Generate a comprehensive summary of all components and their usage patterns.
+    
+    One-click overview of project components, configurations, and usage analytics.
+    """
+    try:
+        client = KeboolaClient.from_state(ctx.session.state)
+        storage_api_url = client.storage_client.raw_client.base_api_url
+        
+        return [
+            Message(
+                role="user",
+                content=f"""Generate a comprehensive summary of all components in this Keboola project, their configurations, and usage patterns.
+
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
+
+**Component Analysis:**
+
+## 1. Component Inventory
+• Complete list of all components by type (extractors, transformations, writers)
+• Component versions and update status
+• Configuration count per component
+• Active vs inactive component status
+
+## 2. Usage Analytics
+• Job execution frequency per component
+• Success/failure rates and reliability metrics
+• Resource consumption patterns
+• Peak usage times and scheduling analysis
+
+## 3. Configuration Analysis
+• Number of configurations per component
+• Configuration complexity and parameter usage
+• Shared vs component-specific configurations
+• Configuration change history and evolution
+
+## 4. Data Flow Mapping
+• Input and output relationships between components
+• Data dependencies and lineage
+• Critical path analysis in data pipelines
+• Component interdependency mapping
+
+## 5. Health & Status Overview
+• Component error rates and common issues
+• Performance metrics and execution times
+• Maintenance and update requirements
+• Deprecated or outdated component usage
+
+## 6. Optimization Opportunities
+• Underutilized or redundant components
+• Configuration consolidation opportunities
+• Component upgrade recommendations
+• Efficiency improvement suggestions
+
+Please provide specific details including component FQIDs, configuration IDs, and actionable insights for project optimization."""
+            )
+        ]
+    except Exception as e:
+        return [
+            Message(
+                role="user",
+                content=f"Error generating component usage summary prompt: {str(e)}"
+            )
+        ]
+
+
+@with_session_state()
+async def error_analysis_report(ctx: Context) -> List[Message]:
+    """
+    Generate an analysis of recent errors and failures across the project.
+    
+    One-click error analysis with troubleshooting recommendations.
+    """
+    try:
+        client = KeboolaClient.from_state(ctx.session.state)
+        storage_api_url = client.storage_client.raw_client.base_api_url
+        
+        return [
+            Message(
+                role="user",
+                content=f"""Analyze recent errors and failures across this Keboola project and provide troubleshooting recommendations.
+
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
+
+**Error Analysis:**
+
+## 1. Error Frequency & Patterns
+• Most common error types across all components
+• Error frequency trends over time
+• Components with highest failure rates
+• Recurring vs one-time error patterns
+
+## 2. Critical Errors
+• High-priority errors affecting data pipelines
+• Errors causing data quality issues
+• Security-related errors or warnings
+• Errors impacting business-critical processes
+
+## 3. Component-Specific Issues
+• Transformation errors and SQL issues
+• Extractor connection and authentication problems
+• Writer destination errors and data delivery failures
+• Orchestration and scheduling conflicts
+
+## 4. Root Cause Analysis
+• Infrastructure vs configuration-related errors
+• Data-related errors (missing files, schema changes)
+• Permission and access-related issues
+• External service dependency failures
+
+## 5. Impact Assessment
+• Business impact of each error category
+• Data pipeline disruption analysis
+• SLA and delivery timeline impacts
+• Downstream system effect analysis
+
+## 6. Resolution Recommendations
+• Immediate fixes for critical errors
+• Preventive measures for recurring issues
+• Configuration improvements to reduce errors
+• Monitoring and alerting enhancements
+
+Please analyze actual error logs and job histories to provide specific error instances with component FQIDs and detailed troubleshooting guidance."""
+            )
+        ]
+    except Exception as e:
+        return [
+            Message(
+                role="user",
+                content=f"Error generating error analysis report prompt: {str(e)}"
+            )
+        ]
+
+
+@with_session_state()
+async def documentation_generator(ctx: Context) -> List[Message]:
+    """
+    Generate comprehensive project documentation automatically.
+    
+    One-click documentation creation for the entire Keboola project.
+    """
+    try:
+        client = KeboolaClient.from_state(ctx.session.state)
+        storage_api_url = client.storage_client.raw_client.base_api_url
+        
+        return [
+            Message(
+                role="user",
+                content=f"""Generate comprehensive, professional documentation for this Keboola project that can be used for onboarding, maintenance, and knowledge sharing.
+
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
+
+**Documentation Structure:**
+
+## 1. Project Overview
+• Executive summary of project purpose and objectives
+• Key stakeholders and business owners
+• Project scope and data processing capabilities
+• Success metrics and KPIs
+
+## 2. Architecture Documentation
+• High-level system architecture diagram description
+• Data flow and pipeline overview
+• Component interaction and dependencies
+• Technical infrastructure and requirements
+
+## 3. Data Dictionary
+• Complete inventory of all buckets and tables with FQIDs
+• Column definitions and business meanings
+• Data types, constraints, and validation rules
+• Data lineage and source system mappings
+
+## 4. Component Documentation
+• Detailed description of each component and its purpose
+• Configuration parameters and their meanings
+• Input/output specifications
+• Business logic and transformation rules
+
+## 5. Operational Procedures
+• Data pipeline monitoring and maintenance procedures
+• Error handling and troubleshooting guides
+• Backup and disaster recovery processes
+• Change management and deployment procedures
+
+## 6. User Guides
+• End-user access and data consumption guides
+• Report and dashboard usage instructions
+• Data quality and validation procedures
+• FAQ and common troubleshooting scenarios
+
+## 7. Technical Reference
+• API endpoints and integration specifications
+• Security and access control documentation
+• Performance tuning and optimization guides
+• Development and testing procedures
+
+Please create detailed, professional documentation using actual project data including specific FQIDs, configurations, and real examples."""
+            )
+        ]
+    except Exception as e:
+        return [
+            Message(
+                role="user",
+                content=f"Error generating documentation prompt: {str(e)}"
             )
         ]
 
@@ -157,6 +653,8 @@ Please analyze the actual project data and provide specific, actionable descript
             )
         ]
 
+
+# Prompts with parameters (kept for specific use cases)
 
 @with_session_state()
 async def debug_transformation(ctx: Context, transformation_name: str) -> List[Message]:
