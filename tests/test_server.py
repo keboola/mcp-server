@@ -16,8 +16,6 @@ from keboola_mcp_server.server import (
     create_server,
 )
 from keboola_mcp_server.tools.components import (
-    GET_COMPONENT_CONFIGURATION_TOOL_NAME,
-    RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
 )
 from keboola_mcp_server.tools.workspace import WorkspaceManager
@@ -37,7 +35,7 @@ class TestServer:
             'find_component_id',
             'get_bucket_detail',
             'get_component',
-            GET_COMPONENT_CONFIGURATION_TOOL_NAME,
+            'get_component_configuration',
             'get_component_configuration_examples',
             'get_flow_detail',
             'get_job_detail',
@@ -46,7 +44,7 @@ class TestServer:
             'query_table',
             'retrieve_bucket_tables',
             'retrieve_buckets',
-            RETRIEVE_COMPONENTS_CONFIGURATIONS_TOOL_NAME,
+            'retrieve_components_configurations',
             'retrieve_flows',
             'retrieve_jobs',
             RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,

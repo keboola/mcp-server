@@ -1,0 +1,11 @@
+{
+    "storage": {
+      "output": {
+        "table_files": [
+          {
+            "source": "foo"
+          }
+        ]
+      }
+    }
+  }
