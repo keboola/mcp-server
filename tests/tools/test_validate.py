@@ -1,4 +1,5 @@
 import json
+import logging
 
 import jsonschema
 import pytest
@@ -77,18 +78,17 @@ def test_validate_storage_invalid(invalid_storage_path: str):
     assert 'This is a test message' in str(err)
 
 
-def test_validate_json_against_schema_invalid_schema():
+def test_validate_json_against_schema_invalid_schema(caplog):
     """
-    We expect logging the error and raising a SchemaError.
-    - only in case when the schema provided is invalid (not agent error)
+    We expect passing when the schema is invalid since it is not an Agent error.
+    However, we expect logging the error.
     """
     corrupted_schema = {'type': 'int', 'minimum': 5}
-    with pytest.raises(jsonschema.SchemaError) as exc_info:
+    with caplog.at_level(logging.ERROR):
         _validate._validate_json_against_schema(
             json_data={'foo': 1}, schema=corrupted_schema, initial_message='This is a test message'
         )
-    err = exc_info.value
-    assert f'schema: {corrupted_schema}' in err.message
+    assert f'schema: {corrupted_schema}' in caplog.text
 
 
 def test_recoverable_validation_error_str():
