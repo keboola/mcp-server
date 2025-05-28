@@ -4,7 +4,6 @@ from typing import List
 
 from fastmcp import Context
 from fastmcp.prompts import Message
-from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.mcp import with_session_state
@@ -24,10 +23,15 @@ async def analyze_project_structure(ctx: Context) -> List[Message]:
         return [
             Message(
                 role='user',
-                content="""Based on the components that are being used and the data available from all of the buckets in the project, give me a high-level understanding of what is going on inside of this project and the types of use cases that are being performed.
+                content="""Based on the components that are being used and the data available from all
+of the buckets in the project, give me a high-level understanding of what is going on inside
+of this project and the types of use cases that are being performed.
 
 **Analysis Requirements:**
-Highlight the key functionalities being implemented, emphasizing the project's capability to address specific problems or tasks. Explore the range of use cases the project is designed for, detailing examples of real-world scenarios it can handle. Be sure to also include the names of real example buckets, tables & configurations that are within the project.
+Highlight the key functionalities being implemented, emphasizing the project\'s
+capability to address specific problems or tasks. Explore the range of use cases the
+project is designed for, detailing examples of real-world scenarios it can handle. Be sure to also include
+the names of real example buckets, tables & configurations that are within the project.
 
 **Structure your output in the following format:**
 
@@ -79,7 +83,8 @@ async def project_health_check(ctx: Context) -> List[Message]:
         return [
             Message(
                 role='user',
-                content="""Perform a comprehensive health check of this Keboola project and identify any issues, risks, or optimization opportunities.
+                content="""Perform a comprehensive health check of this Keboola project and identify
+any issues, risks, or optimization opportunities.
 
 **Health Check Areas:**
 
@@ -184,7 +189,8 @@ async def data_quality_assessment(ctx: Context) -> List[Message]:
 • Specific improvement recommendations
 • Data governance suggestions
 
-Please analyze the actual project data and provide specific findings with table names, metrics, and actionable recommendations."""
+Please analyze the actual project data and provide specific findings with table names,
+metrics, and actionable recommendations."""
             )
         ]
     except Exception as e:
@@ -209,7 +215,8 @@ async def security_audit(ctx: Context) -> List[Message]:
         return [
             Message(
                 role='user',
-                content="""Perform a comprehensive security audit of this Keboola project to identify potential vulnerabilities and security best practice violations.
+                content="""Perform a comprehensive security audit of this Keboola project to
+identify potential vulnerabilities and security best practice violations.
 
 **Security Audit Areas:**
 
@@ -274,7 +281,8 @@ async def performance_optimization_analysis(ctx: Context) -> List[Message]:
         return [
             Message(
                 role='user',
-                content="""Analyze the performance characteristics of this Keboola project and identify optimization opportunities.
+                content="""Analyze the performance characteristics of this Keboola project and
+identify optimization opportunities.
 
 **Performance Analysis Areas:**
 
@@ -314,7 +322,8 @@ async def performance_optimization_analysis(ctx: Context) -> List[Message]:
 • Long-term optimization strategies
 • Resource allocation recommendations
 
-Please analyze actual project performance data and provide specific recommendations with component names and expected performance improvements."""
+Please analyze actual project performance data and provide specific
+recommendations with component names and expected performance improvements."""
             )
         ]
     except Exception as e:
@@ -339,7 +348,8 @@ async def component_usage_summary(ctx: Context) -> List[Message]:
         return [
             Message(
                 role='user',
-                content="""Generate a comprehensive summary of all components in this Keboola project, their configurations, and usage patterns.
+                content="""Generate a comprehensive summary of all components in this Keboola
+project, their configurations, and usage patterns.
 
 **Component Analysis:**
 
@@ -379,7 +389,8 @@ async def component_usage_summary(ctx: Context) -> List[Message]:
 • Component upgrade recommendations
 • Efficiency improvement suggestions
 
-Please provide specific details including component names, configuration IDs, and actionable insights for project optimization."""
+Please provide specific details including component names, configuration IDs, and
+actionable insights for project optimization."""
             )
         ]
     except Exception as e:
@@ -404,7 +415,8 @@ async def error_analysis_report(ctx: Context) -> List[Message]:
         return [
             Message(
                 role='user',
-                content="""Analyze recent errors and failures across this Keboola project and provide troubleshooting recommendations.
+                content="""Analyze recent errors and failures across this Keboola project and
+provide troubleshooting recommendations.
 
 **Error Analysis:**
 
@@ -444,7 +456,8 @@ async def error_analysis_report(ctx: Context) -> List[Message]:
 • Configuration improvements to reduce errors
 • Monitoring and alerting enhancements
 
-Please analyze actual error logs and job histories to provide specific error instances with component names and detailed troubleshooting guidance."""
+Please analyze actual error logs and job histories to provide specific error
+instances with component names and detailed troubleshooting guidance."""
             )
         ]
     except Exception as e:
@@ -469,7 +482,8 @@ async def documentation_generator(ctx: Context) -> List[Message]:
         return [
             Message(
                 role='user',
-                content="""Generate comprehensive, professional documentation for this Keboola project that can be used for onboarding, maintenance, and knowledge sharing.
+                content="""Generate comprehensive, professional documentation for this Keboola
+project that can be used for onboarding, maintenance, and knowledge sharing.
 
 **Documentation Structure:**
 
@@ -515,7 +529,8 @@ async def documentation_generator(ctx: Context) -> List[Message]:
 • Performance tuning and optimization guides
 • Development and testing procedures
 
-Please create detailed, professional documentation using actual project data including specific names, configurations, and real examples."""
+Please create detailed, professional documentation using actual project data
+including specific names, configurations, and real examples."""
             )
         ]
     except Exception as e:
@@ -561,7 +576,9 @@ async def generate_project_descriptions(
         return [
             Message(
                 role='user',
-                content=f"""Generate comprehensive, business-friendly descriptions for all tables and buckets in this Keboola project. {focus_instruction}
+                content=f"""Generate comprehensive, business-friendly descriptions for all tables and buckets
+in this Keboola project.
+{focus_instruction}
 
 **Requirements:**
 Create clear, informative descriptions that help users understand:
@@ -587,7 +604,11 @@ For each table, provide:
 • **Key Columns**: Most important fields and their meanings
 • **Data Quality**: Completeness, accuracy, and freshness indicators
 • **Relationships**: How it connects to other tables
-• **Business Value**: Why this data matters and how it's used{technical_section if focus_area in ['tables', 'all'] else ''}
+• **Business Value**: Why this data matters and how it's used{
+    technical_section if focus_area in ['tables', 'all'] else ''}
+
+
+
 
 ## Summary
 • Overall data architecture insights
@@ -793,4 +814,4 @@ Please help me:
 
 Please provide a comprehensive troubleshooting guide with specific actions I can take."""
         )
-    ] 
+    ]

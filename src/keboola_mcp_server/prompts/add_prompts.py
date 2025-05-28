@@ -28,7 +28,6 @@ def add_keboola_prompts(mcp: KeboolaMcpServer) -> None:
     )
 
     # ONE-CLICK PROMPTS (no required parameters)
-
     # Add project analysis prompt
     mcp.add_prompt(
         analyze_project_structure,
@@ -122,4 +121,4 @@ def add_keboola_prompts(mcp: KeboolaMcpServer) -> None:
         troubleshoot_component_error,
         name='troubleshoot-component-error',
         description='🔧 Generate a prompt to troubleshoot errors in Keboola components'
-    ) 
+    )

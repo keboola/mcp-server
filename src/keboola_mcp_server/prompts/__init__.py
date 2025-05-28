@@ -1,1 +1,1 @@
-"""Prompts module for the Keboola MCP server.""" 
+"""Prompts module for the Keboola MCP server."""
