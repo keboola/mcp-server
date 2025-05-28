@@ -100,7 +100,7 @@ def with_session_state() -> AnyFunction:
 
     This decorator dynamically inserts a session state object into the `Context` parameter of a tool function.
     The session state contains instances of `KeboolaClient` and `WorkspaceManager`. These are initialized using
-    the MCP server configuration, which is composed from the following parameter sources:
+    the MCP server configuration, which is composed of the following parameter sources:
 
     * Initial configuration obtained from CLI parameters when starting the server
     * Environment variables
@@ -149,9 +149,11 @@ def with_session_state() -> AnyFunction:
                 # This is here to allow mocking the context.session.state in tests.
                 config = ServerState.from_context(ctx).config
                 config = config.replace_by(os.environ)
+                accept_secrets_in_url = config.accept_secrets_in_url
+
                 if http_rq := _get_http_request():
                     config = config.replace_by(http_rq.headers)
-                    if config.accept_secrets_in_url:
+                    if accept_secrets_in_url:
                         config = config.replace_by(http_rq.query_params)
 
                 # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
