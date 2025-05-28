@@ -74,10 +74,10 @@ class ReducedComponent(BaseModel):
     def __init__(self, **data):
         super().__init__(**data)
         # Set capability flags based on component_flags
-        input_flags = ('genericDockerUI-tableInput', 'genericDockerUI-simpleTableInput')
+        table_input_mapping_flags = ('genericDockerUI-tableInput', 'genericDockerUI-simpleTableInput')
 
         self.is_row_based = 'genericDockerUI-rows' in self.component_flags
-        self.has_table_input_mapping = any(f in self.component_flags for f in input_flags)
+        self.has_table_input_mapping = any(f in self.component_flags for f in table_input_mapping_flags)
         self.has_table_output_mapping = 'genericDockerUI-tableOutput' in self.component_flags
         self.has_file_input_mapping = 'genericDockerUI-fileInput' in self.component_flags
         self.has_file_output_mapping = 'genericDockerUI-fileOutput' in self.component_flags
