@@ -86,13 +86,14 @@ def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -
     :returns: The validated storage configuration normalized to {"storage" : {...}}
     """
     schema = _load_schema(ConfigurationSchemaResourceName.STORAGE)
-    expected_input_data = {'storage': storage.get('storage', storage)}
+    # we expect the storage to be a dictionary of storage configurations with the "storage" key
+    normalized_storage_data = {'storage': storage.get('storage', storage)}
     _validate_json_against_schema(
-        json_data=expected_input_data,
+        json_data=normalized_storage_data,
         schema=schema,
         initial_message=initial_message,
     )
-    return expected_input_data
+    return normalized_storage_data
 
 
 def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
@@ -103,14 +104,12 @@ def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message:
     :initial_message: initial message to include in the error message
     :returns: The validated parameters configuration normalized to {"parameters" : {...}}
     """
-    expected_parameters = parameters.get('parameters', parameters)
-    assert isinstance(expected_parameters, dict)
     _validate_json_against_schema(
-        json_data=expected_parameters,
+        json_data=parameters,
         schema=schema,
         initial_message=initial_message,
     )
-    return {'parameters': expected_parameters}
+    return {'parameters': parameters.get('parameters', parameters)}
 
 
 def _validate_json_against_schema(

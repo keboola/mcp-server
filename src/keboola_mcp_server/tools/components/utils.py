@@ -299,77 +299,74 @@ ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
 def validate_storage_configuration(
     storage: Optional[JsonDict],
     initial_message: Optional[str] = None,
-) -> JsonDict:
+) -> Optional[JsonDict]:
     """Utility function to validate the storage configuration.
-    :param storage: The storage configuration to validate
+    :param storage: The storage configuration to validate received from the agent.
     :param initial_message: The initial message to include in the error message
-    :returns: The validated storage configuration normalized to {"storage" : {...}}
+    :returns: The validated storage configuration without the "storage" key only the configuration.
     """
-    normalized_storage = {'storage': (storage.get('storage', storage) if storage else storage)}
     if not storage:
         LOG.warning('No storage configuration provided, skipping validation.')
-        return normalized_storage
+        return storage
     initial_message = initial_message or ''
     initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
-    return validate_storage(normalized_storage, initial_message)
+    normalized_storage = validate_storage(storage, initial_message)
+    return cast(JsonDict, normalized_storage['storage'])
 
 
-async def validate_root_parameters(
+async def validate_root_parameters_configuration(
     client: KeboolaClient,
-    parameters: Optional[JsonDict],
+    parameters: JsonDict,
     component_id: str,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
     """Utility function to validate the root parameters configuration.
-    :param parameters: The parameters configuration to validate
-    :param schema: The schema to validate against
-    :param component_id: The ID of the component
-    :param initial_message: The initial message to include in the error message
-    :return: The validated parameters configuration normalized to {"parameters" : {...}}
+    :returns: The validated root parameters configuration without the "parameters" key only the configuration.
     """
-    normalized_parameters = {'parameters': (parameters.get('parameters', parameters) if parameters else parameters)}
-
+    initial_message = initial_message or ''
+    initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
     component = await _get_component(client=client, component_id=component_id)
-    if not component:
-        LOG.warning(f'No component provided for component {component_id}, skipping validation.')
-        return normalized_parameters
-    if parameters:
-        if component.configuration_schema:
-            initial_message = initial_message or ''
-            initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
-            return validate_parameters(normalized_parameters, component.configuration_schema, initial_message)
-        else:
-            LOG.warning(
-                f'No root config parameter schema provided for component {component.component_id}, skipping validation.'
-            )
-    return normalized_parameters
+    return _validate_parameters_configuration(parameters, component.configuration_schema, component_id, initial_message)
 
 
-async def validate_row_parameters(
+async def validate_row_parameters_configuration(
     client: KeboolaClient,
-    parameters: Optional[JsonDict],
+    parameters: JsonDict,
     component_id: str,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
     """Utility function to validate the row parameters configuration.
+    :returns: The validated row parameters configuration without the "parameters" key only the configuration.
+    """
+    initial_message = initial_message or ''
+    initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
+    component = await _get_component(client=client, component_id=component_id)
+    return _validate_parameters_configuration(
+        parameters, component.configuration_row_schema, component_id, initial_message
+    )
+
+
+def _validate_parameters_configuration(
+    parameters: JsonDict,
+    schema: Optional[JsonDict],
+    component_id: str,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """Utility function to validate the parameters configuration.
     :param parameters: The parameters configuration to validate
     :param schema: The schema to validate against
     :param component_id: The ID of the component
     :param initial_message: The initial message to include in the error message
-    :return: The validated parameters configuration normalized to {"parameters" : {...}}
+    :return: The validated parameters configuration without the "parameters" key only the configuration.
     """
-    normalized_parameters = {'parameters': (parameters.get('parameters', parameters) if parameters else parameters)}
-    component = await _get_component(client=client, component_id=component_id)
-    if not component:
-        LOG.warning(f'No component provided for component {component_id}, skipping validation.')
-        return normalized_parameters
-    if parameters:
-        if component.configuration_row_schema:
-            initial_message = initial_message or ''
-            initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component.component_id)
-            return validate_parameters(normalized_parameters, component.configuration_row_schema, initial_message)
-        else:
-            LOG.warning(
-                f'No row config parameter schema provided for component {component.component_id}, skipping validation.'
-            )
-    return normalized_parameters
+    if not schema:
+        LOG.warning(f'No schema provided for component {component_id}, skipping validation.')
+        return parameters
+
+    # we expect the parameters to be a dictionary of parameter configurations without the "parameters" key
+    expected_parameters = parameters.get('parameters', parameters)
+    assert isinstance(expected_parameters, dict)
+    normalized_parameters = validate_parameters(expected_parameters, schema, initial_message)
+    parameters = cast(JsonDict, normalized_parameters['parameters'])
+
+    return parameters
