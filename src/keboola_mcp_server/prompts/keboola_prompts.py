@@ -28,10 +28,6 @@ async def analyze_project_structure(ctx: Context) -> List[Message]:
                 role="user",
                 content=f"""Based on the components that are being used and the data available from all of the buckets in the project, give me a high-level understanding of what is going on inside of this project and the types of use cases that are being performed.
 
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
-
 **Analysis Requirements:**
 Highlight the key functionalities being implemented, emphasizing the project's capability to address specific problems or tasks. Explore the range of use cases the project is designed for, detailing examples of real-world scenarios it can handle. Be sure to also include the FQIDs of real example buckets, tables & configurations that are within the project.
 
@@ -87,10 +83,6 @@ async def project_health_check(ctx: Context) -> List[Message]:
             Message(
                 role="user",
                 content=f"""Perform a comprehensive health check of this Keboola project and identify any issues, risks, or optimization opportunities.
-
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
 
 **Health Check Areas:**
 
@@ -158,10 +150,6 @@ async def data_quality_assessment(ctx: Context) -> List[Message]:
                 role="user",
                 content=f"""Conduct a comprehensive data quality assessment across all data in this Keboola project.
 
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
-
 **Data Quality Analysis:**
 
 ## 1. Completeness Analysis
@@ -227,10 +215,6 @@ async def security_audit(ctx: Context) -> List[Message]:
             Message(
                 role="user",
                 content=f"""Perform a comprehensive security audit of this Keboola project to identify potential vulnerabilities and security best practice violations.
-
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
 
 **Security Audit Areas:**
 
@@ -298,10 +282,6 @@ async def performance_optimization_analysis(ctx: Context) -> List[Message]:
                 role="user",
                 content=f"""Analyze the performance characteristics of this Keboola project and identify optimization opportunities.
 
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
-
 **Performance Analysis Areas:**
 
 ## 1. Job Execution Performance
@@ -367,10 +347,6 @@ async def component_usage_summary(ctx: Context) -> List[Message]:
             Message(
                 role="user",
                 content=f"""Generate a comprehensive summary of all components in this Keboola project, their configurations, and usage patterns.
-
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
 
 **Component Analysis:**
 
@@ -438,10 +414,6 @@ async def error_analysis_report(ctx: Context) -> List[Message]:
                 role="user",
                 content=f"""Analyze recent errors and failures across this Keboola project and provide troubleshooting recommendations.
 
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
-
 **Error Analysis:**
 
 ## 1. Error Frequency & Patterns
@@ -507,10 +479,6 @@ async def documentation_generator(ctx: Context) -> List[Message]:
             Message(
                 role="user",
                 content=f"""Generate comprehensive, professional documentation for this Keboola project that can be used for onboarding, maintenance, and knowledge sharing.
-
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
 
 **Documentation Structure:**
 
@@ -605,12 +573,6 @@ async def generate_project_descriptions(
                 role="user",
                 content=f"""Generate comprehensive, business-friendly descriptions for all tables and buckets in this Keboola project. {focus_instruction}
 
-**Project Details:**
-- Storage API: {storage_api_url}
-- Request ID: {ctx.request_id}
-- Focus Area: {focus_area}
-- Include Technical Details: {include_technical_details}
-
 **Requirements:**
 Create clear, informative descriptions that help users understand:
 1. What data each bucket/table contains
@@ -679,8 +641,6 @@ Please help me:
 3. Suggest optimization strategies
 4. Recommend debugging approaches
 5. Provide best practices for transformation development
-
-The transformation is part of a Keboola project using Storage API: {storage_api_url}
 
 What specific information would you need to effectively debug this transformation?"""
             )
