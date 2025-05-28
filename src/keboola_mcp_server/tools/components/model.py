@@ -386,11 +386,12 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
     @classmethod
     def from_raw_config(cls, raw_config: dict[str, Any]) -> 'FlowConfigurationResponse':
         """Create a FlowConfigurationResponse object from raw API response."""
-        config_params = raw_config.get('configuration', {}).get('parameters', {})
 
-        # Parse phases and tasks
-        phases = [FlowPhase.model_validate(phase) for phase in config_params.get('phases', [])]
-        tasks = [FlowTask.model_validate(task) for task in config_params.get('tasks', [])]
+        config_data = raw_config.get('configuration', {})
+
+        # Parse phases and tasks directly from configuration
+        phases = [FlowPhase.model_validate(phase) for phase in config_data.get('phases', [])]
+        tasks = [FlowTask.model_validate(task) for task in config_data.get('tasks', [])]
 
         flow_config = FlowConfiguration(phases=phases, tasks=tasks)
 
@@ -409,8 +410,8 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
         )
 
 
-class FlowSummary(BaseModel):
-    """Lightweight flow summary for listing operations."""
+class ReducedFlow(BaseModel):
+    """Lightweight flow summary for listing operations - consistent with ReducedComponent naming."""
 
     id: str = Field(
         description='Configuration ID of the flow',
@@ -436,9 +437,10 @@ class FlowSummary(BaseModel):
     tasks_count: int = Field(description='Number of tasks in the flow')
 
     @classmethod
-    def from_raw_config(cls, raw_config: dict[str, Any]) -> 'FlowSummary':
-        """Create a FlowSummary object from raw API response."""
-        config_params = raw_config.get('configuration', {}).get('parameters', {})
+    def from_raw_config(cls, raw_config: dict[str, Any]) -> 'ReducedFlow':
+        """Create a ReducedFlow object from raw API response."""
+
+        config_data = raw_config.get('configuration', {})
 
         return cls(
             id=raw_config['id'],
@@ -448,6 +450,6 @@ class FlowSummary(BaseModel):
             version=raw_config.get('version', 1),
             is_disabled=raw_config.get('isDisabled', False),
             is_deleted=raw_config.get('isDeleted', False),
-            phases_count=len(config_params.get('phases', [])),
-            tasks_count=len(config_params.get('tasks', []))
+            phases_count=len(config_data.get('phases', [])),
+            tasks_count=len(config_data.get('tasks', []))
         )

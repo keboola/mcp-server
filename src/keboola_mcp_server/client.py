@@ -527,25 +527,26 @@ class AsyncStorageClient(KeboolaServiceClient):
         )
 
     async def create_flow_configuration(
-            self,
-            name: str,
-            description: str,
-            flow_parameters: dict[str, Any],
+        self,
+        name: str,
+        description: str,
+        flow_configuration: dict[str, Any],
     ) -> JsonDict:
         """
         Creates a new flow (orchestrator) configuration.
 
+        Note: Flow configurations are special - they store phases/tasks directly
+        under 'configuration', not under 'configuration.parameters' like other components.
+
         :param name: The name of the flow
         :param description: The description of the flow
-        :param flow_parameters: The flow parameters containing phases and tasks
+        :param flow_configuration: The flow configuration containing phases and tasks directly
         :return: The SAPI call response - created flow configuration or raise an error
         """
         data = {
             'name': name,
             'description': description,
-            'configuration': {
-                'parameters': flow_parameters
-            }
+            'configuration': flow_configuration
         }
         return await self.create_component_root_configuration(
             data=data,
@@ -553,30 +554,30 @@ class AsyncStorageClient(KeboolaServiceClient):
         )
 
     async def update_flow_configuration(
-            self,
-            config_id: str,
-            name: str,
-            description: str,
-            change_description: str,
-            flow_parameters: dict[str, Any],
+        self,
+        config_id: str,
+        name: str,
+        description: str,
+        change_description: str,
+        flow_configuration: dict[str, Any],
     ) -> JsonDict:
         """
         Updates an existing flow (orchestrator) configuration.
+
+        Note: Flow configurations store phases/tasks directly under 'configuration'.
 
         :param config_id: The ID of the flow configuration to update
         :param name: The updated name of the flow
         :param description: The updated description of the flow
         :param change_description: Description of the changes made
-        :param flow_parameters: The updated flow parameters containing phases and tasks
+        :param flow_configuration: The updated flow configuration containing phases and tasks directly
         :return: The SAPI call response - updated flow configuration or raise an error
         """
         data = {
             'name': name,
             'description': description,
             'changeDescription': change_description,
-            'configuration': {
-                'parameters': flow_parameters
-            }
+            'configuration': flow_configuration  # Direct assignment!
         }
         return await self.update_component_root_configuration(
             data=data,
