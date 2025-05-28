@@ -1,0 +1,16 @@
+{
+    "storage": {
+      "output": {
+        "tables": [
+          {
+            "destination": "out.c-main.data",
+            "source": "my_table",
+            "schema": [
+              { "name": "id", "data_type": { "base": { "type": "INTEGER" } } }
+            ],
+            "columns": ["id", "name"]
+          }
+        ]
+      }
+    }
+  }

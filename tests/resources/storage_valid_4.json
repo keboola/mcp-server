@@ -1,0 +1,32 @@
+{
+    "storage": {
+      "input": {
+        "tables": [
+          {
+            "source": "in.c-main.data",
+            "destination": "local_table",
+            "where_column": "id",
+            "where_values": ["1", "2"]
+          }
+        ]
+      },
+      "output": {
+        "tables": [
+          {
+            "source": "local_table",
+            "destination": "out.c-main.data",
+            "schema": [
+              {
+                "name": "id",
+                "data_type": {
+                  "base": {
+                    "type": "INTEGER"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+}
