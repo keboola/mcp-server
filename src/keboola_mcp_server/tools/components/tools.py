@@ -9,7 +9,6 @@ from pydantic import Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools._validate import validate_storage
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentConfigurationOutput,
@@ -26,6 +25,7 @@ from keboola_mcp_server.tools.components.utils import (
     _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
+    validate_storage_configuration,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 
@@ -514,18 +514,19 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    storage = validate_storage(storage) if storage else None
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.create_component_root_configuration(
-        component_id=component_id,
-        data={
-            'name': name,
-            'description': description,
-            'configuration': configuration_payload,
-        },
+    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
+    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+
+    new_raw_configuration = cast(
+        dict[str, Any],
+        await client.storage_client.create_component_root_configuration(
+            component_id=component_id,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': configuration_payload,
+            },
+        ),
     )
 
     new_configuration = ComponentRootConfiguration(
@@ -612,19 +613,20 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    storage = validate_storage(storage) if storage else None
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.create_component_row_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        data={
-            'name': name,
-            'description': description,
-            'configuration': configuration_payload,
-        },
+    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
+    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+
+    new_raw_configuration = cast(
+        dict[str, Any],
+        await client.storage_client.create_component_row_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            data={
+                'name': name,
+                'description': description,
+                'configuration': configuration_payload,
+            },
+        ),
     )
 
     new_configuration = ComponentRowConfiguration(
@@ -715,20 +717,21 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage = validate_storage(storage) if storage else None
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.update_component_root_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        data={
-            'name': name,
-            'description': description,
-            'changeDescription': change_description,
-            'configuration': configuration_payload,
-        },
+    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
+    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+
+    new_raw_configuration = cast(
+        dict[str, Any],
+        await client.storage_client.update_component_root_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            data={
+                'name': name,
+                'description': description,
+                'changeDescription': change_description,
+                'configuration': configuration_payload,
+            },
+        ),
     )
 
     new_configuration = ComponentRootConfiguration(
@@ -825,21 +828,22 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage = validate_storage(storage) if storage else None
-    configuration_payload = {'storage': storage, 'parameters': parameters}
-    # TODO validate parameters
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_configuration = await client.storage_client.update_component_row_configuration(
-        component_id=component_id,
-        config_id=configuration_id,
-        configuration_row_id=configuration_row_id,
-        data={
-            'name': name,
-            'description': description,
-            'changeDescription': change_description,
-            'configuration': configuration_payload,
-        },
+    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
+    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+
+    new_raw_configuration = cast(
+        dict[str, Any],
+        await client.storage_client.update_component_row_configuration(
+            component_id=component_id,
+            config_id=configuration_id,
+            configuration_row_id=configuration_row_id,
+            data={
+                'name': name,
+                'description': description,
+                'changeDescription': change_description,
+                'configuration': configuration_payload,
+            },
+        ),
     )
 
     new_configuration = ComponentRowConfiguration(
@@ -893,6 +897,8 @@ async def get_component_configuration_examples(
 
     root_examples = raw_component.get('rootConfigurationExamples') or []
     row_examples = raw_component.get('rowConfigurationExamples') or []
+    assert isinstance(root_examples, list)  # pylance check
+    assert isinstance(row_examples, list)  # pylance check
 
     markdown = f'# Configuration Examples for `{component_id}`\n\n'
 
