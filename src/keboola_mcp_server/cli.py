@@ -44,6 +44,11 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
     parser.add_argument('--host', default='127.0.0.1', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
+    parser.add_argument(
+        '--accept-secrets-in-url', action='store_true',
+        help='(NOT RECOMMENDED) Read Storage API token and other configuration parameters from the query part '
+             'of the MCP server URL. Please note that the URL query parameters are not secure '
+             'for sending sensitive information.')
 
     return parser.parse_args(args)
 
@@ -68,6 +73,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         storage_api_url=parsed_args.api_url,
         storage_token=parsed_args.storage_token,
         workspace_schema=parsed_args.workspace_schema,
+        accept_secrets_in_url=parsed_args.accept_secrets_in_url,
     )
 
     try:
