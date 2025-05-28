@@ -76,6 +76,7 @@ def test_validate_storage_invalid(invalid_storage_path: str):
         _validate.validate_storage(invalid_storage, initial_message='This is a test message')
     err = exc_info.value
     assert 'This is a test message' in str(err)
+    assert f'{json.dumps(invalid_storage, indent=2)}' in str(err)
 
 
 def test_validate_json_against_schema_invalid_schema(caplog):
