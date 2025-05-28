@@ -35,8 +35,11 @@ async def test_stdio_setup(
 
 
 @pytest.mark.asyncio
+# if use_headers: we pass headers else we pass query params in the url.
+@pytest.mark.parametrize('use_headers', [True, False])
 async def test_sse_setup(
     mocker,
+    use_headers: bool,
     run_server_remote: AsyncContextServerRemoteRunner,
     run_client: AsyncContextClientRunner,
     configs: list[ConfigDef],
@@ -44,7 +47,11 @@ async def test_sse_setup(
     workspace_schema: str,
     storage_api_url: str,
 ):
-    config = Config(storage_api_url=storage_api_url)
+    if use_headers:
+        config = Config(storage_api_url=storage_api_url)
+    else:
+        config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
+
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.mcp.os.environ', {})
 
@@ -52,8 +59,14 @@ async def test_sse_setup(
     component_config = configs[0]
 
     async with run_server_remote(server, 'sse') as url:
-        sse_url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
-        async with run_client('sse', sse_url, None) as client:
+        # test both cases: with headers and without headers using query params
+        if use_headers:
+            headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
+        else:
+            headers = None
+            url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
+
+        async with run_client('sse', url, headers) as client:
             await _assert_basic_setup(server, client)
             await _assert_get_component_details_tool_call(client, component_config)
 
@@ -71,8 +84,11 @@ async def test_http_setup(
     workspace_schema: str,
     storage_api_url: str,
 ):
+    if use_headers:
+        config = Config(storage_api_url=storage_api_url)
+    else:
+        config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
 
-    config = Config(storage_api_url=storage_api_url)
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.mcp.os.environ', {})
 
@@ -184,8 +200,8 @@ async def test_http_server_header_and_query_params_client(
     workspace_schema: str,
     storage_api_url: str,
 ):
+    config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
 
-    config = Config(storage_api_url=storage_api_url)
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.mcp.os.environ', {})
 
