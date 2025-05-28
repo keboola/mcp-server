@@ -1,27 +1,37 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
+import json
 import logging
+from importlib import resources
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.model import FlowConfigurationResponse, FlowPhase, FlowSummary, FlowTask
 
 LOG = logging.getLogger(__name__)
 
+RESOURCES = 'keboola_mcp_server.resources'
+FLOW_SCHEMA_RESOURCE = 'flow_schema.json'
+
+
+def _load_schema() -> JsonDict:
+    with resources.open_text(RESOURCES, FLOW_SCHEMA_RESOURCE, encoding='utf-8') as f:
+        return json.load(f)
+
+
+def get_schema_as_markdown() -> str:
+    schema = _load_schema()
+    return f'```json\n{json.dumps(schema, indent=2)}\n```'
+
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    flow_tools = [
-        create_flow,
-        retrieve_flows,
-        update_flow,
-        get_flow_detail,
-    ]
+    flow_tools = [create_flow, retrieve_flows, update_flow, get_flow_detail, get_flow_schema]
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -43,21 +53,19 @@ async def create_flow(
 
     # Process and validate flow structure using Pydantic models
     processed_phases = _ensure_phase_ids(phases)  # Returns List[FlowPhase]
-    processed_tasks = _ensure_task_ids(tasks)     # Returns List[FlowTask]
+    processed_tasks = _ensure_task_ids(tasks)  # Returns List[FlowTask]
     _validate_flow_structure(processed_phases, processed_tasks)
 
     flow_parameters = {
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
-        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks]
+        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
 
     client = KeboolaClient.from_state(ctx.session.state)
     LOG.info(f'Creating new flow: {name}')
 
     new_raw_configuration = await client.storage_client.create_flow_configuration(
-        name=name,
-        description=description,
-        flow_parameters=flow_parameters
+        name=name, description=description, flow_parameters=flow_parameters
     )
 
     flow_config = FlowConfigurationResponse.from_raw_config(new_raw_configuration)
@@ -85,7 +93,7 @@ async def update_flow(
     # Convert Pydantic models back to dicts for API call
     flow_parameters = {
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
-        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks]
+        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -96,7 +104,7 @@ async def update_flow(
         name=name,
         description=description,
         change_description=change_description,
-        flow_parameters=flow_parameters
+        flow_parameters=flow_parameters,
     )
 
     updated_flow_config = FlowConfigurationResponse.from_raw_config(updated_raw_configuration)
@@ -109,8 +117,7 @@ async def update_flow(
 async def retrieve_flows(
     ctx: Context,
     flow_ids: Annotated[
-        Optional[List[str]],
-        Field(description='Optional list of specific flow configuration IDs')
+        Optional[List[str]], Field(description='Optional list of specific flow configuration IDs')
     ] = None,
 ) -> Annotated[List[FlowSummary], Field(description='List of flow configurations')]:
     """Retrieves flow configurations from the project."""
@@ -137,8 +144,8 @@ async def retrieve_flows(
 @tool_errors()
 @with_session_state()
 async def get_flow_detail(
-        ctx: Context,
-        configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve')],
+    ctx: Context,
+    configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve')],
 ) -> Annotated[FlowConfigurationResponse, Field(description='Detailed flow configuration')]:
     """Gets detailed information about a specific flow configuration."""
 
@@ -150,6 +157,15 @@ async def get_flow_detail(
 
     LOG.info(f'Retrieved flow details for configuration: {configuration_id}')
     return flow
+
+
+@tool_errors()
+@with_session_state()
+async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow')]:
+    """Gets the schema for Flow configurations. Should be called prior to calling 'create_flow'"""
+
+    LOG.info('Returning flow configuration schema')
+    return get_schema_as_markdown()
 
 
 def _ensure_phase_ids(phases: List[Dict[str, Any]]) -> List[FlowPhase]:
