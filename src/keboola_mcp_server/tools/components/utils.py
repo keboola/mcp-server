@@ -302,6 +302,8 @@ def validate_storage_configuration(
 ) -> JsonDict:
     """Utility function to validate the storage configuration.
     :param storage: The storage configuration to validate
+    :param initial_message: The initial message to include in the error message
+    :returns: The validated storage configuration normalized to {"storage" : {...}}
     """
     normalized_storage = {'storage': (storage.get('storage', storage) if storage else storage)}
     if not storage:

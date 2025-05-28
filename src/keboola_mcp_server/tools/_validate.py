@@ -6,7 +6,7 @@ import json
 import logging
 from enum import Enum
 from importlib import resources
-from typing import Any, Optional
+from typing import Optional
 
 import jsonschema
 
@@ -15,22 +15,11 @@ from keboola_mcp_server.client import JsonDict
 LOG = logging.getLogger(__name__)
 
 
-RESOURCES_PATH = 'keboola_mcp_server.resources'
+RESOURCES = 'keboola_mcp_server.resources'
 
 
 class ConfigurationSchemaResourceName(str, Enum):
     STORAGE = 'storage-schema.json'
-
-
-STORAGE_VALIDATION_INITIAL_MESSAGE = 'The provided storage configuration input does not follow the storage schema.\n'
-ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
-    'The provided Root parameters configuration input does not follow the Root parameter json schema for component '
-    'id: {component_id}.\n'
-)
-ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
-    'The provided Row parameters configuration input does not follow the Row parameter json schema for component '
-    'id: {component_id}.\n'
-)
 
 
 class RecoverableValidationError(jsonschema.ValidationError):
@@ -78,7 +67,7 @@ class RecoverableValidationError(jsonschema.ValidationError):
 
             Invalid input data:
             {
-            "storage": {...}
+                "storage": {...}
             }
         """
         str_repr = f'{super().__str__()}\n'
@@ -91,17 +80,19 @@ class RecoverableValidationError(jsonschema.ValidationError):
 
 
 def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
-    """
-    Validate the storage configuration using jsonschema.
+    """Validate the storage configuration using jsonschema.
+    :param storage: The storage configuration to validate
+    :param initial_message: The initial message to include in the error message
+    :returns: The validated storage configuration normalized to {"storage" : {...}}
     """
     schema = _load_schema(ConfigurationSchemaResourceName.STORAGE)
     expected_input_data = {'storage': storage.get('storage', storage)}
     _validate_json_against_schema(
         json_data=expected_input_data,
         schema=schema,
-        initial_message=initial_message or STORAGE_VALIDATION_INITIAL_MESSAGE,
+        initial_message=initial_message,
     )
-    return storage
+    return expected_input_data
 
 
 def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
@@ -123,36 +114,25 @@ def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message:
 
 
 def _validate_json_against_schema(
-    json_data: JsonDict, schema: dict[str, Any], initial_message: Optional[str] = None
-) -> bool:
+    json_data: JsonDict, schema: JsonDict, initial_message: Optional[str] = None
+):
     """Validate JSON data against the provided schema."""
     try:
         jsonschema.validate(instance=json_data, schema=schema)
-        return True
     except jsonschema.ValidationError as e:
         raise RecoverableValidationError.create_from_values(e, invalid_json=json_data, initial_message=initial_message)
     except jsonschema.SchemaError as e:
-        err_msg = (
-            f'The validation schema is not valid, skipping the validation: {e} \n'
+        LOG.exception(
+            f'The validation schema is not valid: {e}\n'
             f'initial_message: {initial_message}\n'
             f'schema: {schema}\n'
             f'json_data: {json_data}'
         )
-        LOG.error(f'{err_msg}')
-        # this is not an Agent error, the schema is not valid, we do not know how to validate
-        # the provided json, we will return True and expect the json is correct.
-        return True
-    except Exception as e:
-        raise e  # unsupported error
+        # this is not an Agent error, the schema is not valid and we are unable to validate the json
+        # hence we continue with as if it was valid
+        return
 
 
-def _load_schema(json_schema_name: ConfigurationSchemaResourceName) -> dict[str, Any]:
-    try:
-        with resources.files(RESOURCES_PATH).joinpath(json_schema_name.value).open('r', encoding='utf-8') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        LOG.exception(f'Schema {json_schema_name.value} not found in the package resources.')
-        raise FileNotFoundError(f'Schema {json_schema_name.value} not found in the package resources.')
-    except json.JSONDecodeError as e:
-        LOG.exception(f'Schema {json_schema_name.value} is not valid json: {e}')
-        raise e  # in this case it is not Agent error, the schema is not valid json
+def _load_schema(json_schema_name: ConfigurationSchemaResourceName) -> JsonDict:
+    with resources.open_text(RESOURCES, json_schema_name.value, encoding='utf-8') as f:
+        return json.load(f)

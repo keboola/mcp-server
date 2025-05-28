@@ -1,0 +1,20 @@
+{
+    "storage": {
+      "input": {
+        "tables": [
+          {
+            "source": "in.c-main.data",
+            "destination": "local_table"
+          }
+        ]
+      },
+      "output": {
+        "tables": [
+          {
+            "source": "local_table",
+            "destination": "out.c-main.data"
+          }
+        ]
+      }
+    }
+  }

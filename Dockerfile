@@ -18,11 +18,12 @@ RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-install-
 # Installing separately from its dependencies allows optimal layer caching
 ADD src /app/src
 RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv     uv pip install ddtrace~=3.0
 
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
- 
+
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 
 # Place executables in the environment at the front of the path
