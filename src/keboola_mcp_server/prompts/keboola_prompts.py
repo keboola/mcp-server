@@ -4,6 +4,7 @@ from typing import List
 
 from fastmcp import Context
 from fastmcp.prompts import Message
+from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.mcp import with_session_state
@@ -13,33 +14,53 @@ from keboola_mcp_server.tools.workspace import WorkspaceManager
 @with_session_state()
 async def analyze_project_structure(ctx: Context) -> List[Message]:
     """
-    Generate a prompt to analyze the overall structure of a Keboola project.
+    Generate a comprehensive analysis prompt for a Keboola project's structure, components, and use cases.
     
-    This prompt helps users understand their project's components, data flow,
-    and overall architecture by providing a comprehensive analysis request.
+    This prompt analyzes the project's components, data flow, buckets, tables, and configurations
+    to provide insights into the project's capabilities and real-world applications.
     """
     try:
         client = KeboolaClient.from_state(ctx.session.state)
-        
-        # Get the Storage API URL from the client
         storage_api_url = client.storage_client.raw_client.base_api_url
-        project_info = f"Keboola Project Analysis for project using Storage API: {storage_api_url}"
         
         return [
             Message(
                 role="user",
-                content=f"""Please analyze the structure and components of this Keboola project:
+                content=f"""Based on the components that are being used and the data available from all of the buckets in the project, give me a high-level understanding of what is going on inside of this project and the types of use cases that are being performed.
 
-{project_info}
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
 
-I would like you to:
-1. Examine the data pipeline architecture
-2. Identify key components and their relationships
-3. Suggest potential optimizations or improvements
-4. Highlight any potential issues or bottlenecks
-5. Provide recommendations for best practices
+**Analysis Requirements:**
+Highlight the key functionalities being implemented, emphasizing the project's capability to address specific problems or tasks. Explore the range of use cases the project is designed for, detailing examples of real-world scenarios it can handle. Be sure to also include the FQIDs of real example buckets, tables & configurations that are within the project.
 
-Please provide a comprehensive analysis with actionable insights."""
+**Structure your output in the following format:**
+
+## High-level Summary
+• Bullet-point summary of the activities and use cases being performed
+
+## Data Sources & Integrations
+• List all data sources and external integrations
+• Include specific extractor components and their configurations
+• Mention connection types and data refresh patterns
+
+## Data Processing & Transformation
+• Detail transformation workflows and SQL logic
+• Highlight data cleaning, enrichment, and aggregation processes
+• Include specific transformation component FQIDs and examples
+
+## Data Storage & Management
+• Describe bucket organization and table structures
+• Include real bucket and table FQIDs from the project
+• Explain data retention and archival strategies
+
+## Use Cases
+• Identify specific business use cases and scenarios
+• Provide real-world examples the project can handle
+• Connect technical capabilities to business outcomes
+
+Please provide a comprehensive analysis with specific examples and FQIDs from the actual project data."""
             )
         ]
     except Exception as e:
@@ -47,6 +68,92 @@ Please provide a comprehensive analysis with actionable insights."""
             Message(
                 role="user",
                 content=f"Error generating project analysis prompt: {str(e)}"
+            )
+        ]
+
+
+@with_session_state()
+async def generate_project_descriptions(
+    ctx: Context,
+    focus_area: str = Field(default="all", description="Focus area: 'buckets', 'tables', or 'all'"),
+    include_technical_details: bool = Field(default=True, description="Include technical metadata and schemas")
+) -> List[Message]:
+    """
+    Generate comprehensive descriptions for all tables and buckets in a Keboola project.
+    
+    Args:
+        focus_area: Whether to focus on 'buckets', 'tables', or 'all' components
+        include_technical_details: Whether to include technical metadata and schema information
+    """
+    try:
+        client = KeboolaClient.from_state(ctx.session.state)
+        storage_api_url = client.storage_client.raw_client.base_api_url
+        
+        technical_section = ""
+        if include_technical_details:
+            technical_section = """
+## Technical Details (for each item)
+• Schema information and column definitions
+• Data types and constraints
+• Row counts and data volume metrics
+• Last update timestamps and refresh patterns"""
+
+        focus_instruction = {
+            "buckets": "Focus specifically on bucket-level descriptions and organization.",
+            "tables": "Focus specifically on table-level descriptions and data structures.", 
+            "all": "Provide comprehensive descriptions for both buckets and tables."
+        }.get(focus_area, "Provide comprehensive descriptions for both buckets and tables.")
+        
+        return [
+            Message(
+                role="user",
+                content=f"""Generate comprehensive, business-friendly descriptions for all tables and buckets in this Keboola project. {focus_instruction}
+
+**Project Details:**
+- Storage API: {storage_api_url}
+- Request ID: {ctx.request_id}
+- Focus Area: {focus_area}
+- Include Technical Details: {include_technical_details}
+
+**Requirements:**
+Create clear, informative descriptions that help users understand:
+1. What data each bucket/table contains
+2. The business purpose and use cases
+3. Data lineage and relationships
+4. Quality and completeness indicators
+
+**Structure your output as follows:**
+
+## Bucket Descriptions
+For each bucket, provide:
+• **Bucket Name & FQID**: [bucket.name]
+• **Purpose**: Business purpose and data category
+• **Contents**: Types of tables and data contained
+• **Use Cases**: How this data is typically used
+• **Data Sources**: Where the data originates from{technical_section if focus_area in ['buckets', 'all'] else ''}
+
+## Table Descriptions  
+For each table, provide:
+• **Table Name & FQID**: [bucket.table]
+• **Description**: Clear business description of the data
+• **Key Columns**: Most important fields and their meanings
+• **Data Quality**: Completeness, accuracy, and freshness indicators
+• **Relationships**: How it connects to other tables
+• **Business Value**: Why this data matters and how it's used{technical_section if focus_area in ['tables', 'all'] else ''}
+
+## Summary
+• Overall data architecture insights
+• Recommendations for improving descriptions
+• Suggestions for better data organization
+
+Please analyze the actual project data and provide specific, actionable descriptions for each component."""
+            )
+        ]
+    except Exception as e:
+        return [
+            Message(
+                role="user",
+                content=f"Error generating project descriptions prompt: {str(e)}"
             )
         ]
 
@@ -61,8 +168,6 @@ async def debug_transformation(ctx: Context, transformation_name: str) -> List[M
     """
     try:
         client = KeboolaClient.from_state(ctx.session.state)
-        
-        # Get the Storage API URL from the client
         storage_api_url = client.storage_client.raw_client.base_api_url
         
         return [

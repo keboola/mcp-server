@@ -16,6 +16,7 @@ def add_keboola_prompts(mcp: KeboolaMcpServer) -> None:
         analyze_project_structure,
         create_data_pipeline_plan,
         debug_transformation,
+        generate_project_descriptions,
         optimize_sql_query,
         troubleshoot_component_error,
     )
@@ -24,7 +25,14 @@ def add_keboola_prompts(mcp: KeboolaMcpServer) -> None:
     mcp.add_prompt(
         analyze_project_structure,
         name="analyze-project-structure",
-        description="Generate a comprehensive analysis prompt for a Keboola project's structure and components"
+        description="Generate a comprehensive analysis prompt for a Keboola project's structure, components, and use cases"
+    )
+    
+    # Add project descriptions prompt
+    mcp.add_prompt(
+        generate_project_descriptions,
+        name="generate-project-descriptions",
+        description="Generate comprehensive, business-friendly descriptions for all tables and buckets in a Keboola project"
     )
     
     # Add transformation debugging prompt
