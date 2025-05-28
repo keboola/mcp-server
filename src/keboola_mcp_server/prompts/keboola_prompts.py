@@ -1,6 +1,6 @@
 """Keboola-specific prompts for the MCP server."""
 
-from typing import List, Optional
+from typing import List
 
 from fastmcp import Context
 from fastmcp.prompts import Message
@@ -8,25 +8,23 @@ from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
 @with_session_state()
 async def analyze_project_structure(ctx: Context) -> List[Message]:
     """
-    Generate a comprehensive analysis prompt for a Keboola project's structure, components, and use cases.
-    
-    This prompt analyzes the project's components, data flow, buckets, tables, and configurations
-    to provide insights into the project's capabilities and real-world applications.
+    Generate a comprehensive analysis prompt for a Keboola project's structure.
+
+    This prompt analyzes the project's components, data flow, buckets, tables,
+    and configurations to provide insights into capabilities and applications.
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
-                content=f"""Based on the components that are being used and the data available from all of the buckets in the project, give me a high-level understanding of what is going on inside of this project and the types of use cases that are being performed.
+                role='user',
+                content="""Based on the components that are being used and the data available from all of the buckets in the project, give me a high-level understanding of what is going on inside of this project and the types of use cases that are being performed.
 
 **Analysis Requirements:**
 Highlight the key functionalities being implemented, emphasizing the project's capability to address specific problems or tasks. Explore the range of use cases the project is designed for, detailing examples of real-world scenarios it can handle. Be sure to also include the FQIDs of real example buckets, tables & configurations that are within the project.
@@ -62,8 +60,8 @@ Please provide a comprehensive analysis with specific examples and FQIDs from th
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating project analysis prompt: {str(e)}"
+                role='user',
+                content=f'Error generating project analysis prompt: {str(e)}'
             )
         ]
 
@@ -72,17 +70,16 @@ Please provide a comprehensive analysis with specific examples and FQIDs from th
 async def project_health_check(ctx: Context) -> List[Message]:
     """
     Generate a comprehensive health check analysis for the entire Keboola project.
-    
+
     This one-click prompt analyzes project health, identifies issues, and provides recommendations.
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
-                content=f"""Perform a comprehensive health check of this Keboola project and identify any issues, risks, or optimization opportunities.
+                role='user',
+                content="""Perform a comprehensive health check of this Keboola project and identify any issues, risks, or optimization opportunities.
 
 **Health Check Areas:**
 
@@ -128,8 +125,8 @@ Please provide specific findings with component/table FQIDs and actionable recom
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating project health check prompt: {str(e)}"
+                role='user',
+                content=f'Error generating project health check prompt: {str(e)}'
             )
         ]
 
@@ -138,17 +135,16 @@ Please provide specific findings with component/table FQIDs and actionable recom
 async def data_quality_assessment(ctx: Context) -> List[Message]:
     """
     Generate a comprehensive data quality assessment for all project data.
-    
+
     One-click analysis of data quality across all buckets and tables.
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
-                content=f"""Conduct a comprehensive data quality assessment across all data in this Keboola project.
+                role='user',
+                content="""Conduct a comprehensive data quality assessment across all data in this Keboola project.
 
 **Data Quality Analysis:**
 
@@ -194,8 +190,8 @@ Please analyze the actual project data and provide specific findings with table 
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating data quality assessment prompt: {str(e)}"
+                role='user',
+                content=f'Error generating data quality assessment prompt: {str(e)}'
             )
         ]
 
@@ -204,17 +200,16 @@ Please analyze the actual project data and provide specific findings with table 
 async def security_audit(ctx: Context) -> List[Message]:
     """
     Generate a security audit for the Keboola project.
-    
+
     One-click security assessment covering permissions, access, and best practices.
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
-                content=f"""Perform a comprehensive security audit of this Keboola project to identify potential vulnerabilities and security best practice violations.
+                role='user',
+                content="""Perform a comprehensive security audit of this Keboola project to identify potential vulnerabilities and security best practice violations.
 
 **Security Audit Areas:**
 
@@ -260,8 +255,8 @@ Please provide specific findings with component/bucket FQIDs and prioritized sec
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating security audit prompt: {str(e)}"
+                role='user',
+                content=f'Error generating security audit prompt: {str(e)}'
             )
         ]
 
@@ -270,17 +265,16 @@ Please provide specific findings with component/bucket FQIDs and prioritized sec
 async def performance_optimization_analysis(ctx: Context) -> List[Message]:
     """
     Generate a performance analysis and optimization recommendations.
-    
+
     One-click performance audit identifying bottlenecks and optimization opportunities.
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
-                content=f"""Analyze the performance characteristics of this Keboola project and identify optimization opportunities.
+                role='user',
+                content="""Analyze the performance characteristics of this Keboola project and identify optimization opportunities.
 
 **Performance Analysis Areas:**
 
@@ -326,8 +320,8 @@ Please analyze actual project performance data and provide specific recommendati
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating performance optimization analysis prompt: {str(e)}"
+                role='user',
+                content=f'Error generating performance optimization analysis prompt: {str(e)}'
             )
         ]
 
@@ -336,17 +330,16 @@ Please analyze actual project performance data and provide specific recommendati
 async def component_usage_summary(ctx: Context) -> List[Message]:
     """
     Generate a comprehensive summary of all components and their usage patterns.
-    
+
     One-click overview of project components, configurations, and usage analytics.
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
-                content=f"""Generate a comprehensive summary of all components in this Keboola project, their configurations, and usage patterns.
+                role='user',
+                content="""Generate a comprehensive summary of all components in this Keboola project, their configurations, and usage patterns.
 
 **Component Analysis:**
 
@@ -392,8 +385,8 @@ Please provide specific details including component FQIDs, configuration IDs, an
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating component usage summary prompt: {str(e)}"
+                role='user',
+                content=f'Error generating component usage summary prompt: {str(e)}'
             )
         ]
 
@@ -402,17 +395,16 @@ Please provide specific details including component FQIDs, configuration IDs, an
 async def error_analysis_report(ctx: Context) -> List[Message]:
     """
     Generate an analysis of recent errors and failures across the project.
-    
+
     One-click error analysis with troubleshooting recommendations.
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
-                content=f"""Analyze recent errors and failures across this Keboola project and provide troubleshooting recommendations.
+                role='user',
+                content="""Analyze recent errors and failures across this Keboola project and provide troubleshooting recommendations.
 
 **Error Analysis:**
 
@@ -458,8 +450,8 @@ Please analyze actual error logs and job histories to provide specific error ins
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating error analysis report prompt: {str(e)}"
+                role='user',
+                content=f'Error generating error analysis report prompt: {str(e)}'
             )
         ]
 
@@ -468,17 +460,16 @@ Please analyze actual error logs and job histories to provide specific error ins
 async def documentation_generator(ctx: Context) -> List[Message]:
     """
     Generate comprehensive project documentation automatically.
-    
+
     One-click documentation creation for the entire Keboola project.
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
-                content=f"""Generate comprehensive, professional documentation for this Keboola project that can be used for onboarding, maintenance, and knowledge sharing.
+                role='user',
+                content="""Generate comprehensive, professional documentation for this Keboola project that can be used for onboarding, maintenance, and knowledge sharing.
 
 **Documentation Structure:**
 
@@ -530,8 +521,8 @@ Please create detailed, professional documentation using actual project data inc
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating documentation prompt: {str(e)}"
+                role='user',
+                content=f'Error generating documentation prompt: {str(e)}'
             )
         ]
 
@@ -539,21 +530,20 @@ Please create detailed, professional documentation using actual project data inc
 @with_session_state()
 async def generate_project_descriptions(
     ctx: Context,
-    focus_area: str = Field(default="all", description="Focus area: 'buckets', 'tables', or 'all'"),
-    include_technical_details: bool = Field(default=True, description="Include technical metadata and schemas")
+    focus_area: str = Field(default='all', description="Focus area: 'buckets', 'tables', or 'all'"),
+    include_technical_details: bool = Field(default=True, description='Include technical metadata and schemas')
 ) -> List[Message]:
     """
     Generate comprehensive descriptions for all tables and buckets in a Keboola project.
-    
+
     Args:
         focus_area: Whether to focus on 'buckets', 'tables', or 'all' components
         include_technical_details: Whether to include technical metadata and schema information
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
-        technical_section = ""
+        KeboolaClient.from_state(ctx.session.state)
+
+        technical_section = ''
         if include_technical_details:
             technical_section = """
 ## Technical Details (for each item)
@@ -563,14 +553,14 @@ async def generate_project_descriptions(
 • Last update timestamps and refresh patterns"""
 
         focus_instruction = {
-            "buckets": "Focus specifically on bucket-level descriptions and organization.",
-            "tables": "Focus specifically on table-level descriptions and data structures.", 
-            "all": "Provide comprehensive descriptions for both buckets and tables."
-        }.get(focus_area, "Provide comprehensive descriptions for both buckets and tables.")
-        
+            'buckets': 'Focus specifically on bucket-level descriptions and organization.',
+            'tables': 'Focus specifically on table-level descriptions and data structures.',
+            'all': 'Provide comprehensive descriptions for both buckets and tables.'
+        }.get(focus_area, 'Provide comprehensive descriptions for both buckets and tables.')
+
         return [
             Message(
-                role="user",
+                role='user',
                 content=f"""Generate comprehensive, business-friendly descriptions for all tables and buckets in this Keboola project. {focus_instruction}
 
 **Requirements:**
@@ -590,7 +580,7 @@ For each bucket, provide:
 • **Use Cases**: How this data is typically used
 • **Data Sources**: Where the data originates from{technical_section if focus_area in ['buckets', 'all'] else ''}
 
-## Table Descriptions  
+## Table Descriptions
 For each table, provide:
 • **Table Name & FQID**: [bucket.table]
 • **Description**: Clear business description of the data
@@ -610,8 +600,8 @@ Please analyze the actual project data and provide specific, actionable descript
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating project descriptions prompt: {str(e)}"
+                role='user',
+                content=f'Error generating project descriptions prompt: {str(e)}'
             )
         ]
 
@@ -622,17 +612,16 @@ Please analyze the actual project data and provide specific, actionable descript
 async def debug_transformation(ctx: Context, transformation_name: str) -> List[Message]:
     """
     Generate a prompt to help debug a specific transformation.
-    
+
     Args:
         transformation_name: Name of the transformation to debug
     """
     try:
-        client = KeboolaClient.from_state(ctx.session.state)
-        storage_api_url = client.storage_client.raw_client.base_api_url
-        
+        KeboolaClient.from_state(ctx.session.state)
+
         return [
             Message(
-                role="user",
+                role='user',
                 content=f"""I need help debugging a Keboola transformation called "{transformation_name}".
 
 Please help me:
@@ -648,30 +637,30 @@ What specific information would you need to effectively debug this transformatio
     except Exception as e:
         return [
             Message(
-                role="user",
-                content=f"Error generating transformation debug prompt: {str(e)}"
+                role='user',
+                content=f'Error generating transformation debug prompt: {str(e)}'
             )
         ]
 
 
 async def create_data_pipeline_plan(
-    source_description: str, 
-    target_description: str, 
-    requirements: str = ""
+    source_description: str,
+    target_description: str,
+    requirements: str = ''
 ) -> List[Message]:
     """
     Generate a prompt to create a data pipeline plan.
-    
+
     Args:
         source_description: Description of the data source
         target_description: Description of the target/destination
         requirements: Additional requirements or constraints
     """
-    requirements_text = f"\n\nAdditional requirements:\n{requirements}" if requirements else ""
-    
+    requirements_text = f'\n\nAdditional requirements:\n{requirements}' if requirements else ''
+
     return [
         Message(
-            role="user",
+            role='user',
             content=f"""I need to create a data pipeline in Keboola Connection with the following specifications:
 
 **Source:** {source_description}
@@ -709,19 +698,19 @@ Please provide a detailed, step-by-step implementation plan with specific Kebool
     ]
 
 
-async def optimize_sql_query(sql_query: str, context: str = "") -> List[Message]:
+async def optimize_sql_query(sql_query: str, context: str = '') -> List[Message]:
     """
     Generate a prompt to optimize an SQL query for Keboola transformations.
-    
+
     Args:
         sql_query: The SQL query to optimize
         context: Additional context about the query's purpose
     """
-    context_text = f"\n\nContext: {context}" if context else ""
-    
+    context_text = f'\n\nContext: {context}' if context else ''
+
     return [
         Message(
-            role="user",
+            role='user',
             content=f"""Please analyze and optimize this SQL query for use in a Keboola transformation:{context_text}
 
 ```sql
@@ -756,13 +745,13 @@ Please provide the optimized query with explanations for each improvement."""
 
 
 async def troubleshoot_component_error(
-    component_name: str, 
-    error_message: str, 
-    component_type: str = "unknown"
+    component_name: str,
+    error_message: str,
+    component_type: str = 'unknown'
 ) -> List[Message]:
     """
     Generate a prompt to troubleshoot a component error.
-    
+
     Args:
         component_name: Name of the component with the error
         error_message: The error message received
@@ -770,7 +759,7 @@ async def troubleshoot_component_error(
     """
     return [
         Message(
-            role="user",
+            role='user',
             content=f"""I'm experiencing an error with a Keboola component and need troubleshooting help:
 
 **Component:** {component_name}
