@@ -27,7 +27,7 @@ async def analyze_project_structure(ctx: Context) -> List[Message]:
                 content="""Based on the components that are being used and the data available from all of the buckets in the project, give me a high-level understanding of what is going on inside of this project and the types of use cases that are being performed.
 
 **Analysis Requirements:**
-Highlight the key functionalities being implemented, emphasizing the project's capability to address specific problems or tasks. Explore the range of use cases the project is designed for, detailing examples of real-world scenarios it can handle. Be sure to also include the FQIDs of real example buckets, tables & configurations that are within the project.
+Highlight the key functionalities being implemented, emphasizing the project's capability to address specific problems or tasks. Explore the range of use cases the project is designed for, detailing examples of real-world scenarios it can handle. Be sure to also include the names of real example buckets, tables & configurations that are within the project.
 
 **Structure your output in the following format:**
 
@@ -42,11 +42,11 @@ Highlight the key functionalities being implemented, emphasizing the project's c
 ## Data Processing & Transformation
 • Detail transformation workflows and SQL logic
 • Highlight data cleaning, enrichment, and aggregation processes
-• Include specific transformation component FQIDs and examples
+• Include specific transformation component names and examples
 
 ## Data Storage & Management
 • Describe bucket organization and table structures
-• Include real bucket and table FQIDs from the project
+• Include real bucket and table names from the project
 • Explain data retention and archival strategies
 
 ## Use Cases
@@ -54,7 +54,7 @@ Highlight the key functionalities being implemented, emphasizing the project's c
 • Provide real-world examples the project can handle
 • Connect technical capabilities to business outcomes
 
-Please provide a comprehensive analysis with specific examples and FQIDs from the actual project data."""
+Please provide a comprehensive analysis with specific examples and names from the actual project data."""
             )
         ]
     except Exception as e:
@@ -119,7 +119,7 @@ async def project_health_check(ctx: Context) -> List[Message]:
 • Long-term optimization strategies
 • Best practices implementation suggestions
 
-Please provide specific findings with component/table FQIDs and actionable recommendations."""
+Please provide specific findings with component and table names and actionable recommendations."""
             )
         ]
     except Exception as e:
@@ -184,7 +184,7 @@ async def data_quality_assessment(ctx: Context) -> List[Message]:
 • Specific improvement recommendations
 • Data governance suggestions
 
-Please analyze the actual project data and provide specific findings with table FQIDs, metrics, and actionable recommendations."""
+Please analyze the actual project data and provide specific findings with table names, metrics, and actionable recommendations."""
             )
         ]
     except Exception as e:
@@ -249,7 +249,7 @@ async def security_audit(ctx: Context) -> List[Message]:
 • Security best practices implementation
 • Compliance enhancement suggestions
 
-Please provide specific findings with component/bucket FQIDs and prioritized security recommendations."""
+Please provide specific findings with component and bucket names and prioritized security recommendations."""
             )
         ]
     except Exception as e:
@@ -314,7 +314,7 @@ async def performance_optimization_analysis(ctx: Context) -> List[Message]:
 • Long-term optimization strategies
 • Resource allocation recommendations
 
-Please analyze actual project performance data and provide specific recommendations with component FQIDs and expected performance improvements."""
+Please analyze actual project performance data and provide specific recommendations with component names and expected performance improvements."""
             )
         ]
     except Exception as e:
@@ -379,7 +379,7 @@ async def component_usage_summary(ctx: Context) -> List[Message]:
 • Component upgrade recommendations
 • Efficiency improvement suggestions
 
-Please provide specific details including component FQIDs, configuration IDs, and actionable insights for project optimization."""
+Please provide specific details including component names, configuration IDs, and actionable insights for project optimization."""
             )
         ]
     except Exception as e:
@@ -444,7 +444,7 @@ async def error_analysis_report(ctx: Context) -> List[Message]:
 • Configuration improvements to reduce errors
 • Monitoring and alerting enhancements
 
-Please analyze actual error logs and job histories to provide specific error instances with component FQIDs and detailed troubleshooting guidance."""
+Please analyze actual error logs and job histories to provide specific error instances with component names and detailed troubleshooting guidance."""
             )
         ]
     except Exception as e:
@@ -486,7 +486,7 @@ async def documentation_generator(ctx: Context) -> List[Message]:
 • Technical infrastructure and requirements
 
 ## 3. Data Dictionary
-• Complete inventory of all buckets and tables with FQIDs
+• Complete inventory of all buckets and tables with names
 • Column definitions and business meanings
 • Data types, constraints, and validation rules
 • Data lineage and source system mappings
@@ -515,7 +515,7 @@ async def documentation_generator(ctx: Context) -> List[Message]:
 • Performance tuning and optimization guides
 • Development and testing procedures
 
-Please create detailed, professional documentation using actual project data including specific FQIDs, configurations, and real examples."""
+Please create detailed, professional documentation using actual project data including specific names, configurations, and real examples."""
             )
         ]
     except Exception as e:
@@ -574,7 +574,7 @@ Create clear, informative descriptions that help users understand:
 
 ## Bucket Descriptions
 For each bucket, provide:
-• **Bucket Name & FQID**: [bucket.name]
+• **Bucket Name**: [bucket.name]
 • **Purpose**: Business purpose and data category
 • **Contents**: Types of tables and data contained
 • **Use Cases**: How this data is typically used
@@ -582,7 +582,7 @@ For each bucket, provide:
 
 ## Table Descriptions
 For each table, provide:
-• **Table Name & FQID**: [bucket.table]
+• **Table Name**: [bucket.table]
 • **Description**: Clear business description of the data
 • **Key Columns**: Most important fields and their meanings
 • **Data Quality**: Completeness, accuracy, and freshness indicators
