@@ -13,8 +13,8 @@ def add_keboola_prompts(mcp: KeboolaMcpServer) -> None:
     from keboola_mcp_server.prompts.keboola_prompts import (
         analyze_project_structure,
         component_usage_summary,
-        data_quality_assessment,
         create_project_documentation,
+        data_quality_assessment,
         error_analysis_report,
         project_health_check,
     )
