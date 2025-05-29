@@ -313,8 +313,11 @@ class ComponentConfigurationMetadata(BaseModel):
         root_configuration = ComponentConfigurationResponseBase.model_validate(configuration.model_dump())
         row_configurations = None
         if configuration.rows:
+            component_id = root_configuration.component_id
             row_configurations = [
-                ComponentConfigurationResponseBase.model_validate(row) for row in configuration.rows if row is not None
+                ComponentConfigurationResponseBase.model_validate(row | {'component_id': component_id})
+                for row in configuration.rows
+                if row is not None
             ]
         return cls(root_configuration=root_configuration, row_configurations=row_configurations)
 
