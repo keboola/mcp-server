@@ -6,14 +6,17 @@ import json
 import logging
 from enum import Enum
 from importlib import resources
-from typing import Optional, cast
+from typing import Callable, Optional, cast
 
 import jsonschema
+from jsonschema import Draft202012Validator, TypeChecker
+from jsonschema.validators import extend
 
-from keboola_mcp_server.client import JsonDict
+from keboola_mcp_server.client import JsonDict, JsonPrimitive, JsonStruct
 
 LOG = logging.getLogger(__name__)
 
+ValidateFunction = Callable[[JsonDict, JsonDict], None]
 
 RESOURCES = 'keboola_mcp_server.resources'
 
@@ -79,6 +82,60 @@ class RecoverableValidationError(jsonschema.ValidationError):
         return str_repr.rstrip()
 
 
+class KeboolaParametersValidator:
+    """
+    A custom JSON Schema validator that:
+    1. Supports a custom 'button' type by skipping it since it is a UI construct and not a data type.
+    2. Normalizes the schema by correctly handling the 'required' keyword
+       when it's misused within a property's definition. When a property has 'required' set to true or false, we
+       set it to an empty list.
+    """
+
+    @classmethod
+    def validate(cls, instance: JsonDict, schema: JsonDict) -> None:
+        """
+        Validate the instance against the schema.
+        """
+        normalized_schema = cls.normalize_schema(schema)
+        type_checker = Draft202012Validator.TYPE_CHECKER.redefine('button', cls.skip_button_type)
+        validator = extend(Draft202012Validator, type_checker=type_checker)(normalized_schema)
+        return validator.validate(instance)
+
+    @staticmethod
+    def skip_button_type(checker: TypeChecker, instance: object) -> bool:
+        """
+        Dummy type checker for the button type.
+        If there is a button in the schema, we skip it. As it is a UI construct and not a data type.
+        :returns: True
+        """
+        return True
+
+    @staticmethod
+    def normalize_schema(schema: JsonDict) -> JsonDict:
+        """Normalize schema by converting required fields to lists"""
+
+        def _convert_required(schema: JsonStruct | JsonPrimitive) -> JsonStruct | JsonPrimitive:
+            if not isinstance(schema, dict):
+                return schema
+
+            required = schema.get('required', None)
+            if required is not None:
+                # we convert true and false to empty list since the schema expects a list
+                # We expect: The parent node's required list should include all properties marked as required=true
+                # in its children
+                schema['required'] = required if isinstance(required, list) else []
+            else:
+                schema.pop('required', None)
+
+            if properties := cast(JsonDict, schema.get('properties')):
+                schema['properties'] = {
+                    field_name: _convert_required(field_schema) for field_name, field_schema in properties.items()
+                }
+            return schema
+
+        return cast(JsonDict, _convert_required(schema))
+
+
 def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
     """Validate the storage configuration using jsonschema.
     :param storage: The storage configuration to validate
@@ -105,20 +162,20 @@ def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message:
     :returns: The validated parameters configuration normalized to {"parameters" : {...}}
     """
     expected_input = cast(JsonDict, parameters.get('parameters', parameters))
-    _validate_json_against_schema(
-        json_data=expected_input,
-        schema=schema,
-        initial_message=initial_message,
-    )
+    _validate_json_against_schema(expected_input, schema, initial_message, KeboolaParametersValidator.validate)
     return {'parameters': expected_input}  # normalized to {"parameters" : {...}}
 
 
 def _validate_json_against_schema(
-    json_data: JsonDict, schema: JsonDict, initial_message: Optional[str] = None
+    json_data: JsonDict,
+    schema: JsonDict,
+    initial_message: Optional[str] = None,
+    validate_fn: Optional[ValidateFunction] = None,
 ):
     """Validate JSON data against the provided schema."""
     try:
-        jsonschema.validate(instance=json_data, schema=schema)
+        validate_fn = validate_fn or jsonschema.validate
+        validate_fn(json_data, schema)
     except jsonschema.ValidationError as e:
         raise RecoverableValidationError.create_from_values(e, invalid_json=json_data, initial_message=initial_message)
     except jsonschema.SchemaError as e:

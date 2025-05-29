@@ -1,0 +1,6 @@
+{
+    "qdrant_settings": {
+      "url": "http://localhost:666",
+      "#api_key": "test-api-key"
+    }
+  }
