@@ -1,5 +1,5 @@
 from typing import Any, List, Literal, Optional, Union
-
+from pydantic import model_validator
 from pydantic import AliasChoices, BaseModel, Field
 
 ComponentType = Literal['application', 'extractor', 'writer']
@@ -45,45 +45,59 @@ class ReducedComponent(BaseModel):
     is_row_based: bool = Field(
         default=False,
         description='Whether the component is row-based (e.g. have configuration rows) or not.',
+        validation_alias=AliasChoices('is_row_based', 'isRowBased', 'is-row-based'),
+        serialization_alias='isRowBased'
     )
 
     has_table_input_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has table input mapping or not.',
+        validation_alias=AliasChoices('has_table_input_mapping', 'hasTableInputMapping', 'has-table-input-mapping'),
+        serialization_alias='hasTableInputMapping'
     )
 
     has_table_output_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has table output mapping or not.',
+        validation_alias=AliasChoices('has_table_output_mapping', 'hasTableOutputMapping', 'has-table-output-mapping'),
+        serialization_alias='hasTableOutputMapping'
     )
 
     has_file_input_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has file input mapping or not.',
+        validation_alias=AliasChoices('has_file_input_mapping', 'hasFileInputMapping', 'has-file-input-mapping'),
+        serialization_alias='hasFileInputMapping'
     )
 
     has_file_output_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has file output mapping or not.',
+        validation_alias=AliasChoices('has_file_output_mapping', 'hasFileOutputMapping', 'has-file-output-mapping'),
+        serialization_alias='hasFileOutputMapping'
     )
 
     has_oauth: bool = Field(
         default=False,
         description='Whether the component configuration requires OAuth authorization or not.',
+        validation_alias=AliasChoices('has_oauth', 'hasOauth', 'has-oauth'),
+        serialization_alias='hasOauth'
     )
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    @model_validator(mode='before')
+    def derive_capabilities(self, values: dict[str, Any]) -> dict[str, Any]:
         # Set capability flags based on component_flags
         table_input_mapping_flags = ('genericDockerUI-tableInput', 'genericDockerUI-simpleTableInput')
 
-        self.is_row_based = 'genericDockerUI-rows' in self.component_flags
-        self.has_table_input_mapping = any(f in self.component_flags for f in table_input_mapping_flags)
-        self.has_table_output_mapping = 'genericDockerUI-tableOutput' in self.component_flags
-        self.has_file_input_mapping = 'genericDockerUI-fileInput' in self.component_flags
-        self.has_file_output_mapping = 'genericDockerUI-fileOutput' in self.component_flags
-        self.has_oauth = 'genericDockerUI-authorization' in self.component_flags
+        values['is_row_based'] = 'genericDockerUI-rows' in values['component_flags']
+        values['has_table_input_mapping'] = any(f in values['component_flags'] for f in table_input_mapping_flags)
+        values['has_table_output_mapping'] = 'genericDockerUI-tableOutput' in values['component_flags']
+        values['has_file_input_mapping'] = 'genericDockerUI-fileInput' in values['component_flags']
+        values['has_file_output_mapping'] = 'genericDockerUI-fileOutput' in values['component_flags']
+        values['has_oauth'] = 'genericDockerUI-authorization' in values['component_flags']
 
+        return values
+    
 
 class ComponentConfigurationResponseBase(BaseModel):
     """
