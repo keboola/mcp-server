@@ -6,7 +6,7 @@ import json
 import logging
 from enum import Enum
 from importlib import resources
-from typing import Optional
+from typing import Optional, cast
 
 import jsonschema
 
@@ -104,12 +104,13 @@ def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message:
     :initial_message: initial message to include in the error message
     :returns: The validated parameters configuration normalized to {"parameters" : {...}}
     """
+    expected_input = cast(JsonDict, parameters.get('parameters', parameters))
     _validate_json_against_schema(
-        json_data=parameters,
+        json_data=expected_input,
         schema=schema,
         initial_message=initial_message,
     )
-    return {'parameters': parameters.get('parameters', parameters)}
+    return {'parameters': expected_input}  # normalized to {"parameters" : {...}}
 
 
 def _validate_json_against_schema(
