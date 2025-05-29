@@ -22,7 +22,7 @@ from keboola_mcp_server.tools.components.model import (
 LOG = logging.getLogger(__name__)
 
 RESOURCES = 'keboola_mcp_server.resources'
-FLOW_SCHEMA_RESOURCE = 'flow_schema.json'
+FLOW_SCHEMA_RESOURCE = 'flow-schema.json'
 
 
 def _load_schema() -> JsonDict:
