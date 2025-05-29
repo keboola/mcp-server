@@ -80,7 +80,7 @@ async def test_validate_row_parameters_configuration_output(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('input_schema', [(None, {})])
+@pytest.mark.parametrize('input_schema', [None, {}])
 async def test_validate_parameters_configuration_no_schema(
     mocker, input_schema: Optional[JsonDict], keboola_client: KeboolaClient
 ):
