@@ -130,8 +130,8 @@ class RawKeboolaClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.get(
                 f'{self.base_api_url}/{endpoint}',
-                headers=headers,
                 params=params,
+                headers=headers,
             )
             response.raise_for_status()
             return cast(JsonStruct, response.json())
@@ -140,6 +140,7 @@ class RawKeboolaClient:
         self,
         endpoint: str,
         data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
     ) -> JsonStruct:
         """
@@ -147,6 +148,7 @@ class RawKeboolaClient:
 
         :param endpoint: API endpoint to call
         :param data: Request payload
+        :param params: Query parameters for the request
         :param headers: Additional headers for the request
         :return: API response as dictionary
         """
@@ -154,6 +156,7 @@ class RawKeboolaClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f'{self.base_api_url}/{endpoint}',
+                params=params,
                 headers=headers,
                 json=data or {},
             )
@@ -164,6 +167,7 @@ class RawKeboolaClient:
         self,
         endpoint: str,
         data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
     ) -> JsonStruct:
         """
@@ -171,6 +175,7 @@ class RawKeboolaClient:
 
         :param endpoint: API endpoint to call
         :param data: Request payload
+        :param params: Query parameters for the request
         :param headers: Additional headers for the request
         :return: API response as dictionary
         """
@@ -178,6 +183,7 @@ class RawKeboolaClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.put(
                 f'{self.base_api_url}/{endpoint}',
+                params=params,
                 headers=headers,
                 json=data or {},
             )
@@ -255,29 +261,33 @@ class KeboolaServiceClient:
         self,
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
 
         :param endpoint: API endpoint to call
         :param data: Request payload
+        :param params: Query parameters for the request
         :return: API response as dictionary
         """
-        return await self.raw_client.post(endpoint=endpoint, data=data)
+        return await self.raw_client.post(endpoint=endpoint, data=data, params=params)
 
     async def put(
         self,
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
     ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
 
         :param endpoint: API endpoint to call
         :param data: Request payload
+        :param params: Query parameters for the request
         :return: API response as dictionary
         """
-        return await self.raw_client.put(endpoint=endpoint, data=data)
+        return await self.raw_client.put(endpoint=endpoint, data=data, params=params)
 
     async def delete(
         self,
