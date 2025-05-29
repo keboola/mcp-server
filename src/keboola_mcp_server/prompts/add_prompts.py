@@ -14,7 +14,7 @@ def add_keboola_prompts(mcp: KeboolaMcpServer) -> None:
         analyze_project_structure,
         component_usage_summary,
         data_quality_assessment,
-        documentation_generator,
+        create_project_documentation,
         error_analysis_report,
         project_health_check,
     )
@@ -36,4 +36,4 @@ def add_keboola_prompts(mcp: KeboolaMcpServer) -> None:
     mcp.add_prompt(error_analysis_report)
 
     # Add documentation generator prompt
-    mcp.add_prompt(documentation_generator)
+    mcp.add_prompt(create_project_documentation)

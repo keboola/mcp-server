@@ -381,7 +381,7 @@ instances with component names and detailed troubleshooting guidance."""
     ]
 
 
-async def documentation_generator() -> List[Message]:
+async def create_project_documentation() -> List[Message]:
     """Generate comprehensive project documentation automatically.
 
     One-click documentation creation for the entire Keboola project.
