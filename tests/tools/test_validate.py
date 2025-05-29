@@ -211,16 +211,12 @@ def test_validate_row_parameters(schema_path: str, data_path: str, valid: bool):
         data = json.load(f)
     if valid:
         try:
-            _validate._validate_json_against_schema(
-                data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
-            )
+            _validate.validate_parameters(data, schema)
         except jsonschema.ValidationError:
             pytest.fail('ValidationError was raised when it should not have been')
     else:
         with pytest.raises(jsonschema.ValidationError):
-            _validate._validate_json_against_schema(
-                data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
-            )
+            _validate.validate_parameters(data, schema)
 
 
 @pytest.mark.parametrize(
@@ -241,13 +237,9 @@ def test_validate_root_parameters(schema_path: str, data_path: str, valid: bool)
         data = json.load(f)
     if valid:
         try:
-            _validate._validate_json_against_schema(
-                data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
-            )
+            _validate.validate_parameters(data, schema)
         except jsonschema.ValidationError:
             pytest.fail('ValidationError was raised when it should not have been')
     else:
         with pytest.raises(jsonschema.ValidationError):
-            _validate._validate_json_against_schema(
-                data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
-            )
+            _validate.validate_parameters(data, schema)
