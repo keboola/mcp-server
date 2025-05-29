@@ -49,8 +49,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
 @tool_errors()
 @with_session_state()
 async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow')]:
-    """Gets the schema for Flow configurations. Should be called prior to calling 'create_flow' and used as a
-    template for creating/updating flows."""
+    """Returns the JSON schema that defines the structure of Flow configurations."""
 
     LOG.info('Returning flow configuration schema')
     return get_schema_as_markdown()
