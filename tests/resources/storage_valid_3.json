@@ -1,0 +1,20 @@
+{
+    "storage": {
+      "input": {
+        "files": [
+          {
+            "file_ids": ["file-123", "file-456"],
+            "overwrite": true
+          }
+        ]
+      },
+      "output": {
+        "files": [
+          {
+            "source": "local_file",
+            "tags": ["exported"]
+          }
+        ]
+      }
+    }
+  }

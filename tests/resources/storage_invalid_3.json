@@ -1,0 +1,18 @@
+{
+    "storage": {
+      "input": {
+        "tables": [
+          {
+            "destination": "my_table"  
+          }
+        ]
+      },
+      "output": {
+        "tables": [
+          {
+            "source": "component_table" 
+          }
+        ]
+      }
+    }
+  }
