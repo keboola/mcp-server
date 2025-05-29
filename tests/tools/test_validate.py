@@ -102,3 +102,58 @@ def test_recoverable_validation_error_str():
     assert 'Initial msg' in s
     assert 'Recovery instructions:' in s
     assert '"foo": 1' in s
+
+
+@pytest.mark.parametrize(
+    "input_schema,expected_schema",
+    [
+        # Case 1: required true -> []
+        ({"type": "object", "required": True}, {"type": "object", "required": []}),
+        # Case 2: required false -> []
+        ({"type": "object", "required": False}, {"type": "object", "required": []}),
+        # Case 3: required as list (should remain unchanged)
+        ({"type": "object", "required": ["foo", "bar"]}, {"type": "object", "required": ["foo", "bar"]}),
+        # Case 4: required missing (should not be added)
+        ({"type": "object"}, {"type": "object"}),
+        # Case 5: nested properties with required true/false
+        (
+            {
+                "type": "object",
+                "required": ["foo", "bar"],
+                "properties": {
+                    "foo": {
+                        "type": "string",
+                        "required": ['foo2'],
+                        "properties": {"foo2": {"type": "string", "required": True}},
+                    },
+                    "bar": {"type": "number", "required": False},
+                    "baz": {"type": "boolean", "required": ["baz"]},
+                },
+            },
+            {
+                "type": "object",
+                "required": ["foo", "bar"],
+                "properties": {
+                    "foo": {
+                        "type": "string",
+                        "required": ['foo2'],
+                        "properties": {"foo2": {"type": "string", "required": []}},
+                    },
+                    "bar": {"type": "number", "required": []},
+                    "baz": {"type": "boolean", "required": ["baz"]},
+                },
+            },
+        ),
+        # Case 6: input is not a dict (should return as is)
+        ("notadict", "notadict"),
+        (123, 123),
+        (None, None),
+        # Case 7: required as string (should become [])
+        ({"type": "object", "required": "yes"}, {"type": "object", "required": []}),
+        # Case 8: required as int (should remain unchanged, as not str/bool)
+        ({"type": "object", "required": 1}, {"type": "object", "required": []}),
+    ],
+)
+def test_normalize_schema(input_schema, expected_schema):
+    result = _validate.KeboolaParametersValidator.normalize_schema(input_schema)
+    assert result == expected_schema
