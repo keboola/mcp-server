@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Generator, Mapping
 
 import pytest
@@ -5,6 +6,8 @@ from kbcstorage.client import Client as SyncStorageClient
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.workspace import WorkspaceManager
+
+LOG = logging.getLogger(__name__)
 
 
 def _storage_client(storage_api_url: str, storage_api_token: str) -> SyncStorageClient:
@@ -17,6 +20,10 @@ def dynamic_manager(
 ) -> Generator[WorkspaceManager, Any, None]:
     branch_id = keboola_client.storage_client.branch_id
     storage_client = _storage_client(storage_api_url, storage_api_token)
+    token_info = storage_client.tokens.verify()
+    project_id: str = token_info['owner']['id']
+
+    LOG.info(f'Setting up workspaces in Keboola project with ID={project_id}')
 
     def _get_workspace_meta() -> Mapping[str, Any] | None:
         metadata = storage_client.branches.metadata(branch_id)
@@ -27,16 +34,17 @@ def dynamic_manager(
 
     meta = _get_workspace_meta()
     if meta:
-        pytest.fail(f'Expecting empty Keboola project, but found {meta} in {branch_id} branch')
+        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {meta} in {branch_id} branch')
 
     workspaces = storage_client.workspaces.list()
     # ignore the static workspace
     workspaces = [w for w in workspaces if w['connection']['schema'] != workspace_schema]
     if workspaces:
-        pytest.fail(f'Expecting empty Keboola project, but found {len(workspaces)} extra workspaces')
+        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(workspaces)} extra workspaces')
 
     yield WorkspaceManager(keboola_client)
 
+    LOG.info(f'Cleaning up workspaces in Keboola project with ID={project_id}')
     meta = _get_workspace_meta()
     if meta:
         storage_client.workspaces.delete(meta['value'])

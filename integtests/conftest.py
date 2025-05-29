@@ -221,19 +221,19 @@ def keboola_project(
 
     current_buckets = storage_client.buckets.list()
     if current_buckets:
-        pytest.fail(f'Expecting empty Keboola project, but found {len(current_buckets)} buckets')
+        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_buckets)} buckets')
 
     buckets = _create_buckets(storage_client)
 
     current_tables = storage_client.tables.list()
     if current_tables:
-        pytest.fail(f'Expecting empty Keboola project, but found {len(current_tables)} tables')
+        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_tables)} tables')
 
     tables = _create_tables(storage_client)
 
     current_configs = storage_client.configurations.list(component_id='ex-generic-v2')
     if current_configs:
-        pytest.fail(f'Expecting empty Keboola project, but found {len(current_configs)} configs')
+        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_configs)} configs')
 
     configs = _create_configs(storage_client)
 
