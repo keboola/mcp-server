@@ -1,0 +1,9 @@
+{
+    "embedding_settings": {
+      "provider_type": "openai",
+      "openai_settings": {
+        "model": "text-embedding-3-small",
+        "#api_key": "test-api-key"
+      }
+    }
+  }
