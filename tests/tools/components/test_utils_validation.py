@@ -14,12 +14,13 @@ from keboola_mcp_server.tools.components import utils
         ({'input': {}, 'output': {}}, {'input': {}, 'output': {}}),
         ({'storage': {'input': {}, 'output': {}}}, {'input': {}, 'output': {}}),
         ({}, {}),  # we expect passing when no storage is provided
-        (None, None),  # we expect passing when no storage is provided
+        (None, {}),  # we expect passing when no storage is provided
+        ({'storage': None}, {}),  # we expect passing when no storage is provided
     ],
 )
 def test_validate_storage_configuration_output(input_storage: Optional[JsonDict], output_storage: Optional[JsonDict]):
     """testing normalized and returned structures {storage: {...}} vs {...}"""
-    if input_storage is not None:
+    if input_storage is not None and input_storage.get('storage') is not None:
         result = validate_storage(input_storage)
         expected = {'storage': output_storage}
         assert result == expected  # we expect wrapped structure (normalized)
@@ -80,7 +81,7 @@ async def test_validate_row_parameters_configuration_output(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('input_schema', [(None, {})])
+@pytest.mark.parametrize('input_schema', [None, {}])
 async def test_validate_parameters_configuration_no_schema(
     mocker, input_schema: Optional[JsonDict], keboola_client: KeboolaClient
 ):

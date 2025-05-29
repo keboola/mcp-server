@@ -305,9 +305,9 @@ def validate_storage_configuration(
     :param initial_message: The initial message to include in the error message
     :returns: The validated storage configuration without the "storage" key only the configuration.
     """
-    if not storage:
+    if not storage or storage is None or storage.get('storage', {}) is None:
         LOG.warning('No storage configuration provided, skipping validation.')
-        return storage
+        return {}
     initial_message = initial_message or ''
     initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
     normalized_storage = validate_storage(storage, initial_message)
