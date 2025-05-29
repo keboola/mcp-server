@@ -14,6 +14,7 @@ from starlette.responses import Response
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState
+from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
@@ -117,5 +118,6 @@ def create_server(config: Optional[Config] = None) -> FastMCP:
     add_job_tools(mcp)
     add_storage_tools(mcp)
     add_sql_tools(mcp)
+    add_keboola_prompts(mcp)
 
     return mcp

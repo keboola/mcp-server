@@ -161,9 +161,9 @@ def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message:
     :initial_message: initial message to include in the error message
     :returns: The validated parameters configuration normalized to {"parameters" : {...}}
     """
-    _validate_json_against_schema(parameters, schema, initial_message, KeboolaParametersValidator.validate)
-
-    return {'parameters': parameters.get('parameters', parameters)}
+    expected_input = cast(JsonDict, parameters.get('parameters', parameters))
+    _validate_json_against_schema(expected_input, schema, initial_message, KeboolaParametersValidator.validate)
+    return {'parameters': expected_input}  # normalized to {"parameters" : {...}}
 
 
 def _validate_json_against_schema(

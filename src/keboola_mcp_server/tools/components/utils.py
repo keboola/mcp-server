@@ -364,9 +364,5 @@ def _validate_parameters_configuration(
         return parameters
 
     # we expect the parameters to be a dictionary of parameter configurations without the "parameters" key
-    expected_parameters = parameters.get('parameters', parameters)
-    assert isinstance(expected_parameters, dict)
-    normalized_parameters = validate_parameters(expected_parameters, schema, initial_message)
-    parameters = cast(JsonDict, normalized_parameters['parameters'])
-
-    return parameters
+    normalized_parameters = validate_parameters(parameters, schema, initial_message)
+    return cast(JsonDict, normalized_parameters['parameters'])
