@@ -1,12 +1,14 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
+import json
 import logging
+from importlib import resources
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.model import (
@@ -19,56 +21,23 @@ from keboola_mcp_server.tools.components.model import (
 
 LOG = logging.getLogger(__name__)
 
-FLOW_SCHEMA = """Flow Configuration Schema (based on Keboola orchestrator requirements):
-{
-  "phases": [
-    {
-      "id": "integer|string",           // Unique identifier (required)
-      "name": "string",                 // Phase name (required)
-      "description": "string",          // Optional description (markdown supported)
-      "dependsOn": ["id1", "id2"]       // Array of phase IDs this depends on (optional)
-    }
-  ],
-  "tasks": [
-    {
-      "id": "integer|string",           // Unique identifier (required)
-      "name": "string",                 // Task name (required)
-      "phase": "integer|string",        // Phase ID this task belongs to (required)
-      "enabled": true,                  // Optional, default: true
-      "continueOnFailure": false,       // Optional, default: false
-      "task": {                         // Task configuration (required)
-        "componentId": "string",        // Component ID like "keboola.ex-db-mysql" (required)
-        "configId": "string",           // Configuration ID (optional)
-        "mode": "run|debug"             // Optional, default: "run"
-      }
-    }
-  ]
-}
+RESOURCES = 'keboola_mcp_server.resources'
+FLOW_SCHEMA_RESOURCE = 'flow_schema.json'
 
-Example:
-{
-  "phases": [
-    {"id": 1, "name": "Data Extraction", "dependsOn": []},
-    {"id": 2, "name": "Data Processing", "dependsOn": [1]}
-  ],
-  "tasks": [
-    {
-      "name": "Extract MySQL Data",
-      "phase": 1,
-      "task": {"componentId": "keboola.ex-db-mysql", "configId": "12345"}
-    }
-  ]
-}"""
+
+def _load_schema() -> JsonDict:
+    with resources.open_text(RESOURCES, FLOW_SCHEMA_RESOURCE, encoding='utf-8') as f:
+        return json.load(f)
+
+
+def get_schema_as_markdown() -> str:
+    schema = _load_schema()
+    return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    flow_tools = [
-        create_flow,
-        retrieve_flows,
-        update_flow,
-        get_flow_detail,
-    ]
+    flow_tools = [create_flow, retrieve_flows, update_flow, get_flow_detail, get_flow_schema]
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -79,27 +48,42 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
 @tool_errors()
 @with_session_state()
+async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow')]:
+    """Gets the schema for Flow configurations. Should be called prior to calling 'create_flow' and used as a
+    template for creating/updating flows."""
+
+    LOG.info('Returning flow configuration schema')
+    return get_schema_as_markdown()
+
+
+@tool_errors()
+@with_session_state()
 async def create_flow(
     ctx: Context,
     name: Annotated[str, Field(description='A short, descriptive name for the flow')],
     description: Annotated[str, Field(description='Detailed description of the flow purpose')],
-    phases: Annotated[List[Dict[str, Any]], Field(description=f"""List of phase definitions.
-
-{FLOW_SCHEMA}
-
-Each phase must have 'id' and 'name'. The 'dependsOn' field specifies phase dependencies.""")],
-        tasks: Annotated[List[Dict[str, Any]], Field(description=f"""List of task definitions.
-
-{FLOW_SCHEMA}
-
-Each task must have 'name', 'phase' (referencing a phase id), and 'task.componentId'.""")],
+    phases: Annotated[
+        List[Dict[str, Any]],
+        Field(
+            description="""List of phase definitions.
+    Each phase must have 'id' and 'name'. The 'dependsOn' field specifies phase dependencies."""
+        ),
+    ],
+    tasks: Annotated[
+        List[Dict[str, Any]],
+        Field(
+            description="""List of task definitions.
+    Each task must have 'name', 'phase' (referencing a phase id), and 'task.componentId'."""
+        ),
+    ],
 ) -> Annotated[FlowConfiguration, Field(description='Created flow configuration')]:
-    """Creates a new flow configuration in Keboola orchestrator.
+    """Creates a new flow configuration in Keboola.
 
     Flow configurations are special - they store phases/tasks directly under 'configuration',
     not under 'configuration.parameters' like other components.
 
-    The schema above shows the required structure for phases and tasks."""
+    Prior to calling create flow, agents should call the `get_flow_schema()` to fetch the flow schema, if not already
+    fetched."""
 
     processed_phases = _ensure_phase_ids(phases)
     processed_tasks = _ensure_task_ids(tasks)
@@ -107,16 +91,14 @@ Each task must have 'name', 'phase' (referencing a phase id), and 'task.componen
 
     flow_configuration = {
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
-        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks]
+        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
 
     client = KeboolaClient.from_state(ctx.session.state)
     LOG.info(f'Creating new flow: {name}')
 
     new_raw_configuration = await client.storage_client.create_flow_configuration(
-        name=name,
-        description=description,
-        flow_configuration=flow_configuration  # Direct configuration
+        name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
     flow_response = FlowConfigurationResponse.from_raw_config(new_raw_configuration)
@@ -132,18 +114,23 @@ async def update_flow(
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update')],
     name: Annotated[str, Field(description='Updated flow name')],
     description: Annotated[str, Field(description='Updated flow description')],
-    phases: Annotated[List[Dict[str, Any]], Field(
-        description=f"""Updated list of phase definitions.
-            {FLOW_SCHEMA}
-            """
-        )],
-        tasks: Annotated[List[Dict[str, Any]], Field(
-            description=f"""Updated list of task definitions.
-                {FLOW_SCHEMA}"""
-        )],
-        change_description: Annotated[str, Field(description='Description of changes made')],
+    phases: Annotated[
+        List[Dict[str, Any]],
+        Field(
+            description="""Updated list of phase definitions.
+    Each phase must have 'id' and 'name'. The 'dependsOn' field specifies phase dependencies."""
+        ),
+    ],
+    tasks: Annotated[List[Dict[str, Any]], Field(description='Updated list of task definitions.')],
+    change_description: Annotated[str, Field(description='Description of changes made')],
 ) -> Annotated[FlowConfiguration, Field(description='Updated flow configuration')]:
-    """Updates an existing flow configuration."""
+    """Updates an existing flow configuration.
+
+    Flow configurations are special - they store phases/tasks directly under 'configuration',
+    not under 'configuration.parameters' like other components.
+
+    Prior to calling create flow, agents should call the `get_flow_schema()` to fetch the flow schema, if not
+    already fetched."""
 
     processed_phases = _ensure_phase_ids(phases)
     processed_tasks = _ensure_task_ids(tasks)
@@ -151,7 +138,7 @@ async def update_flow(
 
     flow_configuration = {
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
-        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks]
+        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -162,7 +149,7 @@ async def update_flow(
         name=name,
         description=description,
         change_description=change_description,
-        flow_configuration=flow_configuration  # Direct configuration
+        flow_configuration=flow_configuration,  # Direct configuration
     )
 
     updated_flow_response = FlowConfigurationResponse.from_raw_config(updated_raw_configuration)
@@ -175,9 +162,9 @@ async def update_flow(
 @with_session_state()
 async def retrieve_flows(
     ctx: Context,
-    flow_ids: Annotated[Optional[List[str]], Field(
-        description='Optional list of specific flow configuration IDs'
-    )] = None,
+    flow_ids: Annotated[
+        Optional[List[str]], Field(description='Optional list of specific flow configuration IDs')
+    ] = None,
 ) -> Annotated[List[ReducedFlow], Field(description='List of flow configurations')]:
     """Retrieves flow configurations from the project."""
 

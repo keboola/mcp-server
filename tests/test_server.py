@@ -38,6 +38,7 @@ class TestServer:
             'get_component_configuration',
             'get_component_configuration_examples',
             'get_flow_detail',
+            'get_flow_schema',
             'get_job_detail',
             'get_sql_dialect',
             'get_table_detail',
@@ -78,33 +79,25 @@ class TestServer:
     [
         (  # config params in Config class
             Config(
-                storage_token='SAPI_1234',
-                storage_api_url='http://connection.sapi',
-                workspace_schema='WORKSPACE_1234'
+                storage_token='SAPI_1234', storage_api_url='http://connection.sapi', workspace_schema='WORKSPACE_1234'
             ),
-            {}
+            {},
         ),
         (  # config params in the OS environment
             Config(),
             {
                 'KBC_STORAGE_TOKEN': 'SAPI_1234',
                 'KBC_STORAGE_API_URL': 'http://connection.sapi',
-                'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'
-            }
+                'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
+            },
         ),
         (  # config params mixed up in both the Config class and the OS environment
             Config(storage_api_url='http://connection.sapi'),
-            {
-                'KBC_STORAGE_TOKEN': 'SAPI_1234',
-                'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'
-            }
+            {'KBC_STORAGE_TOKEN': 'SAPI_1234', 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'},
         ),
         (  # the OS environment overrides the initial Config class
             Config(storage_token='foo-bar', storage_api_url='http://connection.sapi', workspace_schema='xyz_123'),
-            {
-                'KBC_STORAGE_TOKEN': 'SAPI_1234',
-                'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'
-            }
+            {'KBC_STORAGE_TOKEN': 'SAPI_1234', 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'},
         ),
         # TODO: Also test values obtained from an HTTP request.
     ],
