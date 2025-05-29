@@ -61,28 +61,35 @@ async def create_flow(
     ctx: Context,
     name: Annotated[str, Field(description='A short, descriptive name for the flow')],
     description: Annotated[str, Field(description='Detailed description of the flow purpose')],
-    phases: Annotated[
-        list[dict[str, Any]],
-        Field(
-            description="""List of phase definitions.
-    Each phase must have 'id' and 'name'. The 'dependsOn' field specifies phase dependencies."""
-        ),
-    ],
-    tasks: Annotated[
-        list[dict[str, Any]],
-        Field(
-            description="""List of task definitions.
-    Each task must have 'name', 'phase' (referencing a phase id), and 'task.componentId'."""
-        ),
-    ],
+    phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions')],
+    tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
 ) -> Annotated[FlowConfiguration, Field(description='Created flow configuration')]:
-    """Creates a new flow configuration in Keboola.
+    """
+    Creates a new flow configuration in Keboola.
+    A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
+    how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
+    Each flow is composed of:
+    - Tasks: individual component configurations (e.g., extractors, writers, transformations).
+    - Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
 
-    Flow configurations are special - they store phases/tasks directly under 'configuration',
-    not under 'configuration.parameters' like other components.
+    CONSIDERATIONS:
+    - The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
+    - Each task and phase must include at least: `id` and `name`.
+    - Each task must reference an existing component configuration in the project.
+    - Items in the `dependsOn` phase field reference ids of other phases.
 
-    Prior to calling create flow, agents should call the `get_flow_schema()` to fetch the flow schema, if not already
-    fetched."""
+    USAGE:
+    Use this tool to automate multi-step data workflows. This is ideal for:
+    - Creating ETL/ELT orchestration.
+    - Coordinating dependencies between components.
+    - Structuring parallel and sequential task execution.
+
+    EXAMPLES:
+    - user_input: Orchestrate all my JIRA extractors.
+        - fill `tasks` parameter with the tasks for the JIRA extractors
+        - determine dependencies between the JIRA extractors
+        - fill `phases` parameter by grouping tasks into phases
+    """
 
     processed_phases = _ensure_phase_ids(phases)
     processed_tasks = _ensure_task_ids(tasks)
@@ -113,23 +120,28 @@ async def update_flow(
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update')],
     name: Annotated[str, Field(description='Updated flow name')],
     description: Annotated[str, Field(description='Updated flow description')],
-    phases: Annotated[
-        list[dict[str, Any]],
-        Field(
-            description="""Updated list of phase definitions.
-    Each phase must have 'id' and 'name'. The 'dependsOn' field specifies phase dependencies."""
-        ),
-    ],
+    phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions')],
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')],
     change_description: Annotated[str, Field(description='Description of changes made')],
 ) -> Annotated[FlowConfiguration, Field(description='Updated flow configuration')]:
-    """Updates an existing flow configuration.
+    """
+    Updates an existing flow configuration in Keboola.
+    A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
+    how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
+    Each flow is composed of:
+    - Tasks: individual component configurations (e.g., extractors, writers, transformations).
+    - Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
 
-    Flow configurations are special - they store phases/tasks directly under 'configuration',
-    not under 'configuration.parameters' like other components.
+    CONSIDERATIONS:
+    - The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
+    - Each task and phase must include at least: `id` and `name`.
+    - Each task must reference an existing component configuration in the project.
+    - Items in the `dependsOn` phase field reference ids of other phases.
+    - The flow specified by `configuration_id` must already exist in the project.
 
-    Prior to calling create flow, agents should call the `get_flow_schema()` to fetch the flow schema, if not
-    already fetched."""
+    USAGE:
+    Use this tool to update an existing flow.
+    """
 
     processed_phases = _ensure_phase_ids(phases)
     processed_tasks = _ensure_task_ids(tasks)
