@@ -3,7 +3,7 @@
 import json
 import logging
 from importlib import resources
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Sequence
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
@@ -63,14 +63,14 @@ async def create_flow(
     name: Annotated[str, Field(description='A short, descriptive name for the flow')],
     description: Annotated[str, Field(description='Detailed description of the flow purpose')],
     phases: Annotated[
-        List[Dict[str, Any]],
+        list[dict[str, Any]],
         Field(
             description="""List of phase definitions.
     Each phase must have 'id' and 'name'. The 'dependsOn' field specifies phase dependencies."""
         ),
     ],
     tasks: Annotated[
-        List[Dict[str, Any]],
+        list[dict[str, Any]],
         Field(
             description="""List of task definitions.
     Each task must have 'name', 'phase' (referencing a phase id), and 'task.componentId'."""
@@ -115,13 +115,13 @@ async def update_flow(
     name: Annotated[str, Field(description='Updated flow name')],
     description: Annotated[str, Field(description='Updated flow description')],
     phases: Annotated[
-        List[Dict[str, Any]],
+        list[dict[str, Any]],
         Field(
             description="""Updated list of phase definitions.
     Each phase must have 'id' and 'name'. The 'dependsOn' field specifies phase dependencies."""
         ),
     ],
-    tasks: Annotated[List[Dict[str, Any]], Field(description='Updated list of task definitions.')],
+    tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')],
     change_description: Annotated[str, Field(description='Description of changes made')],
 ) -> Annotated[FlowConfiguration, Field(description='Updated flow configuration')]:
     """Updates an existing flow configuration.
@@ -163,9 +163,10 @@ async def update_flow(
 async def retrieve_flows(
     ctx: Context,
     flow_ids: Annotated[
-        Optional[List[str]], Field(description='Optional list of specific flow configuration IDs')
-    ] = None,
-) -> Annotated[List[ReducedFlow], Field(description='List of flow configurations')]:
+        Sequence[str],
+        Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
+    ] = tuple(),
+) -> Annotated[list[ReducedFlow], Field(description='The retrieved flow configurations.')]:
     """Retrieves flow configurations from the project."""
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -205,7 +206,7 @@ async def get_flow_detail(
     return flow_response.configuration
 
 
-def _ensure_phase_ids(phases: List[Dict[str, Any]]) -> List[FlowPhase]:
+def _ensure_phase_ids(phases: list[dict[str, Any]]) -> list[FlowPhase]:
     """Ensure all phases have unique IDs and proper structure using Pydantic validation"""
     processed_phases = []
     used_ids = set()
@@ -232,7 +233,7 @@ def _ensure_phase_ids(phases: List[Dict[str, Any]]) -> List[FlowPhase]:
     return processed_phases
 
 
-def _ensure_task_ids(tasks: List[Dict[str, Any]]) -> List[FlowTask]:
+def _ensure_task_ids(tasks: list[dict[str, Any]]) -> list[FlowTask]:
     """Ensure all tasks have unique IDs and proper structure using Pydantic validation"""
     processed_tasks = []
     used_ids = set()
@@ -281,7 +282,7 @@ def _ensure_task_ids(tasks: List[Dict[str, Any]]) -> List[FlowTask]:
     return processed_tasks
 
 
-def _validate_flow_structure(phases: List[FlowPhase], tasks: List[FlowTask]) -> None:
+def _validate_flow_structure(phases: list[FlowPhase], tasks: list[FlowTask]) -> None:
     """Validate that the flow structure is valid - now using Pydantic models"""
     phase_ids = {phase.id for phase in phases}
 
@@ -297,7 +298,7 @@ def _validate_flow_structure(phases: List[FlowPhase], tasks: List[FlowTask]) -> 
     _check_circular_dependencies(phases)
 
 
-def _check_circular_dependencies(phases: List[FlowPhase]) -> None:
+def _check_circular_dependencies(phases: list[FlowPhase]) -> None:
     """
     Optimized circular dependency check that:
     1. Uses O(n) dict lookup instead of O(n²) list search
@@ -307,27 +308,26 @@ def _check_circular_dependencies(phases: List[FlowPhase]) -> None:
     # Build efficient lookup graph once - O(n) optimization
     graph = {phase.id: phase.depends_on for phase in phases}
 
-    def has_cycle(phase_id: Any, visited: set, rec_stack: set, path: List[Any]) -> Optional[List[Any]]:
+    def has_cycle(phase_id: Any, _visited: set, rec_stack: set, path: list[Any]) -> list[Any] | None:
         """
         Returns None if no cycle found, or List[phase_ids] representing the cycle path.
         """
-        visited.add(phase_id)
+        _visited.add(phase_id)
         rec_stack.add(phase_id)
         path.append(phase_id)
 
         dependencies = graph.get(phase_id, [])
 
         for dep_id in dependencies:
-            if dep_id not in visited:
-                cycle = has_cycle(dep_id, visited, rec_stack, path)
+            if dep_id not in _visited:
+                cycle = has_cycle(dep_id, _visited, rec_stack, path)
                 if cycle is not None:
                     return cycle
 
             elif dep_id in rec_stack:
                 try:
                     cycle_start_index = path.index(dep_id)
-                    cycle_path = path[cycle_start_index:] + [dep_id]
-                    return cycle_path
+                    return path[cycle_start_index:] + [dep_id]
                 except ValueError:
                     return [phase_id, dep_id]
 

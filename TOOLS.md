@@ -20,6 +20,7 @@ This document provides details about the tools available in the Keboola MCP serv
 - [create_component_root_configuration](#create_component_root_configuration): Creates a component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_component_row_configuration](#create_component_row_configuration): Creates a component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
+- [create_flow](#create_flow): Creates a new flow configuration in Keboola orchestrator.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and optionally a list of created table names if and only if they are generated within the SQL
 statements.
@@ -27,12 +28,15 @@ statements.
 - [get_component](#get_component): Gets information about a specific component given its ID.
 - [get_component_configuration](#get_component_configuration): Gets information about a specific component/transformation configuration.
 - [get_component_configuration_examples](#get_component_configuration_examples): Retrieves sample configuration examples for a specific component.
-- [retrieve_component_configurations](#retrieve_component_configurations): Retrieves configurations of components present in the project,
+- [get_flow_detail](#get_flow_detail): Gets detailed information about a specific flow configuration.
+- [retrieve_components_configurations](#retrieve_components_configurations): Retrieves configurations of components present in the project,
 optionally filtered by component types or specific component IDs.
+- [retrieve_flows](#retrieve_flows): Retrieves flow configurations from the project.
 - [retrieve_transformations](#retrieve_transformations): Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
 - [update_component_root_configuration](#update_component_root_configuration): Updates a specific component configuration using given by component ID, and configuration ID.
 - [update_component_row_configuration](#update_component_row_configuration): Updates a specific component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
+- [update_flow](#update_flow): Updates an existing flow configuration.
 - [update_sql_transformation_configuration](#update_sql_transformation_configuration): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
 configuration.
 
@@ -443,6 +447,62 @@ EXAMPLES:
 ```
 
 ---
+<a name="create_flow"></a>
+## create_flow
+**Description**:
+
+Creates a new flow configuration in Keboola orchestrator.
+
+    Flow configurations are special - they store phases/tasks directly under 'configuration',
+    not under 'configuration.parameters' like other components.
+
+    The schema above shows the required structure for phases and tasks.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "A short, descriptive name for the flow",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "Detailed description of the flow purpose",
+      "title": "Description",
+      "type": "string"
+    },
+    "phases": {
+      "description": "List of phase definitions.\n\nFlow Configuration Schema (based on Keboola orchestrator requirements):\n{\n  \"phases\": [\n    {\n      \"id\": \"integer|string\",           // Unique identifier (required)\n      \"name\": \"string\",                 // Phase name (required)\n      \"description\": \"string\",          // Optional description (markdown supported)\n      \"dependsOn\": [\"id1\", \"id2\"]       // Array of phase IDs this depends on (optional)\n    }\n  ],\n  \"tasks\": [\n    {\n      \"id\": \"integer|string\",           // Unique identifier (required)\n      \"name\": \"string\",                 // Task name (required)\n      \"phase\": \"integer|string\",        // Phase ID this task belongs to (required)\n      \"enabled\": true,                  // Optional, default: true\n      \"continueOnFailure\": false,       // Optional, default: false\n      \"task\": {                         // Task configuration (required)\n        \"componentId\": \"string\",        // Component ID like \"keboola.ex-db-mysql\" (required)\n        \"configId\": \"string\",           // Configuration ID (optional)\n        \"mode\": \"run|debug\"             // Optional, default: \"run\"\n      }\n    }\n  ]\n}\n\nExample:\n{\n  \"phases\": [\n    {\"id\": 1, \"name\": \"Data Extraction\", \"dependsOn\": []},\n    {\"id\": 2, \"name\": \"Data Processing\", \"dependsOn\": [1]}\n  ],\n  \"tasks\": [\n    {\n      \"name\": \"Extract MySQL Data\",\n      \"phase\": 1,\n      \"task\": {\"componentId\": \"keboola.ex-db-mysql\", \"configId\": \"12345\"}\n    }\n  ]\n}\n\nEach phase must have 'id' and 'name'. The 'dependsOn' field specifies phase dependencies.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "tasks": {
+      "description": "List of task definitions.\n\nFlow Configuration Schema (based on Keboola orchestrator requirements):\n{\n  \"phases\": [\n    {\n      \"id\": \"integer|string\",           // Unique identifier (required)\n      \"name\": \"string\",                 // Phase name (required)\n      \"description\": \"string\",          // Optional description (markdown supported)\n      \"dependsOn\": [\"id1\", \"id2\"]       // Array of phase IDs this depends on (optional)\n    }\n  ],\n  \"tasks\": [\n    {\n      \"id\": \"integer|string\",           // Unique identifier (required)\n      \"name\": \"string\",                 // Task name (required)\n      \"phase\": \"integer|string\",        // Phase ID this task belongs to (required)\n      \"enabled\": true,                  // Optional, default: true\n      \"continueOnFailure\": false,       // Optional, default: false\n      \"task\": {                         // Task configuration (required)\n        \"componentId\": \"string\",        // Component ID like \"keboola.ex-db-mysql\" (required)\n        \"configId\": \"string\",           // Configuration ID (optional)\n        \"mode\": \"run|debug\"             // Optional, default: \"run\"\n      }\n    }\n  ]\n}\n\nExample:\n{\n  \"phases\": [\n    {\"id\": 1, \"name\": \"Data Extraction\", \"dependsOn\": []},\n    {\"id\": 2, \"name\": \"Data Processing\", \"dependsOn\": [1]}\n  ],\n  \"tasks\": [\n    {\n      \"name\": \"Extract MySQL Data\",\n      \"phase\": 1,\n      \"task\": {\"componentId\": \"keboola.ex-db-mysql\", \"configId\": \"12345\"}\n    }\n  ]\n}\n\nEach task must have 'name', 'phase' (referencing a phase id), and 'task.componentId'.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Tasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "phases",
+    "tasks"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="create_sql_transformation"></a>
 ## create_sql_transformation
 **Description**:
@@ -656,8 +716,33 @@ EXAMPLES:
 ```
 
 ---
-<a name="retrieve_component_configurations"></a>
-## retrieve_component_configurations
+<a name="get_flow_detail"></a>
+## get_flow_detail
+**Description**:
+
+Gets detailed information about a specific flow configuration.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_id": {
+      "description": "ID of the flow configuration to retrieve",
+      "title": "Configuration Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="retrieve_components_configurations"></a>
+## retrieve_components_configurations
 **Description**:
 
 Retrieves configurations of components present in the project,
@@ -708,6 +793,31 @@ EXAMPLES:
         "type": "string"
       },
       "title": "Component Ids",
+      "type": "array"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="retrieve_flows"></a>
+## retrieve_flows
+**Description**:
+
+Retrieves flow configurations from the project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "flow_ids": {
+      "description": "The configuration IDs of the flows to retrieve.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Flow Ids",
       "type": "array"
     }
   },
@@ -926,6 +1036,69 @@ EXAMPLES:
     "configuration_id",
     "configuration_row_id",
     "parameters"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="update_flow"></a>
+## update_flow
+**Description**:
+
+Updates an existing flow configuration.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_id": {
+      "description": "ID of the flow configuration to update",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "name": {
+      "description": "Updated flow name",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "Updated flow description",
+      "title": "Description",
+      "type": "string"
+    },
+    "phases": {
+      "description": "Updated list of phase definitions.\n            Flow Configuration Schema (based on Keboola orchestrator requirements):\n{\n  \"phases\": [\n    {\n      \"id\": \"integer|string\",           // Unique identifier (required)\n      \"name\": \"string\",                 // Phase name (required)\n      \"description\": \"string\",          // Optional description (markdown supported)\n      \"dependsOn\": [\"id1\", \"id2\"]       // Array of phase IDs this depends on (optional)\n    }\n  ],\n  \"tasks\": [\n    {\n      \"id\": \"integer|string\",           // Unique identifier (required)\n      \"name\": \"string\",                 // Task name (required)\n      \"phase\": \"integer|string\",        // Phase ID this task belongs to (required)\n      \"enabled\": true,                  // Optional, default: true\n      \"continueOnFailure\": false,       // Optional, default: false\n      \"task\": {                         // Task configuration (required)\n        \"componentId\": \"string\",        // Component ID like \"keboola.ex-db-mysql\" (required)\n        \"configId\": \"string\",           // Configuration ID (optional)\n        \"mode\": \"run|debug\"             // Optional, default: \"run\"\n      }\n    }\n  ]\n}\n\nExample:\n{\n  \"phases\": [\n    {\"id\": 1, \"name\": \"Data Extraction\", \"dependsOn\": []},\n    {\"id\": 2, \"name\": \"Data Processing\", \"dependsOn\": [1]}\n  ],\n  \"tasks\": [\n    {\n      \"name\": \"Extract MySQL Data\",\n      \"phase\": 1,\n      \"task\": {\"componentId\": \"keboola.ex-db-mysql\", \"configId\": \"12345\"}\n    }\n  ]\n}\n            ",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "tasks": {
+      "description": "Updated list of task definitions.\n                Flow Configuration Schema (based on Keboola orchestrator requirements):\n{\n  \"phases\": [\n    {\n      \"id\": \"integer|string\",           // Unique identifier (required)\n      \"name\": \"string\",                 // Phase name (required)\n      \"description\": \"string\",          // Optional description (markdown supported)\n      \"dependsOn\": [\"id1\", \"id2\"]       // Array of phase IDs this depends on (optional)\n    }\n  ],\n  \"tasks\": [\n    {\n      \"id\": \"integer|string\",           // Unique identifier (required)\n      \"name\": \"string\",                 // Task name (required)\n      \"phase\": \"integer|string\",        // Phase ID this task belongs to (required)\n      \"enabled\": true,                  // Optional, default: true\n      \"continueOnFailure\": false,       // Optional, default: false\n      \"task\": {                         // Task configuration (required)\n        \"componentId\": \"string\",        // Component ID like \"keboola.ex-db-mysql\" (required)\n        \"configId\": \"string\",           // Configuration ID (optional)\n        \"mode\": \"run|debug\"             // Optional, default: \"run\"\n      }\n    }\n  ]\n}\n\nExample:\n{\n  \"phases\": [\n    {\"id\": 1, \"name\": \"Data Extraction\", \"dependsOn\": []},\n    {\"id\": 2, \"name\": \"Data Processing\", \"dependsOn\": [1]}\n  ],\n  \"tasks\": [\n    {\n      \"name\": \"Extract MySQL Data\",\n      \"phase\": 1,\n      \"task\": {\"componentId\": \"keboola.ex-db-mysql\", \"configId\": \"12345\"}\n    }\n  ]\n}",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Tasks",
+      "type": "array"
+    },
+    "change_description": {
+      "description": "Description of changes made",
+      "title": "Change Description",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id",
+    "name",
+    "description",
+    "phases",
+    "tasks",
+    "change_description"
   ],
   "type": "object"
 }
