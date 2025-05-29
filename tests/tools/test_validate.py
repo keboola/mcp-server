@@ -4,6 +4,7 @@ import logging
 import jsonschema
 import pytest
 
+from keboola_mcp_server.client import JsonDict
 from keboola_mcp_server.tools import _validate
 
 
@@ -105,55 +106,148 @@ def test_recoverable_validation_error_str():
 
 
 @pytest.mark.parametrize(
-    "input_schema,expected_schema",
+    ('input_schema', 'expected_schema'),
     [
         # Case 1: required true -> []
-        ({"type": "object", "required": True}, {"type": "object", "required": []}),
+        ({'type': 'object', 'required': True}, {'type': 'object', 'required': []}),
         # Case 2: required false -> []
-        ({"type": "object", "required": False}, {"type": "object", "required": []}),
+        ({'type': 'object', 'required': False}, {'type': 'object', 'required': []}),
         # Case 3: required as list (should remain unchanged)
-        ({"type": "object", "required": ["foo", "bar"]}, {"type": "object", "required": ["foo", "bar"]}),
+        ({'type': 'object', 'required': ['foo', 'bar']}, {'type': 'object', 'required': ['foo', 'bar']}),
         # Case 4: required missing (should not be added)
-        ({"type": "object"}, {"type": "object"}),
+        ({'type': 'object'}, {'type': 'object'}),
         # Case 5: nested properties with required true/false
         (
             {
-                "type": "object",
-                "required": ["foo", "bar"],
-                "properties": {
-                    "foo": {
-                        "type": "string",
-                        "required": ['foo2'],
-                        "properties": {"foo2": {"type": "string", "required": True}},
+                'type': 'object',
+                'required': ['foo', 'bar'],
+                'properties': {
+                    'foo': {
+                        'type': 'string',
+                        'required': ['foo2'],
+                        'properties': {'foo2': {'type': 'string', 'required': True}},
                     },
-                    "bar": {"type": "number", "required": False},
-                    "baz": {"type": "boolean", "required": ["baz"]},
+                    'bar': {'type': 'number', 'required': False},
+                    'baz': {'type': 'boolean', 'required': ['baz']},
                 },
             },
             {
-                "type": "object",
-                "required": ["foo", "bar"],
-                "properties": {
-                    "foo": {
-                        "type": "string",
-                        "required": ['foo2'],
-                        "properties": {"foo2": {"type": "string", "required": []}},
+                'type': 'object',
+                'required': ['foo', 'bar'],
+                'properties': {
+                    'foo': {
+                        'type': 'string',
+                        'required': ['foo2'],
+                        'properties': {'foo2': {'type': 'string', 'required': []}},
                     },
-                    "bar": {"type": "number", "required": []},
-                    "baz": {"type": "boolean", "required": ["baz"]},
+                    'bar': {'type': 'number', 'required': []},
+                    'baz': {'type': 'boolean', 'required': ['baz']},
                 },
             },
         ),
         # Case 6: input is not a dict (should return as is)
-        ("notadict", "notadict"),
+        ('notadict', 'notadict'),
         (123, 123),
         (None, None),
         # Case 7: required as string (should become [])
-        ({"type": "object", "required": "yes"}, {"type": "object", "required": []}),
+        ({'type': 'object', 'required': 'yes'}, {'type': 'object', 'required': []}),
         # Case 8: required as int (should remain unchanged, as not str/bool)
-        ({"type": "object", "required": 1}, {"type": "object", "required": []}),
+        ({'type': 'object', 'required': 1}, {'type': 'object', 'required': []}),
     ],
 )
 def test_normalize_schema(input_schema, expected_schema):
     result = _validate.KeboolaParametersValidator.normalize_schema(input_schema)
     assert result == expected_schema
+
+
+@pytest.mark.parametrize(
+    ('schema_path', 'json_data'),
+    [
+        # we pass the schema and json_data which are expected to be valid
+        ('tests/resources/root_parameters_schema.json', {'embedding_settings': {'provider_type': 'openai'}}),
+        (
+            'tests/resources/row_parameters_schema.json',
+            {'text_column': 'this is the only required field of this schema'},
+        ),
+    ],
+)
+def test_schema_validation(caplog, schema_path: str, json_data: JsonDict):
+    """Testing the failure of the jsonschema.validate and the success of the KeboolaParametersValidator.validate"""
+    with open(schema_path, 'r') as f:
+        schema = json.load(f)
+
+    with caplog.at_level(logging.ERROR):
+        # we expect the error logging when schema is invalid but not failure since it is not an Agent error
+        _validate._validate_json_against_schema(json_data, schema, validate_fn=jsonschema.validate)
+    assert f'schema: {schema}' in caplog.text
+
+    try:
+        _validate._validate_json_against_schema(
+            json_data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
+        )
+    except jsonschema.ValidationError:
+        pytest.fail('ValidationError was raised when it should not have been')
+
+
+@pytest.mark.parametrize(
+    ('schema_path', 'data_path', 'valid'),
+    [
+        # text_column is required and correctly set to "notes" (exists in columns).
+        # primary_key is required only when load_type = incremental_load, and it's provided ("email").
+        # Chunking settings are only present when enable_chunking = true, which is respected.
+        ('tests/resources/row_parameters_schema.json', 'tests/resources/row_parameters_valid.json', True),
+        # Missing required field: text_column
+        # Missing required field: primary_key (required when load_type = incremental_load)
+        # Invalid batch_size: 0 (minimum allowed: 1)
+        # Invalid chunk_size: 9000 (maximum allowed: 8000)
+        # Invalid chunk_overlap: -10 (minimum allowed: 0)
+        ('tests/resources/row_parameters_schema.json', 'tests/resources/row_parameters_invalid.json', False),
+    ],
+)
+def test_validate_row_parameters(schema_path: str, data_path: str, valid: bool):
+    with open(schema_path, 'r') as f:
+        schema = json.load(f)
+    with open(data_path, 'r') as f:
+        data = json.load(f)
+    if valid:
+        try:
+            _validate._validate_json_against_schema(
+                data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
+            )
+        except jsonschema.ValidationError:
+            pytest.fail('ValidationError was raised when it should not have been')
+    else:
+        with pytest.raises(jsonschema.ValidationError):
+            _validate._validate_json_against_schema(
+                data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
+            )
+
+
+@pytest.mark.parametrize(
+    ('schema_path', 'data_path', 'valid'),
+    [
+        # embedding_settings is required.
+        # When provider_type is "openai", the openai_settings object must include model and #api_key.
+        ('tests/resources/root_parameters_schema.json', 'tests/resources/root_parameters_valid.json', True),
+        # "embedding_settings" is required at the top level.
+        # Even though qdrant_settings has all required fields, it doesn't satisfy the top-level schema.
+        ('tests/resources/root_parameters_schema.json', 'tests/resources/root_parameters_invalid.json', False),
+    ],
+)
+def test_validate_root_parameters(schema_path: str, data_path: str, valid: bool):
+    with open(schema_path, 'r') as f:
+        schema = json.load(f)
+    with open(data_path, 'r') as f:
+        data = json.load(f)
+    if valid:
+        try:
+            _validate._validate_json_against_schema(
+                data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
+            )
+        except jsonschema.ValidationError:
+            pytest.fail('ValidationError was raised when it should not have been')
+    else:
+        with pytest.raises(jsonschema.ValidationError):
+            _validate._validate_json_against_schema(
+                data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
+            )
