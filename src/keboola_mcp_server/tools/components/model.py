@@ -1,6 +1,6 @@
 from typing import Any, List, Literal, Optional, Union
-from pydantic import model_validator
-from pydantic import AliasChoices, BaseModel, Field
+
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
@@ -84,20 +84,19 @@ class ReducedComponent(BaseModel):
         serialization_alias='hasOauth'
     )
 
-    @model_validator(mode='before')
-    def derive_capabilities(self, values: dict[str, Any]) -> dict[str, Any]:
-        # Set capability flags based on component_flags
+    @model_validator(mode='after')
+    def derive_capabilities(self) -> 'ReducedComponent':
         table_input_mapping_flags = ('genericDockerUI-tableInput', 'genericDockerUI-simpleTableInput')
 
-        values['is_row_based'] = 'genericDockerUI-rows' in values['component_flags']
-        values['has_table_input_mapping'] = any(f in values['component_flags'] for f in table_input_mapping_flags)
-        values['has_table_output_mapping'] = 'genericDockerUI-tableOutput' in values['component_flags']
-        values['has_file_input_mapping'] = 'genericDockerUI-fileInput' in values['component_flags']
-        values['has_file_output_mapping'] = 'genericDockerUI-fileOutput' in values['component_flags']
-        values['has_oauth'] = 'genericDockerUI-authorization' in values['component_flags']
+        self.is_row_based = 'genericDockerUI-rows' in self.component_flags
+        self.has_table_input_mapping = any(f in self.component_flags for f in table_input_mapping_flags)
+        self.has_table_output_mapping = 'genericDockerUI-tableOutput' in self.component_flags
+        self.has_file_input_mapping = 'genericDockerUI-fileInput' in self.component_flags
+        self.has_file_output_mapping = 'genericDockerUI-fileOutput' in self.component_flags
+        self.has_oauth = 'genericDockerUI-authorization' in self.component_flags
 
-        return values
-    
+        return self
+
 
 class ComponentConfigurationResponseBase(BaseModel):
     """
