@@ -1,6 +1,6 @@
 from typing import Any, List, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
@@ -34,51 +34,68 @@ class ReducedComponent(BaseModel):
         serialization_alias='componentType',
     )
 
-    flags: list[str] = Field(
+    component_flags: list[str] = Field(
         default_factory=list,
         description='List of developer portal flags.',
+        validation_alias=AliasChoices('flags', 'component_flags', 'componentFlags', 'component-flags'),
+        serialization_alias='componentFlags'
     )
 
-    # Capability flags derived from flags
+    # Capability flags derived from component_flags
     is_row_based: bool = Field(
         default=False,
         description='Whether the component is row-based (e.g. have configuration rows) or not.',
+        validation_alias=AliasChoices('is_row_based', 'isRowBased', 'is-row-based'),
+        serialization_alias='isRowBased'
     )
 
     has_table_input_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has table input mapping or not.',
+        validation_alias=AliasChoices('has_table_input_mapping', 'hasTableInputMapping', 'has-table-input-mapping'),
+        serialization_alias='hasTableInputMapping'
     )
 
     has_table_output_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has table output mapping or not.',
+        validation_alias=AliasChoices('has_table_output_mapping', 'hasTableOutputMapping', 'has-table-output-mapping'),
+        serialization_alias='hasTableOutputMapping'
     )
 
     has_file_input_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has file input mapping or not.',
+        validation_alias=AliasChoices('has_file_input_mapping', 'hasFileInputMapping', 'has-file-input-mapping'),
+        serialization_alias='hasFileInputMapping'
     )
 
     has_file_output_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has file output mapping or not.',
+        validation_alias=AliasChoices('has_file_output_mapping', 'hasFileOutputMapping', 'has-file-output-mapping'),
+        serialization_alias='hasFileOutputMapping'
     )
 
     has_oauth: bool = Field(
         default=False,
         description='Whether the component configuration requires OAuth authorization or not.',
+        validation_alias=AliasChoices('has_oauth', 'hasOauth', 'has-oauth'),
+        serialization_alias='hasOauth'
     )
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        # Set capability flags based on flags
-        self.is_row_based = 'genericDockerUI-rows' in self.flags
-        self.has_table_input_mapping = 'genericDockerUI-tableInput' in self.flags
-        self.has_table_output_mapping = 'genericDockerUI-tableOutput' in self.flags
-        self.has_file_input_mapping = 'genericDockerUI-fileInput' in self.flags
-        self.has_file_output_mapping = 'genericDockerUI-fileOutput' in self.flags
-        self.has_oauth = 'genericDockerUI-authorization' in self.flags
+    @model_validator(mode='after')
+    def derive_capabilities(self) -> 'ReducedComponent':
+        table_input_mapping_flags = ('genericDockerUI-tableInput', 'genericDockerUI-simpleTableInput')
+
+        self.is_row_based = 'genericDockerUI-rows' in self.component_flags
+        self.has_table_input_mapping = any(f in self.component_flags for f in table_input_mapping_flags)
+        self.has_table_output_mapping = 'genericDockerUI-tableOutput' in self.component_flags
+        self.has_file_input_mapping = 'genericDockerUI-fileInput' in self.component_flags
+        self.has_file_output_mapping = 'genericDockerUI-fileOutput' in self.component_flags
+        self.has_oauth = 'genericDockerUI-authorization' in self.component_flags
+
+        return self
 
 
 class ComponentConfigurationResponseBase(BaseModel):
