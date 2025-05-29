@@ -79,6 +79,33 @@ def test_validate_storage_invalid(invalid_storage_path: str):
     assert f'{json.dumps(invalid_storage, indent=2)}' in str(err)
 
 
+@pytest.mark.parametrize(
+    ('input_storage', 'output_storage'),
+    [
+        ({'input': {}, 'output': {}}, {'storage': {'input': {}, 'output': {}}}),
+        ({'storage': {'input': {}, 'output': {}}}, {'storage': {'input': {}, 'output': {}}}),
+    ],
+)
+def test_validate_storage_output_format(input_storage, output_storage):
+    """We expect the json will be validated and the output will be normalized"""
+    result = _validate.validate_storage(input_storage)
+    assert result == output_storage
+
+
+@pytest.mark.parametrize(
+    ('input_parameters', 'output_parameters'),
+    [
+        ({'a': 1}, {'parameters': {'a': 1}}),
+        ({'parameters': {'a': 1, 'b': 2}}, {'parameters': {'a': 1, 'b': 2}}),
+    ],
+)
+def test_validate_parameters_output_format(input_parameters, output_parameters):
+    """We expect the json will be validated and the output will be normalized"""
+    accepting_schema = {'type': 'object', 'additionalProperties': True}  # accepts any json object
+    result = _validate.validate_parameters(input_parameters, accepting_schema)
+    assert result == output_parameters
+
+
 def test_validate_json_against_schema_invalid_schema(caplog):
     """
     We expect passing when the schema is invalid since it is not an Agent error.
