@@ -9,6 +9,7 @@ from importlib import resources
 from typing import Optional
 
 import jsonschema
+from jsonschema import Draft202012Validator, TypeChecker
 
 from keboola_mcp_server.client import JsonDict
 
@@ -79,6 +80,37 @@ class RecoverableValidationError(jsonschema.ValidationError):
         return str_repr.rstrip()
 
 
+class KeboolaParametersValidator(Draft202012Validator):
+    """
+    A custom JSON Schema validator that:
+    1. Supports a custom 'button' type by skipping it since it is a UI construct and not a data type.
+    2. Normalizes the schema by correctly handling the 'required' keyword
+       when it's misused within a property's definition. When a property has 'required' set to true, it is propagated
+       up to the parent node required list.
+    """
+
+    CLASS_NAME = 'KeboolaParametersValidator'
+
+    def __init__(self, schema: JsonDict, *args, **kwargs):
+        super().__init__(schema, *args, **kwargs)
+        # Set the custom type checker for this validator class
+        self.type_checker = Draft202012Validator.TYPE_CHECKER.redefine(
+            'button', KeboolaParametersValidator.skip_button_type
+        )
+
+    def validate(self, instance: object) -> None:
+        super().validate(instance)
+
+    @staticmethod
+    def skip_button_type(checker: TypeChecker, instance: object) -> bool:
+        """
+        Dummy type checker for the button type.
+        If there is a button in the schema, we skip it. As it is a UI construct and not a data type.
+        :returns: True
+        """
+        return True
+
+
 def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
     """Validate the storage configuration using jsonschema.
     :param storage: The storage configuration to validate
@@ -112,9 +144,7 @@ def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message:
     return {'parameters': parameters.get('parameters', parameters)}
 
 
-def _validate_json_against_schema(
-    json_data: JsonDict, schema: JsonDict, initial_message: Optional[str] = None
-):
+def _validate_json_against_schema(json_data: JsonDict, schema: JsonDict, initial_message: Optional[str] = None):
     """Validate JSON data against the provided schema."""
     try:
         jsonschema.validate(instance=json_data, schema=schema)
