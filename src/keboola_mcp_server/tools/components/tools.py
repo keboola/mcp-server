@@ -25,6 +25,8 @@ from keboola_mcp_server.tools.components.utils import (
     _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
+    validate_root_parameters_configuration,
+    validate_row_parameters_configuration,
     validate_storage_configuration,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
@@ -514,8 +516,15 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
-    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+    storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    parameters = await validate_root_parameters_configuration(
+        client=client,
+        parameters=parameters,
+        component_id=component_id,
+        initial_message='Field "parameters" is not valid.\n',
+    )
+
+    configuration_payload = {'storage': storage, 'parameters': parameters}
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -613,9 +622,18 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
-    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+    storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    parameters = await validate_row_parameters_configuration(
+        client=client,
+        parameters=parameters,
+        component_id=component_id,
+        initial_message='Field "parameters" is not valid.\n',
+    )
 
+    configuration_payload = {'storage': storage, 'parameters': parameters}
+
+    # Try to create the new configuration and return the new object if successful
+    # or log an error and raise an exception if not
     new_raw_configuration = cast(
         dict[str, Any],
         await client.storage_client.create_component_row_configuration(
@@ -717,8 +735,15 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
-    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+    storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    parameters = await validate_root_parameters_configuration(
+        client=client,
+        parameters=parameters,
+        component_id=component_id,
+        initial_message='Field "parameters" is not valid.\n',
+    )
+
+    configuration_payload = {'storage': storage, 'parameters': parameters}
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -828,8 +853,15 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage = validate_storage_configuration(storage, initial_message='The "storage" parameter is not valid.\n')
-    configuration_payload = {'storage': storage.get('storage'), 'parameters': parameters}
+    storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    parameters = await validate_row_parameters_configuration(
+        client=client,
+        parameters=parameters,
+        component_id=component_id,
+        initial_message='Field "parameters" is not valid.\n',
+    )
+
+    configuration_payload = {'storage': storage, 'parameters': parameters}
 
     new_raw_configuration = cast(
         dict[str, Any],

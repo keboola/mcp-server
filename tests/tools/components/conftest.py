@@ -75,7 +75,7 @@ def mock_component() -> dict[str, Any]:
         'version': 1,
         'created': '2024-01-01T00:00:00Z',
         'data': {'data1': 'data1', 'data2': 'data2'},
-        'flags': ['flag1', 'flag2'],
+        'component_flags': ['flag1', 'flag2'],
         'configurationSchema': {},
         'configurationDescription': 'Extract data from AWS S3',
         'emptyConfiguration': {},
