@@ -48,7 +48,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
 @tool_errors()
 @with_session_state()
-async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow')]:
+async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow.')]:
     """Returns the JSON schema that defines the structure of Flow configurations."""
 
     LOG.info('Returning flow configuration schema')
@@ -59,11 +59,11 @@ async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The
 @with_session_state()
 async def create_flow(
     ctx: Context,
-    name: Annotated[str, Field(description='A short, descriptive name for the flow')],
-    description: Annotated[str, Field(description='Detailed description of the flow purpose')],
-    phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions')],
+    name: Annotated[str, Field(description='A short, descriptive name for the flow.')],
+    description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
+    phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
-) -> Annotated[FlowConfiguration, Field(description='Created flow configuration')]:
+) -> Annotated[FlowConfiguration, Field(description='Created flow configuration.')]:
     """
     Creates a new flow configuration in Keboola.
     A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
@@ -117,13 +117,13 @@ async def create_flow(
 @with_session_state()
 async def update_flow(
     ctx: Context,
-    configuration_id: Annotated[str, Field(description='ID of the flow configuration to update')],
-    name: Annotated[str, Field(description='Updated flow name')],
-    description: Annotated[str, Field(description='Updated flow description')],
-    phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions')],
+    configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
+    name: Annotated[str, Field(description='Updated flow name.')],
+    description: Annotated[str, Field(description='Updated flow description.')],
+    phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')],
-    change_description: Annotated[str, Field(description='Description of changes made')],
-) -> Annotated[FlowConfiguration, Field(description='Updated flow configuration')]:
+    change_description: Annotated[str, Field(description='Description of changes made.')],
+) -> Annotated[FlowConfiguration, Field(description='Updated flow configuration.')]:
     """
     Updates an existing flow configuration in Keboola.
     A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
@@ -203,8 +203,8 @@ async def retrieve_flows(
 @with_session_state()
 async def get_flow_detail(
     ctx: Context,
-    configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve')],
-) -> Annotated[FlowConfiguration, Field(description='Detailed flow configuration')]:
+    configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve.')],
+) -> Annotated[FlowConfiguration, Field(description='Detailed flow configuration.')]:
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
