@@ -12,10 +12,22 @@ from mcp.server.auth.provider import (
     construct_redirect_uri,
 )
 from mcp.shared._httpx_utils import create_mcp_http_client
-from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
 
 LOG = logging.getLogger(__name__)
+
+
+class _OAuthClientInformationFull(OAuthClientInformationFull):
+    def validate_redirect_uri(self, redirect_uri: AnyHttpUrl | None) -> AnyHttpUrl:
+        # Ideally, this should verify the redirect_uri against the URI registered by the client.
+        # That, however, would require a persistent registry of clients.
+        # So, instead we require the clients to send their redirect URI in the authorization request,
+        # and we just use that.
+        if redirect_uri is not None:
+            return redirect_uri
+        else:
+            raise InvalidRedirectUriError('The redirect_uri must be specified.')
 
 
 class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
@@ -46,22 +58,24 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         LOG.debug(f'oauth_client_id={self._oauth_client_id}')
         LOG.debug(f'oauth_client_secret={self._oauth_client_secret}')
 
-        self.clients: dict[str, OAuthClientInformationFull] = {}
-
         self.auth_codes: dict[str, AuthorizationCode] = {}
         self.tokens: dict[str, AccessToken] = {}
         self.state_mapping: dict[str, dict[str, str]] = {}
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        """Get OAuth client information."""
-        client =  self.clients.get(client_id)
+        client = _OAuthClientInformationFull(
+            # Use a fake redirect URI. Normally, we would retrieve the client from a persistent registry
+            # and return the registered redirect URI.
+            redirect_uris=[AnyHttpUrl('http://foo')],
+            client_id=client_id,
+            scope=self.MCP_SERVER_SCOPE
+        )
         LOG.debug(f"[get_client] client_id={client_id}, client={client}")
         return client
 
     async def register_client(self, client_info: OAuthClientInformationFull):
-        """Register a new OAuth client."""
+        # This is a no-op. We don't register clients otherwise we would need a persistent registry.
         LOG.debug(f"[register_client] client_info={client_info}")
-        self.clients[client_info.client_id] = client_info
 
     async def authorize(
             self, client: OAuthClientInformationFull, params: AuthorizationParams
@@ -173,6 +187,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     async def exchange_authorization_code(
             self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
+        LOG.debug(f"[exchange_authorization_code] authorization_code={authorization_code}, client={client}")
+
         """Exchange authorization code for tokens."""
         if authorization_code.code not in self.auth_codes:
             LOG.exception(f"[exchange_authorization_code] Invalid authorization code: "
