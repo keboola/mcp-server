@@ -3,17 +3,19 @@ This module overrides FastMCP.add_tool() to improve conversion of tool function 
 into tool descriptions.
 It also provides a decorator that MCP tool functions can use to inject session state into their Context parameter.
 """
-
+import dataclasses
 import inspect
 import logging
+import os
 import textwrap
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.types import find_kwarg_by_type
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.types import AnyFunction, ToolAnnotations
 from starlette.requests import Request
 
@@ -151,6 +153,12 @@ def with_session_state() -> AnyFunction:
                     config = config.replace_by(http_rq.headers)
                     if accept_secrets_in_url:
                         config = config.replace_by(http_rq.query_params)
+
+                    if isinstance(http_rq.user, AuthenticatedUser):
+                        user = cast(AuthenticatedUser, http_rq.user)
+                        # TODO: translate user.access_token to SAPI token
+                        LOG.debug(f'Injecting SAPI token for access token: {user.access_token}')
+                        config = dataclasses.replace(config, storage_token=os.environ.get('HARDCODED_SAPI_TOKEN') or '')
 
                 # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
                 #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
