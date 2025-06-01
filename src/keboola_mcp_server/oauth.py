@@ -33,7 +33,6 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
 
 
 class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
-    """Simple GitHub OAuth provider with essential functionality."""
 
     # TODO: GitHub OAuth URLs and scope. Change to Keboola OAuth server values.
     _OAUTH_SERVER_AUTH_URL: str = 'https://github.com/login/oauth/authorize'
@@ -46,7 +45,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             self, *, oauth_callback_url: str, client_id: str, client_secret: str, jwt_secret: str | None = None
     ) -> None:
         """
-        Creates OAuth provider implementation for GitHub.
+        Creates OAuth provider implementation.
 
         :param oauth_callback_url: The URL where the OAuth server redirects to after the user authorizes.
         :param client_id: The client ID registered with the OAuth server.
@@ -62,7 +61,6 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         LOG.debug(f'oauth_client_secret={self._oauth_client_secret}')
         LOG.debug(f'jwt_secret={self._jwt_secret}')
 
-        self._auth_codes: dict[str, AuthorizationCode] = {}
         self._tokens: dict[str, AccessToken] = {}
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -83,15 +81,16 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     async def authorize(
             self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
-        """Generate an authorization URL for GitHub OAuth flow."""
+        """Generates an authorization URL."""
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.
         # Instead, we encode them to JWT and pass them back to the client.
         # The states expire after 5 minutes.
         state = {
             'redirect_uri': str(params.redirect_uri),
-            'code_challenge': params.code_challenge,
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
+            'code_challenge': params.code_challenge,
+            'state': params.state,
             'client_id': client.client_id,
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
         }
@@ -111,79 +110,82 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         return auth_url
 
     async def handle_oauth_callback(self, code: str, state: str) -> str:
-        """Handle GitHub OAuth callback."""
+        """
+        Handle the callback from the OAuth server.
+
+        :param code: The authorization code for the MCP OAuth client.
+        :param state: The state generated in the authorize() function.
+        :return: The URL that redirects back to the AI assistant OAuth client.
+        """
+        # Validate the state first to prevent calling OAuth server with invalid authorization code.
         try:
             state_data = jwt.decode(state, self._jwt_secret, algorithms=['HS256'])
         except jwt.InvalidTokenError as e:
-            LOG.debug(f"[handle_github_callback] Invalid state: {state}", exc_info=True)
-            raise HTTPException(400, "Invalid state parameter")
+            LOG.debug(f'[handle_oauth_callback] Invalid state: {state}', exc_info=True)
+            raise HTTPException(400, 'Invalid state parameter')
 
         if not state_data:
-            LOG.debug(f"[handle_github_callback] Invalid state: {state_data}", exc_info=True)
-            raise HTTPException(400, "Invalid state parameter")
+            LOG.debug(f'[handle_oauth_callback] Invalid state: {state_data}', exc_info=True)
+            raise HTTPException(400, 'Invalid state parameter')
 
         if state_data['expires_at'] < time.time():
-            LOG.debug(f"[handle_github_callback] Expired state: {state_data}", exc_info=True)
-            raise HTTPException(400, "Invalid state parameter")
+            LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}', exc_info=True)
+            raise HTTPException(400, 'Invalid state parameter')
 
-        redirect_uri = state_data["redirect_uri"]
-        code_challenge = state_data["code_challenge"]
-        redirect_uri_provided_explicitly = (
-                state_data["redirect_uri_provided_explicitly"] == "True"
-        )
-        client_id = state_data["client_id"]
-
-        # Exchange code for token with GitHub
+        # Exchange the authorization code for the access token with OAuth server.
         # TODO: Don't use create_mcp_http_client from a private module.
         async with create_mcp_http_client() as client:
             response = await client.post(
                 self._OAUTH_SERVER_TOKEN_URL,
                 data={
-                    "client_id": self._oauth_client_id,
-                    "client_secret": self._oauth_client_secret,
-                    "code": code,
-                    # TODO: Why is the redirect_uri here? The POST /token endpoint does not redirect anywhere.
-                    "redirect_uri": self._oauth_callback_url,
+                    'client_id': self._oauth_client_id,
+                    'client_secret': self._oauth_client_secret,
+                    'code': code,
+                    # FYI: Some tutorials use the redirect_uri here, but it does not seem to be required.
+                    # 'redirect_uri': self._oauth_callback_url,
                 },
-                headers={"Accept": "application/json"},
+                headers={'Accept': 'application/json'},
             )
 
             if response.status_code != 200:
-                LOG.exception(f"[handle_github_callback] Failed to exchange code for token")
-                raise HTTPException(400, "Failed to exchange code for token")
+                LOG.exception('[handle_oauth_callback] Failed to exchange code for token')
+                raise HTTPException(400, 'Failed to exchange code for token')
 
             data = response.json()
 
-            if "error" in data:
-                LOG.exception(f"[handle_github_callback] GitHub error: data={data}")
-                raise HTTPException(400, data.get("error_description", data["error"]))
+            if 'error' in data:
+                LOG.exception(f'[handle_oauth_callback] Error when exchaning code for token: data={data}')
+                raise HTTPException(400, data.get('error_description', data['error']))
 
-            github_token = data["access_token"]
-            LOG.debug(f"[handle_github_callback] github_token={github_token}")
+            access_token = data['access_token']
+            LOG.debug(f'[handle_oauth_callback] access_token={access_token}')
 
-            # Create MCP authorization code
-            new_code = f"mcp_{secrets.token_hex(16)}"
-            auth_code = AuthorizationCode(
-                code=new_code,
-                client_id=client_id,
-                redirect_uri=AnyHttpUrl(redirect_uri),
-                redirect_uri_provided_explicitly=redirect_uri_provided_explicitly,
-                expires_at=time.time() + 300,
-                scopes=[self.MCP_SERVER_SCOPE],
-                code_challenge=code_challenge,
-            )
-            self._auth_codes[new_code] = auth_code
+        # Store access token - we'll map the MCP token to this later
+        self._tokens[access_token] = AccessToken(
+            token=access_token,
+            client_id=state_data["client_id"],  # this is the AI assistant client ID
+            scopes=[self._OAUTH_SERVER_SCOPE],
+            expires_at=None,
+        )
 
-            # Store GitHub token - we'll map the MCP token to this later
-            self._tokens[github_token] = AccessToken(
-                token=github_token,
-                client_id=client_id,
-                scopes=[self._OAUTH_SERVER_SCOPE],
-                expires_at=None,
-            )
+        # Create MCP authorization code
+        auth_code = {
+            'code': f'mcp_{secrets.token_hex(16)}',
+            'client_id': state_data["client_id"],
+            'redirect_uri': state_data['redirect_uri'],
+            'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == "True"),
+            'expires_at': time.time() + 5 * 60,  # 5 minutes from now
+            'scopes': [self.MCP_SERVER_SCOPE],
+            'code_challenge': state_data['code_challenge'],
+        }
+        auth_code_jwt = jwt.encode(auth_code, self._jwt_secret)
 
-        mcp_redirect_uri = construct_redirect_uri(redirect_uri, code=new_code, state=state)
-        LOG.debug(f"[handle_github_callback] mcp_redirect_uri={mcp_redirect_uri}")
+        mcp_redirect_uri = construct_redirect_uri(
+            redirect_uri_base=state_data['redirect_uri'],
+            code=auth_code_jwt,
+            state=state_data['state']
+        )
+        LOG.debug(f"[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}")
 
         return mcp_redirect_uri
 
@@ -191,35 +193,31 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
         """Load an authorization code."""
-        mcp_auth_code = self._auth_codes.get(authorization_code)
-        LOG.debug(f"[load_authorization_code] client={client}, authorization_code={authorization_code}, mcp_auth_code={mcp_auth_code}")
-        return mcp_auth_code
+        auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
+        LOG.debug(f'[load_authorization_code] client={client}, authorization_code={authorization_code}, '
+                  f'mcp_auth_code={auth_code}')
+        return AuthorizationCode.model_validate(auth_code | {'redirect_uri': AnyHttpUrl(auth_code['redirect_uri'])})
 
     async def exchange_authorization_code(
             self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        LOG.debug(f"[exchange_authorization_code] authorization_code={authorization_code}, client={client}")
-
         """Exchange authorization code for tokens."""
-        if authorization_code.code not in self._auth_codes:
-            LOG.exception(f"[exchange_authorization_code] Invalid authorization code: "
-                          f"client={client}, authorization_code={authorization_code}")
-            raise ValueError("Invalid authorization code")
+        LOG.debug(f'[exchange_authorization_code] authorization_code={authorization_code}, client={client}')
 
         # Generate MCP access token
-        mcp_token = f"mcp_{secrets.token_hex(32)}"
+        mcp_token = f'mcp_{secrets.token_hex(32)}'
 
         # Store MCP token
         mcp_access_token = AccessToken(
             token=mcp_token,
             client_id=client.client_id,
             scopes=authorization_code.scopes,
-            expires_at=int(time.time()) + 3600,
+            expires_at=int(time.time()) + 60 * 60,  # 1 hour from now
         )
         self._tokens[mcp_token] = mcp_access_token
 
-        # Find GitHub token for this client
-        github_token = next(
+        # Find OAuth access token for this client
+        oauth_access_token = next(
             (
                 token
                 for token, data in self._tokens.items()
@@ -231,8 +229,6 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             None,
         )
 
-        del self._auth_codes[authorization_code.code]
-
         mcp_oauth_token = OAuthToken(
             access_token=mcp_token,
             token_type="bearer",
@@ -241,7 +237,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         )
 
         LOG.debug(f"[exchange_authorization_code] mcp_access_token={mcp_oauth_token}, "
-                  f"mcp_oauth_token={mcp_oauth_token}, github_token={github_token}")
+                  f"mcp_oauth_token={mcp_oauth_token}, oauth_access_token={oauth_access_token}")
 
         return mcp_oauth_token
 
