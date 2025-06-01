@@ -6,7 +6,6 @@ It also provides a decorator that MCP tool functions can use to inject session s
 
 import inspect
 import logging
-import os
 import textwrap
 from dataclasses import dataclass
 from functools import wraps
@@ -146,7 +145,6 @@ def with_session_state() -> AnyFunction:
             if not getattr(ctx.session, 'state', None):
                 # This is here to allow mocking the context.session.state in tests.
                 config = ServerState.from_context(ctx).config
-                config = config.replace_by(os.environ)
                 accept_secrets_in_url = config.accept_secrets_in_url
 
                 if http_rq := _get_http_request():
