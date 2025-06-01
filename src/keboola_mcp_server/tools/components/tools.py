@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Annotated, Any, Optional, Sequence, cast
+from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from httpx import HTTPStatusError
@@ -486,14 +486,15 @@ async def create_component_root_configuration(
         Field(description='The component configuration parameters, adhering to the root_configuration_schema'),
     ],
     storage: Annotated[
-        Optional[dict[str, Any]],
+        dict[str, Any],
         Field(
+            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
             ),
         ),
-    ] = None,
+    ],
 ) -> Annotated[ComponentRootConfiguration, Field(description='Created component root configuration.')]:
     """
     Creates a component configuration using the specified name, component ID, configuration JSON, and description.
@@ -588,14 +589,15 @@ async def create_component_row_configuration(
         Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
     ],
     storage: Annotated[
-        Optional[dict[str, Any]],
+        dict[str, Any],
         Field(
+            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
             ),
         ),
-    ] = None,
+    ],
 ) -> Annotated[ComponentRowConfiguration, Field(description='Created component row configuration.')]:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -703,15 +705,16 @@ async def update_component_root_configuration(
         Field(description='The component configuration parameters, adhering to the root_configuration_schema schema'),
     ],
     storage: Annotated[
-        Optional[dict[str, Any]],
+        dict[str, Any],
         Field(
+            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that are not row-based and have tables or file '
                 'input mapping defined'
             ),
         ),
-    ] = None,
+    ],
 ) -> Annotated[ComponentRootConfiguration, Field(description='Updated component root configuration.')]:
     """
     Updates a specific component configuration using given by component ID, and configuration ID.
@@ -821,14 +824,15 @@ async def update_component_row_configuration(
         Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
     ],
     storage: Annotated[
-        Optional[dict[str, Any]],
+        dict[str, Any],
         Field(
+            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
             ),
         ),
-    ] = None,
+    ],
 ) -> Annotated[ComponentRowConfiguration, Field(description='Updated component row configuration.')]:
     """
     Updates a specific component configuration row in the specified configuration_id, using the specified name,
