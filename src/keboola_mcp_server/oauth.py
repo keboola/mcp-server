@@ -2,7 +2,9 @@ import logging
 import secrets
 import time
 from http.client import HTTPException
+from urllib.parse import urlencode
 
+import jwt
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
@@ -41,7 +43,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     MCP_SERVER_SCOPE: str = 'mcp'
 
     def __init__(
-            self, *, oauth_callback_url: str, client_id: str, client_secret: str
+            self, *, oauth_callback_url: str, client_id: str, client_secret: str, jwt_secret: str | None = None
     ) -> None:
         """
         Creates OAuth provider implementation for GitHub.
@@ -53,14 +55,15 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         self._oauth_callback_url = oauth_callback_url
         self._oauth_client_id = client_id
         self._oauth_client_secret = client_secret
+        self._jwt_secret = jwt_secret or secrets.token_hex(32)
 
         LOG.debug(f'oauth_callback_url={self._oauth_callback_url}')
         LOG.debug(f'oauth_client_id={self._oauth_client_id}')
         LOG.debug(f'oauth_client_secret={self._oauth_client_secret}')
+        LOG.debug(f'jwt_secret={self._jwt_secret}')
 
-        self.auth_codes: dict[str, AuthorizationCode] = {}
-        self.tokens: dict[str, AccessToken] = {}
-        self.state_mapping: dict[str, dict[str, str]] = {}
+        self._auth_codes: dict[str, AuthorizationCode] = {}
+        self._tokens: dict[str, AccessToken] = {}
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         client = _OAuthClientInformationFull(
@@ -81,26 +84,27 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
         """Generate an authorization URL for GitHub OAuth flow."""
-        state = params.state or secrets.token_hex(16)
-
-        # Store the state mapping
-        self.state_mapping[state] = {
-            "redirect_uri": str(params.redirect_uri),
-            "code_challenge": params.code_challenge,
-            "redirect_uri_provided_explicitly": str(
-                params.redirect_uri_provided_explicitly
-            ),
-            "client_id": client.client_id,
+        # Create and encode the authorization state.
+        # We don't store the authentication states that we create here to avoid having to persist them.
+        # Instead, we encode them to JWT and pass them back to the client.
+        # The states expire after 5 minutes.
+        state = {
+            'redirect_uri': str(params.redirect_uri),
+            'code_challenge': params.code_challenge,
+            'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
+            'client_id': client.client_id,
+            'expires_at': time.time() + 5 * 60,  # 5 minutes from now
         }
+        state_jwt = jwt.encode(state, self._jwt_secret)
 
-        # Build GitHub authorization URL
-        auth_url = (
-            f"{self._OAUTH_SERVER_AUTH_URL}"
-            f"?client_id={self._oauth_client_id}"
-            f"&redirect_uri={self._oauth_callback_url}"
-            f"&scope={self._OAUTH_SERVER_SCOPE}"
-            f"&state={state}"
-        )
+        # create the authorization URL
+        params = {
+            'client_id': self._oauth_client_id,
+            'redirect_uri': self._oauth_callback_url,
+            'scope': self._OAUTH_SERVER_SCOPE,
+            'state': state_jwt
+        }
+        auth_url = f'{self._OAUTH_SERVER_AUTH_URL}?{urlencode(params)}'
 
         LOG.debug(f"[authorize] client={client}, params={params}, {auth_url}")
 
@@ -108,9 +112,18 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
     async def handle_oauth_callback(self, code: str, state: str) -> str:
         """Handle GitHub OAuth callback."""
-        state_data = self.state_mapping.get(state)
+        try:
+            state_data = jwt.decode(state, self._jwt_secret, algorithms=['HS256'])
+        except jwt.InvalidTokenError as e:
+            LOG.debug(f"[handle_github_callback] Invalid state: {state}", exc_info=True)
+            raise HTTPException(400, "Invalid state parameter")
+
         if not state_data:
-            LOG.exception(f"[handle_github_callback] Invalid state: {state}")
+            LOG.debug(f"[handle_github_callback] Invalid state: {state_data}", exc_info=True)
+            raise HTTPException(400, "Invalid state parameter")
+
+        if state_data['expires_at'] < time.time():
+            LOG.debug(f"[handle_github_callback] Expired state: {state_data}", exc_info=True)
             raise HTTPException(400, "Invalid state parameter")
 
         redirect_uri = state_data["redirect_uri"]
@@ -159,17 +172,15 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
                 scopes=[self.MCP_SERVER_SCOPE],
                 code_challenge=code_challenge,
             )
-            self.auth_codes[new_code] = auth_code
+            self._auth_codes[new_code] = auth_code
 
             # Store GitHub token - we'll map the MCP token to this later
-            self.tokens[github_token] = AccessToken(
+            self._tokens[github_token] = AccessToken(
                 token=github_token,
                 client_id=client_id,
                 scopes=[self._OAUTH_SERVER_SCOPE],
                 expires_at=None,
             )
-
-        del self.state_mapping[state]
 
         mcp_redirect_uri = construct_redirect_uri(redirect_uri, code=new_code, state=state)
         LOG.debug(f"[handle_github_callback] mcp_redirect_uri={mcp_redirect_uri}")
@@ -180,7 +191,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
         """Load an authorization code."""
-        mcp_auth_code = self.auth_codes.get(authorization_code)
+        mcp_auth_code = self._auth_codes.get(authorization_code)
         LOG.debug(f"[load_authorization_code] client={client}, authorization_code={authorization_code}, mcp_auth_code={mcp_auth_code}")
         return mcp_auth_code
 
@@ -190,7 +201,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         LOG.debug(f"[exchange_authorization_code] authorization_code={authorization_code}, client={client}")
 
         """Exchange authorization code for tokens."""
-        if authorization_code.code not in self.auth_codes:
+        if authorization_code.code not in self._auth_codes:
             LOG.exception(f"[exchange_authorization_code] Invalid authorization code: "
                           f"client={client}, authorization_code={authorization_code}")
             raise ValueError("Invalid authorization code")
@@ -205,13 +216,13 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             scopes=authorization_code.scopes,
             expires_at=int(time.time()) + 3600,
         )
-        self.tokens[mcp_token] = mcp_access_token
+        self._tokens[mcp_token] = mcp_access_token
 
         # Find GitHub token for this client
         github_token = next(
             (
                 token
-                for token, data in self.tokens.items()
+                for token, data in self._tokens.items()
                 # see https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/
                 # which you get depends on your GH app setup.
                 if (token.startswith("ghu_") or token.startswith("gho_"))
@@ -220,7 +231,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             None,
         )
 
-        del self.auth_codes[authorization_code.code]
+        del self._auth_codes[authorization_code.code]
 
         mcp_oauth_token = OAuthToken(
             access_token=mcp_token,
@@ -236,7 +247,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         """Load and validate an access token."""
-        access_token = self.tokens.get(token)
+        access_token = self._tokens.get(token)
         LOG.debug(f"[load_access_token] token={token}, access_token={access_token}")
         if not access_token:
             return None
@@ -244,7 +255,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # Check if expired
         now = time.time()
         if access_token.expires_at and access_token.expires_at < now:
-            del self.tokens[token]
+            del self._tokens[token]
             LOG.debug(f"[load_access_token] Expired token: access_token.expires_at={access_token.expires_at}, "
                       f"now={now}")
             return None
@@ -273,5 +284,5 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     ) -> None:
         """Revoke a token."""
         LOG.debug(f"[revoke_token] token={token}, token_type_hint={token_type_hint}")
-        if token in self.tokens:
-            del self.tokens[token]
+        if token in self._tokens:
+            del self._tokens[token]

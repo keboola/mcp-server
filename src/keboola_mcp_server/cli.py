@@ -52,6 +52,8 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     oauth_group.add_argument(
         '--mcp-server-url', default='http://localhost:8000', metavar='STR',
         help='The URL where the MCP server si reachable.')
+    oauth_group.add_argument(
+        '--jwt-secret', metavar='STR', help='The secret key for encoding and decoding JWT tokens.')
 
     return parser.parse_args(args)
 
@@ -76,6 +78,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         oauth_client_id=parsed_args.oauth_client_id,
         oauth_client_secret=parsed_args.oauth_client_secret,
         mcp_server_url=parsed_args.mcp_server_url,
+        jwt_secret=parsed_args.jwt_secret,
     )
     config = config.replace_by(os.environ)
 

@@ -106,6 +106,7 @@ def create_server(config: Config) -> FastMCP:
             # This URL must be reachable from the internet.
             # The path corresponds to oauth_callback_handler() set up below.
             oauth_callback_url=config.mcp_server_url.rstrip('/') + '/oauth/callback',
+            jwt_secret=config.jwt_secret,
         )
         auth_settings = AuthSettings(
             issuer_url=AnyHttpUrl(config.mcp_server_url),

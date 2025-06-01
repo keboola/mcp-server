@@ -28,6 +28,8 @@ class Config:
     """OAuth client secret registered in the Keboola OAuth Server."""
     mcp_server_url: Optional[str] = None
     """The URL where the MCP server si reachable."""
+    jwt_secret: Optional[str] = None
+    """The secret key for encoding and decoding JWT tokens."""
 
     @staticmethod
     def _normalize(name: str) -> str:
