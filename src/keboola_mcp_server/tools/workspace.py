@@ -246,10 +246,6 @@ class WorkspaceManager:
         self._workspace: _Workspace | None = None
         self._table_fqn_cache: dict[str, TableFqn] = {}
 
-    @property
-    def _branch_id(self) -> str:
-        return self._client.storage_client.branch_id
-
     async def _find_info_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
 
@@ -289,7 +285,7 @@ class WorkspaceManager:
     async def _find_info_in_branch(self) -> _WspInfo | None:
         """Finds the workspace info in the current branch."""
 
-        metadata = await self._client.storage_client.get(f'branch/{self._branch_id}/metadata')
+        metadata = await self._client.storage_client.get('branch/default/metadata')
         for m in metadata:
             if m.get('key') == self.MCP_META_KEY:
                 workspace_id = m.get('value') or ''
@@ -307,7 +303,7 @@ class WorkspaceManager:
         """
 
         resp = await self._client.storage_client.post(
-            endpoint=f'branch/{self._branch_id}/workspaces',
+            endpoint='branch/default/workspaces',
             params={'async': True},
             data={'readOnlyStorageAccess': True},
         )
@@ -371,7 +367,7 @@ class WorkspaceManager:
             else:
                 raise ValueError(f'No Keboola workspace found for user: {self._workspace_schema}')
 
-        LOG.info(f'Looking up workspace in branch: {self._branch_id}')
+        LOG.info('Looking up workspace in the default branch.')
         if info := await self._find_info_in_branch():
             # use the workspace that has already been created by the MCP server and noted to the branch
             LOG.info(f'Found workspace: {info}')
@@ -379,15 +375,15 @@ class WorkspaceManager:
             return self._workspace
 
         # create a new workspace and note its ID to the branch
-        LOG.info(f'Creating workspace in branch: {self._branch_id}')
+        LOG.info('Creating workspace in the default branch.')
         if info := await self._create_info():
             LOG.info(f'Found workspace: {info}')
             # update the branch metadata with the workspace ID
             meta = await self._client.storage_client.post(
-                endpoint=f'branch/{self._branch_id}/metadata',
+                endpoint='branch/default/metadata',
                 data={'metadata': [{'key': self.MCP_META_KEY, 'value': info.id}]}
             )
-            LOG.info(f'Set metadata in {self._branch_id} branch: {meta}')
+            LOG.info(f'Set metadata in the default branch: {meta}')
             # use the newly created workspace
             self._workspace = self._init_workspace(info)
             return self._workspace
