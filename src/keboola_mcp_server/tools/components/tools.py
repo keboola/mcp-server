@@ -379,6 +379,7 @@ async def create_sql_transformation(
         name=name,
         description=description,
         configuration=transformation_configuration_payload.model_dump(by_alias=True),
+        mcp_context=ctx.mcp_context,
     )
 
     configuration_id = new_raw_transformation_configuration['id']
@@ -494,6 +495,7 @@ async def update_sql_transformation(
         change_description=change_description,
         updated_description=updated_description if updated_description else None,
         is_disabled=is_disabled,
+        mcp_context=ctx.mcp_context,
     )
 
     await _set_cfg_update_metadata(
@@ -595,6 +597,13 @@ async def create_config(
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
+    # Construct the mcp_context for event logging
+    # using attributes from FastMCP's Context object
+    tool_event_context = {
+        "tool_name": "create_component_root_configuration",  # Typically holds the tool's registered name
+        "tool_args": parameters # Typically holds the resolved arguments for the tool
+    }
+
     new_raw_configuration = cast(
         dict[str, Any],
         await client.storage_client.configuration_create(
@@ -602,6 +611,7 @@ async def create_config(
             name=name,
             description=description,
             configuration=configuration_payload,
+            mcp_context=tool_event_context, # Pass the constructed context
         ),
     )
 
@@ -714,6 +724,7 @@ async def add_config_row(
             name=name,
             description=description,
             configuration=configuration_payload,
+            mcp_context=ctx.mcp_context, # Pass the constructed context
         ),
     )
 
@@ -831,6 +842,7 @@ async def update_config(
             change_description=change_description,
             updated_name=name,
             updated_description=description,
+            mcp_context=ctx.mcp_context, # Pass the constructed context
         ),
     )
 
@@ -949,6 +961,7 @@ async def update_config_row(
             change_description=change_description,
             updated_name=name,
             updated_description=description,
+            mcp_context=ctx.mcp_context, # Pass the constructed context
         ),
     )
 
