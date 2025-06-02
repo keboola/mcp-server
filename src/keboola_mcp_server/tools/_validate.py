@@ -9,7 +9,8 @@ from importlib import resources
 from typing import Callable, Optional, cast
 
 import jsonschema
-from jsonschema import Draft202012Validator, TypeChecker
+import jsonschema.validators
+from jsonschema import TypeChecker
 from jsonschema.validators import extend
 
 from keboola_mcp_server.client import JsonDict, JsonPrimitive, JsonStruct
@@ -84,11 +85,11 @@ class RecoverableValidationError(jsonschema.ValidationError):
 
 class KeboolaParametersValidator:
     """
-    A custom JSON Schema validator that:
-    1. Supports a custom 'button' type by skipping it since it is a UI construct and not a data type.
-    2. Normalizes the schema by correctly handling the 'required' keyword
-       when it's misused within a property's definition. When a property has 'required' set to true or false, we
-       set it to an empty list.
+    A custom JSON Schema validator that handles UI elements and schema normalization:
+    1. Ignores 'button' type (UI-only construct)
+    2. Normalizes schema by:
+       - Converting boolean 'required' flags to proper list format (propagating the required flag up)
+       - Ensuring 'properties' is a dictionary if it is an empty list
     """
 
     @classmethod
@@ -96,44 +97,68 @@ class KeboolaParametersValidator:
         """
         Validate the instance against the schema.
         """
-        normalized_schema = cls.normalize_schema(schema)
-        type_checker = Draft202012Validator.TYPE_CHECKER.redefine('button', cls.skip_button_type)
-        validator = extend(Draft202012Validator, type_checker=type_checker)(normalized_schema)
-        return validator.validate(instance)
+        sanitized_schema = cls.sanitize_schema(schema)
+        base_validator = jsonschema.validators.validator_for(sanitized_schema)
+        keboola_validator = extend(
+            base_validator, type_checker=base_validator.TYPE_CHECKER.redefine('button', cls.is_button)
+        )
+        return keboola_validator(sanitized_schema).validate(instance)
 
     @staticmethod
-    def skip_button_type(checker: TypeChecker, instance: object) -> bool:
+    def is_button(checker: TypeChecker, instance: object) -> bool:
         """
-        Dummy type checker for the button type.
-        If there is a button in the schema, we skip it. As it is a UI construct and not a data type.
-        :returns: True
+        Dummy button type checker.
+        We accept button as a type since it is a UI construct and not a data type.
+        :returns: True if instance is a dict with a type field with value 'button', False otherwise
         """
-        return True
+        # TODO: we can add a custom pydantic model that would validate button type with all expected fields.
+        # For now we just check if the instance is a dict and has a type field with value 'button'.
+        return isinstance(instance, dict) and 'button' == instance.get('type', None)
 
     @staticmethod
-    def normalize_schema(schema: JsonDict) -> JsonDict:
-        """Normalize schema by converting required fields to lists"""
+    def sanitize_schema(schema: JsonDict) -> JsonDict:
+        """Normalize schema by converting required fields to lists and ensuring properties is a dict"""
 
-        def _convert_required(schema: JsonStruct | JsonPrimitive) -> JsonStruct | JsonPrimitive:
+        def _sanitize_required_and_properties(
+            schema: JsonStruct | JsonPrimitive,
+        ) -> tuple[JsonStruct | JsonPrimitive, Optional[bool]]:
+
+            # default returns the element of a schema if we are at the bottom of the tree (not a dict)
             if not isinstance(schema, dict):
-                return schema
+                return schema, False
 
-            required = schema.get('required', None)
-            if required is not None:
-                # we convert true and false to empty list since the schema expects a list
-                # We expect: The parent node's required list should include all properties marked as required=true
-                # in its children
-                schema['required'] = required if isinstance(required, list) else []
+            is_current_required = None
+            required = schema.get('required', [])
+            if not isinstance(required, list):
+                # Convert required field to empty list if boolean/string, keep as-is if list
+                # True/true: propagate up to parent's required list
+                # False/false: remove from parent's required list
+                is_current_required = required.lower() == 'true' if isinstance(required, str) else False
+                is_current_required = is_current_required or (required is True if isinstance(required, bool) else False)
+                required = []
+
+            if properties := schema.get('properties'):
+                # we need to ensure that the properties is a dict, sometimes it is an empty list - normalize it
+                if not isinstance(properties, dict):
+                    properties = {}
+
+                for property_name, subschema in properties.items():
+                    # we recursively sanitize the subschemas within the properties
+                    properties[property_name], is_child_required = _sanitize_required_and_properties(subschema)
+                    if is_child_required is True and property_name not in required:
+                        required.append(property_name)
+                    elif is_child_required is False and property_name in required:
+                        required.remove(property_name)
+
+            if required:
+                schema['required'] = list(required)
             else:
                 schema.pop('required', None)
 
-            if properties := cast(JsonDict, schema.get('properties')):
-                schema['properties'] = {
-                    field_name: _convert_required(field_schema) for field_name, field_schema in properties.items()
-                }
-            return schema
+            return schema, is_current_required
 
-        return cast(JsonDict, _convert_required(schema))
+        sanitized_schema = cast(JsonDict, _sanitize_required_and_properties(schema)[0])
+        return sanitized_schema
 
 
 def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:

@@ -308,7 +308,7 @@
         "propertyOrder": 200
       },
       "test_database_connection": {
-        "type": "kunda",
+        "type": "button",
         "format": "sync-action",
         "options": {
           "async": {
@@ -320,7 +320,7 @@
         }
       },
       "test_embedding_service_connection": {
-        "type": "kunda",
+        "type": "button",
         "format": "sync-action",
         "options": {
           "async": {
