@@ -10,19 +10,13 @@ from keboola_mcp_server.tools.workspace import WorkspaceManager
 LOG = logging.getLogger(__name__)
 
 
-def _storage_client(storage_api_url: str, storage_api_token: str) -> SyncStorageClient:
-    return SyncStorageClient(storage_api_url, storage_api_token)
-
-
 @pytest.fixture
 def dynamic_manager(
-        keboola_client: KeboolaClient, storage_api_token: str, storage_api_url: str, workspace_schema: str
+        keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
 ) -> Generator[WorkspaceManager, Any, None]:
-    storage_client = _storage_client(storage_api_url, storage_api_token)
+    storage_client = sync_storage_client
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
-
-    LOG.info(f'Setting up workspaces in Keboola project with ID={project_id}')
 
     def _get_workspace_meta() -> Mapping[str, Any] | None:
         metadata = storage_client.branches.metadata('default')
