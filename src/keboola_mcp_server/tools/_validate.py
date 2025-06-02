@@ -137,7 +137,7 @@ class KeboolaParametersValidator:
                 is_current_required = is_current_required or (required is True if isinstance(required, bool) else False)
                 required = []
 
-            if properties := schema.get('properties'):
+            if (properties := schema.get('properties')) is not None:
                 # we need to ensure that the properties is a dict, sometimes it is an empty list - normalize it
                 if not isinstance(properties, dict):
                     properties = {}
@@ -149,6 +149,7 @@ class KeboolaParametersValidator:
                         required.append(property_name)
                     elif is_child_required is False and property_name in required:
                         required.remove(property_name)
+                schema['properties'] = properties
 
             if required:
                 schema['required'] = list(required)

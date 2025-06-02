@@ -194,7 +194,7 @@ def test_recoverable_validation_error_str():
         # Case 7: properties values are not a dict type (should return as it is)
         ({'properties': {'a': 1}}, {'properties': {'a': 1}}),
         # Case 8: properties are an empty list should convert to an empty dict
-        ({'properties': []}, {'properties': []}),
+        ({'properties': []}, {'properties': {}}),
         # Case 9: required as string -> remove the required field
         ({'type': 'object', 'required': 'yes'}, {'type': 'object'}),
         # Case 10: required as int - remove the required field
