@@ -165,7 +165,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             token=access_token,
             client_id=state_data["client_id"],  # this is the AI assistant client ID
             scopes=[self._OAUTH_SERVER_SCOPE],
-            expires_at=None,
+            expires_at=None,  # TODO: set the expiration time from the OAuth server response
         )
 
         # Create MCP authorization code
@@ -177,6 +177,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
             'scopes': [self.MCP_SERVER_SCOPE],
             'code_challenge': state_data['code_challenge'],
+            # TODO: add access_token here rather than storing it in self._tokens
         }
         auth_code_jwt = jwt.encode(auth_code, self._jwt_secret)
 
@@ -217,6 +218,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         self._tokens[mcp_token] = mcp_access_token
 
         # Find OAuth access token for this client
+        # TODO: read this from the authorization_code; it will have to be a subclass of AuthorizationCode
+        # TODO: add oauth_access_token to mcp_access_token to avoid storing it in self._tokens
         oauth_access_token = next(
             (
                 token
