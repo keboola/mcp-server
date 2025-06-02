@@ -408,6 +408,32 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
+    async def configuration_create(
+        self,
+        component_id: str,
+        name: str,
+        description: str,
+        configuration: dict[str, Any],
+    ) -> JsonDict:
+        """
+        Creates a new configuration for a component.
+
+        :param component_id: The id of the component for which to create the configuration.
+        :param name: The name of the configuration.
+        :param description: The description of the configuration.
+        :param configuration: The configuration definition as a dictionary.
+
+        :return: The SAPI call response - created configuration or raise an error.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
+
+        payload = {
+            'name': name,
+            'description': description,
+            'configuration': configuration,
+        }
+        return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
+
     async def configuration_update(
         self,
         component_id: str,

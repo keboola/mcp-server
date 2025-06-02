@@ -332,8 +332,8 @@ async def create_sql_transformation(
     # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
     sql_dialect = await get_sql_dialect(ctx)
-    transformation_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {transformation_id}')
+    component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage(input and output tables)
@@ -342,34 +342,26 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
-    endpoint = f'branch/{client.storage_client.branch_id}/components/{transformation_id}/configs'
 
-    LOG.info(f'Creating new transformation configuration: {name} for component: {transformation_id}.')
-    # Try to create the new transformation configuration and return the new object if successful
-    # or log an error and raise an exception if not
-    new_raw_transformation_configuration = cast(
-        JsonDict,
-        await client.storage_client.post(
-            endpoint=endpoint,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': transformation_configuration_payload.model_dump(),
-            },
-        ),
+    LOG.info(f'Creating new transformation configuration: {name} for component: {component_id}.')
+    new_raw_transformation_configuration = await client.storage_client.configuration_create(
+        component_id=component_id,
+        name=name,
+        description=description,
+        configuration=transformation_configuration_payload.model_dump(),
     )
 
-    component = await _get_component(client=client, component_id=transformation_id)
+    component = await _get_component(client=client, component_id=component_id)
     new_transformation_configuration = ComponentConfigurationResponse.model_validate(
         new_raw_transformation_configuration
         | {
-            'component_id': transformation_id,
+            'component_id': component_id,
             'component': component,
         }
     )
 
     LOG.info(
-        f'Created new transformation "{transformation_id}" with configuration id '
+        f'Created new transformation "{component_id}" with configuration id '
         f'"{new_transformation_configuration.configuration_id}".'
     )
     return new_transformation_configuration
