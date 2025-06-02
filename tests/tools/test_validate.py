@@ -135,10 +135,10 @@ def test_recoverable_validation_error_str():
 @pytest.mark.parametrize(
     ('input_schema', 'expected_schema'),
     [
-        # Case 1: required true -> []
-        ({'type': 'object', 'required': True}, {'type': 'object', 'required': []}),
-        # Case 2: required false -> []
-        ({'type': 'object', 'required': False}, {'type': 'object', 'required': []}),
+        # Case 1: required true -> remove the required field
+        ({'type': 'object', 'required': True}, {'type': 'object'}),
+        # Case 2: required false -> remove the required field
+        ({'type': 'object', 'required': False}, {'type': 'object'}),
         # Case 3: required as list (should remain unchanged)
         ({'type': 'object', 'required': ['foo', 'bar']}, {'type': 'object', 'required': ['foo', 'bar']}),
         # Case 4: required missing (should not be added)
@@ -147,7 +147,7 @@ def test_recoverable_validation_error_str():
         (
             {
                 'type': 'object',
-                'required': ['foo', 'bar'],
+                'required': ['foo'],
                 'properties': {
                     'foo': {
                         'type': 'string',
@@ -160,30 +160,51 @@ def test_recoverable_validation_error_str():
             },
             {
                 'type': 'object',
-                'required': ['foo', 'bar'],
+                'required': ['foo'],
                 'properties': {
                     'foo': {
                         'type': 'string',
                         'required': ['foo2'],
-                        'properties': {'foo2': {'type': 'string', 'required': []}},
+                        'properties': {'foo2': {'type': 'string'}},
                     },
-                    'bar': {'type': 'number', 'required': []},
+                    'bar': {'type': 'number'},
                     'baz': {'type': 'boolean', 'required': ['baz']},
                 },
             },
         ),
-        # Case 6: input is not a dict (should return as is)
-        ('notadict', 'notadict'),
-        (123, 123),
-        (None, None),
-        # Case 7: required as string (should become [])
-        ({'type': 'object', 'required': 'yes'}, {'type': 'object', 'required': []}),
-        # Case 8: required as int (should remain unchanged, as not str/bool)
-        ({'type': 'object', 'required': 1}, {'type': 'object', 'required': []}),
+        # Case 6: nested properties with required true/false - add if required and remove if Not
+        (
+            {
+                'type': 'object',
+                'required': ['foo2'],
+                'properties': {
+                    'foo': {'type': 'string', 'required': True},
+                    'foo2': {'type': 'string', 'required': 'False'},
+                },
+            },
+            {
+                'type': 'object',
+                'required': ['foo'],
+                'properties': {
+                    'foo': {'type': 'string'},
+                    'foo2': {'type': 'string'},
+                },
+            },
+        ),
+        # Case 7: properties values are not a dict type (should return as it is)
+        ({'properties': {'a': 1}}, {'properties': {'a': 1}}),
+        # Case 8: properties are an empty list should convert to an empty dict
+        ({'properties': []}, {'properties': []}),
+        # Case 9: required as string -> remove the required field
+        ({'type': 'object', 'required': 'yes'}, {'type': 'object'}),
+        # Case 10: required as int - remove the required field
+        ({'type': 'object', 'required': 1}, {'type': 'object'}),
+        # Case 11: empty schema should return an empty schema
+        ({}, {}),
     ],
 )
-def test_normalize_schema(input_schema, expected_schema):
-    result = _validate.KeboolaParametersValidator.normalize_schema(input_schema)
+def test_normalize_schema(input_schema: JsonDict, expected_schema: JsonDict):
+    result = _validate.KeboolaParametersValidator.sanitize_schema(input_schema)
     assert result == expected_schema
 
 
