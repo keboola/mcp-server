@@ -1,0 +1,35 @@
+{
+    "phases": [
+      {
+        "id": 1,
+        "name": "Standalone Phase"
+      }
+    ],
+    "tasks": [
+      {
+        "id": 101,
+        "name": "Minimal Task with Config Data",
+        "phase": 1,
+        "task": {
+          "componentId": "keboola.generic-runner",
+          "configData": {
+            "parameters": {
+              "url": "https://example.com/data",
+              "method": "GET"
+            }
+          },
+          "mode": "run"
+        }
+      },
+      {
+        "id": 102,
+        "name": "Debug Mode Task",
+        "phase": 1,
+        "task": {
+          "componentId": "keboola.test-component",
+          "mode": "debug"
+        }
+      }
+    ]
+  }
+  
