@@ -40,18 +40,8 @@ def mock_raw_flow_config() -> Dict[str, Any]:
         'isDeleted': False,
         'configuration': {
             'phases': [
-                {
-                    'id': 1,
-                    'name': 'Data Extraction',
-                    'description': 'Extract data from sources',
-                    'dependsOn': []
-                },
-                {
-                    'id': 2,
-                    'name': 'Data Processing',
-                    'description': 'Process extracted data',
-                    'dependsOn': [1]
-                }
+                {'id': 1, 'name': 'Data Extraction', 'description': 'Extract data from sources', 'dependsOn': []},
+                {'id': 2, 'name': 'Data Processing', 'description': 'Process extracted data', 'dependsOn': [1]},
             ],
             'tasks': [
                 {
@@ -60,11 +50,7 @@ def mock_raw_flow_config() -> Dict[str, Any]:
                     'phase': 1,
                     'enabled': True,
                     'continueOnFailure': False,
-                    'task': {
-                        'componentId': 'keboola.ex-aws-s3',
-                        'configId': '12345',
-                        'mode': 'run'
-                    }
+                    'task': {'componentId': 'keboola.ex-aws-s3', 'configId': '12345', 'mode': 'run'},
                 },
                 {
                     'id': 20002,
@@ -72,17 +58,13 @@ def mock_raw_flow_config() -> Dict[str, Any]:
                     'phase': 2,
                     'enabled': True,
                     'continueOnFailure': False,
-                    'task': {
-                        'componentId': 'keboola.snowflake-transformation',
-                        'configId': '67890',
-                        'mode': 'run'
-                    }
-                }
-            ]
+                    'task': {'componentId': 'keboola.snowflake-transformation', 'configId': '67890', 'mode': 'run'},
+                },
+            ],
         },
         'changeDescription': 'Initial creation',
         'metadata': [],
-        'created': '2025-05-25T06:33:41+0200'
+        'created': '2025-05-25T06:33:41+0200',
     }
 
 
@@ -96,13 +78,10 @@ def mock_empty_flow_config() -> Dict[str, Any]:
         'version': 1,
         'isDisabled': False,
         'isDeleted': False,
-        'configuration': {
-            'phases': [],
-            'tasks': []
-        },
+        'configuration': {'phases': [], 'tasks': []},
         'changeDescription': None,
         'metadata': [],
-        'created': '2025-05-25T07:00:00+0200'
+        'created': '2025-05-25T07:00:00+0200',
     }
 
 
@@ -112,7 +91,7 @@ def sample_phases() -> List[Dict[str, Any]]:
     return [
         {'name': 'Data Extraction', 'dependsOn': [], 'description': 'Extract data'},
         {'name': 'Data Processing', 'dependsOn': [1], 'description': 'Process data'},
-        {'name': 'Data Output', 'dependsOn': [2], 'description': 'Output processed data'}
+        {'name': 'Data Output', 'dependsOn': [2], 'description': 'Output processed data'},
     ]
 
 
@@ -120,25 +99,22 @@ def sample_phases() -> List[Dict[str, Any]]:
 def sample_tasks() -> List[Dict[str, Any]]:
     """Sample task definitions for testing."""
     return [
-        {
-            'name': 'Extract from S3',
-            'phase': 1,
-            'task': {'componentId': 'keboola.ex-aws-s3', 'configId': '12345'}
-        },
+        {'name': 'Extract from S3', 'phase': 1, 'task': {'componentId': 'keboola.ex-aws-s3', 'configId': '12345'}},
         {
             'name': 'Transform Data',
             'phase': 2,
-            'task': {'componentId': 'keboola.snowflake-transformation', 'configId': '67890'}
+            'task': {'componentId': 'keboola.snowflake-transformation', 'configId': '67890'},
         },
         {
             'name': 'Export to BigQuery',
             'phase': 3,
-            'task': {'componentId': 'keboola.wr-google-bigquery-v2', 'configId': '11111'}
-        }
+            'task': {'componentId': 'keboola.wr-google-bigquery-v2', 'configId': '11111'},
+        },
     ]
 
 
 # --- Test Model Parsing ---
+
 
 class TestFlowModels:
     """Test Flow Pydantic models."""
@@ -203,16 +179,13 @@ class TestFlowModels:
 
 # --- Test Helper Functions ---
 
+
 class TestFlowHelpers:
     """Test helper functions for flow processing."""
 
     def test_ensure_phase_ids_with_missing_ids(self):
         """Test phase ID generation when IDs are missing."""
-        phases = [
-            {'name': 'Phase 1'},
-            {'name': 'Phase 2', 'dependsOn': [1]},
-            {'id': 5, 'name': 'Phase 5'}
-        ]
+        phases = [{'name': 'Phase 1'}, {'name': 'Phase 2', 'dependsOn': [1]}, {'id': 5, 'name': 'Phase 5'}]
 
         processed_phases = _ensure_phase_ids(phases)
 
@@ -228,7 +201,7 @@ class TestFlowHelpers:
         """Test phase processing when IDs already exist."""
         phases = [
             {'id': 10, 'name': 'Custom Phase 1'},
-            {'id': 'string-id', 'name': 'Custom Phase 2', 'dependsOn': [10]}
+            {'id': 'string-id', 'name': 'Custom Phase 2', 'dependsOn': [10]},
         ]
 
         processed_phases = _ensure_phase_ids(phases)
@@ -243,7 +216,7 @@ class TestFlowHelpers:
         tasks = [
             {'name': 'Task 1', 'phase': 1, 'task': {'componentId': 'comp1'}},
             {'name': 'Task 2', 'phase': 2, 'task': {'componentId': 'comp2'}},
-            {'id': 30000, 'name': 'Task 3', 'phase': 3, 'task': {'componentId': 'comp3'}}
+            {'id': 30000, 'name': 'Task 3', 'phase': 3, 'task': {'componentId': 'comp3'}},
         ]
 
         processed_tasks = _ensure_task_ids(tasks)
@@ -257,7 +230,7 @@ class TestFlowHelpers:
         """Test that default mode 'run' is added to tasks."""
         tasks = [
             {'name': 'Task 1', 'phase': 1, 'task': {'componentId': 'comp1'}},
-            {'name': 'Task 2', 'phase': 1, 'task': {'componentId': 'comp2', 'mode': 'debug'}}
+            {'name': 'Task 2', 'phase': 1, 'task': {'componentId': 'comp2', 'mode': 'debug'}},
         ]
 
         processed_tasks = _ensure_task_ids(tasks)
@@ -282,9 +255,7 @@ class TestFlowHelpers:
 
     def test_validate_flow_structure_invalid_phase_dependency(self):
         """Test validation failure for invalid phase dependencies."""
-        phases = _ensure_phase_ids([
-            {'id': 1, 'name': 'Phase 1', 'dependsOn': [999]}  # Non-existent phase
-        ])
+        phases = _ensure_phase_ids([{'id': 1, 'name': 'Phase 1', 'dependsOn': [999]}])  # Non-existent phase
         tasks = []
 
         with pytest.raises(ValueError, match='depends on non-existent phase 999'):
@@ -293,11 +264,9 @@ class TestFlowHelpers:
     def test_validate_flow_structure_invalid_task_phase(self):
         """Test validation failure for task referencing non-existent phase."""
         phases = _ensure_phase_ids([{'id': 1, 'name': 'Phase 1'}])
-        tasks = _ensure_task_ids([{
-            'name': 'Bad Task',
-            'phase': 999,  # Non-existent phase
-            'task': {'componentId': 'comp1'}
-        }])
+        tasks = _ensure_task_ids(
+            [{'name': 'Bad Task', 'phase': 999, 'task': {'componentId': 'comp1'}}]  # Non-existent phase
+        )
 
         with pytest.raises(ValueError, match='references non-existent phase 999'):
             _validate_flow_structure(phases, tasks)
@@ -305,63 +274,68 @@ class TestFlowHelpers:
 
 # --- Test Circular Dependency Detection ---
 
+
 class TestCircularDependencies:
     """Test circular dependency detection."""
 
     def test_no_circular_dependencies(self):
         """Test flow with no circular dependencies."""
-        phases = _ensure_phase_ids([
-            {'id': 1, 'name': 'Phase 1'},
-            {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
-            {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]}
-        ])
+        phases = _ensure_phase_ids(
+            [
+                {'id': 1, 'name': 'Phase 1'},
+                {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
+                {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]},
+            ]
+        )
 
         _check_circular_dependencies(phases)
 
     def test_direct_circular_dependency(self):
         """Test detection of direct circular dependency."""
-        phases = _ensure_phase_ids([
-            {'id': 1, 'name': 'Phase 1', 'dependsOn': [2]},
-            {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]}
-        ])
+        phases = _ensure_phase_ids(
+            [{'id': 1, 'name': 'Phase 1', 'dependsOn': [2]}, {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]}]
+        )
 
         with pytest.raises(ValueError, match='Circular dependency detected'):
             _check_circular_dependencies(phases)
 
     def test_indirect_circular_dependency(self):
         """Test detection of indirect circular dependency."""
-        phases = _ensure_phase_ids([
-            {'id': 1, 'name': 'Phase 1', 'dependsOn': [3]},
-            {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
-            {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]}
-        ])
+        phases = _ensure_phase_ids(
+            [
+                {'id': 1, 'name': 'Phase 1', 'dependsOn': [3]},
+                {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
+                {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]},
+            ]
+        )
 
         with pytest.raises(ValueError, match='Circular dependency detected'):
             _check_circular_dependencies(phases)
 
     def test_self_referencing_dependency(self):
         """Test detection of self-referencing dependency."""
-        phases = _ensure_phase_ids([
-            {'id': 1, 'name': 'Phase 1', 'dependsOn': [1]}
-        ])
+        phases = _ensure_phase_ids([{'id': 1, 'name': 'Phase 1', 'dependsOn': [1]}])
 
         with pytest.raises(ValueError, match='Circular dependency detected'):
             _check_circular_dependencies(phases)
 
     def test_complex_valid_dependencies(self):
         """Test complex but valid dependency structure."""
-        phases = _ensure_phase_ids([
-            {'id': 1, 'name': 'Phase 1'},
-            {'id': 2, 'name': 'Phase 2'},
-            {'id': 3, 'name': 'Phase 3', 'dependsOn': [1, 2]},
-            {'id': 4, 'name': 'Phase 4', 'dependsOn': [3]},
-            {'id': 5, 'name': 'Phase 5', 'dependsOn': [1]}
-        ])
+        phases = _ensure_phase_ids(
+            [
+                {'id': 1, 'name': 'Phase 1'},
+                {'id': 2, 'name': 'Phase 2'},
+                {'id': 3, 'name': 'Phase 3', 'dependsOn': [1, 2]},
+                {'id': 4, 'name': 'Phase 4', 'dependsOn': [3]},
+                {'id': 5, 'name': 'Phase 5', 'dependsOn': [1]},
+            ]
+        )
 
         _check_circular_dependencies(phases)
 
 
 # --- Test Flow Tools ---
+
 
 class TestFlowTools:
     """Test flow management tools."""
@@ -373,20 +347,18 @@ class TestFlowTools:
         mcp_context_client: Context,
         sample_phases: List[Dict[str, Any]],
         sample_tasks: List[Dict[str, Any]],
-        mock_raw_flow_config: Dict[str, Any]
+        mock_raw_flow_config: Dict[str, Any],
     ):
         """Test flow creation."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.create_flow_configuration = mocker.AsyncMock(
-            return_value=mock_raw_flow_config
-        )
+        keboola_client.storage_client.create_flow_configuration = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
         result = await create_flow(
             ctx=mcp_context_client,
             name='Test Flow',
             description='Test flow description',
             phases=sample_phases,
-            tasks=sample_tasks
+            tasks=sample_tasks,
         )
 
         assert isinstance(result, FlowConfiguration)
@@ -412,7 +384,7 @@ class TestFlowTools:
         mocker: MockerFixture,
         mcp_context_client: Context,
         mock_raw_flow_config: Dict[str, Any],
-        mock_empty_flow_config: Dict[str, Any]
+        mock_empty_flow_config: Dict[str, Any],
     ):
         """Test retrieving all flows."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -432,21 +404,13 @@ class TestFlowTools:
 
     @pytest.mark.asyncio
     async def test_retrieve_flows_specific_ids(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-        mock_raw_flow_config: Dict[str, Any]
+        self, mocker: MockerFixture, mcp_context_client: Context, mock_raw_flow_config: Dict[str, Any]
     ):
         """Test retrieving specific flows by ID."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(
-            return_value=mock_raw_flow_config
-        )
+        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
-        result = await retrieve_flows(
-            ctx=mcp_context_client,
-            flow_ids=['21703284']
-        )
+        result = await retrieve_flows(ctx=mcp_context_client, flow_ids=['21703284'])
 
         assert len(result) == 1
         assert result[0].id == '21703284'
@@ -454,10 +418,7 @@ class TestFlowTools:
 
     @pytest.mark.asyncio
     async def test_retrieve_flows_with_missing_id(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-        mock_raw_flow_config: Dict[str, Any]
+        self, mocker: MockerFixture, mcp_context_client: Context, mock_raw_flow_config: Dict[str, Any]
     ):
         """Test retrieving flows when some IDs don't exist."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -468,35 +429,22 @@ class TestFlowTools:
             else:
                 raise Exception(f'Flow {flow_id} not found')
 
-        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(
-            side_effect=mock_get_flow
-        )
+        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(side_effect=mock_get_flow)
 
-        result = await retrieve_flows(
-            ctx=mcp_context_client,
-            flow_ids=['21703284', 'nonexistent']
-        )
+        result = await retrieve_flows(ctx=mcp_context_client, flow_ids=['21703284', 'nonexistent'])
 
         assert len(result) == 1
         assert result[0].id == '21703284'
 
     @pytest.mark.asyncio
     async def test_get_flow_detail(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-        mock_raw_flow_config: Dict[str, Any]
+        self, mocker: MockerFixture, mcp_context_client: Context, mock_raw_flow_config: Dict[str, Any]
     ):
         """Test getting detailed flow configuration."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(
-            return_value=mock_raw_flow_config
-        )
+        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
-        result = await get_flow_detail(
-            ctx=mcp_context_client,
-            configuration_id='21703284'
-        )
+        result = await get_flow_detail(ctx=mcp_context_client, configuration_id='21703284')
 
         assert isinstance(result, FlowConfiguration)
         assert len(result.phases) == 2
@@ -511,13 +459,11 @@ class TestFlowTools:
         mcp_context_client: Context,
         sample_phases: List[Dict[str, Any]],
         sample_tasks: List[Dict[str, Any]],
-        mock_raw_flow_config: Dict[str, Any]
+        mock_raw_flow_config: Dict[str, Any],
     ):
         """Test flow update."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.update_flow_configuration = mocker.AsyncMock(
-            return_value=mock_raw_flow_config
-        )
+        keboola_client.storage_client.update_flow_configuration = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
         result = await update_flow(
             ctx=mcp_context_client,
@@ -526,7 +472,7 @@ class TestFlowTools:
             description='Updated description',
             phases=sample_phases,
             tasks=sample_tasks,
-            change_description='Updated flow structure'
+            change_description='Updated flow structure',
         )
 
         assert isinstance(result, FlowConfiguration)
@@ -546,14 +492,12 @@ class TestFlowTools:
 
 # --- Test Edge Cases ---
 
+
 class TestFlowEdgeCases:
     """Test edge cases and error conditions."""
 
     @pytest.mark.asyncio
-    async def test_create_flow_with_invalid_structure(
-        self,
-        mcp_context_client: Context
-    ):
+    async def test_create_flow_with_invalid_structure(self, mcp_context_client: Context):
         """Test flow creation with invalid structure."""
         invalid_phases = [{'name': 'Phase 1', 'dependsOn': [999]}]  # Invalid dependency
         invalid_tasks = [{'name': 'Task 1', 'phase': 1, 'task': {'componentId': 'comp1'}}]
@@ -564,15 +508,12 @@ class TestFlowEdgeCases:
                 name='Invalid Flow',
                 description='Invalid flow',
                 phases=invalid_phases,
-                tasks=invalid_tasks
+                tasks=invalid_tasks,
             )
 
     def test_phase_validation_with_missing_name(self):
         """Test phase validation when required name field is missing."""
-        invalid_phases = [
-            {'name': 'Valid Phase'},
-            {}
-        ]
+        invalid_phases = [{'name': 'Valid Phase'}, {}]
 
         processed_phases = _ensure_phase_ids(invalid_phases)
         assert len(processed_phases) == 2
@@ -580,9 +521,7 @@ class TestFlowEdgeCases:
 
     def test_task_validation_with_missing_name(self):
         """Test task validation when required name field is missing."""
-        invalid_tasks = [
-            {}
-        ]
+        invalid_tasks = [{}]
 
         with pytest.raises(ValueError, match="missing 'task' configuration"):
             _ensure_task_ids(invalid_tasks)
@@ -597,11 +536,9 @@ class TestFlowEdgeCases:
 
 # --- Integration-style Tests ---
 
+
 @pytest.mark.asyncio
-async def test_complete_flow_workflow(
-    mocker: MockerFixture,
-    mcp_context_client: Context
-):
+async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client: Context):
     """Test a complete flow workflow: create, retrieve, update, get detail."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
@@ -613,15 +550,23 @@ async def test_complete_flow_workflow(
         'configuration': {'phases': [], 'tasks': []},
         'isDisabled': False,
         'isDeleted': False,
-        'created': '2025-05-28T12:00:00Z'
+        'created': '2025-05-28T12:00:00Z',
     }
 
     updated_flow = created_flow.copy()
     updated_flow['version'] = 2
     updated_flow['configuration'] = {
         'phases': [{'id': 1, 'name': 'Test Phase', 'dependsOn': []}],
-        'tasks': [{'id': 20001, 'name': 'Test Task', 'phase': 1, 'enabled': True,
-                  'continueOnFailure': False, 'task': {'componentId': 'test.component', 'mode': 'run'}}]
+        'tasks': [
+            {
+                'id': 20001,
+                'name': 'Test Task',
+                'phase': 1,
+                'enabled': True,
+                'continueOnFailure': False,
+                'task': {'componentId': 'test.component', 'mode': 'run'},
+            }
+        ],
     }
 
     keboola_client.storage_client.create_flow_configuration = mocker.AsyncMock(return_value=created_flow)
@@ -634,7 +579,7 @@ async def test_complete_flow_workflow(
         name='Integration Test Flow',
         description='Flow for integration testing',
         phases=[],
-        tasks=[]
+        tasks=[],
     )
     assert isinstance(created, FlowConfiguration)
 
@@ -649,14 +594,11 @@ async def test_complete_flow_workflow(
         description='Updated flow for integration testing',
         phases=[{'name': 'Test Phase'}],
         tasks=[{'name': 'Test Task', 'phase': 1, 'task': {'componentId': 'test.component'}}],
-        change_description='Added test phase and task'
+        change_description='Added test phase and task',
     )
     assert isinstance(updated, FlowConfiguration)
 
-    detail = await get_flow_detail(
-        ctx=mcp_context_client,
-        configuration_id='123456'
-    )
+    detail = await get_flow_detail(ctx=mcp_context_client, configuration_id='123456')
     assert isinstance(detail, FlowConfiguration)
     assert len(detail.phases) == 1
     assert len(detail.tasks) == 1
