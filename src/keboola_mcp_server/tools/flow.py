@@ -154,7 +154,6 @@ async def update_flow(
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
-    # breakpoint()
     flow_configuration = cast(JsonDict, flow_configuration)
     validate_flow_configuration_against_schema(flow_configuration)
 
