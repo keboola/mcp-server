@@ -294,7 +294,7 @@ class WorkspaceManager:
                     return await self._find_info_by_id(workspace_id)
         return None
 
-    async def _create_info(self, *, timeout_sec: float = 60.0) -> _WspInfo | None:
+    async def _create_info(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
         """
         Creates a new workspace in the current branch and returns its info.
 
