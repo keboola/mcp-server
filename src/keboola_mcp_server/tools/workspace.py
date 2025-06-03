@@ -289,6 +289,7 @@ class WorkspaceManager:
         workspace = await self._get_workspace()
         return workspace.get_sql_dialect()
 
+
 class ProjectManager:
     STATE_KEY = 'project_manager'
 
@@ -297,7 +298,7 @@ class ProjectManager:
         instance = state[cls.STATE_KEY]
         assert isinstance(instance, ProjectManager), f'Expected ProjectManager, got: {instance}'
         return instance
-    
+
     def __init__(self, client: KeboolaClient):
         self.project = None
         self.client = client
@@ -308,4 +309,3 @@ class ProjectManager:
             project_data = await self.client.storage_client.verify_token()
             self.project = project_data.get('owner', {}).get('id')
         return str(self.project)
-    

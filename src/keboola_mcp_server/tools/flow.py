@@ -47,12 +47,14 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
     LOG.info('Flow tools initialized.')
 
+
 class FlowToolResponse(BaseModel):
     description: str = Field(..., description='The updated description value.')
-    timestamp: datetime = Field(..., description='The timestamp of the description update.', 
+    timestamp: datetime = Field(..., description='The timestamp of the description update.',
                                 validation_alias=AliasChoices('timestamp', 'created'))
     success: bool = Field(default=True, description='Indicates if the update succeeded.')
     link: str = Field(..., description='The url of the created/updated object.')
+
 
 @tool_errors()
 @with_session_state()
@@ -177,7 +179,7 @@ async def update_flow(
         flow_configuration=flow_configuration,  # Direct configuration
     )
 
-    flow_id = str(updated_raw_configuration.get('id', '')) # Could this just be configuration_id instead?
+    flow_id = str(updated_raw_configuration.get('id', ''))  # Could this just be configuration_id instead?
     project_id = await project_manager.get_project()
     flow_link = get_flow_url(project_id=project_id, flow_id=flow_id)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'link': flow_link})
@@ -370,6 +372,7 @@ def _check_circular_dependencies(phases: list[FlowPhase]) -> None:
             if cycle_path is not None:
                 cycle_str = ' -> '.join(str(pid) for pid in cycle_path)
                 raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
-            
+
+
 def get_flow_url(project_id: str | int, flow_id: str | int):
     return f'https://connection.keboola.com/admin/projects/{project_id}/flows/{flow_id}'

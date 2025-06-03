@@ -20,7 +20,7 @@ from starlette.requests import Request
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.tools.workspace import WorkspaceManager, ProjectManager
+from keboola_mcp_server.tools.workspace import ProjectManager, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ def _create_session_state(config: Config) -> dict[str, Any]:
     except Exception as e:
         LOG.error(f'Failed to initialize Storage API Workspace manager: {e}')
         raise
-    
+
     try:
         project_manager = ProjectManager(client)
         state[ProjectManager.STATE_KEY] = project_manager
@@ -92,7 +92,7 @@ def _create_session_state(config: Config) -> dict[str, Any]:
     except Exception as e:
         LOG.error(f'Failed to initialize Storage API Workspace manager: {e}')
         raise
-    
+
     return state
 
 
