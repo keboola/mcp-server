@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import random
-import urllib.parse
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
 from dataclasses import dataclass
 from multiprocessing import Process
@@ -197,9 +196,18 @@ def _create_configs(storage_client: SyncStorageClient) -> list[ConfigDef]:
     return configs
 
 
+def _sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncStorageClient:
+    client = SyncStorageClient(storage_api_url, storage_api_token)
+    token_info = client.tokens.verify()
+    LOG.info(f'Authorized as "{token_info["description"]}" ({token_info["id"]}) '
+             f'to project "{token_info["owner"]["name"]}" ({token_info["owner"]["id"]}) '
+             f'at "{client.root_url}" stack.')
+    return client
+
+
 @pytest.fixture(scope='session')
 def keboola_project(
-    env_init: bool, sync_storage_client: SyncStorageClient
+    env_init: bool, storage_api_token: str, storage_api_url: str
 ) -> Generator[ProjectDef, Any, None]:
     """
     Sets up a Keboola project with items needed for integration tests,
@@ -207,7 +215,7 @@ def keboola_project(
     After the tests, the project is cleaned up.
     """
     # Cannot use keboola_client fixture because it is function-scoped
-    storage_client = sync_storage_client
+    storage_client = _sync_storage_client(storage_api_token, storage_api_url)
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
 
@@ -259,29 +267,15 @@ def configs(keboola_project: ProjectDef) -> list[ConfigDef]:
     return keboola_project.configs
 
 
-def _sync_storage_client(keboola_client: KeboolaClient) -> SyncStorageClient:
-    url = urllib.parse.urlsplit(keboola_client.storage_client.raw_client.base_api_url)
-    return SyncStorageClient(
-        str(urllib.parse.urlunsplit([url.scheme, url.netloc, '', '', ''])),
-        keboola_client.token)
-
-
-@pytest.fixture(scope='session')
-def keboola_client(storage_api_token: str, storage_api_url: str) -> KeboolaClient:
-    keboola_client = KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
-    storage_client = _sync_storage_client(keboola_client)
-    token_info = storage_client.tokens.verify()
-    # Log details of the SAPI token used for accessing the testing Keboola project.
-    LOG.info(f'Authorized as "{token_info["description"]}" ({token_info["id"]}) '
-             f'to project "{token_info["owner"]["name"]}" ({token_info["owner"]["id"]}) '
-             f'at "{storage_client.root_url}" stack.')
-    return keboola_client
-
-
-@pytest.fixture(scope='session')
-def sync_storage_client(keboola_client: KeboolaClient) -> SyncStorageClient:
+@pytest.fixture
+def sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncStorageClient:
     """Gets the ordinary (synchronous) client from the official Keboola SDK (i.e. `kbcstorage` package)."""
-    return _sync_storage_client(keboola_client)
+    return _sync_storage_client(storage_api_token, storage_api_url)
+
+
+@pytest.fixture
+def keboola_client(sync_storage_client: SyncStorageClient) -> KeboolaClient:
+    return KeboolaClient(storage_api_token=sync_storage_client.token, storage_api_url=sync_storage_client.root_url)
 
 
 @pytest.fixture
