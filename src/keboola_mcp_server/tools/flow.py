@@ -19,6 +19,7 @@ from keboola_mcp_server.tools.components.model import (
     FlowTask,
     ReducedFlow,
 )
+from keboola_mcp_server.tools.workspace import ProjectManager
 
 LOG = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ async def create_flow(
     }
 
     client = KeboolaClient.from_state(ctx.session.state)
+    project_manager = ProjectManager.from_state(ctx.session.state)
     LOG.info(f'Creating new flow: {name}')
 
     new_raw_configuration = await client.storage_client.flow_create(
@@ -115,15 +117,10 @@ async def create_flow(
     )
 
     # flow_response = FlowConfigurationResponse.from_raw_config(new_raw_configuration)
-    flow_id = new_raw_configuration.get('id', '')
-    token_project_data = await client.storage_client.verify_token()
-    project_id = token_project_data.get('owner', {}).get('id', '')
+    flow_id = str(new_raw_configuration.get('id', ''))
+    project_id = await project_manager.get_project()
     flow_link = get_flow_url(project_id=project_id, flow_id=flow_id)
-    updated_raw_configuration = new_raw_configuration | {'link': flow_link}
-    tool_response = FlowToolResponse.model_validate(updated_raw_configuration)
-
-    flow_id = updated_raw_configuration.get('id', '')
-
+    tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'link': flow_link})
 
     LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
     return tool_response
@@ -169,6 +166,7 @@ async def update_flow(
     }
 
     client = KeboolaClient.from_state(ctx.session.state)
+    project_manager = ProjectManager.from_state(ctx.session.state)
     LOG.info(f'Updating flow configuration: {configuration_id}')
 
     updated_raw_configuration = await client.storage_client.flow_update(
@@ -179,13 +177,10 @@ async def update_flow(
         flow_configuration=flow_configuration,  # Direct configuration
     )
 
-    # updated_flow_response = FlowConfigurationResponse.from_raw_config(updated_raw_configuration)
-    flow_id = updated_raw_configuration.get('id', '')
-    token_project_data = await client.storage_client.verify_token()
-    project_id = token_project_data.get('owner', {}).get('id', '')
+    flow_id = str(updated_raw_configuration.get('id', '')) # Could this just be configuration_id instead?
+    project_id = await project_manager.get_project()
     flow_link = get_flow_url(project_id=project_id, flow_id=flow_id)
-    updated_raw_configuration = updated_raw_configuration | {'link': flow_link}
-    tool_response = FlowToolResponse.model_validate(updated_raw_configuration)
+    tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'link': flow_link})
 
     LOG.info(f'Updated flow configuration: {flow_id}')
     return tool_response
