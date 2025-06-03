@@ -18,8 +18,9 @@ LOG = logging.getLogger(__name__)
 RESOURCES = 'keboola_mcp_server.resources'
 
 
-class ConfigurationSchemaResourceName(str, Enum):
+class ConfigurationSchemaResources(str, Enum):
     STORAGE = 'storage-schema.json'
+    FLOW = 'flow-schema.json'
 
 
 class RecoverableValidationError(jsonschema.ValidationError):
@@ -85,7 +86,7 @@ def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -
     :param initial_message: The initial message to include in the error message
     :returns: The validated storage configuration normalized to {"storage" : {...}}
     """
-    schema = _load_schema(ConfigurationSchemaResourceName.STORAGE)
+    schema = _load_schema(ConfigurationSchemaResources.STORAGE)
     # we expect the storage to be a dictionary of storage configurations with the "storage" key
     normalized_storage_data = {'storage': storage.get('storage', storage)}
     _validate_json_against_schema(
@@ -113,9 +114,23 @@ def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message:
     return {'parameters': expected_input}  # normalized to {"parameters" : {...}}
 
 
-def _validate_json_against_schema(
-    json_data: JsonDict, schema: JsonDict, initial_message: Optional[str] = None
-):
+def validate_flow_configuration_against_schema(flow: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
+    """
+    Validate the flow configuration using jsonschema.
+    :flow: json data to validate
+    :initial_message: initial message to include in the error message
+    :returns: The validated flow configuration
+    """
+    schema = _load_schema(ConfigurationSchemaResources.FLOW)
+    _validate_json_against_schema(
+        json_data=flow,
+        schema=schema,
+        initial_message=initial_message,
+    )
+    return flow
+
+
+def _validate_json_against_schema(json_data: JsonDict, schema: JsonDict, initial_message: Optional[str] = None):
     """Validate JSON data against the provided schema."""
     try:
         jsonschema.validate(instance=json_data, schema=schema)
@@ -133,6 +148,6 @@ def _validate_json_against_schema(
         return
 
 
-def _load_schema(json_schema_name: ConfigurationSchemaResourceName) -> JsonDict:
+def _load_schema(json_schema_name: ConfigurationSchemaResources) -> JsonDict:
     with resources.open_text(RESOURCES, json_schema_name.value, encoding='utf-8') as f:
         return json.load(f)
