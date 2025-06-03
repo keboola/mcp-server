@@ -3,7 +3,6 @@
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from typing import Optional
 
@@ -80,7 +79,6 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         mcp_server_url=parsed_args.mcp_server_url,
         jwt_secret=parsed_args.jwt_secret,
     )
-    config = config.replace_by(os.environ)
 
     try:
         # Create and run server

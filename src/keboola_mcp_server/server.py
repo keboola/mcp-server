@@ -98,6 +98,8 @@ def create_server(config: Config) -> FastMCP:
     :param config: Server configuration.
     :return: Configured FastMCP server instance.
     """
+    config = config.replace_by(os.environ)
+
     if config.oauth_client_id and config.oauth_client_secret:
         # TODO: replace with Keboola OAuth provider
         oauth_provider = SimpleOAuthProvider(

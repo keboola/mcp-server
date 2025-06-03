@@ -24,7 +24,7 @@ from keboola_mcp_server.tools.workspace import WorkspaceManager
 class TestServer:
     @pytest.mark.asyncio
     async def test_list_tools(self):
-        server = create_server()
+        server = create_server(Config())
         tools = await server.get_tools()
         assert sorted(tool.name for tool in tools.values()) == [
             'create_component_root_configuration',
@@ -56,7 +56,7 @@ class TestServer:
 
     @pytest.mark.asyncio
     async def test_tools_have_descriptions(self):
-        server = create_server()
+        server = create_server(Config())
         tools = await server.get_tools()
 
         missing_descriptions: list[str] = []
@@ -125,14 +125,14 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
 
         return param
 
+    # mock the environment variables
+    os_mock = mocker.patch('keboola_mcp_server.server.os')
+    os_mock.environ = envs
+
     # create MCP server with the initial Config
     mcp = create_server(config)
     tools_count = len(await mcp.get_tools())
     mcp.add_tool(assessed_function, name='assessed-function')
-
-    # mock the environment variables
-    os_mock = mocker.patch('keboola_mcp_server.mcp.os')
-    os_mock.environ = envs
 
     # running the server as stdio transport through client
     async with Client(mcp) as client:
@@ -176,7 +176,7 @@ async def test_keboola_injection_and_lifespan(
     }
     config = Config.from_dict(cfg_dict)
 
-    mocker.patch('keboola_mcp_server.mcp.os.environ', os_environ_params)
+    mocker.patch('keboola_mcp_server.server.os.environ', os_environ_params)
 
     server = create_server(config)
 
@@ -188,9 +188,9 @@ async def test_keboola_injection_and_lifespan(
         workspace = WorkspaceManager.from_state(ctx.session.state)
         assert isinstance(workspace, WorkspaceManager)
 
-        # check the server state life_span
+        # chack that the server state config contains the initial params + the environment params
         server_state = ServerState.from_context(ctx)
-        assert asdict(server_state.config) == asdict(config)
+        assert asdict(server_state.config) == asdict(config) | os_environ_params
 
         assert client.token == expected_params['storage_token']
         assert workspace._workspace_schema == expected_params['workspace_schema']
