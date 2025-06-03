@@ -6,7 +6,6 @@ It also provides a decorator that MCP tool functions can use to inject session s
 import dataclasses
 import inspect
 import logging
-import os
 import textwrap
 from dataclasses import dataclass
 from functools import wraps
@@ -21,6 +20,7 @@ from starlette.requests import Request
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
+from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -156,9 +156,9 @@ def with_session_state() -> AnyFunction:
 
                     if isinstance(http_rq.user, AuthenticatedUser):
                         user = cast(AuthenticatedUser, http_rq.user)
-                        # TODO: translate user.access_token to SAPI token
                         LOG.debug(f'Injecting SAPI token for access token: {user.access_token}')
-                        config = dataclasses.replace(config, storage_token=os.environ.get('HARDCODED_SAPI_TOKEN') or '')
+                        assert isinstance(user.access_token, ProxyAccessToken)
+                        config = dataclasses.replace(config, storage_token=f'Bearer {user.access_token.delegate.token}')
 
                 # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
                 #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.

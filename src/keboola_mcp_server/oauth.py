@@ -32,6 +32,14 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
 
 
+class _ExtendedAuthorizationCode(AuthorizationCode):
+    oauth_access_token: AccessToken
+
+
+class ProxyAccessToken(AccessToken):
+    delegate: AccessToken
+
+
 class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
     # TODO: Make this configurable. When deployed to a stack this is the stack's "connection" URL.
@@ -60,8 +68,6 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         LOG.debug(f'oauth_client_id={self._oauth_client_id}')
         LOG.debug(f'oauth_client_secret={self._oauth_client_secret}')
         LOG.debug(f'jwt_secret={self._jwt_secret}')
-
-        self._tokens: dict[str, AccessToken] = {}
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         client = _OAuthClientInformationFull(
@@ -160,16 +166,13 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             LOG.debug(f'[handle_oauth_callback] OAuth server response: {data}')
 
             if 'error' in data:
-                LOG.exception(f'[handle_oauth_callback] Error when exchaning code for token: data={data}')
+                LOG.exception(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
                 raise HTTPException(400, data.get('error_description', data['error']))
 
-            access_token = data['access_token']
-            LOG.debug(f'[handle_oauth_callback] access_token={access_token}')
-
         # Store access token - we'll map the MCP token to this later
-        self._tokens[access_token] = AccessToken(
-            token=access_token,
-            client_id=state_data["client_id"],  # this is the AI assistant client ID
+        access_token = AccessToken(
+            token=data['access_token'],
+            client_id=self._oauth_client_id,
             scopes=[self._OAUTH_SERVER_SCOPE],
             expires_at=None,  # TODO: set the expiration time from the OAuth server response
         )
@@ -183,7 +186,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
             'scopes': [self.MCP_SERVER_SCOPE],
             'code_challenge': state_data['code_challenge'],
-            # TODO: add access_token here rather than storing it in self._tokens
+            'oauth_access_token': access_token.model_dump(),
         }
         auth_code_jwt = jwt.encode(auth_code, self._jwt_secret)
 
@@ -202,65 +205,47 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         """Load an authorization code."""
         auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
         LOG.debug(f'[load_authorization_code] client={client}, authorization_code={authorization_code}, '
-                  f'mcp_auth_code={auth_code}')
-        return AuthorizationCode.model_validate(auth_code | {'redirect_uri': AnyHttpUrl(auth_code['redirect_uri'])})
+                  f'auth_code={auth_code}')
+        return _ExtendedAuthorizationCode.model_validate(auth_code | {'redirect_uri': AnyHttpUrl(auth_code['redirect_uri'])})
 
     async def exchange_authorization_code(
             self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
         """Exchange authorization code for tokens."""
         LOG.debug(f'[exchange_authorization_code] authorization_code={authorization_code}, client={client}')
-
-        # Generate MCP access token
-        mcp_token = f'mcp_{secrets.token_hex(32)}'
+        # Check that we get the instance loaded by load_authorization_code() function.
+        assert isinstance(authorization_code, _ExtendedAuthorizationCode)
 
         # Store MCP token
-        mcp_access_token = AccessToken(
-            token=mcp_token,
+        access_token = ProxyAccessToken(
+            token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
             scopes=authorization_code.scopes,
             expires_at=int(time.time()) + 60 * 60,  # 1 hour from now
+            delegate=authorization_code.oauth_access_token,
         )
-        self._tokens[mcp_token] = mcp_access_token
+        access_token_jwt = jwt.encode(access_token.model_dump(), self._jwt_secret)
 
-        # Find OAuth access token for this client
-        # TODO: read this from the authorization_code; it will have to be a subclass of AuthorizationCode
-        # TODO: add oauth_access_token to mcp_access_token to avoid storing it in self._tokens
-        oauth_access_token = next(
-            (
-                token
-                for token, data in self._tokens.items()
-                # see https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/
-                # which you get depends on your GH app setup.
-                if (token.startswith("ghu_") or token.startswith("gho_"))
-                   and data.client_id == client.client_id
-            ),
-            None,
-        )
-
-        mcp_oauth_token = OAuthToken(
-            access_token=mcp_token,
+        oauth_token = OAuthToken(
+            access_token=access_token_jwt,
             token_type="bearer",
             expires_in=3600,
             scope=" ".join(authorization_code.scopes),
         )
 
-        LOG.debug(f"[exchange_authorization_code] mcp_access_token={mcp_oauth_token}, "
-                  f"mcp_oauth_token={mcp_oauth_token}, oauth_access_token={oauth_access_token}")
+        LOG.debug(f"[exchange_authorization_code] access_token={access_token}, oauth_token={oauth_token}")
 
-        return mcp_oauth_token
+        return oauth_token
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         """Load and validate an access token."""
-        access_token = self._tokens.get(token)
+        access_token_raw = jwt.decode(token, self._jwt_secret, algorithms=['HS256'])
+        access_token = ProxyAccessToken.model_validate(access_token_raw)
         LOG.debug(f"[load_access_token] token={token}, access_token={access_token}")
-        if not access_token:
-            return None
 
         # Check if expired
         now = time.time()
         if access_token.expires_at and access_token.expires_at < now:
-            del self._tokens[token]
             LOG.debug(f"[load_access_token] Expired token: access_token.expires_at={access_token.expires_at}, "
                       f"now={now}")
             return None
@@ -289,5 +274,4 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     ) -> None:
         """Revoke a token."""
         LOG.debug(f"[revoke_token] token={token}, token_type_hint={token_type_hint}")
-        if token in self._tokens:
-            del self._tokens[token]
+        # This is no-op as we don't store the tokens.
