@@ -629,6 +629,9 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :return: Token and project information
         """
+        res = cast(JsonDict, await self.get(endpoint='tokens/verify'))
+        LOG.info(res)
+        print(res)
         return cast(JsonDict, await self.get(endpoint='tokens/verify'))
 
 

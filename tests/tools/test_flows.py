@@ -380,6 +380,9 @@ class TestFlowTools:
         keboola_client.storage_client.flow_create = mocker.AsyncMock(
             return_value=mock_raw_flow_config
         )
+        keboola_client.storage_client.verify_token = mocker.AsyncMock(
+            return_value={'owner': {'id': 1}}
+        )
 
         result = await create_flow(
             ctx=mcp_context_client,
