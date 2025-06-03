@@ -41,7 +41,8 @@ def dynamic_manager(
     meta = _get_workspace_meta()
     if meta:
         storage_client.workspaces.delete(meta['value'])
-        storage_client.branches._delete(f'{storage_client.branches.base_url}branch/default/metadata/{meta["id"]}')
+        storage_client.branches.requests.delete(
+            f'{storage_client.root_url}/v2/storage/branch/default/requests/{meta["id"]}')
 
 
 class TestWorkspaceManager:
