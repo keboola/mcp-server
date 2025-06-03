@@ -91,8 +91,8 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
     test_config = configs[0]
     component_id = test_config.component_id
 
-    test_name = 'Test Integration Configuration'
-    test_description = 'Integration test configuration created by automated test'
+    test_name = 'Test Configuration'
+    test_description = 'Test configuration created by automated test'
     test_parameters = {}
     test_storage = {}
 

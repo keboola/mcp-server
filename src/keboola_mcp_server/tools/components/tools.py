@@ -537,8 +537,7 @@ async def create_component_root_configuration(
     configuration_id = new_configuration.configuration_id
 
     LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
+        f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".'
     )
 
     try:

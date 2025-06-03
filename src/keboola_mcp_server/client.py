@@ -468,7 +468,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         payload = {
             'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
         }
-        LOG.info(f'Updating metadata for configuration {configuration_id}: {payload}')
         return cast(JsonList, await self.post(endpoint=endpoint, data=payload))
 
     async def configuration_update(
