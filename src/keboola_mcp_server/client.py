@@ -622,6 +622,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Table details as dictionary
         """
         return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
+    
+    async def verify_token(self) -> JsonDict:
+        """
+        Checks the token privileges and returns information about the project to which the token belongs.
+
+        :return: Token and project information
+        """
+        return cast(JsonDict, await self.get(endpoint=f'tokens/verify'))
 
 
 class JobsQueueClient(KeboolaServiceClient):
