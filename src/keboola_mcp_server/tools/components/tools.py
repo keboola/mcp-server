@@ -19,6 +19,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentWithConfigurations,
 )
 from keboola_mcp_server.tools.components.utils import (
+    TransformationConfiguration,
     _get_component,
     _get_sql_transformation_id_from_sql_dialect,
     _get_transformation_configuration,
@@ -283,12 +284,12 @@ async def create_sql_transformation(
             ),
         ),
     ],
-    sql_statements: Annotated[
-        Sequence[str],
+    code_blocks: Annotated[
+        Sequence[TransformationConfiguration.Parameters.Block.Code],
         Field(
             description=(
-                'The executable SQL query statements written in the current SQL dialect. '
-                'Each statement should be a separate item in the list.'
+                'The executable SQL query code blocks, each containing a descriptive name and a list of semantically '
+                'related statements written in the current SQL dialect. Each code blockis a separate item in the list.'
             ),
         ),
     ],
@@ -310,6 +311,8 @@ async def create_sql_transformation(
     CONSIDERATIONS:
     - The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
       appropriate tool.
+    - Each SQL code block should include one or more statements that share a similar purpose or meaning, and should have
+      a descriptive name that reflects its intent.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
@@ -338,7 +341,7 @@ async def create_sql_transformation(
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage(input and output tables)
     transformation_configuration_payload = _get_transformation_configuration(
-        statements=sql_statements, transformation_name=name, output_tables=created_table_names
+        codes=code_blocks, transformation_name=name, output_tables=created_table_names
     )
 
     client = KeboolaClient.from_state(ctx.session.state)

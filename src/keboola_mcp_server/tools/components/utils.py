@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any, Optional, Sequence, Union, cast, get_args
 
 from httpx import HTTPStatusError
@@ -245,24 +246,26 @@ class TransformationConfiguration(BaseModel):
 
 
 def _get_transformation_configuration(
-    statements: Sequence[str], transformation_name: str, output_tables: Sequence[str]
+    codes: Sequence[TransformationConfiguration.Parameters.Block.Code],
+    transformation_name: str,
+    output_tables: Sequence[str],
 ) -> TransformationConfiguration:
     """
     Utility function to set the transformation configuration from code statements.
     It creates the expected configuration for the transformation, parameters and storage.
 
-    :param statements: The code statements (sql for now)
+    :param statements: The code blocks (sql for now)
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
     :return: Dictionary with parameters and storage following the TransformationConfiguration schema
     """
     storage = TransformationConfiguration.Storage()
-    # build parameters configuration out of code statements
+    # build parameters configuration out of code blocks
     parameters = TransformationConfiguration.Parameters(
         blocks=[
             TransformationConfiguration.Parameters.Block(
-                name='Block 0',
-                codes=[TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=list(statements))],
+                name='Blocks',
+                codes=list(codes),
             )
         ]
     )
