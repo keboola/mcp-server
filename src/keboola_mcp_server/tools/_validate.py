@@ -100,19 +100,18 @@ class KeboolaParametersValidator:
         sanitized_schema = cls.sanitize_schema(schema)
         base_validator = jsonschema.validators.validator_for(sanitized_schema)
         keboola_validator = extend(
-            base_validator, type_checker=base_validator.TYPE_CHECKER.redefine('button', cls.is_button)
+            base_validator, type_checker=base_validator.TYPE_CHECKER.redefine('button', cls.check_button_type)
         )
         return keboola_validator(sanitized_schema).validate(instance)
 
     @staticmethod
-    def is_button(checker: TypeChecker, instance: object) -> bool:
+    def check_button_type(checker: TypeChecker, instance: object) -> bool:
         """
         Dummy button type checker.
         We accept button as a type since it is a UI construct and not a data type.
         :returns: True if instance is a dict with a type field with value 'button', False otherwise
         """
-        # TODO: we can add a custom pydantic model that would validate button type with all expected fields.
-        # For now we just check if the instance is a dict and has a type field with value 'button'.
+        # TODO: We can add a custom pydantic model or json schema for validating button type instances.
         return isinstance(instance, dict) and 'button' == instance.get('type', None)
 
     @staticmethod
@@ -130,21 +129,23 @@ class KeboolaParametersValidator:
             is_current_required = None
             required = schema.get('required', [])
             if not isinstance(required, list):
-                # Convert required field to empty list if boolean/string, keep as-is if list
-                # True/true: propagate up to parent's required list
-                # False/false: remove from parent's required list
-                is_current_required = required.lower() == 'true' if isinstance(required, str) else False
-                is_current_required = is_current_required or (required is True if isinstance(required, bool) else False)
+                # Convert required field to empty list, and set is_current_required to True/False if the required
+                # field is set to true/false and propagate the required flag up to the parent's required list
+                is_current_required = str(required).lower() == 'true'
                 required = []
 
             if (properties := schema.get('properties')) is not None:
-                # we need to ensure that the properties is a dict, sometimes it is an empty list - normalize it
-                if not isinstance(properties, dict):
-                    properties = {}
+                if properties == []:
+                    properties = {}  # convert empty list to empty dict to avoid AttributeError in jsonschema
+                elif not isinstance(properties, dict):
+                    # Invalid schema - properties must be a dictionary. SchemaError will be caught and logged
+                    # in _validate_json_against_schema but the validation will succeed since we cant use invalid schema
+                    raise jsonschema.SchemaError(f'properties must be a dictionary, got {type(properties)}')
 
                 for property_name, subschema in properties.items():
                     # we recursively sanitize the subschemas within the properties
                     properties[property_name], is_child_required = _sanitize_required_and_properties(subschema)
+                    # if is_child_required is None, do not propagate - the child has required field correctly set
                     if is_child_required is True and property_name not in required:
                         required.append(property_name)
                     elif is_child_required is False and property_name in required:
