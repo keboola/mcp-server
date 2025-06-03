@@ -95,7 +95,7 @@ def test_get_transformation_configuration(
 @pytest.mark.parametrize(
     ('input_str', 'expected_str'),
     [
-        ('!@#$%^&*()+,./;\'[]\\`', ''),
+        ('!@#$%^&*()+,./;\'[]"\\`', ''),
         ('_-', '_-'),
         ('1234567890', '1234567890'),
         ('test_table_1', 'test_table_1'),
