@@ -209,6 +209,20 @@ def test_normalize_schema(input_schema: JsonDict, expected_schema: JsonDict):
 
 
 @pytest.mark.parametrize(
+    ('input_schema'),
+    [
+        # case 1: properties are non-empty list -> fail
+        {'type': 'object', 'properties': [{'type': 'string'}]},
+        # case 2: properties are not a dict -> fail
+        {'type': 'object', 'properties': 1},
+    ],
+)
+def test_normalize_schema_invalid_parameters(input_schema: JsonDict):
+    with pytest.raises(jsonschema.SchemaError):
+        _validate.KeboolaParametersValidator.sanitize_schema(input_schema)
+
+
+@pytest.mark.parametrize(
     ('schema_path', 'json_data'),
     [
         # we pass the schema and json_data which are expected to be valid
