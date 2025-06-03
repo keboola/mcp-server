@@ -628,14 +628,12 @@ async def create_component_row_configuration(
     # or log an error and raise an exception if not
     new_raw_configuration = cast(
         dict[str, Any],
-        await client.storage_client.create_component_row_configuration(
+        await client.storage_client.configuration_row_create(
             component_id=component_id,
             config_id=configuration_id,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': configuration_payload,
-            },
+            name=name,
+            description=description,
+            configuration=configuration_payload,
         ),
     )
 
@@ -745,6 +743,7 @@ async def update_component_root_configuration(
             configuration_id=configuration_id,
             configuration=configuration_payload,
             change_description=change_description,
+            updated_name=name,
             updated_description=description,
         ),
     )
@@ -856,16 +855,14 @@ async def update_component_row_configuration(
 
     new_raw_configuration = cast(
         dict[str, Any],
-        await client.storage_client.update_component_row_configuration(
+        await client.storage_client.configuration_row_update(
             component_id=component_id,
             config_id=configuration_id,
             configuration_row_id=configuration_row_id,
-            data={
-                'name': name,
-                'description': description,
-                'changeDescription': change_description,
-                'configuration': configuration_payload,
-            },
+            configuration=configuration_payload,
+            change_description=change_description,
+            updated_name=name,
+            updated_description=description,
         ),
     )
 

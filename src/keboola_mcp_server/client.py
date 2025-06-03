@@ -368,14 +368,31 @@ class AsyncStorageClient(KeboolaServiceClient):
             params['include'] = ','.join(include)
         return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
 
-    async def table_detail(self, table_id: str) -> JsonDict:
+    async def configuration_create(
+        self,
+        component_id: str,
+        name: str,
+        description: str,
+        configuration: dict[str, Any],
+    ) -> JsonDict:
         """
-        Retrieves information about a given table.
+        Creates a new configuration for a component.
 
-        :param table_id: The id of the table
-        :return: Table details as dictionary
+        :param component_id: The id of the component for which to create the configuration.
+        :param name: The name of the configuration.
+        :param description: The description of the configuration.
+        :param configuration: The configuration definition as a dictionary.
+
+        :return: The SAPI call response - created configuration or raise an error.
         """
-        return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
+
+        payload = {
+            'name': name,
+            'description': description,
+            'configuration': configuration,
+        }
+        return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
 
     async def configuration_detail(self, component_id: str, configuration_id: str) -> JsonDict:
         """
@@ -408,38 +425,13 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
-    async def configuration_create(
-        self,
-        component_id: str,
-        name: str,
-        description: str,
-        configuration: dict[str, Any],
-    ) -> JsonDict:
-        """
-        Creates a new configuration for a component.
-
-        :param component_id: The id of the component for which to create the configuration.
-        :param name: The name of the configuration.
-        :param description: The description of the configuration.
-        :param configuration: The configuration definition as a dictionary.
-
-        :return: The SAPI call response - created configuration or raise an error.
-        """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
-
-        payload = {
-            'name': name,
-            'description': description,
-            'configuration': configuration,
-        }
-        return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
-
     async def configuration_update(
         self,
         component_id: str,
         configuration_id: str,
         configuration: dict[str, Any],
         change_description: str,
+        updated_name: Optional[str] = None,
         updated_description: Optional[str] = None,
         is_disabled: bool = False,
     ) -> JsonDict:
@@ -450,6 +442,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_id: The id of the configuration.
         :param configuration: The updated configuration dictionary.
         :param change_description: The description of the modification to the configuration.
+        :param updated_name: The updated name of the configuration, if None, the original
+            name is preserved.
         :param updated_description: The entire description of the updated configuration, if None, the original
             description is preserved.
         :param is_disabled: Whether the configuration should be disabled.
@@ -461,6 +455,9 @@ class AsyncStorageClient(KeboolaServiceClient):
             'configuration': configuration,
             'changeDescription': change_description,
         }
+        if updated_name:
+            payload['name'] = updated_name
+
         if updated_description:
             payload['description'] = updated_description
 
@@ -469,53 +466,82 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.put(endpoint=endpoint, data=payload))
 
-    async def create_component_row_configuration(
+    async def configuration_row_create(
         self,
-        data: dict[str, Any],
         component_id: str,
         config_id: str,
+        name: str,
+        description: str,
+        configuration: dict[str, Any],
     ) -> JsonDict:
         """
         Creates a new row configuration for a component configuration.
 
-        :param data: The configuration data to create row configuration.
         :param component_id: The ID of the component.
         :param config_id: The ID of the configuration.
+        :param name: The name of the row configuration.
+        :param description: The description of the row configuration.
+        :param configuration: The configuration data to create row configuration.
         :return: The SAPI call response - created row configuration or raise an error.
         """
+        payload = {
+            'name': name,
+            'description': description,
+            'configuration': configuration,
+        }
+
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows', data=data
+                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows', data=payload
             ),
         )
 
-    async def update_component_row_configuration(
+    async def configuration_row_update(
         self,
-        data: dict[str, Any],
         component_id: str,
         config_id: str,
         configuration_row_id: str,
+        configuration: dict[str, Any],
+        change_description: str,
+        updated_name: Optional[str] = None,
+        updated_description: Optional[str] = None,
     ) -> JsonDict:
         """
         Updates a row configuration for a component configuration.
 
-        :param data: The configuration data to update row configuration.
+        :param configuration: The configuration data to update row configuration.
         :param component_id: The ID of the component.
         :param config_id: The ID of the configuration.
         :param configuration_row_id: The ID of the row.
+        :param change_description: The description of the changes made.
+        :param updated_name: The updated name of the configuration, if None, the original
+            name is preserved.
+        :param updated_description: The updated description of the configuration, if None, the original
+            description is preserved.
         :return: The SAPI call response - updated row configuration or raise an error.
         """
+
+        payload = {
+            'configuration': configuration,
+            'changeDescription': change_description,
+        }
+        if updated_name:
+            payload['name'] = updated_name
+
+        if updated_description:
+            payload['description'] = updated_description
+
         return cast(
             JsonDict,
             await self.put(
                 endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}'
                 f'/rows/{configuration_row_id}',
-                data=data,
+                data=payload,
             ),
         )
 
-    async def create_flow_configuration(
+    async def flow_create(
         self,
         name: str,
         description: str,
@@ -539,7 +565,27 @@ class AsyncStorageClient(KeboolaServiceClient):
             configuration=flow_configuration,
         )
 
-    async def update_flow_configuration(
+    async def flow_detail(self, config_id: str) -> JsonDict:
+        """
+        Retrieves a specific flow (orchestrator) configuration.
+
+        :param config_id: The ID of the flow configuration to retrieve
+        :return: Flow configuration details
+        """
+        return await self.configuration_detail(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=config_id
+        )
+
+    async def flow_list(self) -> list[JsonDict]:
+        """
+        Lists all flow (orchestrator) configurations in the project.
+
+        :return: List of flow configurations
+        """
+        return await self.configuration_list(component_id=ORCHESTRATOR_COMPONENT_ID)
+
+    async def flow_update(
         self,
         config_id: str,
         name: str,
@@ -564,28 +610,18 @@ class AsyncStorageClient(KeboolaServiceClient):
             configuration_id=config_id,
             configuration=flow_configuration,
             change_description=change_description,
+            updated_name=name,
             updated_description=description,
         )
 
-    async def list_flow_configurations(self) -> list[JsonDict]:
+    async def table_detail(self, table_id: str) -> JsonDict:
         """
-        Lists all flow (orchestrator) configurations in the project.
+        Retrieves information about a given table.
 
-        :return: List of flow configurations
+        :param table_id: The id of the table
+        :return: Table details as dictionary
         """
-        return await self.configuration_list(component_id=ORCHESTRATOR_COMPONENT_ID)
-
-    async def get_flow_configuration(self, config_id: str) -> JsonDict:
-        """
-        Retrieves a specific flow (orchestrator) configuration.
-
-        :param config_id: The ID of the flow configuration to retrieve
-        :return: Flow configuration details
-        """
-        return await self.configuration_detail(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=config_id
-        )
+        return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
 
 
 class JobsQueueClient(KeboolaServiceClient):
