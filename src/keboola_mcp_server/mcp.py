@@ -154,7 +154,7 @@ def with_session_state() -> AnyFunction:
                     if accept_secrets_in_url:
                         config = config.replace_by(http_rq.query_params)
 
-                    if isinstance(http_rq.user, AuthenticatedUser):
+                    if 'user' in http_rq.scope and isinstance(http_rq.user, AuthenticatedUser):
                         user = cast(AuthenticatedUser, http_rq.user)
                         LOG.debug(f'Injecting SAPI token for access token: {user.access_token}')
                         assert isinstance(user.access_token, ProxyAccessToken)
