@@ -392,7 +392,7 @@ async def test_update_transformation_configuration(
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
-    new_config = {'foo': 'foo'}
+    new_config = {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]}
     new_change_description = 'foo fooo'
     mock_configuration['configuration'] = new_config
     mock_configuration['changeDescription'] = new_change_description
@@ -405,7 +405,8 @@ async def test_update_transformation_configuration(
         context,
         mock_configuration['id'],
         new_change_description,
-        new_config,
+        parameters=TransformationConfiguration.Parameters.model_validate(new_config),
+        storage={},
         updated_description=str(),
         is_disabled=False,
     )
@@ -421,7 +422,7 @@ async def test_update_transformation_configuration(
         component_id=expected_component_id,
         configuration_id=mock_configuration['id'],
         change_description=new_change_description,
-        configuration=new_config,
+        configuration={'parameters': new_config, 'storage': {}},
         updated_description=None,
         is_disabled=False,
     )
