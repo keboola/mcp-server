@@ -18,7 +18,7 @@ from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.session import ServerSession
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.tools.workspace import ProjectManager, WorkspaceManager
 
 AsyncContextServerRemoteRunner = Callable[
     [FastMCP, Literal['sse', 'streamable-http']], _AsyncGeneratorContextManager[str]
@@ -271,6 +271,9 @@ def configs(keboola_project: ProjectDef) -> list[ConfigDef]:
 def keboola_client(storage_api_token: str, storage_api_url: str) -> KeboolaClient:
     return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
 
+@pytest.fixture
+def project_manager(keboola_client: KeboolaClient) -> ProjectManager:
+    return ProjectManager(keboola_client)
 
 @pytest.fixture
 def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> WorkspaceManager:
@@ -279,7 +282,8 @@ def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> W
 
 @pytest.fixture
 def mcp_context(
-    mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, keboola_project: ProjectDef
+    mocker, keboola_client: KeboolaClient, project_manager: ProjectManager, workspace_manager: WorkspaceManager, 
+    keboola_project: ProjectDef
 ) -> Context:
     """
     MCP context containing the Keboola client and workspace manager.
@@ -289,6 +293,7 @@ def mcp_context(
     # We set the user session state as it is done in the @with_session_state decorator
     client_context.session.state = {
         KeboolaClient.STATE_KEY: keboola_client,
+        ProjectManager.STATE_KEY: project_manager,
         WorkspaceManager.STATE_KEY: workspace_manager,
     }
     return client_context
