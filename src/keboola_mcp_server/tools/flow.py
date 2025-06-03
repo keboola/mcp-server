@@ -118,7 +118,6 @@ async def create_flow(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
-    # flow_response = FlowConfigurationResponse.from_raw_config(new_raw_configuration)
     flow_id = str(new_raw_configuration.get('id', ''))
     project_id = await project_manager.get_project()
     flow_link = get_flow_url(project_id=project_id, flow_id=flow_id)
