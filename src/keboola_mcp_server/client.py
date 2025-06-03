@@ -469,22 +469,6 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.put(endpoint=endpoint, data=payload))
 
-    async def create_component_root_configuration(
-        self,
-        data: dict[str, Any],
-        component_id: str,
-    ) -> JsonDict:
-        """
-        Creates a new configuration for a component.
-
-        :param data: The configuration data to create.
-        :param component_id: The ID of the component.
-        :return: The SAPI call response - created configuration or raise an error.
-        """
-        return cast(
-            JsonDict, await self.post(endpoint=f'branch/{self.branch_id}/components/{component_id}/configs', data=data)
-        )
-
     async def create_component_row_configuration(
         self,
         data: dict[str, Any],
@@ -503,27 +487,6 @@ class AsyncStorageClient(KeboolaServiceClient):
             JsonDict,
             await self.post(
                 endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows', data=data
-            ),
-        )
-
-    async def update_component_root_configuration(
-        self,
-        data: dict[str, Any],
-        component_id: str,
-        config_id: str,
-    ) -> JsonDict:
-        """
-        Updates a component configuration.
-
-        :param data: The configuration data to update.
-        :param component_id: The ID of the component.
-        :param config_id: The ID of the configuration.
-        :return: The SAPI call response - updated configuration or raise an error.
-        """
-        return cast(
-            JsonDict,
-            await self.put(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}', data=data
             ),
         )
 
@@ -569,14 +532,11 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param flow_configuration: The flow configuration containing phases and tasks directly
         :return: The SAPI call response - created flow configuration or raise an error
         """
-        data = {
-            'name': name,
-            'description': description,
-            'configuration': flow_configuration
-        }
-        return await self.create_component_root_configuration(
-            data=data,
-            component_id=ORCHESTRATOR_COMPONENT_ID
+        return await self.configuration_create(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            name=name,
+            description=description,
+            configuration=flow_configuration,
         )
 
     async def update_flow_configuration(
@@ -599,16 +559,12 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param flow_configuration: The updated flow configuration containing phases and tasks directly
         :return: The SAPI call response - updated flow configuration or raise an error
         """
-        data = {
-            'name': name,
-            'description': description,
-            'changeDescription': change_description,
-            'configuration': flow_configuration  # Direct assignment!
-        }
-        return await self.update_component_root_configuration(
-            data=data,
+        return await self.configuration_update(
             component_id=ORCHESTRATOR_COMPONENT_ID,
-            config_id=config_id
+            configuration_id=config_id,
+            configuration=flow_configuration,
+            change_description=change_description,
+            updated_description=description,
         )
 
     async def list_flow_configurations(self) -> list[JsonDict]:

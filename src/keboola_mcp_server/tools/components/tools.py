@@ -521,13 +521,11 @@ async def create_component_root_configuration(
 
     new_raw_configuration = cast(
         dict[str, Any],
-        await client.storage_client.create_component_root_configuration(
+        await client.storage_client.configuration_create(
             component_id=component_id,
-            data={
-                'name': name,
-                'description': description,
-                'configuration': configuration_payload,
-            },
+            name=name,
+            description=description,
+            configuration=configuration_payload,
         ),
     )
 
@@ -742,15 +740,12 @@ async def update_component_root_configuration(
 
     new_raw_configuration = cast(
         dict[str, Any],
-        await client.storage_client.update_component_root_configuration(
+        await client.storage_client.configuration_update(
             component_id=component_id,
-            config_id=configuration_id,
-            data={
-                'name': name,
-                'description': description,
-                'changeDescription': change_description,
-                'configuration': configuration_payload,
-            },
+            configuration_id=configuration_id,
+            configuration=configuration_payload,
+            change_description=change_description,
+            updated_description=description,
         ),
     )
 
