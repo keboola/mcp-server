@@ -534,11 +534,21 @@ async def create_component_root_configuration(
         storage=new_raw_configuration['configuration'].get('storage'),
         parameters=new_raw_configuration['configuration'].get('parameters'),
     )
+    configuration_id = new_configuration.configuration_id
 
     LOG.info(
         f'Created new configuration for component "{component_id}" with configuration id '
         f'"{new_configuration.configuration_id}".'
     )
+
+    try:
+        await client.storage_client.configuration_metadata_update(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            metadata={'KBC.MCP.createdBy': 'true'},
+        )
+    except HTTPStatusError as e:
+        LOG.error(f'Failed to set "KBC.MCP.createdBy" metadata for configuration {configuration_id}: {e}')
 
     return new_configuration
 
