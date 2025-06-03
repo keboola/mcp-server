@@ -351,7 +351,9 @@ class TestFlowTools:
     ):
         """Test flow creation."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.create_flow_configuration = mocker.AsyncMock(return_value=mock_raw_flow_config)
+        keboola_client.storage_client.flow_create = mocker.AsyncMock(
+            return_value=mock_raw_flow_config
+        )
 
         result = await create_flow(
             ctx=mcp_context_client,
@@ -365,8 +367,8 @@ class TestFlowTools:
         assert len(result.phases) == 2
         assert len(result.tasks) == 2
 
-        keboola_client.storage_client.create_flow_configuration.assert_called_once()
-        call_args = keboola_client.storage_client.create_flow_configuration.call_args
+        keboola_client.storage_client.flow_create.assert_called_once()
+        call_args = keboola_client.storage_client.flow_create.call_args
 
         assert call_args.kwargs['name'] == 'Test Flow'
         assert call_args.kwargs['description'] == 'Test flow description'
@@ -388,7 +390,7 @@ class TestFlowTools:
     ):
         """Test retrieving all flows."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.list_flow_configurations = mocker.AsyncMock(
+        keboola_client.storage_client.flow_list = mocker.AsyncMock(
             return_value=[mock_raw_flow_config, mock_empty_flow_config]
         )
 
@@ -408,13 +410,15 @@ class TestFlowTools:
     ):
         """Test retrieving specific flows by ID."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(return_value=mock_raw_flow_config)
+        keboola_client.storage_client.flow_detail = mocker.AsyncMock(
+            return_value=mock_raw_flow_config
+        )
 
         result = await retrieve_flows(ctx=mcp_context_client, flow_ids=['21703284'])
 
         assert len(result) == 1
         assert result[0].id == '21703284'
-        keboola_client.storage_client.get_flow_configuration.assert_called_once_with('21703284')
+        keboola_client.storage_client.flow_detail.assert_called_once_with('21703284')
 
     @pytest.mark.asyncio
     async def test_retrieve_flows_with_missing_id(
@@ -429,7 +433,9 @@ class TestFlowTools:
             else:
                 raise Exception(f'Flow {flow_id} not found')
 
-        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(side_effect=mock_get_flow)
+        keboola_client.storage_client.flow_detail = mocker.AsyncMock(
+            side_effect=mock_get_flow
+        )
 
         result = await retrieve_flows(ctx=mcp_context_client, flow_ids=['21703284', 'nonexistent'])
 
@@ -442,7 +448,9 @@ class TestFlowTools:
     ):
         """Test getting detailed flow configuration."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(return_value=mock_raw_flow_config)
+        keboola_client.storage_client.flow_detail = mocker.AsyncMock(
+            return_value=mock_raw_flow_config
+        )
 
         result = await get_flow_detail(ctx=mcp_context_client, configuration_id='21703284')
 
@@ -463,7 +471,9 @@ class TestFlowTools:
     ):
         """Test flow update."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.update_flow_configuration = mocker.AsyncMock(return_value=mock_raw_flow_config)
+        keboola_client.storage_client.flow_update = mocker.AsyncMock(
+            return_value=mock_raw_flow_config
+        )
 
         result = await update_flow(
             ctx=mcp_context_client,
@@ -477,8 +487,8 @@ class TestFlowTools:
 
         assert isinstance(result, FlowConfiguration)
 
-        keboola_client.storage_client.update_flow_configuration.assert_called_once()
-        call_args = keboola_client.storage_client.update_flow_configuration.call_args
+        keboola_client.storage_client.flow_update.assert_called_once()
+        call_args = keboola_client.storage_client.flow_update.call_args
 
         assert call_args.kwargs['config_id'] == '21703284'
         assert call_args.kwargs['name'] == 'Updated Flow'
@@ -569,10 +579,10 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
         ],
     }
 
-    keboola_client.storage_client.create_flow_configuration = mocker.AsyncMock(return_value=created_flow)
-    keboola_client.storage_client.list_flow_configurations = mocker.AsyncMock(return_value=[created_flow])
-    keboola_client.storage_client.update_flow_configuration = mocker.AsyncMock(return_value=updated_flow)
-    keboola_client.storage_client.get_flow_configuration = mocker.AsyncMock(return_value=updated_flow)
+    keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=created_flow)
+    keboola_client.storage_client.flow_list = mocker.AsyncMock(return_value=[created_flow])
+    keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=updated_flow)
+    keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=updated_flow)
 
     created = await create_flow(
         ctx=mcp_context_client,

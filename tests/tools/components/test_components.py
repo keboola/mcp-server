@@ -291,7 +291,7 @@ async def test_create_transformation_configuration(
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
     keboola_client.storage_client.get = mocker.AsyncMock(return_value={'components': [component]})
-    keboola_client.storage_client.post = mocker.AsyncMock(return_value=configuration)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration['name']
     bucket_name = '-'.join(transformation_name.lower().split())
@@ -301,10 +301,10 @@ async def test_create_transformation_configuration(
 
     # Test the create_sql_transformation tool
     new_transformation_configuration = await create_sql_transformation(
-        context,
-        transformation_name,
-        description,
-        sql_statements,
+        ctx=context,
+        name=transformation_name,
+        description=description,
+        sql_statements=sql_statements,
         created_table_names=[created_table_name],
     )
 
@@ -321,30 +321,28 @@ async def test_create_transformation_configuration(
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=expected_component_id)
 
-    keboola_client.storage_client.post.assert_called_once_with(
-        endpoint=f'branch/{mock_branch_id}/components/{expected_component_id}/configs',
-        data={
-            'name': transformation_name,
-            'description': description,
-            'configuration': {
-                'parameters': {
-                    'blocks': [
+    keboola_client.storage_client.configuration_create.assert_called_once_with(
+        component_id=expected_component_id,
+        name=transformation_name,
+        description=description,
+        configuration={
+            'parameters': {
+                'blocks': [
+                    {
+                        'name': 'Block 0',
+                        'codes': [{'name': 'Code 0', 'script': sql_statements}],
+                    }
+                ]
+            },
+            'storage': {
+                'input': {'tables': []},
+                'output': {
+                    'tables': [
                         {
-                            'name': 'Block 0',
-                            'codes': [{'name': 'Code 0', 'script': sql_statements}],
+                            'source': created_table_name,
+                            'destination': f'out.c-{bucket_name}.{created_table_name}',
                         }
                     ]
-                },
-                'storage': {
-                    'input': {'tables': []},
-                    'output': {
-                        'tables': [
-                            {
-                                'source': created_table_name,
-                                'destination': f'out.c-{bucket_name}.{created_table_name}',
-                            }
-                        ]
-                    },
                 },
             },
         },
@@ -365,10 +363,10 @@ async def test_create_transformation_configuration_fail(
 
     with pytest.raises(ValueError, match='Unsupported SQL dialect'):
         _ = await create_sql_transformation(
-            context,
-            'test_name',
-            'test_description',
-            ['SELECT * FROM test'],
+            ctx=context,
+            name='test_name',
+            description='test_description',
+            sql_statements=['SELECT * FROM test'],
         )
 
 

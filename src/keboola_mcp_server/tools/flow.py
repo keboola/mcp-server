@@ -106,7 +106,7 @@ async def create_flow(
     client = KeboolaClient.from_state(ctx.session.state)
     LOG.info(f'Creating new flow: {name}')
 
-    new_raw_configuration = await client.storage_client.create_flow_configuration(
+    new_raw_configuration = await client.storage_client.flow_create(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
@@ -160,7 +160,7 @@ async def update_flow(
     client = KeboolaClient.from_state(ctx.session.state)
     LOG.info(f'Updating flow configuration: {configuration_id}')
 
-    updated_raw_configuration = await client.storage_client.update_flow_configuration(
+    updated_raw_configuration = await client.storage_client.flow_update(
         config_id=configuration_id,
         name=name,
         description=description,
@@ -190,14 +190,14 @@ async def retrieve_flows(
         flows = []
         for flow_id in flow_ids:
             try:
-                raw_config = await client.storage_client.get_flow_configuration(flow_id)
+                raw_config = await client.storage_client.flow_detail(flow_id)
                 flow = ReducedFlow.from_raw_config(raw_config)
                 flows.append(flow)
             except Exception as e:
                 LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
         return flows
     else:
-        raw_flows = await client.storage_client.list_flow_configurations()
+        raw_flows = await client.storage_client.flow_list()
         flows = [ReducedFlow.from_raw_config(raw_flow) for raw_flow in raw_flows]
         LOG.info(f'Found {len(flows)} flows in the project')
         return flows
@@ -213,7 +213,7 @@ async def get_flow_detail(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    raw_config = await client.storage_client.get_flow_configuration(configuration_id)
+    raw_config = await client.storage_client.flow_detail(configuration_id)
 
     flow_response = FlowConfigurationResponse.from_raw_config(raw_config)
 
