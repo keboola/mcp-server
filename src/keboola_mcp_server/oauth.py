@@ -34,10 +34,10 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
 
 class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
-    # TODO: GitHub OAuth URLs and scope. Change to Keboola OAuth server values.
-    _OAUTH_SERVER_AUTH_URL: str = 'https://github.com/login/oauth/authorize'
-    _OAUTH_SERVER_TOKEN_URL: str = 'https://github.com/login/oauth/access_token'
-    _OAUTH_SERVER_SCOPE: str = 'read:user'
+    # TODO: Make this configurable. When deployed to a stack this is the stack's "connection" URL.
+    _OAUTH_SERVER_AUTH_URL: str = 'https://connection.canary-orion.keboola.dev/oauth/authorize'
+    _OAUTH_SERVER_TOKEN_URL: str = 'https://connection.canary-orion.keboola.dev/oauth/token'
+    _OAUTH_SERVER_SCOPE: str = 'email'
 
     MCP_SERVER_SCOPE: str = 'mcp'
 
@@ -99,6 +99,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # create the authorization URL
         params = {
             'client_id': self._oauth_client_id,
+            'response_type': 'code',
             'redirect_uri': self._oauth_callback_url,
             'scope': self._OAUTH_SERVER_SCOPE,
             'state': state_jwt
@@ -141,17 +142,22 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
                     'client_id': self._oauth_client_id,
                     'client_secret': self._oauth_client_secret,
                     'code': code,
+                    'grant_type': 'authorization_code',
                     # FYI: Some tutorials use the redirect_uri here, but it does not seem to be required.
-                    # 'redirect_uri': self._oauth_callback_url,
+                    # The Keboola OAuth server requires it, but GitHub OAuth server does not.
+                    'redirect_uri': self._oauth_callback_url,
                 },
                 headers={'Accept': 'application/json'},
             )
 
             if response.status_code != 200:
-                LOG.exception('[handle_oauth_callback] Failed to exchange code for token')
-                raise HTTPException(400, 'Failed to exchange code for token')
+                LOG.exception('[handle_oauth_callback] Failed to exchange code for token, '
+                              f'OAuth server response: status={response.status_code}, text={response.text}')
+                raise HTTPException(400, 'Failed to exchange code for token: '
+                                         f'status={response.status_code}, text={response.text}')
 
             data = response.json()
+            LOG.debug(f'[handle_oauth_callback] OAuth server response: {data}')
 
             if 'error' in data:
                 LOG.exception(f'[handle_oauth_callback] Error when exchaning code for token: data={data}')
