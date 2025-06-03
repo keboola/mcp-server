@@ -384,12 +384,21 @@ async def update_sql_transformation_configuration(
             description='Description of the changes made to the transformation configuration.',
         ),
     ],
-    updated_configuration: Annotated[
+    parameters: Annotated[
+        TransformationConfiguration.Parameters,
+        Field(
+            description=(
+                'Updated transformation parameter configuration JSON object containing both updated settings applied '
+                'and all existing settings preserved.'
+            ),
+        ),
+    ],
+    storage: Annotated[
         dict[str, Any],
         Field(
             description=(
-                'Updated transformation configuration JSON object containing both updated settings applied and all '
-                'existing settings preserved.'
+                'Updated transformation storage configuration JSON object containing both updated settings applied '
+                'and all existing settings preserved.'
             ),
         ),
     ],
@@ -412,19 +421,28 @@ async def update_sql_transformation_configuration(
     configuration.
 
     CONSIDERATIONS:
-    - The configuration JSON data must follow the current Keboola transformation configuration schema.
+    - The parameters configuration must include blocks and codes of SQL statements.
+    - The Codes within the block should be semantically related and have a descriptive name.
     - The SQL code statements should follow the current SQL dialect, which can be retrieved using appropriate tool.
+    - The storage configuration must not be empty, and it should include input and output tables with correct mappings.
     - When the behavior of the transformation is not changed, the updated_description can be empty string.
 
     EXAMPLES:
     - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
-        - set the transformation_id and configuration_id accordingly and update configuration parameters based on
+        - set the transformation configuration_id accordingly and update parameters and storage tool arguments based on
           the [USER INTENT]
         - returns the updated transformation configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
+
+    validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+
+    updated_configuration = {
+        'parameters': parameters.model_dump(),
+        'storage': storage,
+    }
 
     LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
     updated_raw_configuration = await client.storage_client.configuration_update(
