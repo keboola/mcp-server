@@ -245,6 +245,14 @@ class TransformationConfiguration(BaseModel):
     storage: Storage = Field(description='The storage configuration for the transformation')
 
 
+def _clean_bucket_name(bucket_name: str) -> str:
+    """
+    Utility function to clean the bucket name.
+    Removes all characters from bucket_name except alphanumeric, dashes, and underscores.
+    """
+    return re.sub(r'[^a-zA-Z0-9_-]', '', bucket_name)
+
+
 def _get_transformation_configuration(
     codes: Sequence[TransformationConfiguration.Parameters.Block.Code],
     transformation_name: str,
@@ -274,6 +282,7 @@ def _get_transformation_configuration(
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
         # expected output table name format is `out.c-<sql_query_name>.<table_name>`
         bucket_name = '-'.join(transformation_name.lower().split())
+        bucket_name = _clean_bucket_name(bucket_name)
         destination = f'out.c-{bucket_name}'
         storage.output.tables = [
             TransformationConfiguration.Storage.Destination.Table(
