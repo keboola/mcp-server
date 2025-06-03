@@ -9,7 +9,7 @@ from keboola_mcp_server.client import (
     KeboolaClient,
     RawKeboolaClient,
 )
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.tools.workspace import ProjectManager, WorkspaceManager
 
 
 @pytest.fixture
@@ -32,6 +32,12 @@ def keboola_client(mocker) -> KeboolaClient:
 
 
 @pytest.fixture
+def project_manager(mocker) -> ProjectManager:
+    """Creates mocked `ProjectManager` instance."""
+    return mocker.MagicMock(ProjectManager)
+
+
+@pytest.fixture
 def workspace_manager(mocker) -> WorkspaceManager:
     """Creates mocked `WorkspaceManager` instance."""
     return mocker.MagicMock(WorkspaceManager)
@@ -49,10 +55,12 @@ def empty_context(mocker) -> Context:
 
 @pytest.fixture
 def mcp_context_client(
-    keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, empty_context: Context
+    keboola_client: KeboolaClient, project_manager: ProjectManager, workspace_manager: WorkspaceManager,
+    empty_context: Context
 ) -> Context:
     """Fills the empty_context's state with the `KeboolaClient` and `WorkspaceManager` mocks."""
     client_context = empty_context
+    client_context.session.state[ProjectManager.STATE_KEY] = project_manager
     client_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
     client_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
     return client_context

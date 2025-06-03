@@ -1,7 +1,7 @@
 """Unit tests for Flow management tools."""
 
 from typing import Any, Dict, List
-
+from datetime import datetime
 import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
@@ -15,6 +15,7 @@ from keboola_mcp_server.tools.components.model import (
     ReducedFlow,
 )
 from keboola_mcp_server.tools.flow import (
+    FlowToolResponse,
     _check_circular_dependencies,
     _ensure_phase_ids,
     _ensure_task_ids,
@@ -24,9 +25,16 @@ from keboola_mcp_server.tools.flow import (
     retrieve_flows,
     update_flow,
 )
-
+from keboola_mcp_server.tools.workspace import ProjectManager
 # --- Fixtures ---
 
+def parse_iso_timestamp(ts: str) -> datetime:
+    return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+
+@pytest.fixture
+def mock_project_id() -> str:
+    """Mocks a project id."""
+    return '1'
 
 @pytest.fixture
 def mock_raw_flow_config() -> Dict[str, Any]:
@@ -373,16 +381,16 @@ class TestFlowTools:
         mcp_context_client: Context,
         sample_phases: List[Dict[str, Any]],
         sample_tasks: List[Dict[str, Any]],
-        mock_raw_flow_config: Dict[str, Any]
+        mock_raw_flow_config: Dict[str, Any],
+        mock_project_id: str
     ):
         """Test flow creation."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.flow_create = mocker.AsyncMock(
             return_value=mock_raw_flow_config
         )
-        keboola_client.storage_client.verify_token = mocker.AsyncMock(
-            return_value={'owner': {'id': 1}}
-        )
+        project_manager = ProjectManager.from_state(mcp_context_client.session.state)
+        project_manager.get_project = mocker.AsyncMock(return_value=mock_project_id)
 
         result = await create_flow(
             ctx=mcp_context_client,
@@ -392,9 +400,12 @@ class TestFlowTools:
             tasks=sample_tasks
         )
 
-        assert isinstance(result, FlowConfiguration)
-        assert len(result.phases) == 2
-        assert len(result.tasks) == 2
+        assert isinstance(result, FlowToolResponse)
+        assert result.description == 'Test flow description'
+        assert result.timestamp == parse_iso_timestamp('2025-05-25T06:33:41+0200')
+        assert result.success == True
+        assert result.link == 'https://connection.keboola.com/admin/projects/1/flows/21703284'
+
 
         keboola_client.storage_client.flow_create.assert_called_once()
         call_args = keboola_client.storage_client.flow_create.call_args
@@ -514,13 +525,17 @@ class TestFlowTools:
         mcp_context_client: Context,
         sample_phases: List[Dict[str, Any]],
         sample_tasks: List[Dict[str, Any]],
-        mock_raw_flow_config: Dict[str, Any]
+        mock_raw_flow_config: Dict[str, Any],
+        mock_project_id: str
     ):
         """Test flow update."""
+        mock_raw_flow_config['description'] = 'Updated description'
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.flow_update = mocker.AsyncMock(
             return_value=mock_raw_flow_config
         )
+        project_manager = ProjectManager.from_state(mcp_context_client.session.state)
+        project_manager.get_project = mocker.AsyncMock(return_value=mock_project_id)
 
         result = await update_flow(
             ctx=mcp_context_client,
@@ -532,7 +547,11 @@ class TestFlowTools:
             change_description='Updated flow structure'
         )
 
-        assert isinstance(result, FlowConfiguration)
+        assert isinstance(result, FlowToolResponse)
+        assert result.description == 'Updated description'
+        assert result.timestamp == parse_iso_timestamp('2025-05-25T06:33:41+0200')
+        assert result.success == True
+        assert result.link == 'https://connection.keboola.com/admin/projects/1/flows/21703284'
 
         keboola_client.storage_client.flow_update.assert_called_once()
         call_args = keboola_client.storage_client.flow_update.call_args
@@ -639,7 +658,7 @@ async def test_complete_flow_workflow(
         phases=[],
         tasks=[]
     )
-    assert isinstance(created, FlowConfiguration)
+    assert isinstance(created, FlowToolResponse)
 
     flows = await retrieve_flows(ctx=mcp_context_client)
     assert len(flows) == 1
@@ -654,7 +673,7 @@ async def test_complete_flow_workflow(
         tasks=[{'name': 'Test Task', 'phase': 1, 'task': {'componentId': 'test.component'}}],
         change_description='Added test phase and task'
     )
-    assert isinstance(updated, FlowConfiguration)
+    assert isinstance(updated, FlowToolResponse)
 
     detail = await get_flow_detail(
         ctx=mcp_context_client,
