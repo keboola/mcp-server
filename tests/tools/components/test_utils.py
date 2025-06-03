@@ -90,3 +90,19 @@ def test_get_transformation_configuration(
         for created_table, expected_table_name in zip(configuration.storage.output.tables, created_table_names):
             assert created_table.source == expected_table_name
             assert created_table.destination == f'{expected_bucket_id}.{expected_table_name}'
+
+
+@pytest.mark.parametrize(
+    ('input_str', 'expected_str'),
+    [
+        ('!@#$%^&*()+,./;\'[]\\`', ''),
+        ('_-', '_-'),
+        ('1234567890', '1234567890'),
+        ('test_table_1', 'test_table_1'),
+        ('test:-Table-1!', 'test-Table-1'),
+        ('test Test', 'testTest'),
+    ],
+)
+def test_clean_bucket_name(input_str: str, expected_str: str):
+    """Test clean_bucket_name function."""
+    assert _clean_bucket_name(input_str) == expected_str
