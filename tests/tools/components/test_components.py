@@ -21,6 +21,7 @@ from keboola_mcp_server.tools.components.model import (
     ReducedComponent,
 )
 from keboola_mcp_server.tools.components.tools import get_component_configuration_examples
+from keboola_mcp_server.tools.components.utils import TransformationConfiguration
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
@@ -296,7 +297,10 @@ async def test_create_transformation_configuration(
     transformation_name = mock_configuration['name']
     bucket_name = '-'.join(transformation_name.lower().split())
     description = mock_configuration['description']
-    sql_statements = ['SELECT * FROM test', 'SELECT * FROM test2']
+    code_blocks = [
+        TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=['SELECT * FROM test']),
+        TransformationConfiguration.Parameters.Block.Code(name='Code 1', script=['SELECT * FROM test2']),
+    ]
     created_table_name = 'test_table_1'
 
     # Test the create_sql_transformation tool
@@ -304,16 +308,12 @@ async def test_create_transformation_configuration(
         ctx=context,
         name=transformation_name,
         description=description,
-        sql_statements=sql_statements,
+        code_blocks=code_blocks,
         created_table_names=[created_table_name],
     )
 
     expected_config = ComponentConfigurationResponse.model_validate(
-        {
-            **configuration,
-            'component_id': expected_component_id,
-            'component': {**component}
-        }
+        {**configuration, 'component_id': expected_component_id, 'component': {**component}}
     )
 
     assert isinstance(new_transformation_configuration, ComponentConfigurationResponse)
@@ -329,8 +329,8 @@ async def test_create_transformation_configuration(
             'parameters': {
                 'blocks': [
                     {
-                        'name': 'Block 0',
-                        'codes': [{'name': 'Code 0', 'script': sql_statements}],
+                        'name': 'Blocks',
+                        'codes': [{'name': code.name, 'script': code.script} for code in code_blocks],
                     }
                 ]
             },
@@ -366,7 +366,9 @@ async def test_create_transformation_configuration_fail(
             ctx=context,
             name='test_name',
             description='test_description',
-            sql_statements=['SELECT * FROM test'],
+            code_blocks=[
+                TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=['SELECT * FROM test'])
+            ],
         )
 
 
