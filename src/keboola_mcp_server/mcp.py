@@ -90,7 +90,7 @@ def _create_session_state(config: Config) -> dict[str, Any]:
         state[ProjectManager.STATE_KEY] = project_manager
         LOG.info('Successfully initialized Storage API Project manager.')
     except Exception as e:
-        LOG.error(f'Failed to initialize Storage API Workspace manager: {e}')
+        LOG.error(f'Failed to initialize Storage API Project manager: {e}')
         raise
 
     return state
