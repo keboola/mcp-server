@@ -15,6 +15,8 @@ JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
 JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
+ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
+
 
 class KeboolaClient:
     """Class holding clients for Keboola APIs: Storage API, Job Queue API, and AI Service."""
@@ -532,6 +534,85 @@ class AsyncStorageClient(KeboolaServiceClient):
                 f'/rows/{configuration_row_id}',
                 data=data,
             ),
+        )
+
+    async def create_flow_configuration(
+        self,
+        name: str,
+        description: str,
+        flow_configuration: dict[str, Any],
+    ) -> JsonDict:
+        """
+        Creates a new flow (orchestrator) configuration.
+
+        Note: Flow configurations are special - they store phases/tasks directly
+        under 'configuration', not under 'configuration.parameters' like other components.
+
+        :param name: The name of the flow
+        :param description: The description of the flow
+        :param flow_configuration: The flow configuration containing phases and tasks directly
+        :return: The SAPI call response - created flow configuration or raise an error
+        """
+        data = {
+            'name': name,
+            'description': description,
+            'configuration': flow_configuration
+        }
+        return await self.create_component_root_configuration(
+            data=data,
+            component_id=ORCHESTRATOR_COMPONENT_ID
+        )
+
+    async def update_flow_configuration(
+        self,
+        config_id: str,
+        name: str,
+        description: str,
+        change_description: str,
+        flow_configuration: dict[str, Any],
+    ) -> JsonDict:
+        """
+        Updates an existing flow (orchestrator) configuration.
+
+        Note: Flow configurations store phases/tasks directly under 'configuration'.
+
+        :param config_id: The ID of the flow configuration to update
+        :param name: The updated name of the flow
+        :param description: The updated description of the flow
+        :param change_description: Description of the changes made
+        :param flow_configuration: The updated flow configuration containing phases and tasks directly
+        :return: The SAPI call response - updated flow configuration or raise an error
+        """
+        data = {
+            'name': name,
+            'description': description,
+            'changeDescription': change_description,
+            'configuration': flow_configuration  # Direct assignment!
+        }
+        return await self.update_component_root_configuration(
+            data=data,
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            config_id=config_id
+        )
+
+    async def list_flow_configurations(self) -> list[JsonDict]:
+        """
+        Lists all flow (orchestrator) configurations in the project.
+
+        :return: List of flow configurations
+        """
+        return await self.configuration_list(component_id=ORCHESTRATOR_COMPONENT_ID)
+
+    async def get_flow_configuration(self, config_id: str) -> JsonDict:
+        """
+        Retrieves a specific flow (orchestrator) configuration.
+
+        :param config_id: The ID of the flow configuration to retrieve
+        :return: Flow configuration details
+        """
+        return await self.configuration_detail(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=config_id
         )
 
 
