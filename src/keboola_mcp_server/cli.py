@@ -86,7 +86,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         keboola_mcp_server = create_server(config)
         if parsed_args.transport == 'stdio':
             if config.oauth_client_id or config.oauth_client_secret:
-                raise RuntimeError(f'OAuth authorization can only be used with HTTP-based transports.')
+                raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
         else:
             await keboola_mcp_server.run_async(

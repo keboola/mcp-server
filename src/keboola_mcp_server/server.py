@@ -149,11 +149,11 @@ def create_server(config: Config) -> FastMCP:
     @mcp.custom_route('/oauth/callback', methods=['GET'])
     async def oauth_callback_handler(request: Request) -> Response:
         """Handle GitHub OAuth callback."""
-        code = request.query_params.get("code")
-        state = request.query_params.get("state")
+        code = request.query_params.get('code')
+        state = request.query_params.get('state')
 
         if not code or not state:
-            raise HTTPException(400, "Missing code or state parameter")
+            raise HTTPException(400, 'Missing code or state parameter')
 
         try:
             redirect_uri = await oauth_provider.handle_oauth_callback(code, state)

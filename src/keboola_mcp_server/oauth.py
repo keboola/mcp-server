@@ -77,12 +77,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             client_id=client_id,
             scope=self.MCP_SERVER_SCOPE
         )
-        LOG.debug(f"[get_client] client_id={client_id}, client={client}")
+        LOG.debug(f'[get_client] client_id={client_id}, client={client}')
         return client
 
     async def register_client(self, client_info: OAuthClientInformationFull):
         # This is a no-op. We don't register clients otherwise we would need a persistent registry.
-        LOG.debug(f"[register_client] client_info={client_info}")
+        LOG.debug(f'[register_client] client_info={client_info}')
 
     async def authorize(
             self, client: OAuthClientInformationFull, params: AuthorizationParams
@@ -112,7 +112,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         }
         auth_url = f'{self._OAUTH_SERVER_AUTH_URL}?{urlencode(params)}'
 
-        LOG.debug(f"[authorize] client={client}, params={params}, {auth_url}")
+        LOG.debug(f'[authorize] client={client}, params={params}, {auth_url}')
 
         return auth_url
 
@@ -127,7 +127,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # Validate the state first to prevent calling OAuth server with invalid authorization code.
         try:
             state_data = jwt.decode(state, self._jwt_secret, algorithms=['HS256'])
-        except jwt.InvalidTokenError as e:
+        except jwt.InvalidTokenError:
             LOG.debug(f'[handle_oauth_callback] Invalid state: {state}', exc_info=True)
             raise HTTPException(400, 'Invalid state parameter')
 
@@ -180,9 +180,9 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # Create MCP authorization code
         auth_code = {
             'code': f'mcp_{secrets.token_hex(16)}',
-            'client_id': state_data["client_id"],
+            'client_id': state_data['client_id'],
             'redirect_uri': state_data['redirect_uri'],
-            'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == "True"),
+            'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == 'True'),
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
             'scopes': [self.MCP_SERVER_SCOPE],
             'code_challenge': state_data['code_challenge'],
@@ -195,7 +195,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             code=auth_code_jwt,
             state=state_data['state']
         )
-        LOG.debug(f"[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}")
+        LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
 
         return mcp_redirect_uri
 
@@ -206,7 +206,9 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
         LOG.debug(f'[load_authorization_code] client={client}, authorization_code={authorization_code}, '
                   f'auth_code={auth_code}')
-        return _ExtendedAuthorizationCode.model_validate(auth_code | {'redirect_uri': AnyHttpUrl(auth_code['redirect_uri'])})
+        return _ExtendedAuthorizationCode.model_validate(
+            auth_code | {'redirect_uri': AnyHttpUrl(auth_code['redirect_uri'])}
+        )
 
     async def exchange_authorization_code(
             self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
@@ -228,12 +230,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
-            token_type="bearer",
+            token_type='bearer',
             expires_in=3600,
-            scope=" ".join(authorization_code.scopes),
+            scope=' '.join(authorization_code.scopes),
         )
 
-        LOG.debug(f"[exchange_authorization_code] access_token={access_token}, oauth_token={oauth_token}")
+        LOG.debug(f'[exchange_authorization_code] access_token={access_token}, oauth_token={oauth_token}')
 
         return oauth_token
 
@@ -241,13 +243,13 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         """Load and validate an access token."""
         access_token_raw = jwt.decode(token, self._jwt_secret, algorithms=['HS256'])
         access_token = ProxyAccessToken.model_validate(access_token_raw)
-        LOG.debug(f"[load_access_token] token={token}, access_token={access_token}")
+        LOG.debug(f'[load_access_token] token={token}, access_token={access_token}')
 
         # Check if expired
         now = time.time()
         if access_token.expires_at and access_token.expires_at < now:
-            LOG.debug(f"[load_access_token] Expired token: access_token.expires_at={access_token.expires_at}, "
-                      f"now={now}")
+            LOG.debug(f'[load_access_token] Expired token: access_token.expires_at={access_token.expires_at}, '
+                      f'now={now}')
             return None
 
         return access_token
@@ -256,7 +258,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
         """Load a refresh token - not supported."""
-        LOG.debug(f"[load_refresh_token] client={client}, refresh_token={refresh_token}")
+        LOG.debug(f'[load_refresh_token] client={client}, refresh_token={refresh_token}')
         return None
 
     async def exchange_refresh_token(
@@ -266,12 +268,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             scopes: list[str],
     ) -> OAuthToken:
         """Exchange refresh token"""
-        LOG.debug(f"[exchange_refresh_token] client={client}, refresh_token={refresh_token}, scopes={scopes}")
-        raise NotImplementedError("Not supported")
+        LOG.debug(f'[exchange_refresh_token] client={client}, refresh_token={refresh_token}, scopes={scopes}')
+        raise NotImplementedError('Not supported')
 
     async def revoke_token(
             self, token: str, token_type_hint: str | None = None
     ) -> None:
         """Revoke a token."""
-        LOG.debug(f"[revoke_token] token={token}, token_type_hint={token_type_hint}")
+        LOG.debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
         # This is no-op as we don't store the tokens.
