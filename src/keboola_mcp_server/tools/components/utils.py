@@ -311,7 +311,7 @@ ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
 def validate_storage_configuration(
     storage: Optional[JsonDict],
     initial_message: Optional[str] = None,
-) -> Optional[JsonDict]:
+) -> JsonDict:
     """Utility function to validate the storage configuration.
     :param storage: The storage configuration to validate received from the agent.
     :param initial_message: The initial message to include in the error message
