@@ -508,7 +508,6 @@ async def create_component_root_configuration(
     client = KeboolaClient.from_state(ctx.session.state)
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
-
     storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
     parameters = await validate_root_parameters_configuration(
         client=client,
