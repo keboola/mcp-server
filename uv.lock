@@ -926,7 +926,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "0.28.0"
+version = "0.29.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
