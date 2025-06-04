@@ -41,7 +41,7 @@ def extract_description(values: dict[str, Any]) -> Optional[str]:
             (
                 value
                 for item in metadata
-                if (item.get('key') == MetadataField.DESCRIPTION.value and (value := item.get('value')))
+                if (item.get('key') == MetadataField.DESCRIPTION and (value := item.get('value')))
             ),
             None,
         )
@@ -229,10 +229,10 @@ async def update_bucket_description(
 
     data = {
         'provider': 'user',
-        'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
+        'metadata': [{'key': MetadataField.DESCRIPTION, 'value': description}],
     }
     response = cast(list[JsonDict], await client.storage_client.post(endpoint=metadata_endpoint, data=data))
-    description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION.value)
+    description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
 
     return UpdateDescriptionResponse.model_validate(description_entry)
 
@@ -253,11 +253,11 @@ async def update_table_description(
 
     data = {
         'provider': 'user',
-        'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
+        'metadata': [{'key': MetadataField.DESCRIPTION, 'value': description}],
     }
     response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     raw_metadata = cast(list[JsonDict], response.get('metadata', []))
-    description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION.value)
+    description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
 
     return UpdateDescriptionResponse.model_validate(description_entry)
 
@@ -282,7 +282,7 @@ async def update_column_description(
         'columnsMetadata': {
             f'{column_name}': [
                 {
-                    'key': MetadataField.DESCRIPTION.value,
+                    'key': MetadataField.DESCRIPTION,
                     'value': description,
                     'columnName': column_name,
                 }
@@ -293,7 +293,7 @@ async def update_column_description(
     response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
     description_entry = next(
-        entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION.value
+        entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION
     )
 
     return UpdateDescriptionResponse.model_validate(description_entry)
