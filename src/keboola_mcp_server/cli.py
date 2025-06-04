@@ -43,17 +43,6 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
              'of the MCP server URL. Please note that the URL query parameters are not secure '
              'for sending sensitive information.')
 
-    oauth_group = parser.add_argument_group('OAuth arguments')
-    oauth_group.add_argument(
-        '--oauth-client-id', metavar='STR', help='Client ID provided by Keboola OAuth Server.')
-    oauth_group.add_argument(
-        '--oauth-client-secret', metavar='STR', help='Client provided by Keboola OAuth Server.')
-    oauth_group.add_argument(
-        '--mcp-server-url', default='http://localhost:8000', metavar='STR',
-        help='The URL where the MCP server si reachable.')
-    oauth_group.add_argument(
-        '--jwt-secret', metavar='STR', help='The secret key for encoding and decoding JWT tokens.')
-
     return parser.parse_args(args)
 
 
@@ -74,14 +63,10 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         storage_token=parsed_args.storage_token,
         workspace_schema=parsed_args.workspace_schema,
         accept_secrets_in_url=parsed_args.accept_secrets_in_url,
-        oauth_client_id=parsed_args.oauth_client_id,
-        oauth_client_secret=parsed_args.oauth_client_secret,
-        mcp_server_url=parsed_args.mcp_server_url,
-        jwt_secret=parsed_args.jwt_secret,
     )
 
     try:
-        # Create and run server
+        # Create and run the server
         LOG.info(f'Creating server with config: {config}')
         keboola_mcp_server = create_server(config)
         if parsed_args.transport == 'stdio':
