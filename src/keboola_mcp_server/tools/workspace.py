@@ -1,10 +1,13 @@
 import abc
+import asyncio
 import json
 import logging
+import time
 from typing import Any, Literal, Mapping, Optional, Sequence
 
 from google.api_core.exceptions import BadRequest
 from google.cloud.bigquery import Client, Row
+from httpx import HTTPStatusError
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
@@ -65,11 +68,11 @@ class QueryResult:
 
 
 class _Workspace(abc.ABC):
-    def __init__(self, workspace_id: str) -> None:
+    def __init__(self, workspace_id: int) -> None:
         self._workspace_id = workspace_id
 
     @property
-    def id(self) -> str:
+    def id(self) -> int:
         return self._workspace_id
 
     @abc.abstractmethod
@@ -93,7 +96,7 @@ class _Workspace(abc.ABC):
 
 
 class _SnowflakeWorkspace(_Workspace):
-    def __init__(self, workspace_id: str, schema: str, client: KeboolaClient):
+    def __init__(self, workspace_id: int, schema: str, client: KeboolaClient):
         super().__init__(workspace_id)
         self._schema = schema  # default schema created for the workspace
         self._client = client
@@ -160,7 +163,7 @@ class _SnowflakeWorkspace(_Workspace):
 class _BigQueryWorkspace(_Workspace):
     _BQ_FIELDS = {'_timestamp'}
 
-    def __init__(self, workspace_id: str, dataset_id: str, project_id: str):
+    def __init__(self, workspace_id: int, dataset_id: str, project_id: str):
         super().__init__(workspace_id)
         self._dataset_id = dataset_id  # default dataset created for the workspace
         self._project_id = project_id
@@ -219,8 +222,27 @@ class _BigQueryWorkspace(_Workspace):
         return result
 
 
+@dataclass(frozen=True)
+class _WspInfo:
+    id: int
+    schema: str
+    backend: str
+    credentials: str | None  # the backend credentials; it can contain serialized JSON data
+    readonly: bool | None
+
+    @staticmethod
+    def from_sapi_info(sapi_wsp_info: Mapping[str, Any]) -> '_WspInfo':
+        _id = sapi_wsp_info.get('id')
+        backend = sapi_wsp_info.get('connection', {}).get('backend')
+        _schema = sapi_wsp_info.get('connection', {}).get('schema')
+        credentials = sapi_wsp_info.get('connection', {}).get('user')
+        readonly = sapi_wsp_info.get('readOnlyStorageAccess')
+        return _WspInfo(id=_id, schema=_schema, backend=backend, credentials=credentials, readonly=readonly)
+
+
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
+    MCP_META_KEY = 'KBC.MCP.workspaceId'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'WorkspaceManager':
@@ -228,42 +250,152 @@ class WorkspaceManager:
         assert isinstance(instance, WorkspaceManager), f'Expected WorkspaceManager, got: {instance}'
         return instance
 
-    def __init__(self, client: KeboolaClient, workspace_schema: str):
+    def __init__(self, client: KeboolaClient, workspace_schema: str | None = None):
         self._client = client
         self._workspace_schema = workspace_schema
         self._workspace: _Workspace | None = None
         self._table_fqn_cache: dict[str, TableFqn] = {}
 
+    async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
+        """Finds the workspace info by its schema."""
+
+        for sapi_wsp_info in await self._client.storage_client.get('workspaces'):
+            assert isinstance(sapi_wsp_info, dict)
+            wi = _WspInfo.from_sapi_info(sapi_wsp_info)
+            if wi.id and wi.backend and wi.schema and wi.schema == schema:
+                return wi
+
+        return None
+
+    async def _find_ws_by_id(self, workspace_id: str) -> _WspInfo | None:
+        """Finds the workspace info by its ID."""
+
+        try:
+            sapi_wsp_info = await self._client.storage_client.get(f'workspaces/{workspace_id}')
+            assert isinstance(sapi_wsp_info, dict)
+            wi = _WspInfo.from_sapi_info(sapi_wsp_info)
+
+            if wi.id and wi.backend and wi.schema:
+                return wi
+            else:
+                raise ValueError(f'Invalid workspace info: {sapi_wsp_info}')
+
+        except HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            else:
+                raise e
+
+    async def _find_ws_in_branch(self) -> _WspInfo | None:
+        """Finds the workspace info in the current branch."""
+
+        metadata = await self._client.storage_client.get('branch/default/metadata')
+        for m in metadata:
+            if m.get('key') == self.MCP_META_KEY:
+                workspace_id = m.get('value') or ''
+                workspace_id = workspace_id.strip()
+                if workspace_id and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
+                    return info
+
+        return None
+
+    async def _create_ws(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
+        """
+        Creates a new workspace in the current branch and returns its info.
+
+        :param timeout_sec: The number of seconds to wait for the workspace creation job to finish.
+        :return: The workspace info if the workspace was created successfully, None otherwise.
+        """
+
+        resp = await self._client.storage_client.post(
+            endpoint='branch/default/workspaces',
+            params={'async': True},
+            data={'readOnlyStorageAccess': True},
+        )
+
+        job_id = resp['id']
+        start_ts = time.perf_counter()
+        LOG.info(f'Requested new workspace: job_id={job_id}, timeout={timeout_sec:.2f} seconds')
+
+        while True:
+            job_info = await self._client.storage_client.get(f'jobs/{job_id}')
+            job_status = job_info['status']
+
+            duration = time.perf_counter() - start_ts
+            LOG.info(f'Job info: job_id={job_id}, status={job_status}, '
+                     f'duration={duration:.2f} seconds, timeout={timeout_sec:.2f} seconds')
+
+            if job_info['status'] == 'success':
+                workspace_id = job_info['results']['id']
+                LOG.info(f'Created workspace: {workspace_id}')
+                return await self._find_ws_by_id(workspace_id)
+
+            elif duration > timeout_sec:
+                LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
+                return None
+
+            else:
+                remaining_time = max(0.0, timeout_sec - duration)
+                await asyncio.sleep(min(5.0, remaining_time))
+
+    def _init_workspace(self, info: _WspInfo) -> _Workspace:
+        """Creates a new `Workspace` instance based on the workspace info."""
+
+        if info.backend == 'snowflake':
+            return _SnowflakeWorkspace(workspace_id=info.id, schema=info.schema, client=self._client)
+
+        elif info.backend == 'bigquery':
+            credentials = json.loads(info.credentials or '{}')
+            if project_id := credentials.get('project_id'):
+                return _BigQueryWorkspace(
+                    workspace_id=info.id,
+                    dataset_id=info.schema,
+                    project_id=project_id,
+                )
+
+            else:
+                raise ValueError(f'No credentials or no project ID in workspace: {info.schema}')
+
+        else:
+            raise ValueError(f'Unexpected backend type "{info.backend}" in workspace: {info.schema}')
+
     async def _get_workspace(self) -> _Workspace:
         if self._workspace:
             return self._workspace
 
-        for wsp_info in await self._client.storage_client.get('workspaces'):
-            assert isinstance(wsp_info, dict)
-            _id = wsp_info.get('id')
-            backend = wsp_info.get('connection', {}).get('backend')
-            schema = wsp_info.get('connection', {}).get('schema')
-            if _id and backend and schema and schema == self._workspace_schema:
-                if backend == 'snowflake':
-                    self._workspace = _SnowflakeWorkspace(workspace_id=_id, schema=schema, client=self._client)
-                    return self._workspace
+        if self._workspace_schema:
+            # use the workspace that was explicitly requested
+            # this workspace must never be written to the default branch metadata
+            LOG.info(f'Looking up workspace by schema: {self._workspace_schema}')
+            if info := await self._find_ws_by_schema(self._workspace_schema):
+                LOG.info(f'Found workspace: {info}')
+                self._workspace = self._init_workspace(info)
+                return self._workspace
+            else:
+                raise ValueError(f'No Keboola workspace found or the workspace has no read-only storage access: '
+                                 f'workspace_schema={self._workspace_schema}')
 
-                elif backend == 'bigquery':
-                    credentials = json.loads(wsp_info.get('connection', {}).get('user') or '{}')
-                    if project_id := credentials.get('project_id'):
-                        self._workspace = _BigQueryWorkspace(
-                            workspace_id=_id,
-                            dataset_id=schema,
-                            project_id=project_id,
-                        )
-                        return self._workspace
-                    else:
-                        raise ValueError(f'No credentials or no project ID in workspace: {self._workspace_schema}')
+        LOG.info('Looking up workspace in the default branch.')
+        if info := await self._find_ws_in_branch():
+            # use the workspace that has already been created by the MCP server and noted to the branch
+            LOG.info(f'Found workspace: {info}')
+            self._workspace = self._init_workspace(info)
+            return self._workspace
 
-                else:
-                    raise ValueError(f'Unexpected backend type "{backend}" in workspace: {self._workspace_schema}')
-
-        raise ValueError(f'No Keboola workspace found for user: {self._workspace_schema}')
+        # create a new workspace and note its ID to the branch
+        LOG.info('Creating workspace in the default branch.')
+        if info := await self._create_ws():
+            # update the branch metadata with the workspace ID
+            meta = await self._client.storage_client.post(
+                endpoint='branch/default/metadata',
+                data={'metadata': [{'key': self.MCP_META_KEY, 'value': info.id}]}
+            )
+            LOG.info(f'Set metadata in the default branch: {meta}')
+            # use the newly created workspace
+            self._workspace = self._init_workspace(info)
+            return self._workspace
+        else:
+            raise ValueError('Failed to initialize Keboola Workspace.')
 
     async def execute_query(self, sql_query: str) -> QueryResult:
         workspace = await self._get_workspace()

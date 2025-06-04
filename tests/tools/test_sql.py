@@ -75,7 +75,7 @@ class TestWorkspaceManagerSnowflake:
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
         keboola_client.storage_client.get.return_value = [
             {
-                'id': 'workspace_1234',
+                'id': 1234,
                 'connection': {
                     'schema': 'workspace_1234',
                     'backend': 'snowflake',
@@ -187,7 +187,7 @@ class TestWorkspaceManagerBigQuery:
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
         keboola_client.storage_client.get.return_value = [
             {
-                'id': 'workspace_1234',
+                'id': 1234,
                 'connection': {
                     'schema': 'workspace_1234',
                     'backend': 'bigquery',
