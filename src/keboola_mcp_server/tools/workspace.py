@@ -2,7 +2,7 @@ import abc
 import asyncio
 import json
 import logging
-from datetime import datetime
+import time
 from typing import Any, Literal, Mapping, Optional, Sequence
 
 from google.api_core.exceptions import BadRequest
@@ -314,17 +314,14 @@ class WorkspaceManager:
         )
 
         job_id = resp['id']
-        start_ts = datetime.now()
-        LOG.info(f'Requested new workspace: '
-                 f'job_id={job_id}, '
-                 f'start_time={start_ts.strftime("%Y-%m-%d %H:%M:%S")}, '
-                 f'timeout={timeout_sec:.2f} seconds')
+        start_ts = time.perf_counter()
+        LOG.info(f'Requested new workspace: job_id={job_id}, timeout={timeout_sec:.2f} seconds')
 
         while True:
             job_info = await self._client.storage_client.get(f'jobs/{job_id}')
             job_status = job_info['status']
 
-            duration = (datetime.now() - start_ts).total_seconds()
+            duration = time.perf_counter() - start_ts
             LOG.info(f'Job info: job_id={job_id}, status={job_status}, '
                      f'duration={duration:.2f} seconds, timeout={timeout_sec:.2f} seconds')
 
