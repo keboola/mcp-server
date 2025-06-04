@@ -1,0 +1,45 @@
+{
+    "phases": [
+      {
+        "id": "phase-1",
+        "name": "Extract Data",
+        "description": "This phase extracts data from the source system.",
+        "dependsOn": []
+      },
+      {
+        "id": "phase-2",
+        "name": "Transform Data",
+        "description": "This phase transforms the data.",
+        "dependsOn": ["phase-1"]
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-1",
+        "name": "Extract from MySQL",
+        "phase": "phase-1",
+        "enabled": true,
+        "continueOnFailure": false,
+        "task": {
+          "componentId": "keboola.db-ex-mysql",
+          "configId": "mysql-config-1",
+          "mode": "run",
+          "tag": "extract"
+        }
+      },
+      {
+        "id": "task-2",
+        "name": "Transform in Python",
+        "phase": "phase-2",
+        "enabled": true,
+        "continueOnFailure": false,
+        "task": {
+          "componentId": "keboola.python-transformation-v2",
+          "configRowIds": ["row-1", "row-2"],
+          "mode": "debug",
+          "previousJobId": "123456"
+        }
+      }
+    ]
+  }
+  

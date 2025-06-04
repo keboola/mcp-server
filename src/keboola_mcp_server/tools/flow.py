@@ -3,7 +3,7 @@
 import json
 import logging
 from importlib import resources
-from typing import Annotated, Any, Sequence
+from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
@@ -11,6 +11,7 @@ from pydantic import Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
+from keboola_mcp_server.tools._validate import validate_flow_configuration_against_schema
 from keboola_mcp_server.tools.components.model import (
     FlowConfiguration,
     FlowConfigurationResponse,
@@ -99,11 +100,13 @@ async def create_flow(
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
+    flow_configuration = cast(JsonDict, flow_configuration)
+    validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
     LOG.info(f'Creating new flow: {name}')
 
-    new_raw_configuration = await client.storage_client.create_flow_configuration(
+    new_raw_configuration = await client.storage_client.flow_create(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
@@ -151,11 +154,13 @@ async def update_flow(
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
+    flow_configuration = cast(JsonDict, flow_configuration)
+    validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
     LOG.info(f'Updating flow configuration: {configuration_id}')
 
-    updated_raw_configuration = await client.storage_client.update_flow_configuration(
+    updated_raw_configuration = await client.storage_client.flow_update(
         config_id=configuration_id,
         name=name,
         description=description,
@@ -174,8 +179,7 @@ async def update_flow(
 async def retrieve_flows(
     ctx: Context,
     flow_ids: Annotated[
-        Sequence[str],
-        Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
+        Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
     ] = tuple(),
 ) -> Annotated[list[ReducedFlow], Field(description='The retrieved flow configurations.')]:
     """Retrieves flow configurations from the project."""
@@ -186,14 +190,14 @@ async def retrieve_flows(
         flows = []
         for flow_id in flow_ids:
             try:
-                raw_config = await client.storage_client.get_flow_configuration(flow_id)
+                raw_config = await client.storage_client.flow_detail(flow_id)
                 flow = ReducedFlow.from_raw_config(raw_config)
                 flows.append(flow)
             except Exception as e:
                 LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
         return flows
     else:
-        raw_flows = await client.storage_client.list_flow_configurations()
+        raw_flows = await client.storage_client.flow_list()
         flows = [ReducedFlow.from_raw_config(raw_flow) for raw_flow in raw_flows]
         LOG.info(f'Found {len(flows)} flows in the project')
         return flows
@@ -209,7 +213,7 @@ async def get_flow_detail(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    raw_config = await client.storage_client.get_flow_configuration(configuration_id)
+    raw_config = await client.storage_client.flow_detail(configuration_id)
 
     flow_response = FlowConfigurationResponse.from_raw_config(raw_config)
 

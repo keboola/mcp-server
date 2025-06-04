@@ -1,0 +1,15 @@
+{
+    "phases": [
+      {
+        "id": "phase1",
+        "name": "Phase 1"
+      },
+      {
+        "id": "phase2",
+        "name": "Phase 2",
+        "dependsOn": [42, true]
+      }
+    ],
+    "tasks": []
+  }
+  
