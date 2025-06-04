@@ -20,6 +20,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentWithConfigurations,
 )
 from keboola_mcp_server.tools.components.utils import (
+    TransformationConfiguration,
     _get_component,
     _get_sql_transformation_id_from_sql_dialect,
     _get_transformation_configuration,
@@ -303,12 +304,12 @@ async def create_sql_transformation(
             ),
         ),
     ],
-    sql_statements: Annotated[
-        Sequence[str],
+    code_blocks: Annotated[
+        Sequence[TransformationConfiguration.Parameters.Block.Code],
         Field(
             description=(
-                'The executable SQL query statements written in the current SQL dialect. '
-                'Each statement should be a separate item in the list.'
+                'The executable SQL query code blocks, each containing a descriptive name and a list of semantically '
+                'related statements written in the current SQL dialect. Each code block is a separate item in the list.'
             ),
         ),
     ],
@@ -330,6 +331,8 @@ async def create_sql_transformation(
     CONSIDERATIONS:
     - The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
       appropriate tool.
+    - Each SQL code block should include one or more SQL statements that share a similar purpose or meaning, and should
+      have a descriptive name that reflects that purpose.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
@@ -358,7 +361,7 @@ async def create_sql_transformation(
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
     transformation_configuration_payload = _get_transformation_configuration(
-        statements=sql_statements, transformation_name=name, output_tables=created_table_names
+        codes=code_blocks, transformation_name=name, output_tables=created_table_names
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -402,12 +405,21 @@ async def update_sql_transformation_configuration(
         str,
         Field(description='Description of the changes made to the transformation configuration.'),
     ],
-    updated_configuration: Annotated[
+    parameters: Annotated[
+        TransformationConfiguration.Parameters,
+        Field(
+            description=(
+                'The updated "parameters" part of the transformation configuration that contains the newly '
+                'applied settings and preserves all other existing settings.'
+            ),
+        ),
+    ],
+    storage: Annotated[
         dict[str, Any],
         Field(
             description=(
-                'Updated transformation configuration JSON object containing both updated settings applied and all '
-                'existing settings preserved.'
+                'The updated "storage" part of the transformation configuration that contains the newly '
+                'applied settings and preserves all other existing settings.'
             ),
         ),
     ],
@@ -428,19 +440,28 @@ async def update_sql_transformation_configuration(
     configuration.
 
     CONSIDERATIONS:
-    - The configuration JSON data must follow the current Keboola transformation configuration schema.
+    - The parameters configuration must include blocks and codes of SQL statements.
+    - The Codes within the block should be semantically related and have a descriptive name.
     - The SQL code statements should follow the current SQL dialect, which can be retrieved using appropriate tool.
+    - The storage configuration must not be empty, and it should include input and output tables with correct mappings.
     - When the behavior of the transformation is not changed, the updated_description can be empty string.
 
     EXAMPLES:
     - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
-        - set the transformation_id and configuration_id accordingly and update configuration parameters based on
+        - set the transformation configuration_id accordingly and update parameters and storage tool arguments based on
           the [USER INTENT]
         - returns the updated transformation configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
+
+    validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
+
+    updated_configuration = {
+        'parameters': parameters.model_dump(),
+        'storage': storage,
+    }
 
     LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
     updated_raw_configuration = await client.storage_client.configuration_update(
@@ -527,12 +548,13 @@ async def create_component_root_configuration(
     client = KeboolaClient.from_state(ctx.session.state)
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+
+    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
     parameters = await validate_root_parameters_configuration(
         client=client,
         parameters=parameters,
         component_id=component_id,
-        initial_message='Field "parameters" is not valid.\n',
+        initial_message='The "parameters" field is not valid.',
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
@@ -625,12 +647,12 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
     parameters = await validate_row_parameters_configuration(
         client=client,
         parameters=parameters,
         component_id=component_id,
-        initial_message='Field "parameters" is not valid.\n',
+        initial_message='The "parameters" field is not valid.',
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
@@ -730,12 +752,12 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
     parameters = await validate_root_parameters_configuration(
         client=client,
         parameters=parameters,
         component_id=component_id,
-        initial_message='Field "parameters" is not valid.\n',
+        initial_message='The "parameters" field is not valid.',
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
@@ -835,7 +857,7 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
     parameters = await validate_row_parameters_configuration(
         client=client,
         parameters=parameters,
