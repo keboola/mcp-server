@@ -308,8 +308,8 @@ What buckets and tables are in my Keboola project?
 
 | **MCP Client** | **Support Status** | **Connection Method** |
 |----------------|-------------------|----------------------|
-| Claude (Desktop & Web) | ✅ supported, tested | stdio |
-| Cursor | ✅ supported, tested | stdio |
+| Claude (Desktop & Web) | ✅ supported | stdio |
+| Cursor | ✅ supported | stdio |
 | Windsurf, Zed, Replit | ✅ Supported | stdio |
 | Codeium, Sourcegraph | ✅ Supported | HTTP+SSE |
 | Custom MCP Clients | ✅ Supported | HTTP+SSE or stdio |
