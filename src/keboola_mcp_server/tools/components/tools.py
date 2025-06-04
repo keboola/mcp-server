@@ -77,21 +77,15 @@ async def retrieve_components_configurations(
     ctx: Context,
     component_types: Annotated[
         Sequence[ComponentType],
-        Field(
-            description='List of component types to filter by. If none, return all components.',
-        ),
+        Field(description='List of component types to filter by. If none, return all components.'),
     ] = tuple(),
     component_ids: Annotated[
         Sequence[str],
-        Field(
-            description='List of component IDs to retrieve configurations for. If none, return all components.',
-        ),
+        Field(description='List of component IDs to retrieve configurations for. If none, return all components.'),
     ] = tuple(),
 ) -> Annotated[
     list[ComponentWithConfigurations],
-    Field(
-        description='List of objects, each containing a component and its associated configurations.',
-    ),
+    Field(description='List of objects, each containing a component and its associated configurations.'),
 ]:
     """
     Retrieves configurations of components present in the project,
@@ -133,9 +127,7 @@ async def retrieve_transformations_configurations(
     ctx: Context,
     transformation_ids: Annotated[
         Sequence[str],
-        Field(
-            description='List of transformation component IDs to retrieve configurations for.',
-        ),
+        Field(description='List of transformation component IDs to retrieve configurations for.'),
     ] = tuple(),
 ) -> Annotated[
     list[ComponentWithConfigurations],
@@ -144,7 +136,7 @@ async def retrieve_transformations_configurations(
     ),
 ]:
     """
-    Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
+    Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
 
     USAGE:
     - Use when you want to see transformation configurations in the project for given transformation_ids.
@@ -161,11 +153,11 @@ async def retrieve_transformations_configurations(
         - set transformation_ids to ['specified-id']
         - returns the transformation configurations with ID 'specified-id'
     """
-    # If no transformation IDs are provided, retrieve transformations configurations by transformation type
+    # If no transformation IDs are provided, retrieve transformation configurations by transformation type
     if not transformation_ids:
         client = KeboolaClient.from_state(ctx.session.state)
         return await _retrieve_components_configurations_by_types(client, ['transformation'])
-    # If transformation IDs are provided, retrieve transformations configurations by IDs
+    # If transformation IDs are provided, retrieve transformation configurations by IDs
     else:
         client = KeboolaClient.from_state(ctx.session.state)
         return await _retrieve_components_configurations_by_ids(client, transformation_ids)
@@ -199,12 +191,7 @@ async def get_component(
 @with_session_state()
 async def get_component_configuration(
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-    configuration_id: Annotated[
-        str,
-        Field(
-            description='ID of the component/transformation configuration',
-        ),
-    ],
+    configuration_id: Annotated[str, Field(description='ID of the component/transformation configuration',)],
     ctx: Context,
 ) -> Annotated[ComponentConfigurationOutput, Field(description='The component/transformation and its configuration.')]:
     """
@@ -264,15 +251,25 @@ async def get_component_configuration(
     )
 
 
+async def _set_cfg_creation_metadata(client, component_id, configuration_id):
+    # Set configuration metadata to indicate it was created by MCP
+    try:
+        await client.storage_client.configuration_metadata_update(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            metadata={'KBC.MCP.createdBy': 'true'},
+        )
+    except HTTPStatusError as e:
+        LOG.error(f'Failed to set "KBC.MCP.createdBy" metadata for configuration {configuration_id}: {e}')
+
+
 @tool_errors()
 @with_session_state()
 async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
         str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
-        ),
+        Field(description='A short, descriptive name summarizing the purpose of the SQL transformation.',),
     ],
     description: Annotated[
         str,
@@ -314,7 +311,7 @@ async def create_sql_transformation(
       retrieved using appropriate tools.
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
       fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
-    - Unless otherwise specified by user, transformation name and description are generated based on the sql query
+    - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
       and user intent.
 
     USAGE:
@@ -336,7 +333,7 @@ async def create_sql_transformation(
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
-    # and storage(input and output tables)
+    # and storage (input and output tables)
     transformation_configuration_payload = _get_transformation_configuration(
         statements=sql_statements, transformation_name=name, output_tables=created_table_names
     )
@@ -360,6 +357,12 @@ async def create_sql_transformation(
         }
     )
 
+    await _set_cfg_creation_metadata(
+        client=client,
+        component_id=component_id,
+        configuration_id=new_transformation_configuration.configuration_id,
+    )
+
     LOG.info(
         f'Created new transformation "{component_id}" with configuration id '
         f'"{new_transformation_configuration.configuration_id}".'
@@ -371,15 +374,10 @@ async def create_sql_transformation(
 @with_session_state()
 async def update_sql_transformation_configuration(
     ctx: Context,
-    configuration_id: Annotated[
-        str,
-        Field(description='ID of the transformation configuration to update'),
-    ],
+    configuration_id: Annotated[str, Field(description='ID of the transformation configuration to update')],
     change_description: Annotated[
         str,
-        Field(
-            description='Description of the changes made to the transformation configuration.',
-        ),
+        Field(description='Description of the changes made to the transformation configuration.'),
     ],
     updated_configuration: Annotated[
         dict[str, Any],
@@ -399,9 +397,7 @@ async def update_sql_transformation_configuration(
     ] = '',
     is_disabled: Annotated[
         bool,
-        Field(
-            description='Whether to disable the transformation configuration. Default is False.',
-        ),
+        Field(description='Whether to disable the transformation configuration. Default is False.',),
     ] = False,
 ) -> Annotated[ComponentConfigurationResponse, Field(description='Updated transformation configuration.')]:
     """
@@ -455,9 +451,7 @@ async def create_component_root_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
-        ),
+        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
     ],
     description: Annotated[
         str,
@@ -467,12 +461,7 @@ async def create_component_root_configuration(
             ),
         ),
     ],
-    component_id: Annotated[
-        str,
-        Field(
-            description='The ID of the component for which to create the configuration.',
-        ),
-    ],
+    component_id: Annotated[str, Field(description='The ID of the component for which to create the configuration.')],
     parameters: Annotated[
         dict[str, Any],
         Field(description='The component configuration parameters, adhering to the root_configuration_schema'),
@@ -540,14 +529,7 @@ async def create_component_root_configuration(
         f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".'
     )
 
-    try:
-        await client.storage_client.configuration_metadata_update(
-            component_id=component_id,
-            configuration_id=configuration_id,
-            metadata={'KBC.MCP.createdBy': 'true'},
-        )
-    except HTTPStatusError as e:
-        LOG.error(f'Failed to set "KBC.MCP.createdBy" metadata for configuration {configuration_id}: {e}')
+    await _set_cfg_creation_metadata(client, component_id, configuration_id)
 
     return new_configuration
 
@@ -558,9 +540,7 @@ async def create_component_row_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
-        ),
+        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
     ],
     description: Annotated[
         str,
@@ -570,17 +550,10 @@ async def create_component_row_configuration(
             ),
         ),
     ],
-    component_id: Annotated[
-        str,
-        Field(
-            description='The ID of the component for which to create the configuration.',
-        ),
-    ],
+    component_id: Annotated[str, Field(description='The ID of the component for which to create the configuration.')],
     configuration_id: Annotated[
         str,
-        Field(
-            description='The ID of the configuration for which to create the configuration row.',
-        ),
+        Field(description='The ID of the configuration for which to create the configuration row.',),
     ],
     parameters: Annotated[
         dict[str, Any],
@@ -666,9 +639,7 @@ async def update_component_root_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
-        ),
+        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
     ],
     description: Annotated[
         str,
@@ -680,22 +651,10 @@ async def update_component_root_configuration(
     ],
     change_description: Annotated[
         str,
-        Field(
-            description=('Description of the change made to the component configuration.'),
-        ),
+        Field(description='Description of the change made to the component configuration.',),
     ],
-    component_id: Annotated[
-        str,
-        Field(
-            description="The ID of the component which you'd like to update",
-        ),
-    ],
-    configuration_id: Annotated[
-        str,
-        Field(
-            description="The ID of the configuration which you'd like to update.",
-        ),
-    ],
+    component_id: Annotated[str, Field(description="The ID of the component which you'd like to update")],
+    configuration_id: Annotated[str, Field(description="The ID of the configuration which you'd like to update.")],
     parameters: Annotated[
         dict[str, Any],
         Field(description='The component configuration parameters, adhering to the root_configuration_schema schema'),
@@ -777,9 +736,7 @@ async def update_component_row_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
-        ),
+        Field(description='A short, descriptive name summarizing the purpose of the component configuration.'),
     ],
     description: Annotated[
         str,
@@ -791,27 +748,13 @@ async def update_component_row_configuration(
     ],
     change_description: Annotated[
         str,
-        Field(
-            description=('Description of the change made to the component configuration.'),
-        ),
+        Field(description='Description of the change made to the component configuration.',),
     ],
-    component_id: Annotated[
-        str,
-        Field(
-            description="The ID of the component which you'd like to update",
-        ),
-    ],
-    configuration_id: Annotated[
-        str,
-        Field(
-            description="The ID of the configuration which you'd like to update.",
-        ),
-    ],
+    component_id: Annotated[str, Field(description="The ID of the component which you'd like to update")],
+    configuration_id: Annotated[str, Field(description="The ID of the configuration which you'd like to update.")],
     configuration_row_id: Annotated[
         str,
-        Field(
-            description="The ID of the configuration row which you'd like to update.",
-        ),
+        Field(description="The ID of the configuration row which you'd like to update."),
     ],
     parameters: Annotated[
         dict[str, Any],
@@ -893,17 +836,10 @@ async def update_component_row_configuration(
 @with_session_state()
 async def get_component_configuration_examples(
     ctx: Context,
-    component_id: Annotated[
-        str,
-        Field(
-            description='The ID of the component to get configuration examples for.',
-        ),
-    ],
+    component_id: Annotated[str, Field(description='The ID of the component to get configuration examples for.')],
 ) -> Annotated[
     str,
-    Field(
-        description='Markdown formatted string containing configuration examples for the component.',
-    ),
+    Field(description='Markdown formatted string containing configuration examples for the component.'),
 ]:
     """
     Retrieves sample configuration examples for a specific component.
@@ -947,12 +883,7 @@ async def get_component_configuration_examples(
 @with_session_state()
 async def find_component_id(
     ctx: Context,
-    query: Annotated[
-        str,
-        Field(
-            description='Natural language query to find the requested component.',
-        ),
-    ],
+    query: Annotated[str, Field(description='Natural language query to find the requested component.')],
 ) -> list[SuggestedComponent]:
     """
     Returns list of component IDs that match the given query.
@@ -967,6 +898,3 @@ async def find_component_id(
     client = KeboolaClient.from_state(ctx.session.state)
     suggestion_response = await client.ai_service_client.suggest_component(query)
     return suggestion_response.components
-
-
-# End of component tools #########################################
