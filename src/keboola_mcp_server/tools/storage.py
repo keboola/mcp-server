@@ -41,28 +41,33 @@ def extract_description(values: dict[str, Any]) -> Optional[str]:
             (
                 value
                 for item in metadata
-                if (item.get('key') == MetadataField.DESCRIPTION.value and (value := item.get('value')))
+                if (item.get('key') == MetadataField.DESCRIPTION and (value := item.get('value')))
             ),
             None,
         )
 
 
 class BucketDetail(BaseModel):
-    id: str = Field(description='Unique identifier for the bucket')
-    name: str = Field(description='Name of the bucket')
-    description: Optional[str] = Field(None, description='Description of the bucket')
-    stage: Optional[str] = Field(None, description='Stage of the bucket (in for input stage, out for output stage)')
-    created: str = Field(description='Creation timestamp of the bucket')
+    id: str = Field(description='Unique identifier for the bucket.')
+    name: str = Field(description='Name of the bucket.')
+    display_name: str = Field(
+        description='The display name of the bucket.',
+        validation_alias=AliasChoices('displayName', 'display_name', 'display-name'),
+        serialization_alias='displayName',
+    )
+    description: Optional[str] = Field(None, description='Description of the bucket.')
+    stage: Optional[str] = Field(None, description='Stage of the bucket (in for input stage, out for output stage).')
+    created: str = Field(description='Creation timestamp of the bucket.')
     data_size_bytes: Optional[int] = Field(
         None,
-        description='Total data size of the bucket in bytes',
+        description='Total data size of the bucket in bytes.',
         validation_alias=AliasChoices('dataSizeBytes', 'data_size_bytes', 'data-size-bytes'),
         serialization_alias='dataSizeBytes',
     )
 
     tables_count: Optional[int] = Field(
         default=None,
-        description='Number of tables in the bucket',
+        description='Number of tables in the bucket.',
         validation_alias=AliasChoices('tablesCount', 'tables_count', 'tables-count'),
         serialization_alias='tablesCount',
     )
@@ -93,31 +98,36 @@ class TableColumnInfo(BaseModel):
 
 
 class TableDetail(BaseModel):
-    id: str = Field(description='Unique identifier for the table')
-    name: str = Field(description='Name of the table')
-    description: Optional[str] = Field(None, description='Description of the table')
+    id: str = Field(description='Unique identifier for the table.')
+    name: str = Field(description='Name of the table.')
+    display_name: str = Field(
+        description='The display name of the table.',
+        validation_alias=AliasChoices('displayName', 'display_name', 'display-name'),
+        serialization_alias='displayName',
+    )
+    description: Optional[str] = Field(None, description='Description of the table.')
     primary_key: Optional[list[str]] = Field(
         None,
-        description='List of primary key columns',
+        description='List of primary key columns.',
         validation_alias=AliasChoices('primaryKey', 'primary_key', 'primary-key'),
         serialization_alias='primaryKey',
     )
-    created: Optional[str] = Field(None, description='Creation timestamp of the table')
+    created: Optional[str] = Field(None, description='Creation timestamp of the table.')
     rows_count: Optional[int] = Field(
         None,
-        description='Number of rows in the table',
+        description='Number of rows in the table.',
         validation_alias=AliasChoices('rowsCount', 'rows_count', 'rows-count'),
         serialization_alias='rowsCount',
     )
     data_size_bytes: Optional[int] = Field(
         None,
-        description='Total data size of the table in bytes',
+        description='Total data size of the table in bytes.',
         validation_alias=AliasChoices('dataSizeBytes', 'data_size_bytes', 'data-size-bytes'),
         serialization_alias='dataSizeBytes',
     )
     columns: Optional[list[TableColumnInfo]] = Field(
         None,
-        description='List of column information including database identifiers',
+        description='List of column information including database identifiers.',
     )
     fully_qualified_name: Optional[str] = Field(
         None,
@@ -219,10 +229,10 @@ async def update_bucket_description(
 
     data = {
         'provider': 'user',
-        'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
+        'metadata': [{'key': MetadataField.DESCRIPTION, 'value': description}],
     }
     response = cast(list[JsonDict], await client.storage_client.post(endpoint=metadata_endpoint, data=data))
-    description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION.value)
+    description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
 
     return UpdateDescriptionResponse.model_validate(description_entry)
 
@@ -243,11 +253,11 @@ async def update_table_description(
 
     data = {
         'provider': 'user',
-        'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': description}],
+        'metadata': [{'key': MetadataField.DESCRIPTION, 'value': description}],
     }
     response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     raw_metadata = cast(list[JsonDict], response.get('metadata', []))
-    description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION.value)
+    description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
 
     return UpdateDescriptionResponse.model_validate(description_entry)
 
@@ -272,7 +282,7 @@ async def update_column_description(
         'columnsMetadata': {
             f'{column_name}': [
                 {
-                    'key': MetadataField.DESCRIPTION.value,
+                    'key': MetadataField.DESCRIPTION,
                     'value': description,
                     'columnName': column_name,
                 }
@@ -283,7 +293,7 @@ async def update_column_description(
     response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
     description_entry = next(
-        entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION.value
+        entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION
     )
 
     return UpdateDescriptionResponse.model_validate(description_entry)

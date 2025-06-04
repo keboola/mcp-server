@@ -6,20 +6,25 @@ import json
 import logging
 from enum import Enum
 from importlib import resources
-from typing import Optional
+from typing import Callable, Optional, cast
 
 import jsonschema
+import jsonschema.validators
+from jsonschema import TypeChecker
+from jsonschema.validators import extend
 
-from keboola_mcp_server.client import JsonDict
+from keboola_mcp_server.client import JsonDict, JsonPrimitive, JsonStruct
 
 LOG = logging.getLogger(__name__)
 
+ValidateFunction = Callable[[JsonDict, JsonDict], None]
 
 RESOURCES = 'keboola_mcp_server.resources'
 
 
-class ConfigurationSchemaResourceName(str, Enum):
+class ConfigurationSchemaResources(str, Enum):
     STORAGE = 'storage-schema.json'
+    FLOW = 'flow-schema.json'
 
 
 class RecoverableValidationError(jsonschema.ValidationError):
@@ -79,26 +84,142 @@ class RecoverableValidationError(jsonschema.ValidationError):
         return str_repr.rstrip()
 
 
+class KeboolaParametersValidator:
+    """
+    A custom JSON Schema validator that handles UI elements and schema normalization:
+    1. Ignores 'button' type (UI-only construct)
+    2. Normalizes schema by:
+       - Converting boolean 'required' flags to proper list format (propagating the required flag up)
+       - Ensuring 'properties' is a dictionary if it is an empty list
+    """
+
+    @classmethod
+    def validate(cls, instance: JsonDict, schema: JsonDict) -> None:
+        """
+        Validate the instance against the schema.
+        """
+        sanitized_schema = cls.sanitize_schema(schema)
+        base_validator = jsonschema.validators.validator_for(sanitized_schema)
+        keboola_validator = extend(
+            base_validator, type_checker=base_validator.TYPE_CHECKER.redefine('button', cls.check_button_type)
+        )
+        return keboola_validator(sanitized_schema).validate(instance)
+
+    @staticmethod
+    def check_button_type(checker: TypeChecker, instance: object) -> bool:
+        """
+        Dummy button type checker.
+        We accept button as a type since it is a UI construct and not a data type.
+        :returns: True if instance is a dict with a type field with value 'button', False otherwise
+        """
+        # TODO: We can add a custom pydantic model or json schema for validating button type instances.
+        return isinstance(instance, dict) and 'button' == instance.get('type', None)
+
+    @staticmethod
+    def sanitize_schema(schema: JsonDict) -> JsonDict:
+        """Normalize schema by converting required fields to lists and ensuring properties is a dict"""
+
+        def _sanitize_required_and_properties(
+            schema: JsonStruct | JsonPrimitive,
+        ) -> tuple[JsonStruct | JsonPrimitive, Optional[bool]]:
+
+            # default returns the element of a schema if we are at the bottom of the tree (not a dict)
+            if not isinstance(schema, dict):
+                return schema, False
+
+            is_current_required = None
+            required = schema.get('required', [])
+            if not isinstance(required, list):
+                # Convert required field to empty list, and set is_current_required to True/False if the required
+                # field is set to true/false and propagate the required flag up to the parent's required list
+                is_current_required = str(required).lower() == 'true'
+                required = []
+
+            if (properties := schema.get('properties')) is not None:
+                if properties == []:
+                    properties = {}  # convert empty list to empty dict to avoid AttributeError in jsonschema
+                elif not isinstance(properties, dict):
+                    # Invalid schema - properties must be a dictionary. SchemaError will be caught and logged
+                    # in _validate_json_against_schema but the validation will succeed since we cant use invalid schema
+                    raise jsonschema.SchemaError(f'properties must be a dictionary, got {type(properties)}')
+
+                for property_name, subschema in properties.items():
+                    # we recursively sanitize the subschemas within the properties
+                    properties[property_name], is_child_required = _sanitize_required_and_properties(subschema)
+                    # if is_child_required is None, do not propagate - the child has required field correctly set
+                    if is_child_required is True and property_name not in required:
+                        required.append(property_name)
+                    elif is_child_required is False and property_name in required:
+                        required.remove(property_name)
+                schema['properties'] = properties
+
+            if required:
+                schema['required'] = list(required)
+            else:
+                schema.pop('required', None)
+
+            return schema, is_current_required
+
+        sanitized_schema = cast(JsonDict, _sanitize_required_and_properties(schema)[0])
+        return sanitized_schema
+
+
 def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
     """Validate the storage configuration using jsonschema.
     :param storage: The storage configuration to validate
     :param initial_message: The initial message to include in the error message
     :returns: The validated storage configuration normalized to {"storage" : {...}}
     """
-    schema = _load_schema(ConfigurationSchemaResourceName.STORAGE)
-    expected_input_data = {'storage': storage.get('storage', storage)}
+    schema = _load_schema(ConfigurationSchemaResources.STORAGE)
+    # we expect the storage to be a dictionary of storage configurations with the "storage" key
+    normalized_storage_data = {'storage': storage.get('storage', storage)}
     _validate_json_against_schema(
-        json_data=expected_input_data,
+        json_data=normalized_storage_data,
         schema=schema,
         initial_message=initial_message,
     )
-    return expected_input_data
+    return normalized_storage_data
 
 
-def _validate_json_against_schema(json_data: JsonDict, schema: JsonDict, initial_message: Optional[str] = None):
+def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
+    """
+    Validate the parameters configuration using jsonschema.
+    :parameters: json data to validate
+    :schema: json schema to validate against (root or row parameter configuration schema)
+    :initial_message: initial message to include in the error message
+    :returns: The validated parameters configuration normalized to {"parameters" : {...}}
+    """
+    expected_input = cast(JsonDict, parameters.get('parameters', parameters))
+    _validate_json_against_schema(expected_input, schema, initial_message, KeboolaParametersValidator.validate)
+    return {'parameters': expected_input}  # normalized to {"parameters" : {...}}
+
+
+def validate_flow_configuration_against_schema(flow: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
+    """
+    Validate the flow configuration using jsonschema.
+    :flow: json data to validate
+    :initial_message: initial message to include in the error message
+    :returns: The validated flow configuration
+    """
+    schema = _load_schema(ConfigurationSchemaResources.FLOW)
+    _validate_json_against_schema(
+        json_data=flow,
+        schema=schema,
+        initial_message=initial_message,
+    )
+    return flow
+
+
+def _validate_json_against_schema(
+    json_data: JsonDict,
+    schema: JsonDict,
+    initial_message: Optional[str] = None,
+    validate_fn: Optional[ValidateFunction] = None,
+):
     """Validate JSON data against the provided schema."""
     try:
-        jsonschema.validate(instance=json_data, schema=schema)
+        validate_fn = validate_fn or jsonschema.validate
+        validate_fn(json_data, schema)
     except jsonschema.ValidationError as e:
         raise RecoverableValidationError.create_from_values(e, invalid_json=json_data, initial_message=initial_message)
     except jsonschema.SchemaError as e:
@@ -113,6 +234,6 @@ def _validate_json_against_schema(json_data: JsonDict, schema: JsonDict, initial
         return
 
 
-def _load_schema(json_schema_name: ConfigurationSchemaResourceName) -> JsonDict:
+def _load_schema(json_schema_name: ConfigurationSchemaResources) -> JsonDict:
     with resources.open_text(RESOURCES, json_schema_name.value, encoding='utf-8') as f:
         return json.load(f)

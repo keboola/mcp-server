@@ -2,7 +2,7 @@ import abc
 import asyncio
 import json
 import logging
-from datetime import datetime
+import time
 from typing import Any, Literal, Mapping, Optional, Sequence
 
 from google.api_core.exceptions import BadRequest
@@ -227,7 +227,17 @@ class _WspInfo:
     id: int
     schema: str
     backend: str
-    credentials: str | None
+    credentials: str | None  # the backend credentials; it can contain serialized JSON data
+    readonly: bool | None
+
+    @staticmethod
+    def from_sapi_info(sapi_wsp_info: Mapping[str, Any]) -> '_WspInfo':
+        _id = sapi_wsp_info.get('id')
+        backend = sapi_wsp_info.get('connection', {}).get('backend')
+        _schema = sapi_wsp_info.get('connection', {}).get('schema')
+        credentials = sapi_wsp_info.get('connection', {}).get('user')
+        readonly = sapi_wsp_info.get('readOnlyStorageAccess')
+        return _WspInfo(id=_id, schema=_schema, backend=backend, credentials=credentials, readonly=readonly)
 
 
 class WorkspaceManager:
@@ -246,39 +256,29 @@ class WorkspaceManager:
         self._workspace: _Workspace | None = None
         self._table_fqn_cache: dict[str, TableFqn] = {}
 
-    @property
-    def _branch_id(self) -> str:
-        return self._client.storage_client.branch_id
-
-    async def _find_info_by_schema(self, schema: str) -> _WspInfo | None:
+    async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
 
-        for wsp_info in await self._client.storage_client.get('workspaces'):
-            assert isinstance(wsp_info, dict)
-            _id = wsp_info.get('id')
-            backend = wsp_info.get('connection', {}).get('backend')
-            _schema = wsp_info.get('connection', {}).get('schema')
-            credentials = wsp_info.get('connection', {}).get('user')
-            if _id and backend and _schema and _schema == schema:
-                return _WspInfo(id=_id, schema=schema, backend=backend, credentials=credentials)
+        for sapi_wsp_info in await self._client.storage_client.get('workspaces'):
+            assert isinstance(sapi_wsp_info, dict)
+            wi = _WspInfo.from_sapi_info(sapi_wsp_info)
+            if wi.id and wi.backend and wi.schema and wi.schema == schema:
+                return wi
 
         return None
 
-    async def _find_info_by_id(self, workspace_id: str) -> _WspInfo | None:
+    async def _find_ws_by_id(self, workspace_id: str) -> _WspInfo | None:
         """Finds the workspace info by its ID."""
 
         try:
-            wsp_info = await self._client.storage_client.get(f'workspaces/{workspace_id}')
+            sapi_wsp_info = await self._client.storage_client.get(f'workspaces/{workspace_id}')
+            assert isinstance(sapi_wsp_info, dict)
+            wi = _WspInfo.from_sapi_info(sapi_wsp_info)
 
-            _id = wsp_info.get('id')
-            backend = wsp_info.get('connection', {}).get('backend')
-            _schema = wsp_info.get('connection', {}).get('schema')
-            credentials = wsp_info.get('connection', {}).get('user')
-
-            if _id and backend and _schema:
-                return _WspInfo(id=_id, schema=_schema, backend=backend, credentials=credentials)
+            if wi.id and wi.backend and wi.schema:
+                return wi
             else:
-                raise ValueError(f'Invalid workspace info: {wsp_info}')
+                raise ValueError(f'Invalid workspace info: {sapi_wsp_info}')
 
         except HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -286,19 +286,20 @@ class WorkspaceManager:
             else:
                 raise e
 
-    async def _find_info_in_branch(self) -> _WspInfo | None:
+    async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the workspace info in the current branch."""
 
-        metadata = await self._client.storage_client.get(f'branch/{self._branch_id}/metadata')
+        metadata = await self._client.storage_client.get('branch/default/metadata')
         for m in metadata:
             if m.get('key') == self.MCP_META_KEY:
                 workspace_id = m.get('value') or ''
                 workspace_id = workspace_id.strip()
-                if workspace_id:
-                    return await self._find_info_by_id(workspace_id)
+                if workspace_id and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
+                    return info
+
         return None
 
-    async def _create_info(self, *, timeout_sec: float = 60.0) -> _WspInfo | None:
+    async def _create_ws(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
         """
         Creates a new workspace in the current branch and returns its info.
 
@@ -307,34 +308,35 @@ class WorkspaceManager:
         """
 
         resp = await self._client.storage_client.post(
-            endpoint=f'branch/{self._branch_id}/workspaces',
+            endpoint='branch/default/workspaces',
             params={'async': True},
             data={'readOnlyStorageAccess': True},
         )
 
         job_id = resp['id']
-        start_ts = datetime.now()
-        LOG.info(f'Requested new workspace: '
-                 f'job_id={job_id}, '
-                 f'start_time={start_ts.strftime("%Y-%m-%d %H:%M:%S")}, '
-                 f'timeout={timeout_sec:.2f} seconds')
+        start_ts = time.perf_counter()
+        LOG.info(f'Requested new workspace: job_id={job_id}, timeout={timeout_sec:.2f} seconds')
 
-        while (duration := (datetime.now() - start_ts).total_seconds()) < timeout_sec:
+        while True:
             job_info = await self._client.storage_client.get(f'jobs/{job_id}')
             job_status = job_info['status']
 
+            duration = time.perf_counter() - start_ts
             LOG.info(f'Job info: job_id={job_id}, status={job_status}, '
                      f'duration={duration:.2f} seconds, timeout={timeout_sec:.2f} seconds')
 
             if job_info['status'] == 'success':
                 workspace_id = job_info['results']['id']
                 LOG.info(f'Created workspace: {workspace_id}')
-                return await self._find_info_by_id(workspace_id)
-            else:
-                await asyncio.sleep(5)
+                return await self._find_ws_by_id(workspace_id)
 
-        LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
-        return None
+            elif duration > timeout_sec:
+                LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
+                return None
+
+            else:
+                remaining_time = max(0.0, timeout_sec - duration)
+                await asyncio.sleep(min(5.0, remaining_time))
 
     def _init_workspace(self, info: _WspInfo) -> _Workspace:
         """Creates a new `Workspace` instance based on the workspace info."""
@@ -363,31 +365,32 @@ class WorkspaceManager:
 
         if self._workspace_schema:
             # use the workspace that was explicitly requested
+            # this workspace must never be written to the default branch metadata
             LOG.info(f'Looking up workspace by schema: {self._workspace_schema}')
-            if info := await self._find_info_by_schema(self._workspace_schema):
+            if info := await self._find_ws_by_schema(self._workspace_schema):
                 LOG.info(f'Found workspace: {info}')
                 self._workspace = self._init_workspace(info)
                 return self._workspace
             else:
-                raise ValueError(f'No Keboola workspace found for user: {self._workspace_schema}')
+                raise ValueError(f'No Keboola workspace found or the workspace has no read-only storage access: '
+                                 f'workspace_schema={self._workspace_schema}')
 
-        LOG.info(f'Looking up workspace in branch: {self._branch_id}')
-        if info := await self._find_info_in_branch():
+        LOG.info('Looking up workspace in the default branch.')
+        if info := await self._find_ws_in_branch():
             # use the workspace that has already been created by the MCP server and noted to the branch
             LOG.info(f'Found workspace: {info}')
             self._workspace = self._init_workspace(info)
             return self._workspace
 
         # create a new workspace and note its ID to the branch
-        LOG.info(f'Creating workspace in branch: {self._branch_id}')
-        if info := await self._create_info():
-            LOG.info(f'Found workspace: {info}')
+        LOG.info('Creating workspace in the default branch.')
+        if info := await self._create_ws():
             # update the branch metadata with the workspace ID
             meta = await self._client.storage_client.post(
-                endpoint=f'branch/{self._branch_id}/metadata',
+                endpoint='branch/default/metadata',
                 data={'metadata': [{'key': self.MCP_META_KEY, 'value': info.id}]}
             )
-            LOG.info(f'Set metadata in {self._branch_id} branch: {meta}')
+            LOG.info(f'Set metadata in the default branch: {meta}')
             # use the newly created workspace
             self._workspace = self._init_workspace(info)
             return self._workspace

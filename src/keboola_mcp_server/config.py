@@ -3,7 +3,6 @@
 import dataclasses
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
@@ -103,10 +102,18 @@ class Config:
         return f'Config({joined_params})'
 
 
-class MetadataField(str, Enum):
+class MetadataField:
     """
-    Enum to hold predefined names of Keboola metadata fields
-    Add others as needed
+    Predefined names of Keboola metadata fields.
     """
 
     DESCRIPTION = 'KBC.description'
+
+    # set for configurations created by MCP tools;
+    # expected value: 'true'
+    CREATED_BY_MCP = 'KBC.MCP.createdBy'
+
+    # set for configurations updated by MCP tools;
+    # the full key should end by a version number;
+    # expected value: 'true'
+    UPDATED_BY_MCP_PREFIX = 'KBC.MCP.updatedBy.version.'

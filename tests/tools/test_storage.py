@@ -45,6 +45,7 @@ def mock_table_data() -> Mapping[str, Any]:
     raw_table_data = {
         'id': 'in.c-test.test-table',
         'name': 'test-table',
+        'display_name': 'test-table-display-name',
         'primary_key': ['id'],
         'created': '2024-01-01T00:00:00Z',
         'rows_count': 100,
@@ -74,6 +75,7 @@ def mock_buckets() -> Sequence[Mapping[str, Any]]:
         {
             'id': 'bucket1',
             'name': 'Test Bucket 1',
+            'display_name': 'test-bucket-1-display-name',
             'description': 'A test bucket',
             'stage': 'production',
             'created': '2024-01-01T00:00:00Z',
@@ -83,6 +85,7 @@ def mock_buckets() -> Sequence[Mapping[str, Any]]:
         {
             'id': 'bucket2',
             'name': 'Test Bucket 2',
+            'display_name': 'test-bucket-2-display-name',
             'description': 'Another test bucket',
             'created': '2025-01-01T00:00:00Z',
             'table_count': 3,
@@ -97,7 +100,7 @@ def mock_update_bucket_description_response() -> Sequence[Mapping[str, Any]]:
     return [
         {
             'id': '999',
-            'key': MetadataField.DESCRIPTION.value,
+            'key': MetadataField.DESCRIPTION,
             'value': 'Updated bucket description',
             'provider': 'user',
             'timestamp': '2024-01-01T00:00:00Z',
@@ -179,6 +182,7 @@ async def test_get_bucket_detail(
     assert isinstance(result, BucketDetail)
     assert result.id == expected_bucket['id']
     assert result.name == expected_bucket['name']
+    assert result.display_name == expected_bucket['display_name']
 
     # Check optional fields only if they are present in the expected bucket
     if 'description' in expected_bucket:
@@ -212,6 +216,7 @@ async def test_retrieve_buckets_in_project(
     for expected_bucket, result_bucket in zip(mock_buckets, result):
         assert result_bucket.id == expected_bucket['id']
         assert result_bucket.name == expected_bucket['name']
+        assert result_bucket.display_name == expected_bucket['display_name']
         if 'description' in expected_bucket:
             assert result_bucket.description == expected_bucket['description']
         if 'stage' in expected_bucket:
@@ -243,6 +248,7 @@ async def test_get_table_detail(
     assert isinstance(result, TableDetail)
     assert result.id == mock_table_data['raw_table_data']['id']
     assert result.name == mock_table_data['raw_table_data']['name']
+    assert result.display_name == mock_table_data['raw_table_data']['display_name']
     assert result.primary_key == mock_table_data['raw_table_data']['primary_key']
     assert result.rows_count == mock_table_data['raw_table_data']['rows_count']
     assert result.data_size_bytes == mock_table_data['raw_table_data']['data_size_bytes']
@@ -255,18 +261,19 @@ async def test_get_table_detail(
     ('sapi_response', 'expected'),
     [
         (
-            [{'id': 'in.c-bucket.foo', 'name': 'foo'}],
-            [TableDetail(id='in.c-bucket.foo', name='foo')],
+            [{'id': 'in.c-bucket.foo', 'name': 'foo', 'display_name': 'foo'}],
+            [TableDetail(id='in.c-bucket.foo', name='foo', display_name='foo')],
         ),
         (
             [
                 {
                     'id': 'in.c-bucket.bar',
                     'name': 'bar',
+                    'display_name': 'foo',
                     'metadata': [{'key': 'KBC.description', 'value': 'Nice Bar'}],
                 }
             ],
-            [TableDetail(id='in.c-bucket.bar', name='bar', description='Nice Bar')],
+            [TableDetail(id='in.c-bucket.bar', name='bar', display_name='foo', description='Nice Bar')],
         ),
     ],
 )
@@ -307,7 +314,7 @@ async def test_update_bucket_description_success(
         endpoint='buckets/in.c-test.bucket-id/metadata',
         data={
             'provider': 'user',
-            'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': 'Updated bucket description'}],
+            'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated bucket description'}],
         },
     )
 
@@ -336,7 +343,7 @@ async def test_update_table_description_success(
         endpoint='tables/in.c-test.test-table/metadata',
         data={
             'provider': 'user',
-            'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': 'Updated table description'}],
+            'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated table description'}],
         },
     )
 

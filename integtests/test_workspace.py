@@ -2,6 +2,7 @@ import logging
 from typing import Any, Generator, Mapping
 
 import pytest
+import requests
 from kbcstorage.client import Client as SyncStorageClient
 
 from keboola_mcp_server.client import KeboolaClient
@@ -10,31 +11,24 @@ from keboola_mcp_server.tools.workspace import WorkspaceManager
 LOG = logging.getLogger(__name__)
 
 
-def _storage_client(storage_api_url: str, storage_api_token: str) -> SyncStorageClient:
-    return SyncStorageClient(storage_api_url, storage_api_token)
-
-
 @pytest.fixture
 def dynamic_manager(
-        keboola_client: KeboolaClient, storage_api_token: str, storage_api_url: str, workspace_schema: str
+        keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
 ) -> Generator[WorkspaceManager, Any, None]:
-    branch_id = keboola_client.storage_client.branch_id
-    storage_client = _storage_client(storage_api_url, storage_api_token)
+    storage_client = sync_storage_client
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
 
-    LOG.info(f'Setting up workspaces in Keboola project with ID={project_id}')
-
-    def _get_workspace_meta() -> Mapping[str, Any] | None:
-        metadata = storage_client.branches.metadata(branch_id)
-        for m in metadata:
+    def _get_workspace_meta() -> list[Mapping[str, Any]]:
+        metadata: list[Mapping[str, Any]] = []
+        for m in storage_client.branches.metadata('default'):
             if m.get('key') == WorkspaceManager.MCP_META_KEY:
-                return m
-        return None
+                metadata.append(m)
+        return metadata
 
-    meta = _get_workspace_meta()
-    if meta:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {meta} in {branch_id} branch')
+    metas = _get_workspace_meta()
+    if metas:
+        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {metas} in the default branch')
 
     workspaces = storage_client.workspaces.list()
     # ignore the static workspace
@@ -45,10 +39,20 @@ def dynamic_manager(
     yield WorkspaceManager(keboola_client)
 
     LOG.info(f'Cleaning up workspaces in Keboola project with ID={project_id}')
-    meta = _get_workspace_meta()
-    if meta:
-        storage_client.workspaces.delete(meta['value'])
-        storage_client.branches._delete(f'{storage_client.branches.base_url}branch/{branch_id}/metadata/{meta["id"]}')
+    metas = _get_workspace_meta()
+    if len(metas) > 1:
+        LOG.info(f'Multiple metadata entries found: {metas}')
+    for meta in metas:
+        try:
+            storage_client.workspaces.delete(meta['value'])
+            LOG.info(f'Deleted workspaces: {meta["value"]}')
+        except requests.HTTPError:
+            LOG.exception(f'Failed to delete workspace {meta["value"]}')
+        try:
+            storage_client.branches._delete(f'{storage_client.branches.base_url}branch/default/metadata/{meta["id"]}')
+            LOG.info(f'Deleted workspaces metadata: {meta["id"]}')
+        except requests.HTTPError as e:
+            LOG.exception(f'Failed to delete workspace metadata {meta["id"]}: {e}')
 
 
 class TestWorkspaceManager:
@@ -57,7 +61,7 @@ class TestWorkspaceManager:
     async def test_static_workspace(self, workspace_manager: WorkspaceManager, workspace_schema: str):
         assert workspace_manager._workspace_schema == workspace_schema
 
-        info = await workspace_manager._find_info_by_schema(workspace_schema)
+        info = await workspace_manager._find_ws_by_schema(workspace_schema)
         assert info is not None
         assert info.schema == workspace_schema
         assert info.backend in ['snowflake', 'bigquery']
@@ -71,7 +75,7 @@ class TestWorkspaceManager:
         assert dynamic_manager._workspace_schema is None
 
         # check that there is no workspace in the branch
-        info = await dynamic_manager._find_info_in_branch()
+        info = await dynamic_manager._find_ws_in_branch()
         assert info is None
 
         # create workspace
@@ -79,6 +83,6 @@ class TestWorkspaceManager:
         assert workspace is not None
 
         # check that the new workspace is recorded in the branch
-        info = await dynamic_manager._find_info_in_branch()
+        info = await dynamic_manager._find_ws_in_branch()
         assert info is not None
         assert workspace.id == info.id

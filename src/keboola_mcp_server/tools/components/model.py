@@ -2,6 +2,8 @@ from typing import Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
+
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
 AllComponentTypes = Union[ComponentType, TransformationType]
@@ -38,7 +40,7 @@ class ReducedComponent(BaseModel):
         default_factory=list,
         description='List of developer portal flags.',
         validation_alias=AliasChoices('flags', 'component_flags', 'componentFlags', 'component-flags'),
-        serialization_alias='componentFlags'
+        serialization_alias='componentFlags',
     )
 
     # Capability flags derived from component_flags
@@ -46,42 +48,42 @@ class ReducedComponent(BaseModel):
         default=False,
         description='Whether the component is row-based (e.g. have configuration rows) or not.',
         validation_alias=AliasChoices('is_row_based', 'isRowBased', 'is-row-based'),
-        serialization_alias='isRowBased'
+        serialization_alias='isRowBased',
     )
 
     has_table_input_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has table input mapping or not.',
         validation_alias=AliasChoices('has_table_input_mapping', 'hasTableInputMapping', 'has-table-input-mapping'),
-        serialization_alias='hasTableInputMapping'
+        serialization_alias='hasTableInputMapping',
     )
 
     has_table_output_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has table output mapping or not.',
         validation_alias=AliasChoices('has_table_output_mapping', 'hasTableOutputMapping', 'has-table-output-mapping'),
-        serialization_alias='hasTableOutputMapping'
+        serialization_alias='hasTableOutputMapping',
     )
 
     has_file_input_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has file input mapping or not.',
         validation_alias=AliasChoices('has_file_input_mapping', 'hasFileInputMapping', 'has-file-input-mapping'),
-        serialization_alias='hasFileInputMapping'
+        serialization_alias='hasFileInputMapping',
     )
 
     has_file_output_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has file output mapping or not.',
         validation_alias=AliasChoices('has_file_output_mapping', 'hasFileOutputMapping', 'has-file-output-mapping'),
-        serialization_alias='hasFileOutputMapping'
+        serialization_alias='hasFileOutputMapping',
     )
 
     has_oauth: bool = Field(
         default=False,
         description='Whether the component configuration requires OAuth authorization or not.',
         validation_alias=AliasChoices('has_oauth', 'hasOauth', 'has-oauth'),
-        serialization_alias='hasOauth'
+        serialization_alias='hasOauth',
     )
 
     @model_validator(mode='after')
@@ -313,8 +315,11 @@ class ComponentConfigurationMetadata(BaseModel):
         root_configuration = ComponentConfigurationResponseBase.model_validate(configuration.model_dump())
         row_configurations = None
         if configuration.rows:
+            component_id = root_configuration.component_id
             row_configurations = [
-                ComponentConfigurationResponseBase.model_validate(row) for row in configuration.rows if row is not None
+                ComponentConfigurationResponseBase.model_validate(row | {'component_id': component_id})
+                for row in configuration.rows
+                if row is not None
             ]
         return cls(root_configuration=root_configuration, row_configurations=row_configurations)
 
@@ -328,3 +333,135 @@ class ComponentWithConfigurations(BaseModel):
     configurations: List[ComponentConfigurationMetadata] = Field(
         description='The list of configurations metadata associated with the component.',
     )
+
+
+class FlowPhase(BaseModel):
+    """Represents a phase in a flow configuration."""
+
+    id: Union[int, str] = Field(description='Unique identifier of the phase')
+    name: str = Field(description='Name of the phase', min_length=1)
+    description: str = Field(default_factory=str, description='Description of the phase')
+    depends_on: List[Union[int, str]] = Field(
+        default_factory=list,
+        description='List of phase IDs this phase depends on',
+        validation_alias=AliasChoices('dependsOn', 'depends_on', 'depends-on'),
+        serialization_alias='dependsOn',
+    )
+
+
+class FlowTask(BaseModel):
+    """Represents a task in a flow configuration."""
+
+    id: Union[int, str] = Field(description='Unique identifier of the task')
+    name: str = Field(description='Name of the task')
+    phase: Union[int, str] = Field(description='ID of the phase this task belongs to')
+    enabled: bool = Field(default=True, description='Whether the task is enabled')
+    continue_on_failure: bool = Field(
+        default=False,
+        description='Whether to continue if task fails',
+        validation_alias=AliasChoices('continueOnFailure', 'continue_on_failure', 'continue-on-failure'),
+        serialization_alias='continueOnFailure',
+    )
+    task: dict[str, Any] = Field(description='Task configuration containing componentId, configId, etc.')
+
+
+class FlowConfiguration(BaseModel):
+    """Represents a complete flow configuration."""
+
+    phases: List[FlowPhase] = Field(description='List of phases in the flow')
+    tasks: List[FlowTask] = Field(description='List of tasks in the flow')
+
+
+class FlowConfigurationResponse(ComponentConfigurationResponseBase):
+    """
+    Detailed information about a Keboola Flow Configuration, extending the base configuration response.
+    """
+
+    version: int = Field(description='The version of the flow configuration')
+    configuration: FlowConfiguration = Field(description='The flow configuration containing phases and tasks')
+    change_description: Optional[str] = Field(
+        description='The description of the changes made to the flow configuration',
+        default=None,
+        validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
+        serialization_alias='changeDescription',
+    )
+    configuration_metadata: list[dict[str, Any]] = Field(
+        description='The metadata of the flow configuration',
+        default_factory=list,
+        validation_alias=AliasChoices(
+            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
+        ),
+        serialization_alias='configurationMetadata',
+    )
+    created: Optional[str] = Field(None, description='Creation timestamp')
+
+    @classmethod
+    def from_raw_config(cls, raw_config: dict[str, Any]) -> 'FlowConfigurationResponse':
+        """Create a FlowConfigurationResponse object from raw API response."""
+
+        config_data = raw_config.get('configuration', {})
+
+        # Parse phases and tasks directly from configuration
+        phases = [FlowPhase.model_validate(phase) for phase in config_data.get('phases', [])]
+        tasks = [FlowTask.model_validate(task) for task in config_data.get('tasks', [])]
+
+        flow_config = FlowConfiguration(phases=phases, tasks=tasks)
+
+        return cls(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=raw_config['id'],
+            configuration_name=raw_config['name'],
+            configuration_description=raw_config.get('description', ''),
+            version=raw_config.get('version', 1),
+            is_disabled=raw_config.get('isDisabled', False),
+            is_deleted=raw_config.get('isDeleted', False),
+            configuration=flow_config,
+            change_description=raw_config.get('changeDescription'),
+            configuration_metadata=raw_config.get('metadata', []),
+            created=raw_config.get('created'),
+        )
+
+
+class ReducedFlow(BaseModel):
+    """Lightweight flow summary for listing operations - consistent with ReducedComponent naming."""
+
+    id: str = Field(
+        description='Configuration ID of the flow',
+        validation_alias=AliasChoices('id', 'configuration_id', 'configurationId'),
+    )
+    name: str = Field(description='Name of the flow')
+    description: str = Field(description='Description of the flow')
+    created: Optional[str] = Field(None, description='Creation timestamp')
+    version: int = Field(description='Version number of the flow')
+    is_disabled: bool = Field(
+        default=False,
+        description='Whether the flow is disabled',
+        validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
+        serialization_alias='isDisabled',
+    )
+    is_deleted: bool = Field(
+        default=False,
+        description='Whether the flow is deleted',
+        validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
+        serialization_alias='isDeleted',
+    )
+    phases_count: int = Field(description='Number of phases in the flow')
+    tasks_count: int = Field(description='Number of tasks in the flow')
+
+    @classmethod
+    def from_raw_config(cls, raw_config: dict[str, Any]) -> 'ReducedFlow':
+        """Create a ReducedFlow object from raw API response."""
+
+        config_data = raw_config.get('configuration', {})
+
+        return cls(
+            id=raw_config['id'],
+            name=raw_config['name'],
+            description=raw_config.get('description', ''),
+            created=raw_config.get('created'),
+            version=raw_config.get('version', 1),
+            is_disabled=raw_config.get('isDisabled', False),
+            is_deleted=raw_config.get('isDeleted', False),
+            phases_count=len(config_data.get('phases', [])),
+            tasks_count=len(config_data.get('tasks', [])),
+        )

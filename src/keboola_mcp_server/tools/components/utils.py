@@ -5,7 +5,7 @@ from httpx import HTTPStatusError
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.tools._validate import validate_storage
+from keboola_mcp_server.tools._validate import validate_parameters, validate_storage
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
@@ -286,21 +286,96 @@ def _get_transformation_configuration(
 
 
 STORAGE_VALIDATION_INITIAL_MESSAGE = 'The provided storage configuration input does not follow the storage schema.\n'
+ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
+    'The provided Root parameters configuration input does not follow the Root parameter json schema for component '
+    'id: {component_id}.\n'
+)
+ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
+    'The provided Row parameters configuration input does not follow the Row parameter json schema for component '
+    'id: {component_id}.\n'
+)
 
 
 def validate_storage_configuration(
     storage: Optional[JsonDict],
     initial_message: Optional[str] = None,
-) -> JsonDict:
-    """Utility function to validate the storage configuration.
-    :param storage: The storage configuration to validate
-    :param initial_message: The initial message to include in the error message
-    :returns: The validated storage configuration normalized to {"storage" : {...}}
+) -> Optional[JsonDict]:
     """
-    normalized_storage = {'storage': (storage.get('storage', storage) if storage else storage)}
-    if not storage:
+    Validates the storage configuration and extracts the storage key contents.
+    :param storage: The storage configuration to validate received from the agent.
+    :param initial_message: The initial message to include in the error message.
+    :return: The contents of the 'storage' key from the validated configuration,
+              or an empty dict if no storage is provided.
+    """
+    if not storage or storage is None or storage.get('storage', {}) is None:
         LOG.warning('No storage configuration provided, skipping validation.')
-        return normalized_storage
+        return {}
     initial_message = initial_message or ''
     initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
-    return validate_storage(normalized_storage, initial_message)
+    normalized_storage = validate_storage(storage, initial_message)
+    return cast(JsonDict, normalized_storage['storage'])
+
+
+async def validate_root_parameters_configuration(
+    client: KeboolaClient,
+    parameters: JsonDict,
+    component_id: str,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """
+    Utility function to validate the root parameters configuration.
+    :param client: The Keboola client
+    :param parameters: The parameters of the configuration to validate
+    :param component_id: The ID of the component for which the configuration is provided
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
+    """
+    initial_message = initial_message or ''
+    initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
+    component = await _get_component(client=client, component_id=component_id)
+    return _validate_parameters_configuration(parameters, component.configuration_schema, component_id, initial_message)
+
+
+async def validate_row_parameters_configuration(
+    client: KeboolaClient,
+    parameters: JsonDict,
+    component_id: str,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """
+    Utility function to validate the row parameters configuration.
+    :param client: The Keboola client
+    :param parameters: The parameters of the configuration to validate
+    :param component_id: The ID of the component for which the configuration is provided
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
+    """
+    initial_message = initial_message or ''
+    initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
+    component = await _get_component(client=client, component_id=component_id)
+    return _validate_parameters_configuration(
+        parameters, component.configuration_row_schema, component_id, initial_message
+    )
+
+
+def _validate_parameters_configuration(
+    parameters: JsonDict,
+    schema: Optional[JsonDict],
+    component_id: str,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """
+    Utility function to validate the parameters configuration.
+    :param parameters: The parameters configuration to validate
+    :param schema: The schema to validate against
+    :param component_id: The ID of the component
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
+    """
+    if not schema:
+        LOG.warning(f'No schema provided for component {component_id}, skipping validation.')
+        return parameters
+
+    # we expect the parameters to be a dictionary of parameter configurations without the "parameters" key
+    normalized_parameters = validate_parameters(parameters, schema, initial_message)
+    return cast(JsonDict, normalized_parameters['parameters'])

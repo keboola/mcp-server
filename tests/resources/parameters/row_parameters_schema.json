@@ -1,0 +1,186 @@
+{
+  "type": "object",
+  "title": "Vector Store Configuration",
+  "required": [
+    "text_column"
+  ],
+  "properties": {
+    "_metadata_": {
+      "type": "object",
+      "options": {
+        "hidden": true
+      },
+      "properties": {
+        "table": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "columns": {
+              "type": "array"
+            },
+            "primaryKey": {
+              "type": "array"
+            }
+          }
+        }
+      }
+    },
+    "destination": {
+      "type": "object",
+      "title": "Destination",
+      "options": [],
+      "required": [
+        "collection_name"
+      ],
+      "properties": {
+        "load_type": {
+          "enum": [
+            "full_load",
+            "incremental_load"
+          ],
+          "type": "string",
+          "title": "Load Type",
+          "format": "checkbox",
+          "default": "full_load",
+          "options": {
+            "enum_titles": [
+              "Full Load",
+              "Incremental Load"
+            ]
+          },
+          "description": "If Full load is used, the destination table will be overwritten every run. If incremental load is used, data will be upserted into the destination table. Tables with a primary key will have rows updated, tables without a primary key will have rows appended.",
+          "propertyOrder": 30
+        },
+        "primary_key": {
+          "type": "string",
+          "title": "Primary Key Column",
+          "watch": {
+            "columns": "_metadata_.table.columns"
+          },
+          "options": {
+            "dependencies": {
+              "load_type": "incremental_load"
+            }
+          },
+          "required": false,
+          "enumSource": "columns",
+          "description": "Choose a column to use as unique identifier for upserts.",
+          "propertyOrder": 30
+        },
+        "collection_name": {
+          "type": "string",
+          "title": "Collection Name",
+          "default": "keboola_embeddings",
+          "propertyOrder": 10
+        },
+        "metadata_columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "title": "Column Name",
+            "watch": {
+              "columns": "_metadata_.table.columns"
+            },
+            "enumSource": "columns"
+          },
+          "title": "Metadata Columns",
+          "format": "select",
+          "options": {
+            "tags": true
+          },
+          "required": false,
+          "description": "Choose columns to save to the vector store database as metadata.",
+          "uniqueItems": true,
+          "propertyOrder": 20
+        }
+      },
+      "propertyOrder": 300
+    },
+    "text_column": {
+      "type": "string",
+      "title": "Embed column name",
+      "watch": {
+        "columns": "_metadata_.table.columns"
+      },
+      "required": true,
+      "enumSource": "columns",
+      "description": "Choose a column to embed data",
+      "propertyOrder": 1
+    },
+    "advanced_options": {
+      "type": "object",
+      "title": "Advanced Options",
+      "properties": {
+        "batch_size": {
+          "type": "integer",
+          "title": "Batch Size",
+          "default": 100,
+          "maximum": 1000,
+          "minimum": 1,
+          "description": "Number of texts to process in one batch",
+          "propertyOrder": 20
+        },
+        "enable_chunking": {
+          "type": "boolean",
+          "title": "Enable Text Chunking",
+          "format": "checkbox",
+          "default": false,
+          "description": "Split long texts into smaller chunks before embedding",
+          "propertyOrder": 30
+        },
+        "chunking_settings": {
+          "type": "object",
+          "title": "Chunking Settings",
+          "options": {
+            "dependencies": {
+              "enable_chunking": true
+            }
+          },
+          "properties": {
+            "chunk_size": {
+              "type": "integer",
+              "title": "Chunk Size",
+              "default": 1000,
+              "maximum": 8000,
+              "minimum": 100,
+              "description": "Maximum number of characters in each chunk",
+              "propertyOrder": 50
+            },
+            "chunk_overlap": {
+              "type": "integer",
+              "title": "Chunk Overlap",
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 0,
+              "description": "Number of characters to overlap between chunks",
+              "propertyOrder": 60
+            },
+            "chunk_strategy": {
+              "enum": [
+                "character",
+                "sentence",
+                "word",
+                "paragraph"
+              ],
+              "type": "string",
+              "title": "Chunking Strategy",
+              "default": "paragraph",
+              "options": {
+                "tooltip": "Paragraph is recommended for most use cases"
+              },
+              "description": "How to split the text into chunks",
+              "propertyOrder": 70
+            }
+          },
+          "propertyOrder": 40
+        }
+      },
+      "propertyOrder": 200
+    }
+  }
+}
