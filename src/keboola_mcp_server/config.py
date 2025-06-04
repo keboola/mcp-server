@@ -25,6 +25,10 @@ class Config:
     """OAuth client ID registered in the Keboola OAuth Server."""
     oauth_client_secret: Optional[str] = None
     """OAuth client secret registered in the Keboola OAuth Server."""
+    oauth_server_url: Optional[str] = None
+    """The URL of the OAuth server to authenticate with."""
+    oauth_scope: Optional[str] = None
+    """The OAuth scope to request from the OAuth server."""
     mcp_server_url: Optional[str] = None
     """The URL where the MCP server si reachable."""
     jwt_secret: Optional[str] = None

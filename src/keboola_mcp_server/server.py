@@ -102,13 +102,14 @@ def create_server(config: Config) -> FastMCP:
     config = config.replace_by(os.environ)
 
     if config.oauth_client_id and config.oauth_client_secret:
-        # TODO: replace with Keboola OAuth provider
         oauth_provider = SimpleOAuthProvider(
             client_id=config.oauth_client_id,
             client_secret=config.oauth_client_secret,
+            server_url=config.oauth_server_url,
+            scope=config.oauth_scope,
             # This URL must be reachable from the internet.
             # The path corresponds to oauth_callback_handler() set up below.
-            oauth_callback_url=config.mcp_server_url.rstrip('/') + '/oauth/callback',
+            mcp_callback_url=config.mcp_server_url.rstrip('/') + '/oauth/callback',
             jwt_secret=config.jwt_secret,
         )
         auth_settings = AuthSettings(

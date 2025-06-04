@@ -77,4 +77,5 @@ class TestConfig:
         config = Config(storage_token='foo')
         assert str(config) == ("Config(storage_api_url=None, storage_token='****', workspace_schema=None, "
                                'accept_secrets_in_url=None, oauth_client_id=None, oauth_client_secret=None, '
-                               'mcp_server_url=None, jwt_secret=None)')
+                               'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
+                               'jwt_secret=None)')

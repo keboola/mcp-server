@@ -2,7 +2,7 @@ import logging
 import secrets
 import time
 from http.client import HTTPException
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 
 import jwt
 from mcp.server.auth.provider import (
@@ -42,26 +42,29 @@ class ProxyAccessToken(AccessToken):
 
 class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
-    # TODO: Make this configurable. When deployed to a stack this is the stack's "connection" URL.
-    _OAUTH_SERVER_AUTH_URL: str = 'https://connection.canary-orion.keboola.dev/oauth/authorize'
-    _OAUTH_SERVER_TOKEN_URL: str = 'https://connection.canary-orion.keboola.dev/oauth/token'
-    _OAUTH_SERVER_SCOPE: str = 'email'
-
     MCP_SERVER_SCOPE: str = 'mcp'
 
     def __init__(
-            self, *, oauth_callback_url: str, client_id: str, client_secret: str, jwt_secret: str | None = None
+            self, *, mcp_callback_url: str,
+            client_id: str, client_secret: str, server_url: str, scope: str,
+            jwt_secret: str | None = None
     ) -> None:
         """
         Creates OAuth provider implementation.
 
-        :param oauth_callback_url: The URL where the OAuth server redirects to after the user authorizes.
+        :param mcp_callback_url: The URL where the OAuth server redirects to after the user authorizes.
         :param client_id: The client ID registered with the OAuth server.
-        :param client_secret: The client secret registered with the OAuth server.
+        :param client_secret: The client secret registered with the OAuth server
+        :param server_url: The URL of the OAuth server that the MCP server should authenticate to.
+        :param scope: The scope of access to request from the OAuth server.
+        :param jwt_secret: The secret key for encoding and decoding JWT tokens.
         """
-        self._oauth_callback_url = oauth_callback_url
+        self._mcp_callback_url = mcp_callback_url
         self._oauth_client_id = client_id
         self._oauth_client_secret = client_secret
+        self._oauth_server_auth_url = urljoin(server_url, '/oauth/authorize')
+        self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
+        self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -101,11 +104,11 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         params = {
             'client_id': self._oauth_client_id,
             'response_type': 'code',
-            'redirect_uri': self._oauth_callback_url,
-            'scope': self._OAUTH_SERVER_SCOPE,
+            'redirect_uri': self._mcp_callback_url,
+            'scope': self._oauth_scope,
             'state': state_jwt
         }
-        auth_url = f'{self._OAUTH_SERVER_AUTH_URL}?{urlencode(params)}'
+        auth_url = f'{self._oauth_server_auth_url}?{urlencode(params)}'
 
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
 
@@ -138,7 +141,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # TODO: Don't use create_mcp_http_client from a private module.
         async with create_mcp_http_client() as client:
             response = await client.post(
-                self._OAUTH_SERVER_TOKEN_URL,
+                self._oauth_server_token_url,
                 data={
                     'client_id': self._oauth_client_id,
                     'client_secret': self._oauth_client_secret,
@@ -146,7 +149,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
                     'grant_type': 'authorization_code',
                     # FYI: Some tutorials use the redirect_uri here, but it does not seem to be required.
                     # The Keboola OAuth server requires it, but GitHub OAuth server does not.
-                    'redirect_uri': self._oauth_callback_url,
+                    'redirect_uri': self._mcp_callback_url,
                 },
                 headers={'Accept': 'application/json'},
             )
@@ -168,7 +171,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         access_token = AccessToken(
             token=data['access_token'],
             client_id=self._oauth_client_id,
-            scopes=[self._OAUTH_SERVER_SCOPE],
+            scopes=[self._oauth_scope],
             expires_at=None,  # TODO: set the expiration time from the OAuth server response
         )
 
