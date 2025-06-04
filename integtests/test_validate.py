@@ -55,6 +55,6 @@ async def test_validate_parameters(keboola_client: KeboolaClient):
         except jsonschema.SchemaError as e:
             pytest.fail(f'Schema error for {raw_component["id"]}: {e}')
     LOG.info(
-        f'Total components: {len(components)}, from which {root_counts} have root configuration schema and {row_counts} '
-        'have row configuration schema. All schemas are valid.'
+        f'Total components: {len(components)}, from which {root_counts} have root configuration schema and '
+        f'{row_counts} have row configuration schema. All schemas are valid.'
     )
