@@ -100,7 +100,7 @@ def mock_update_bucket_description_response() -> Sequence[Mapping[str, Any]]:
     return [
         {
             'id': '999',
-            'key': MetadataField.DESCRIPTION.value,
+            'key': MetadataField.DESCRIPTION,
             'value': 'Updated bucket description',
             'provider': 'user',
             'timestamp': '2024-01-01T00:00:00Z',
@@ -314,7 +314,7 @@ async def test_update_bucket_description_success(
         endpoint='buckets/in.c-test.bucket-id/metadata',
         data={
             'provider': 'user',
-            'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': 'Updated bucket description'}],
+            'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated bucket description'}],
         },
     )
 
@@ -343,7 +343,7 @@ async def test_update_table_description_success(
         endpoint='tables/in.c-test.test-table/metadata',
         data={
             'provider': 'user',
-            'metadata': [{'key': MetadataField.DESCRIPTION.value, 'value': 'Updated table description'}],
+            'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated table description'}],
         },
     )
 

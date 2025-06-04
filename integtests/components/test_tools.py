@@ -6,6 +6,7 @@ from mcp.server.fastmcp import Context
 
 from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components import (
     ComponentType,
     ComponentWithConfigurations,
@@ -101,7 +102,7 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
     test_storage = {}
 
     # Create the configuration
-    result = await create_component_root_configuration(
+    created_config = await create_component_root_configuration(
         ctx=mcp_context,
         name=test_name,
         description=test_description,
@@ -110,19 +111,19 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
         storage=test_storage
     )
     try:
-        assert isinstance(result, ComponentRootConfiguration)
-        assert result.configuration_name == test_name
-        assert result.configuration_description == test_description
-        assert result.component_id == component_id
-        assert result.configuration_id is not None
-        assert result.parameters == test_parameters
-        assert result.storage == test_storage
+        assert isinstance(created_config, ComponentRootConfiguration)
+        assert created_config.configuration_name == test_name
+        assert created_config.configuration_description == test_description
+        assert created_config.component_id == component_id
+        assert created_config.configuration_id is not None
+        assert created_config.parameters == test_parameters
+        assert created_config.storage == test_storage
 
         # Verify the configuration exists in the backend by fetching it
         client = KeboolaClient.from_state(mcp_context.session.state)
         config_detail = await client.storage_client.configuration_detail(
             component_id=component_id,
-            configuration_id=result.configuration_id
+            configuration_id=created_config.configuration_id
         )
 
         assert config_detail['name'] == test_name
@@ -132,20 +133,20 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
             component_id=component_id,
-            configuration_id=result.configuration_id
+            configuration_id=created_config.configuration_id
         )
 
         # Convert metadata list to dictionary for easier checking
         # metadata is a list of dicts with 'key' and 'value' keys
         assert isinstance(metadata, list)
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-        assert 'KBC.MCP.createdBy' in metadata_dict
-        assert metadata_dict['KBC.MCP.createdBy'] == 'true'
+        assert MetadataField.CREATED_BY_MCP in metadata_dict
+        assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
     finally:
         # Delete the configuration
         await client.storage_client.configuration_delete(
             component_id=component_id,
-            configuration_id=result.configuration_id
+            configuration_id=created_config.configuration_id
         )
 
 
@@ -157,19 +158,14 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
     test_config = configs[0]
     component_id = test_config.component_id
 
-    initial_name = 'Initial Test Configuration'
-    initial_description = 'Initial test configuration created by automated test'
-    initial_parameters = {'initial_param': 'initial_value'}
-    initial_storage = {'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}}
-
     # Create the initial configuration
     created_config = await create_component_root_configuration(
         ctx=mcp_context,
-        name=initial_name,
-        description=initial_description,
+        name='Initial Test Configuration',
+        description='Initial test configuration created by automated test',
         component_id=component_id,
-        parameters=initial_parameters,
-        storage=initial_storage
+        parameters={'initial_param': 'initial_value'},
+        storage={'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}}
     )
     assert created_config.configuration_id is not None
     client = KeboolaClient.from_state(mcp_context.session.state)
@@ -182,7 +178,7 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
         change_description = 'Automated test update'
 
         # Update the configuration
-        updated_result = await update_component_root_configuration(
+        updated_config = await update_component_root_configuration(
             ctx=mcp_context,
             name=updated_name,
             description=updated_description,
@@ -193,19 +189,19 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
             storage=updated_storage
         )
 
-        assert isinstance(updated_result, ComponentRootConfiguration)
-        assert updated_result.configuration_name == updated_name
-        assert updated_result.configuration_description == updated_description
-        assert updated_result.component_id == component_id
-        assert updated_result.configuration_id == created_config.configuration_id
-        assert updated_result.parameters == updated_parameters
-        assert updated_result.storage == updated_storage
-        assert updated_result.version > created_config.version
+        assert isinstance(updated_config, ComponentRootConfiguration)
+        assert updated_config.configuration_name == updated_name
+        assert updated_config.configuration_description == updated_description
+        assert updated_config.component_id == component_id
+        assert updated_config.configuration_id == created_config.configuration_id
+        assert updated_config.parameters == updated_parameters
+        assert updated_config.storage == updated_storage
+        assert updated_config.version > created_config.version
 
         # Verify the configuration exists in the backend by fetching it
         config_detail = await client.storage_client.configuration_detail(
             component_id=component_id,
-            configuration_id=updated_result.configuration_id
+            configuration_id=updated_config.configuration_id
         )
 
         assert config_detail['name'] == updated_name
@@ -222,14 +218,14 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
         # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
             component_id=component_id,
-            configuration_id=updated_result.configuration_id
+            configuration_id=updated_config.configuration_id
         )
 
         assert isinstance(metadata, list)
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-        update_metadata_key = f'KBC.MCP.updatedBy.version.{updated_result.version}'
-        assert update_metadata_key in metadata_dict
-        assert metadata_dict[update_metadata_key] == 'true'
+        updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{updated_config.version}'
+        assert updated_by_md_key in metadata_dict
+        assert metadata_dict[updated_by_md_key] == 'true'
 
     finally:
         # Delete the configuration

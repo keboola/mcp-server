@@ -7,6 +7,7 @@ from httpx import HTTPStatusError
 from pydantic import Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.model import (
@@ -257,10 +258,12 @@ async def _set_cfg_creation_metadata(client: KeboolaClient, component_id: str, c
         await client.storage_client.configuration_metadata_update(
             component_id=component_id,
             configuration_id=configuration_id,
-            metadata={'KBC.MCP.createdBy': 'true'},
+            metadata={MetadataField.CREATED_BY_MCP: 'true'},
         )
     except HTTPStatusError as e:
-        LOG.exception(f'Failed to set "KBC.MCP.createdBy" metadata for configuration {configuration_id}: {e}')
+        LOG.exception(
+            f'Failed to set "{MetadataField.CREATED_BY_MCP}" metadata for configuration {configuration_id}: {e}'
+        )
 
 
 async def _set_cfg_update_metadata(
@@ -270,14 +273,17 @@ async def _set_cfg_update_metadata(
     configuration_version: int,
 ) -> None:
     """ Sets configuration metadata to indicate it was updated by MCP. """
+    updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{configuration_version}'
     try:
         await client.storage_client.configuration_metadata_update(
             component_id=component_id,
             configuration_id=configuration_id,
-            metadata={f'KBC.MCP.updatedBy.version.{configuration_version}': 'true'},
+            metadata={updated_by_md_key: 'true'},
         )
     except HTTPStatusError as e:
-        LOG.exception(f'Failed to set "KBC.MCP.updatedBy" metadata for configuration {configuration_id}: {e}')
+        LOG.exception(
+            f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}'
+        )
 
 
 @tool_errors()
