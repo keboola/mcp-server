@@ -1,4 +1,6 @@
 import logging
+import re
+import unicodedata
 from typing import Any, Optional, Sequence, Union, cast, get_args
 
 from httpx import HTTPStatusError
@@ -244,25 +246,50 @@ class TransformationConfiguration(BaseModel):
     storage: Storage = Field(description='The storage configuration for the transformation')
 
 
+def _clean_bucket_name(bucket_name: str) -> str:
+    """
+    Utility function to clean the bucket name.
+    Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
+    Converts spaces to dashes.
+    Removes leading underscores, dashes, and whitespace.
+    Removes any character that is not alphanumeric, dash, or underscore.
+    """
+    max_bucket_length = 96
+    bucket_name = bucket_name.strip()
+    # Convert the bucket name to ASCII
+    bucket_name = unicodedata.normalize('NFKD', bucket_name)
+    bucket_name = bucket_name.encode('ascii', 'ignore').decode('ascii')  # český -> cesky
+    # Replace all whitespace (including tabs, newlines) with dashes
+    bucket_name = re.sub(r'\s+', '-', bucket_name)
+    # Remove any character that is not alphanumeric, dash, or underscore
+    bucket_name = re.sub(r'[^a-zA-Z0-9_-]', '', bucket_name)
+    # Remove leading underscores if present
+    bucket_name = re.sub(r'^_+', '', bucket_name)
+    bucket_name = bucket_name[:max_bucket_length]
+    return bucket_name
+
+
 def _get_transformation_configuration(
-    statements: Sequence[str], transformation_name: str, output_tables: Sequence[str]
+    codes: Sequence[TransformationConfiguration.Parameters.Block.Code],
+    transformation_name: str,
+    output_tables: Sequence[str],
 ) -> TransformationConfiguration:
     """
     Utility function to set the transformation configuration from code statements.
     It creates the expected configuration for the transformation, parameters and storage.
 
-    :param statements: The code statements (sql for now)
+    :param statements: The code blocks (sql for now)
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
     :return: Dictionary with parameters and storage following the TransformationConfiguration schema
     """
     storage = TransformationConfiguration.Storage()
-    # build parameters configuration out of code statements
+    # build parameters configuration out of code blocks
     parameters = TransformationConfiguration.Parameters(
         blocks=[
             TransformationConfiguration.Parameters.Block(
-                name='Block 0',
-                codes=[TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=list(statements))],
+                name='Blocks',
+                codes=list(codes),
             )
         ]
     )
@@ -270,7 +297,7 @@ def _get_transformation_configuration(
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
         # expected output table name format is `out.c-<sql_query_name>.<table_name>`
-        bucket_name = '-'.join(transformation_name.lower().split())
+        bucket_name = _clean_bucket_name(transformation_name)
         destination = f'out.c-{bucket_name}'
         storage.output.tables = [
             TransformationConfiguration.Storage.Destination.Table(
@@ -299,16 +326,18 @@ ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
 def validate_storage_configuration(
     storage: Optional[JsonDict],
     initial_message: Optional[str] = None,
-) -> Optional[JsonDict]:
-    """Utility function to validate the storage configuration.
+) -> JsonDict:
+    """
+    Validates the storage configuration and extracts the storage key contents.
     :param storage: The storage configuration to validate received from the agent.
-    :param initial_message: The initial message to include in the error message
-    :returns: The validated storage configuration without the "storage" key only the configuration.
+    :param initial_message: The initial message to include in the error message.
+    :return: The contents of the 'storage' key from the validated configuration,
+              or an empty dict if no storage is provided.
     """
     if not storage or storage is None or storage.get('storage', {}) is None:
         LOG.warning('No storage configuration provided, skipping validation.')
         return {}
-    initial_message = initial_message or ''
+    initial_message = (initial_message or '') + '\n'
     initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
     normalized_storage = validate_storage(storage, initial_message)
     return cast(JsonDict, normalized_storage['storage'])
@@ -320,10 +349,15 @@ async def validate_root_parameters_configuration(
     component_id: str,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
-    """Utility function to validate the root parameters configuration.
-    :returns: The validated root parameters configuration without the "parameters" key only the configuration.
     """
-    initial_message = initial_message or ''
+    Utility function to validate the root parameters configuration.
+    :param client: The Keboola client
+    :param parameters: The parameters of the configuration to validate
+    :param component_id: The ID of the component for which the configuration is provided
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
+    """
+    initial_message = (initial_message or '') + '\n'
     initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
     component = await _get_component(client=client, component_id=component_id)
     return _validate_parameters_configuration(parameters, component.configuration_schema, component_id, initial_message)
@@ -335,10 +369,15 @@ async def validate_row_parameters_configuration(
     component_id: str,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
-    """Utility function to validate the row parameters configuration.
-    :returns: The validated row parameters configuration without the "parameters" key only the configuration.
     """
-    initial_message = initial_message or ''
+    Utility function to validate the row parameters configuration.
+    :param client: The Keboola client
+    :param parameters: The parameters of the configuration to validate
+    :param component_id: The ID of the component for which the configuration is provided
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
+    """
+    initial_message = (initial_message or '') + '\n'
     initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
     component = await _get_component(client=client, component_id=component_id)
     return _validate_parameters_configuration(
@@ -352,12 +391,13 @@ def _validate_parameters_configuration(
     component_id: str,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
-    """Utility function to validate the parameters configuration.
+    """
+    Utility function to validate the parameters configuration.
     :param parameters: The parameters configuration to validate
     :param schema: The schema to validate against
     :param component_id: The ID of the component
     :param initial_message: The initial message to include in the error message
-    :return: The validated parameters configuration without the "parameters" key only the configuration.
+    :return: The contents of the 'parameters' key from the validated configuration
     """
     if not schema:
         LOG.warning(f'No schema provided for component {component_id}, skipping validation.')

@@ -21,6 +21,7 @@ from keboola_mcp_server.tools.components.model import (
     ReducedComponent,
 )
 from keboola_mcp_server.tools.components.tools import get_component_configuration_examples
+from keboola_mcp_server.tools.components.utils import TransformationConfiguration, _clean_bucket_name
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
@@ -294,9 +295,12 @@ async def test_create_transformation_configuration(
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration['name']
-    bucket_name = '-'.join(transformation_name.lower().split())
+    bucket_name = _clean_bucket_name(transformation_name)
     description = mock_configuration['description']
-    sql_statements = ['SELECT * FROM test', 'SELECT * FROM test2']
+    code_blocks = [
+        TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=['SELECT * FROM test']),
+        TransformationConfiguration.Parameters.Block.Code(name='Code 1', script=['SELECT * FROM test2']),
+    ]
     created_table_name = 'test_table_1'
 
     # Test the create_sql_transformation tool
@@ -304,16 +308,12 @@ async def test_create_transformation_configuration(
         ctx=context,
         name=transformation_name,
         description=description,
-        sql_statements=sql_statements,
+        code_blocks=code_blocks,
         created_table_names=[created_table_name],
     )
 
     expected_config = ComponentConfigurationResponse.model_validate(
-        {
-            **configuration,
-            'component_id': expected_component_id,
-            'component': {**component}
-        }
+        {**configuration, 'component_id': expected_component_id, 'component': {**component}}
     )
 
     assert isinstance(new_transformation_configuration, ComponentConfigurationResponse)
@@ -329,8 +329,8 @@ async def test_create_transformation_configuration(
             'parameters': {
                 'blocks': [
                     {
-                        'name': 'Block 0',
-                        'codes': [{'name': 'Code 0', 'script': sql_statements}],
+                        'name': 'Blocks',
+                        'codes': [{'name': code.name, 'script': code.script} for code in code_blocks],
                     }
                 ]
             },
@@ -366,7 +366,9 @@ async def test_create_transformation_configuration_fail(
             ctx=context,
             name='test_name',
             description='test_description',
-            sql_statements=['SELECT * FROM test'],
+            code_blocks=[
+                TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=['SELECT * FROM test'])
+            ],
         )
 
 
@@ -390,7 +392,7 @@ async def test_update_transformation_configuration(
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
-    new_config = {'foo': 'foo'}
+    new_config = {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]}
     new_change_description = 'foo fooo'
     mock_configuration['configuration'] = new_config
     mock_configuration['changeDescription'] = new_change_description
@@ -403,7 +405,8 @@ async def test_update_transformation_configuration(
         context,
         mock_configuration['id'],
         new_change_description,
-        new_config,
+        parameters=TransformationConfiguration.Parameters.model_validate(new_config),
+        storage={},
         updated_description=str(),
         is_disabled=False,
     )
@@ -419,7 +422,7 @@ async def test_update_transformation_configuration(
         component_id=expected_component_id,
         configuration_id=mock_configuration['id'],
         change_description=new_change_description,
-        configuration=new_config,
+        configuration={'parameters': new_config, 'storage': {}},
         updated_description=None,
         is_disabled=False,
     )

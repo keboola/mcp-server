@@ -5,6 +5,7 @@ import pytest
 from keboola_mcp_server.tools.components.model import ComponentType
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
+    _clean_bucket_name,
     _get_transformation_configuration,
     _handle_component_types,
 )
@@ -62,8 +63,9 @@ def test_get_transformation_configuration(
     """Test get_transformation_configuration tool which should return the correct transformation configuration
     given the sql statement created_table_names and transformation_name."""
 
+    codes = [TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=sql_statements)]
     configuration = _get_transformation_configuration(
-        statements=sql_statements,
+        codes=codes,
         transformation_name=transformation_name,
         output_tables=created_table_names,
     )
@@ -88,3 +90,22 @@ def test_get_transformation_configuration(
         for created_table, expected_table_name in zip(configuration.storage.output.tables, created_table_names):
             assert created_table.source == expected_table_name
             assert created_table.destination == f'{expected_bucket_id}.{expected_table_name}'
+
+
+@pytest.mark.parametrize(
+    ('input_str', 'expected_str'),
+    [
+        ('!@#$%^&*()+,./;\'[]"\\`', ''),
+        ('a_-', 'a_-'),
+        ('1234567890', '1234567890'),
+        ('test_table_1', 'test_table_1'),
+        ('test:-Table-1!', 'test-Table-1'),
+        ('test Test', 'test-Test'),
+        ('__test_test', 'test_test'),
+        ('--test-test', '--test-test'),  # it is allowed
+        ('+ěščřžýáíé', 'escrzyaie'),
+    ],
+)
+def test_clean_bucket_name(input_str: str, expected_str: str):
+    """Test clean_bucket_name function."""
+    assert _clean_bucket_name(input_str) == expected_str

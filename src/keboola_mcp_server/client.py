@@ -132,8 +132,8 @@ class RawKeboolaClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.get(
                 f'{self.base_api_url}/{endpoint}',
-                headers=headers,
                 params=params,
+                headers=headers,
             )
             response.raise_for_status()
             return cast(JsonStruct, response.json())
@@ -142,6 +142,7 @@ class RawKeboolaClient:
         self,
         endpoint: str,
         data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
     ) -> JsonStruct:
         """
@@ -149,6 +150,7 @@ class RawKeboolaClient:
 
         :param endpoint: API endpoint to call
         :param data: Request payload
+        :param params: Query parameters for the request
         :param headers: Additional headers for the request
         :return: API response as dictionary
         """
@@ -156,6 +158,7 @@ class RawKeboolaClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f'{self.base_api_url}/{endpoint}',
+                params=params,
                 headers=headers,
                 json=data or {},
             )
@@ -166,6 +169,7 @@ class RawKeboolaClient:
         self,
         endpoint: str,
         data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
     ) -> JsonStruct:
         """
@@ -173,6 +177,7 @@ class RawKeboolaClient:
 
         :param endpoint: API endpoint to call
         :param data: Request payload
+        :param params: Query parameters for the request
         :param headers: Additional headers for the request
         :return: API response as dictionary
         """
@@ -180,6 +185,7 @@ class RawKeboolaClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.put(
                 f'{self.base_api_url}/{endpoint}',
+                params=params,
                 headers=headers,
                 json=data or {},
             )
@@ -190,7 +196,7 @@ class RawKeboolaClient:
         self,
         endpoint: str,
         headers: dict[str, Any] | None = None,
-    ) -> JsonStruct:
+    ) -> JsonStruct | None:
         """
         Makes a DELETE request to the service API.
 
@@ -206,7 +212,10 @@ class RawKeboolaClient:
             )
             response.raise_for_status()
 
-            return cast(JsonStruct, response.json())
+            if response.content:
+                return cast(JsonStruct, response.json())
+
+            return None
 
 
 class KeboolaServiceClient:
@@ -257,34 +266,38 @@ class KeboolaServiceClient:
         self,
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
 
         :param endpoint: API endpoint to call
         :param data: Request payload
+        :param params: Query parameters for the request
         :return: API response as dictionary
         """
-        return await self.raw_client.post(endpoint=endpoint, data=data)
+        return await self.raw_client.post(endpoint=endpoint, data=data, params=params)
 
     async def put(
         self,
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
     ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
 
         :param endpoint: API endpoint to call
         :param data: Request payload
+        :param params: Query parameters for the request
         :return: API response as dictionary
         """
-        return await self.raw_client.put(endpoint=endpoint, data=data)
+        return await self.raw_client.put(endpoint=endpoint, data=data, params=params)
 
     async def delete(
         self,
         endpoint: str,
-    ) -> JsonStruct:
+    ) -> JsonStruct | None:
         """
         Makes a DELETE request to the service API.
 
@@ -398,6 +411,21 @@ class AsyncStorageClient(KeboolaServiceClient):
         }
         return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
 
+    async def configuration_delete(self, component_id: str, configuration_id: str, skip_trash: bool = False) -> None:
+        """
+        Deletes a configuration.
+
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :param skip_trash: If True, the configuration is deleted without moving to the trash.
+            (Technically it means the API endpoint is called twice.)
+        :raises ValueError: If the component_id or configuration_id is invalid.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        await self.delete(endpoint=endpoint)
+        if skip_trash:
+            await self.delete(endpoint=endpoint)
+
     async def configuration_detail(self, component_id: str, configuration_id: str) -> JsonDict:
         """
         Retrieves information about a given configuration.
@@ -428,6 +456,37 @@ class AsyncStorageClient(KeboolaServiceClient):
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
+
+    async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> JsonList:
+        """
+        Retrieves metadata for a given configuration.
+
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        return cast(JsonList, await self.get(endpoint=endpoint))
+
+    async def configuration_metadata_update(
+        self,
+        component_id: str,
+        configuration_id: str,
+        metadata: dict[str, Any],
+    ) -> JsonList:
+        """
+        Updates metadata for the given configuration.
+
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :param metadata: The metadata to update.
+        :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        payload = {
+            'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
+        }
+        return cast(JsonList, await self.post(endpoint=endpoint, data=payload))
 
     async def configuration_update(
         self,

@@ -76,8 +76,6 @@ def _create_session_state(config: Config) -> dict[str, Any]:
         raise
 
     try:
-        if not config.workspace_schema:
-            raise ValueError('Workspace schema is not provided.')
         workspace_manager = WorkspaceManager(client, config.workspace_schema)
         state[WorkspaceManager.STATE_KEY] = workspace_manager
         LOG.info('Successfully initialized Storage API Workspace manager.')
