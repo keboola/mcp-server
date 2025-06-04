@@ -227,7 +227,7 @@ class _WspInfo:
     id: int
     schema: str
     backend: str
-    credentials: str | None
+    credentials: str | None  # the backend credentials; it can contain serialized JSON data
     readonly: bool | None
 
     @staticmethod
