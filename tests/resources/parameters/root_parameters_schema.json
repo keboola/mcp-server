@@ -1,0 +1,337 @@
+{
+    "type": "object",
+    "title": "Embeddings Configuration",
+    "required": [
+      "embedding_settings"
+    ],
+    "properties": {
+      "qdrant_settings": {
+        "type": "object",
+        "title": "Qdrant Settings",
+        "options": {
+          "dependencies": {
+            "db_type": "qdrant"
+          }
+        },
+        "required": [
+          "url",
+          "#api_key"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "URL",
+            "description": "Qdrant instance URL"
+          },
+          "#api_key": {
+            "type": "string",
+            "title": "API Key",
+            "format": "password"
+          }
+        }
+      },
+      "embedding_settings": {
+        "type": "object",
+        "title": "Embedding Service Settings",
+        "required": [
+          "provider_type"
+        ],
+        "properties": {
+          "provider_type": {
+            "enum": [
+              "openai",
+              "azure_openai",
+              "cohere",
+              "huggingface_hub",
+              "google_vertex",
+              "bedrock"
+            ],
+            "type": "string",
+            "title": "Embedding Provider",
+            "options": {
+              "tooltip": "Choose the AI service that will generate embeddings"
+            },
+            "enumNames": [
+              "OpenAI",
+              "Azure OpenAI",
+              "Cohere",
+              "HuggingFace Hub",
+              "Google Vertex AI",
+              "AWS Bedrock"
+            ],
+            "description": "Select the embedding service to use"
+          },
+          "azure_settings": {
+            "type": "object",
+            "title": "Azure OpenAI Settings",
+            "options": {
+              "dependencies": {
+                "provider_type": "azure_openai"
+              }
+            },
+            "required": [
+              "deployment_name",
+              "#api_key",
+              "azure_endpoint"
+            ],
+            "properties": {
+              "#api_key": {
+                "type": "string",
+                "title": "API Key",
+                "format": "password"
+              },
+              "api_version": {
+                "type": "string",
+                "title": "API Version",
+                "default": "2024-02-01"
+              },
+              "azure_endpoint": {
+                "type": "string",
+                "title": "Azure Endpoint",
+                "options": {
+                  "inputAttributes": {
+                    "placeholder": "https://<your-endpoint>.openai.azure.com/"
+                  }
+                },
+                "description": "Your Azure OpenAI endpoint URL"
+              },
+              "deployment_name": {
+                "type": "string",
+                "title": "Deployment Name",
+                "description": "Enter your Azure OpenAI deployment name"
+              }
+            }
+          },
+          "cohere_settings": {
+            "type": "object",
+            "title": "Cohere Settings",
+            "options": {
+              "dependencies": {
+                "provider_type": "cohere"
+              }
+            },
+            "required": [
+              "model",
+              "#api_key"
+            ],
+            "properties": {
+              "model": {
+                "enum": [
+                  "embed-english-v3.0",
+                  "embed-english-light-v3.0",
+                  "embed-multilingual-v3.0",
+                  "embed-multilingual-light-v3.0"
+                ],
+                "type": "string",
+                "title": "Model",
+                "default": "embed-english-v3.0",
+                "options": {
+                  "tooltip": "Light models are faster but less accurate"
+                },
+                "description": "Select the Cohere embedding model"
+              },
+              "#api_key": {
+                "type": "string",
+                "title": "API Key",
+                "format": "password"
+              }
+            }
+          },
+          "openai_settings": {
+            "type": "object",
+            "title": "OpenAI Settings",
+            "options": {
+              "dependencies": {
+                "provider_type": "openai"
+              }
+            },
+            "required": [
+              "model",
+              "#api_key"
+            ],
+            "properties": {
+              "model": {
+                "enum": [
+                  "text-embedding-3-small",
+                  "text-embedding-3-large",
+                  "text-embedding-ada-002"
+                ],
+                "type": "string",
+                "title": "Model",
+                "default": "text-embedding-3-small",
+                "options": {
+                  "tooltip": "text-embedding-3-small is recommended for most use cases"
+                },
+                "description": "Select the OpenAI embedding model"
+              },
+              "#api_key": {
+                "type": "string",
+                "title": "API Key",
+                "format": "password"
+              }
+            }
+          },
+          "bedrock_settings": {
+            "type": "object",
+            "title": "AWS Bedrock Settings",
+            "options": {
+              "dependencies": {
+                "provider_type": "bedrock"
+              }
+            },
+            "required": [
+              "#aws_access_key",
+              "#aws_secret_key",
+              "region",
+              "model_id"
+            ],
+            "properties": {
+              "region": {
+                "enum": [
+                  "us-east-1",
+                  "us-west-2",
+                  "ap-southeast-1",
+                  "ap-northeast-1",
+                  "eu-central-1"
+                ],
+                "type": "string",
+                "title": "AWS Region",
+                "description": "AWS region where Bedrock is available"
+              },
+              "model_id": {
+                "enum": [
+                  "amazon.titan-embed-text-v1",
+                  "amazon.titan-embed-g1-text-02",
+                  "cohere.embed-english-v3",
+                  "cohere.embed-multilingual-v3"
+                ],
+                "type": "string",
+                "title": "Model ID",
+                "default": "amazon.titan-embed-text-v1",
+                "description": "Bedrock model identifier"
+              },
+              "#aws_access_key": {
+                "type": "string",
+                "title": "AWS Access Key",
+                "format": "password"
+              },
+              "#aws_secret_key": {
+                "type": "string",
+                "title": "AWS Secret Key",
+                "format": "password"
+              }
+            }
+          },
+          "huggingface_settings": {
+            "type": "object",
+            "title": "HuggingFace Hub Settings",
+            "options": {
+              "dependencies": {
+                "provider_type": "huggingface_hub"
+              }
+            },
+            "required": [
+              "model",
+              "#api_key"
+            ],
+            "properties": {
+              "model": {
+                "type": "string",
+                "title": "Model Name",
+                "default": "sentence-transformers/all-mpnet-base-v2",
+                "options": {
+                  "tooltip": "Recommended models: all-mpnet-base-v2, all-MiniLM-L6-v2, bge-large-en-v1.5",
+                  "inputAttributes": {
+                    "placeholder": "sentence-transformers/all-mpnet-base-v2"
+                  }
+                },
+                "description": "Enter the HuggingFace model name"
+              },
+              "#api_key": {
+                "type": "string",
+                "title": "API Key",
+                "format": "password"
+              },
+              "show_progress": {
+                "type": "boolean",
+                "title": "Show Progress",
+                "default": false,
+                "description": "Whether to show a progress bar during embedding generation"
+              },
+              "normalize_embeddings": {
+                "type": "boolean",
+                "title": "Normalize Embeddings",
+                "default": true,
+                "description": "Whether to normalize the computed embeddings to unit length"
+              }
+            }
+          },
+          "google_vertex_settings": {
+            "type": "object",
+            "title": "Google Vertex AI Settings",
+            "options": {
+              "dependencies": {
+                "provider_type": "google_vertex"
+              }
+            },
+            "required": [
+              "#credentials",
+              "project"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "title": "Project ID",
+                "description": "Google Cloud project ID"
+              },
+              "location": {
+                "type": "string",
+                "title": "Location",
+                "default": "us-central1",
+                "description": "Google Cloud region"
+              },
+              "model_name": {
+                "type": "string",
+                "title": "Model Name",
+                "default": "textembedding-gecko@latest",
+                "description": "Vertex AI model name"
+              },
+              "#credentials": {
+                "type": "string",
+                "title": "Service Account JSON",
+                "format": "password",
+                "description": "Google Cloud service account credentials JSON"
+              }
+            }
+          }
+        },
+        "propertyOrder": 200
+      },
+      "test_database_connection": {
+        "type": "button",
+        "format": "sync-action",
+        "options": {
+          "async": {
+            "cache": false,
+            "label": "Test Connection to Vector Store Database",
+            "action": "testVectorStoreConnection"
+          },
+          "hidden": true
+        }
+      },
+      "test_embedding_service_connection": {
+        "type": "button",
+        "format": "sync-action",
+        "options": {
+          "async": {
+            "cache": false,
+            "label": "Test Connection to Embedding Service",
+            "action": "testEmbeddingServiceConnection"
+          },
+          "hidden": true
+        },
+        "propertyOrder": 300
+      }
+    }
+  }
+  

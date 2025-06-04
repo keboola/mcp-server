@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime
 from importlib import resources
-from typing import Annotated, Any, Sequence
+from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
@@ -12,6 +12,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
+from keboola_mcp_server.tools._validate import validate_flow_configuration_against_schema
 from keboola_mcp_server.tools.components.model import (
     FlowConfiguration,
     FlowConfigurationResponse,
@@ -109,6 +110,8 @@ async def create_flow(
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
+    flow_configuration = cast(JsonDict, flow_configuration)
+    validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
     project_manager = ProjectManager.from_state(ctx.session.state)
@@ -167,6 +170,8 @@ async def update_flow(
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
+    flow_configuration = cast(JsonDict, flow_configuration)
+    validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
     project_manager = ProjectManager.from_state(ctx.session.state)
@@ -195,8 +200,7 @@ async def update_flow(
 async def retrieve_flows(
     ctx: Context,
     flow_ids: Annotated[
-        Sequence[str],
-        Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
+        Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
     ] = tuple(),
 ) -> Annotated[list[ReducedFlow], Field(description='The retrieved flow configurations.')]:
     """Retrieves flow configurations from the project."""
