@@ -1,5 +1,5 @@
 """MCP server implementation for Keboola Connection."""
-
+import dataclasses
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -102,6 +102,15 @@ def create_server(config: Config) -> FastMCP:
     config = config.replace_by(os.environ)
 
     if config.oauth_client_id and config.oauth_client_secret:
+        # fall back to HOSTNAME_SUFFIX if no URLs are specified for the OAUth server or the MCP server itself
+        hostname_suffix = os.environ.get('HOSTNAME_SUFFIX')
+        if not config.oauth_server_url and hostname_suffix:
+            config = dataclasses.replace(config, oauth_server_url=f'https://connection.{hostname_suffix}')
+        if not config.mcp_server_url and hostname_suffix:
+            config = dataclasses.replace(config, mcp_server_url=f'https://mcp.{hostname_suffix}')
+        if not config.oauth_scope:
+            config = dataclasses.replace(config, oauth_scope='email')
+
         oauth_provider = SimpleOAuthProvider(
             client_id=config.oauth_client_id,
             client_secret=config.oauth_client_secret,
@@ -129,6 +138,7 @@ def create_server(config: Config) -> FastMCP:
         auth_settings = None
 
     # Initialize FastMCP server with system lifespan
+    LOG.info(f'Creating server with config: {config}')
     mcp = KeboolaMcpServer(
         name='Keboola Explorer',
         lifespan=create_keboola_lifespan(config),

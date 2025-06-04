@@ -67,7 +67,6 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
     try:
         # Create and run the server
-        LOG.info(f'Creating server with config: {config}')
         keboola_mcp_server = create_server(config)
         if parsed_args.transport == 'stdio':
             if config.oauth_client_id or config.oauth_client_secret:
