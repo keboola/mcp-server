@@ -64,11 +64,6 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         self._oauth_client_secret = client_secret
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
 
-        LOG.debug(f'oauth_callback_url={self._oauth_callback_url}')
-        LOG.debug(f'oauth_client_id={self._oauth_client_id}')
-        LOG.debug(f'oauth_client_secret={self._oauth_client_secret}')
-        LOG.debug(f'jwt_secret={self._jwt_secret}')
-
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         client = _OAuthClientInformationFull(
             # Use a fake redirect URI. Normally, we would retrieve the client from a persistent registry
@@ -77,12 +72,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             client_id=client_id,
             scope=self.MCP_SERVER_SCOPE
         )
-        LOG.debug(f'[get_client] client_id={client_id}, client={client}')
+        LOG.debug(f'Client loaded: client_id={client_id}')
         return client
 
     async def register_client(self, client_info: OAuthClientInformationFull):
         # This is a no-op. We don't register clients otherwise we would need a persistent registry.
-        LOG.debug(f'[register_client] client_info={client_info}')
+        LOG.debug(f'Client registered: client_id={client_info.client_id}')
 
     async def authorize(
             self, client: OAuthClientInformationFull, params: AuthorizationParams
@@ -112,7 +107,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         }
         auth_url = f'{self._OAUTH_SERVER_AUTH_URL}?{urlencode(params)}'
 
-        LOG.debug(f'[authorize] client={client}, params={params}, {auth_url}')
+        LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
 
         return auth_url
 
@@ -204,7 +199,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     ) -> AuthorizationCode | None:
         """Load an authorization code."""
         auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
-        LOG.debug(f'[load_authorization_code] client={client}, authorization_code={authorization_code}, '
+        LOG.debug(f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
                   f'auth_code={auth_code}')
         return _ExtendedAuthorizationCode.model_validate(
             auth_code | {'redirect_uri': AnyHttpUrl(auth_code['redirect_uri'])}
@@ -214,7 +209,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
         """Exchange authorization code for tokens."""
-        LOG.debug(f'[exchange_authorization_code] authorization_code={authorization_code}, client={client}')
+        LOG.debug(f'[exchange_authorization_code] authorization_code={authorization_code}, '
+                  f'client_id={client.client_id}')
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
 
@@ -248,8 +244,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # Check if expired
         now = time.time()
         if access_token.expires_at and access_token.expires_at < now:
-            LOG.debug(f'[load_access_token] Expired token: access_token.expires_at={access_token.expires_at}, '
-                      f'now={now}')
+            LOG.info(f'[load_access_token] Expired token: access_token.expires_at={access_token.expires_at}, '
+                     f'now={now}')
             return None
 
         return access_token
@@ -258,7 +254,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
         """Load a refresh token - not supported."""
-        LOG.debug(f'[load_refresh_token] client={client}, refresh_token={refresh_token}')
+        LOG.debug(f'[load_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}')
         return None
 
     async def exchange_refresh_token(
@@ -268,7 +264,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             scopes: list[str],
     ) -> OAuthToken:
         """Exchange refresh token"""
-        LOG.debug(f'[exchange_refresh_token] client={client}, refresh_token={refresh_token}, scopes={scopes}')
+        LOG.debug(f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, '
+                  f'scopes={scopes}')
         raise NotImplementedError('Not supported')
 
     async def revoke_token(
