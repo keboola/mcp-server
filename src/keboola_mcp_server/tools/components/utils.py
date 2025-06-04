@@ -1,5 +1,6 @@
 import logging
 import re
+import unicodedata
 from typing import Any, Optional, Sequence, Union, cast, get_args
 
 from httpx import HTTPStatusError
@@ -248,9 +249,23 @@ class TransformationConfiguration(BaseModel):
 def _clean_bucket_name(bucket_name: str) -> str:
     """
     Utility function to clean the bucket name.
+    Converts the bucket name to lowercase.
     Removes all characters from bucket_name except alphanumeric, dashes, and underscores.
+    Also removes leading underscores, dashes, and whitespace.
+    Replaces whitespace with dashes.
     """
-    return re.sub(r'[^a-zA-Z0-9_-]', '', bucket_name)
+    bucket_name = bucket_name.lower().strip()
+    # Remove leading underscores if present
+    bucket_name = re.sub(r'^_+', '', bucket_name)
+    bucket_name = unicodedata.normalize('NFKD', bucket_name)
+    bucket_name = bucket_name.encode('ascii', 'ignore').decode('ascii')
+    # Replace all whitespace (including tabs, newlines) with dashes
+    bucket_name = re.sub(r'\s+', '-', bucket_name)
+    # Remove any character that is not alphanumeric, dash, or underscore
+    bucket_name = re.sub(r'[^a-zA-Z0-9_-]', '', bucket_name)
+    # Remove leading dashes or underscores
+    bucket_name = re.sub(r'^[-_]+', '', bucket_name)
+    return bucket_name
 
 
 def _get_transformation_configuration(
@@ -281,8 +296,7 @@ def _get_transformation_configuration(
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
         # expected output table name format is `out.c-<sql_query_name>.<table_name>`
-        bucket_name = '-'.join(transformation_name.lower().split())
-        bucket_name = _clean_bucket_name(bucket_name)
+        bucket_name = _clean_bucket_name(transformation_name)
         destination = f'out.c-{bucket_name}'
         storage.output.tables = [
             TransformationConfiguration.Storage.Destination.Table(
@@ -320,7 +334,7 @@ def validate_storage_configuration(
     if not storage or storage is None or storage.get('storage', {}) is None:
         LOG.warning('No storage configuration provided, skipping validation.')
         return {}
-    initial_message = initial_message or ''
+    initial_message = (initial_message or '') + '\n'
     initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
     normalized_storage = validate_storage(storage, initial_message)
     return cast(JsonDict, normalized_storage['storage'])
@@ -335,7 +349,7 @@ async def validate_root_parameters_configuration(
     """Utility function to validate the root parameters configuration.
     :returns: The validated root parameters configuration without the "parameters" key only the configuration.
     """
-    initial_message = initial_message or ''
+    initial_message = (initial_message or '') + '\n'
     initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
     component = await _get_component(client=client, component_id=component_id)
     return _validate_parameters_configuration(parameters, component.configuration_schema, component_id, initial_message)
@@ -350,7 +364,7 @@ async def validate_row_parameters_configuration(
     """Utility function to validate the row parameters configuration.
     :returns: The validated row parameters configuration without the "parameters" key only the configuration.
     """
-    initial_message = initial_message or ''
+    initial_message = (initial_message or '') + '\n'
     initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
     component = await _get_component(client=client, component_id=component_id)
     return _validate_parameters_configuration(

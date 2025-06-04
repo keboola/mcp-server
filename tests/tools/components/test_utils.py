@@ -96,11 +96,14 @@ def test_get_transformation_configuration(
     ('input_str', 'expected_str'),
     [
         ('!@#$%^&*()+,./;\'[]"\\`', ''),
-        ('_-', '_-'),
+        ('a_-', 'a_-'),
         ('1234567890', '1234567890'),
         ('test_table_1', 'test_table_1'),
-        ('test:-Table-1!', 'test-Table-1'),
-        ('test Test', 'testTest'),
+        ('test:-Table-1!', 'test-table-1'),
+        ('test Test', 'test-test'),
+        ('__test_test', 'test_test'),
+        ('--test-test', 'test-test'),
+        ('+ěščřžýáíé', 'escrzyaie'),
     ],
 )
 def test_clean_bucket_name(input_str: str, expected_str: str):
