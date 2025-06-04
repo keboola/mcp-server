@@ -228,6 +228,16 @@ class _WspInfo:
     schema: str
     backend: str
     credentials: str | None
+    readonly: bool | None
+
+    @staticmethod
+    def from_sapi_info(sapi_wsp_info: Mapping[str, Any]) -> '_WspInfo':
+        _id = sapi_wsp_info.get('id')
+        backend = sapi_wsp_info.get('connection', {}).get('backend')
+        _schema = sapi_wsp_info.get('connection', {}).get('schema')
+        credentials = sapi_wsp_info.get('connection', {}).get('user')
+        readonly = sapi_wsp_info.get('readOnlyStorageAccess')
+        return _WspInfo(id=_id, schema=_schema, backend=backend, credentials=credentials, readonly=readonly)
 
 
 class WorkspaceManager:
@@ -249,14 +259,11 @@ class WorkspaceManager:
     async def _find_info_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
 
-        for wsp_info in await self._client.storage_client.get('workspaces'):
-            assert isinstance(wsp_info, dict)
-            _id = wsp_info.get('id')
-            backend = wsp_info.get('connection', {}).get('backend')
-            _schema = wsp_info.get('connection', {}).get('schema')
-            credentials = wsp_info.get('connection', {}).get('user')
-            if _id and backend and _schema and _schema == schema:
-                return _WspInfo(id=_id, schema=schema, backend=backend, credentials=credentials)
+        for sapi_wsp_info in await self._client.storage_client.get('workspaces'):
+            assert isinstance(sapi_wsp_info, dict)
+            wi = _WspInfo.from_sapi_info(sapi_wsp_info)
+            if wi.id and wi.backend and wi.schema and wi.schema == schema:
+                return wi
 
         return None
 
@@ -264,17 +271,14 @@ class WorkspaceManager:
         """Finds the workspace info by its ID."""
 
         try:
-            wsp_info = await self._client.storage_client.get(f'workspaces/{workspace_id}')
+            sapi_wsp_info = await self._client.storage_client.get(f'workspaces/{workspace_id}')
+            assert isinstance(sapi_wsp_info, dict)
+            wi = _WspInfo.from_sapi_info(sapi_wsp_info)
 
-            _id = wsp_info.get('id')
-            backend = wsp_info.get('connection', {}).get('backend')
-            _schema = wsp_info.get('connection', {}).get('schema')
-            credentials = wsp_info.get('connection', {}).get('user')
-
-            if _id and backend and _schema:
-                return _WspInfo(id=_id, schema=_schema, backend=backend, credentials=credentials)
+            if wi.id and wi.backend and wi.schema:
+                return wi
             else:
-                raise ValueError(f'Invalid workspace info: {wsp_info}')
+                raise ValueError(f'Invalid workspace info: {sapi_wsp_info}')
 
         except HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -290,8 +294,9 @@ class WorkspaceManager:
             if m.get('key') == self.MCP_META_KEY:
                 workspace_id = m.get('value') or ''
                 workspace_id = workspace_id.strip()
-                if workspace_id:
-                    return await self._find_info_by_id(workspace_id)
+                if workspace_id and (info := await self._find_info_by_id(workspace_id)) and info.readonly:
+                    return info
+
         return None
 
     async def _create_info(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
@@ -363,13 +368,15 @@ class WorkspaceManager:
 
         if self._workspace_schema:
             # use the workspace that was explicitly requested
+            # this workspace must never be written to the default branch metadata
             LOG.info(f'Looking up workspace by schema: {self._workspace_schema}')
             if info := await self._find_info_by_schema(self._workspace_schema):
                 LOG.info(f'Found workspace: {info}')
                 self._workspace = self._init_workspace(info)
                 return self._workspace
             else:
-                raise ValueError(f'No Keboola workspace found for user: {self._workspace_schema}')
+                raise ValueError(f'No Keboola workspace found or the workspace has no read-only storage access: '
+                                 f'workspace_schema={self._workspace_schema}')
 
         LOG.info('Looking up workspace in the default branch.')
         if info := await self._find_info_in_branch():
