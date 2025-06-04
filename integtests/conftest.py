@@ -250,6 +250,8 @@ def keboola_project(
     for config in configs:
         LOG.info(f'Deleting config with component ID={config.component_id} and config ID={config.configuration_id}')
         storage_client.configurations.delete(config.component_id, config.configuration_id)
+        # Double delete because the first delete moves the configuration to the trash
+        storage_client.configurations.delete(config.component_id, config.configuration_id)
 
 
 @pytest.fixture(scope='session')

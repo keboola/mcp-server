@@ -196,7 +196,7 @@ class RawKeboolaClient:
         self,
         endpoint: str,
         headers: dict[str, Any] | None = None,
-    ) -> JsonStruct:
+    ) -> JsonStruct | None:
         """
         Makes a DELETE request to the service API.
 
@@ -212,7 +212,10 @@ class RawKeboolaClient:
             )
             response.raise_for_status()
 
-            return cast(JsonStruct, response.json())
+            if response.content:
+                return cast(JsonStruct, response.json())
+
+            return None
 
 
 class KeboolaServiceClient:
@@ -294,7 +297,7 @@ class KeboolaServiceClient:
     async def delete(
         self,
         endpoint: str,
-    ) -> JsonStruct:
+    ) -> JsonStruct | None:
         """
         Makes a DELETE request to the service API.
 
@@ -404,6 +407,21 @@ class AsyncStorageClient(KeboolaServiceClient):
         }
         return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
 
+    async def configuration_delete(self, component_id: str, configuration_id: str, skip_trash: bool = False) -> None:
+        """
+        Deletes a configuration.
+
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :param skip_trash: If True, the configuration is deleted without moving to the trash.
+            (Technically it means the API endpoint is called twice.)
+        :raises ValueError: If the component_id or configuration_id is invalid.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        await self.delete(endpoint=endpoint)
+        if skip_trash:
+            await self.delete(endpoint=endpoint)
+
     async def configuration_detail(self, component_id: str, configuration_id: str) -> JsonDict:
         """
         Retrieves information about a given configuration.
@@ -434,6 +452,37 @@ class AsyncStorageClient(KeboolaServiceClient):
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
+
+    async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> JsonList:
+        """
+        Retrieves metadata for a given configuration.
+
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        return cast(JsonList, await self.get(endpoint=endpoint))
+
+    async def configuration_metadata_update(
+        self,
+        component_id: str,
+        configuration_id: str,
+        metadata: dict[str, Any],
+    ) -> JsonList:
+        """
+        Updates metadata for the given configuration.
+
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :param metadata: The metadata to update.
+        :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        payload = {
+            'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
+        }
+        return cast(JsonList, await self.post(endpoint=endpoint, data=payload))
 
     async def configuration_update(
         self,
@@ -632,6 +681,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Table details as dictionary
         """
         return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
+
+    async def verify_token(self) -> JsonDict:
+        """
+        Checks the token privileges and returns information about the project to which the token belongs.
+
+        :return: Token and project information
+        """
+        return cast(JsonDict, await self.get(endpoint='tokens/verify'))
 
 
 class JobsQueueClient(KeboolaServiceClient):
