@@ -1,7 +1,8 @@
 """Unit tests for Flow management tools."""
 
-from typing import Any, Dict, List
 from datetime import datetime
+from typing import Any, Dict, List
+
 import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
@@ -26,15 +27,19 @@ from keboola_mcp_server.tools.flow import (
     update_flow,
 )
 from keboola_mcp_server.tools.workspace import ProjectManager
+
 # --- Fixtures ---
+
 
 def parse_iso_timestamp(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+
 
 @pytest.fixture
 def mock_project_id() -> str:
     """Mocks a project id."""
     return '1'
+
 
 @pytest.fixture
 def mock_raw_flow_config() -> Dict[str, Any]:
@@ -403,9 +408,8 @@ class TestFlowTools:
         assert isinstance(result, FlowToolResponse)
         assert result.description == 'Test flow description'
         assert result.timestamp == parse_iso_timestamp('2025-05-25T06:33:41+0200')
-        assert result.success == True
+        assert result.success is True
         assert result.link == 'https://connection.keboola.com/admin/projects/1/flows/21703284'
-
 
         keboola_client.storage_client.flow_create.assert_called_once()
         call_args = keboola_client.storage_client.flow_create.call_args
@@ -550,7 +554,7 @@ class TestFlowTools:
         assert isinstance(result, FlowToolResponse)
         assert result.description == 'Updated description'
         assert result.timestamp == parse_iso_timestamp('2025-05-25T06:33:41+0200')
-        assert result.success == True
+        assert result.success is True
         assert result.link == 'https://connection.keboola.com/admin/projects/1/flows/21703284'
 
         keboola_client.storage_client.flow_update.assert_called_once()

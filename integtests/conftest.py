@@ -271,9 +271,11 @@ def configs(keboola_project: ProjectDef) -> list[ConfigDef]:
 def keboola_client(storage_api_token: str, storage_api_url: str) -> KeboolaClient:
     return KeboolaClient(storage_api_token=storage_api_token, storage_api_url=storage_api_url)
 
+
 @pytest.fixture
 def project_manager(keboola_client: KeboolaClient) -> ProjectManager:
     return ProjectManager(keboola_client)
+
 
 @pytest.fixture
 def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> WorkspaceManager:
@@ -282,7 +284,7 @@ def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> W
 
 @pytest.fixture
 def mcp_context(
-    mocker, keboola_client: KeboolaClient, project_manager: ProjectManager, workspace_manager: WorkspaceManager, 
+    mocker, keboola_client: KeboolaClient, project_manager: ProjectManager, workspace_manager: WorkspaceManager,
     keboola_project: ProjectDef
 ) -> Context:
     """

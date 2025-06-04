@@ -1,5 +1,7 @@
 import pytest
+
 from keboola_mcp_server.tools.workspace import ProjectManager
+
 
 @pytest.mark.asyncio
 async def test_project_manager_get_project(project_manager: ProjectManager, keboola_project) -> None:
