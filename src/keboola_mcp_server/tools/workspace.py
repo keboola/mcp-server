@@ -388,7 +388,6 @@ class WorkspaceManager:
         # create a new workspace and note its ID to the branch
         LOG.info('Creating workspace in the default branch.')
         if info := await self._create_info():
-            LOG.info(f'Found workspace: {info}')
             # update the branch metadata with the workspace ID
             meta = await self._client.storage_client.post(
                 endpoint='branch/default/metadata',
