@@ -50,6 +50,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
 
 class FlowToolResponse(BaseModel):
+    flow_id: str = Field(..., description='The id of the flow.', validation_alias=AliasChoices('id', 'flow_id'))
     description: str = Field(..., description='The updated description value.')
     timestamp: datetime = Field(..., description='The timestamp of the description update.',
                                 validation_alias=AliasChoices('timestamp', 'created'))
