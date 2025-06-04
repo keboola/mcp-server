@@ -315,10 +315,11 @@ class WorkspaceManager:
                  f'start_time={start_ts.strftime("%Y-%m-%d %H:%M:%S")}, '
                  f'timeout={timeout_sec:.2f} seconds')
 
-        while (duration := (datetime.now() - start_ts).total_seconds()) < timeout_sec:
+        while True:
             job_info = await self._client.storage_client.get(f'jobs/{job_id}')
             job_status = job_info['status']
 
+            duration = (datetime.now() - start_ts).total_seconds()
             LOG.info(f'Job info: job_id={job_id}, status={job_status}, '
                      f'duration={duration:.2f} seconds, timeout={timeout_sec:.2f} seconds')
 
@@ -326,11 +327,13 @@ class WorkspaceManager:
                 workspace_id = job_info['results']['id']
                 LOG.info(f'Created workspace: {workspace_id}')
                 return await self._find_info_by_id(workspace_id)
-            else:
-                await asyncio.sleep(5)
 
-        LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
-        return None
+            elif duration > timeout_sec:
+                LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
+                return None
+
+            else:
+                await asyncio.sleep(min(5.0, timeout_sec))
 
     def _init_workspace(self, info: _WspInfo) -> _Workspace:
         """Creates a new `Workspace` instance based on the workspace info."""
