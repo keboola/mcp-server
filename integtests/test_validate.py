@@ -38,22 +38,33 @@ async def test_validate_parameters(keboola_client: KeboolaClient):
     data = cast(JsonDict, await keboola_client.storage_client.get(''))  # get information about current storage stack
     LOG.info(f'Fetched information: {data.keys()}')
     components = cast(list[JsonDict], data['components'])
-    components = sorted(components, key=lambda x: (x['type'], x['name']))  # sort by type and then by name
+    components.sort(key=lambda x: (x['type'], x['name']))  # sort by type and then by name
     LOG.info(f'Fetched total of {len(components)} components')
+
     row_counts, root_counts = 0, 0
+    invalid_row_schemas, invalid_root_schemas = [], []
     for raw_component in components:
-        try:
-            component = Component.model_validate(raw_component)
-            configuration_schema = component.configuration_schema
-            configuration_row_schema = component.configuration_row_schema
-            if configuration_schema:
+        component = Component.model_validate(raw_component)  # We could also check pydantic validation here
+        if component.configuration_schema:
+            try:
                 root_counts += 1
-                _check_schema(configuration_schema, dummy_parameters={})
-            if configuration_row_schema:
+                _check_schema(component.configuration_schema, dummy_parameters={})
+            except jsonschema.SchemaError as e:
+                LOG.exception(f'Root schema error for {raw_component["id"]}: {e}')
+                invalid_root_schemas.append(raw_component['id'])
+        if component.configuration_row_schema:
+            try:
                 row_counts += 1
-                _check_schema(configuration_row_schema, dummy_parameters={})
-        except jsonschema.SchemaError as e:
-            pytest.fail(f'Schema error for {raw_component["id"]}: {e}')
+                _check_schema(component.configuration_row_schema, dummy_parameters={})
+            except jsonschema.SchemaError as e:
+                LOG.exception(f'Row schema error for {raw_component["id"]}: {e}')
+                invalid_row_schemas.append(raw_component['id'])
+
+    if invalid_root_schemas:
+        pytest.fail(f'Invalid root schemas({len(invalid_root_schemas)}): {invalid_root_schemas}')
+    if invalid_row_schemas:
+        pytest.fail(f'Invalid row schemas({len(invalid_row_schemas)}): {invalid_row_schemas}')
+
     LOG.info(
         f'Total components: {len(components)}, from which {root_counts} have root configuration schema and '
         f'{row_counts} have row configuration schema. All schemas are valid.'
