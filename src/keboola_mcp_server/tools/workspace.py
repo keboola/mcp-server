@@ -303,7 +303,7 @@ class ProjectManager:
         self.project = None
         self.client = client
 
-    async def get_project(self) -> str | int:
+    async def get_project_id(self) -> str | int:
         if self.project is None:
             # This should probably be handled for exceptions somehow - unclear how at this time
             project_data = await self.client.storage_client.verify_token()

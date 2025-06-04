@@ -124,7 +124,7 @@ async def create_flow(
     )
 
     flow_id = str(new_raw_configuration.get('id', ''))
-    project_id = await project_manager.get_project()
+    project_id = await project_manager.get_project_id()
     base_url = client.storage_client.base_api_url.split('/v2')[0]
     flow_link = get_flow_url(base_url=base_url, project_id=project_id, flow_id=flow_id)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'link': flow_link})
@@ -187,7 +187,7 @@ async def update_flow(
     )
 
     flow_id = str(updated_raw_configuration.get('id', ''))  # Could this just be configuration_id instead?
-    project_id = await project_manager.get_project()
+    project_id = await project_manager.get_project_id()
     base_url = client.storage_client.base_api_url.split('/v2')[0]
     flow_link = get_flow_url(base_url=base_url, project_id=project_id, flow_id=flow_id)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'link': flow_link})

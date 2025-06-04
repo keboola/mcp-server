@@ -365,7 +365,7 @@ class TestFlowTools:
             return_value=mock_raw_flow_config
         )
         project_manager = ProjectManager.from_state(mcp_context_client.session.state)
-        project_manager.get_project = mocker.AsyncMock(return_value=mock_project_id)
+        project_manager.get_project_id = mocker.AsyncMock(return_value=mock_project_id)
 
         result = await create_flow(
             ctx=mcp_context_client,
@@ -490,7 +490,7 @@ class TestFlowTools:
             return_value=mock_raw_flow_config
         )
         project_manager = ProjectManager.from_state(mcp_context_client.session.state)
-        project_manager.get_project = mocker.AsyncMock(return_value=mock_project_id)
+        project_manager.get_project_id = mocker.AsyncMock(return_value=mock_project_id)
 
         result = await update_flow(
             ctx=mcp_context_client,
