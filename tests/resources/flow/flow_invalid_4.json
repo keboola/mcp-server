@@ -1,0 +1,20 @@
+{
+    "phases": [
+      {
+        "id": "phase1",
+        "name": "Valid Phase"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task1",
+        "name": "Task with invalid mode",
+        "phase": "phase1",
+        "task": {
+          "componentId": "keboola.db-ex-mysql",
+          "mode": "execute"
+        }
+      }
+    ]
+  }
+  

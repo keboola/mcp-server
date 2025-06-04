@@ -1,0 +1,53 @@
+{
+    "phases": [
+      {
+        "id": "extract",
+        "name": "Extract Data"
+      },
+      {
+        "id": "transform",
+        "name": "Transform Data",
+        "dependsOn": ["extract"]
+      },
+      {
+        "id": "load",
+        "name": "Load Data",
+        "dependsOn": ["transform"]
+      }
+    ],
+    "tasks": [
+      {
+        "id": "extract-snowflake",
+        "name": "Extract from Snowflake",
+        "phase": "extract",
+        "enabled": false,
+        "task": {
+          "componentId": "keboola.db-ex-snowflake",
+          "configId": "snowflake-config"
+        }
+      },
+      {
+        "id": "transform-cleaning",
+        "name": "Data Cleaning",
+        "phase": "transform",
+        "continueOnFailure": true,
+        "task": {
+          "componentId": "keboola.python-transformation",
+          "configId": "cleaning-config",
+          "configRowIds": ["row-1", "row-2"],
+          "tag": "cleanup-tag"
+        }
+      },
+      {
+        "id": "load-to-bigquery",
+        "name": "Load to BigQuery",
+        "phase": "load",
+        "task": {
+          "componentId": "keboola.db-wr-bigquery",
+          "configId": "bq-target",
+          "previousJobId": "job-1234567890"
+        }
+      }
+    ]
+  }
+  
