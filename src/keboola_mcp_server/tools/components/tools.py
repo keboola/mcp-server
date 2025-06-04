@@ -260,7 +260,7 @@ async def _set_cfg_creation_metadata(client, component_id, configuration_id):
             metadata={'KBC.MCP.createdBy': 'true'},
         )
     except HTTPStatusError as e:
-        LOG.error(f'Failed to set "KBC.MCP.createdBy" metadata for configuration {configuration_id}: {e}')
+        LOG.exception(f'Failed to set "KBC.MCP.createdBy" metadata for configuration {configuration_id}: {e}')
 
 
 @tool_errors()
@@ -497,7 +497,7 @@ async def create_component_root_configuration(
     client = KeboolaClient.from_state(ctx.session.state)
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
-    storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    storage_cfg = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
     parameters = await validate_root_parameters_configuration(
         client=client,
         parameters=parameters,
@@ -505,7 +505,7 @@ async def create_component_root_configuration(
         initial_message='Field "parameters" is not valid.\n',
     )
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
+    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -595,7 +595,7 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    storage_cfg = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
     parameters = await validate_row_parameters_configuration(
         client=client,
         parameters=parameters,
@@ -603,7 +603,7 @@ async def create_component_row_configuration(
         initial_message='Field "parameters" is not valid.\n',
     )
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
+    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -651,10 +651,10 @@ async def update_component_root_configuration(
     ],
     change_description: Annotated[
         str,
-        Field(description='Description of the change made to the component configuration.',),
+        Field(description='Description of the change made to the component configuration.'),
     ],
-    component_id: Annotated[str, Field(description="The ID of the component which you'd like to update")],
-    configuration_id: Annotated[str, Field(description="The ID of the configuration which you'd like to update.")],
+    component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
+    configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     parameters: Annotated[
         dict[str, Any],
         Field(description='The component configuration parameters, adhering to the root_configuration_schema schema'),
@@ -693,7 +693,7 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    storage_cfg = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
     parameters = await validate_root_parameters_configuration(
         client=client,
         parameters=parameters,
@@ -701,7 +701,7 @@ async def update_component_root_configuration(
         initial_message='Field "parameters" is not valid.\n',
     )
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
+    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -750,12 +750,9 @@ async def update_component_row_configuration(
         str,
         Field(description='Description of the change made to the component configuration.',),
     ],
-    component_id: Annotated[str, Field(description="The ID of the component which you'd like to update")],
-    configuration_id: Annotated[str, Field(description="The ID of the configuration which you'd like to update.")],
-    configuration_row_id: Annotated[
-        str,
-        Field(description="The ID of the configuration row which you'd like to update."),
-    ],
+    component_id: Annotated[str, Field(description='The ID of the component to update.')],
+    configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
+    configuration_row_id: Annotated[str, Field(description='The ID of the configuration row to update.')],
     parameters: Annotated[
         dict[str, Any],
         Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
@@ -794,7 +791,7 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
+    storage_cfg = validate_storage_configuration(storage=storage, initial_message='Field "storage" is not valid.\n')
     parameters = await validate_row_parameters_configuration(
         client=client,
         parameters=parameters,
@@ -802,7 +799,7 @@ async def update_component_row_configuration(
         initial_message='Field "parameters" is not valid.\n',
     )
 
-    configuration_payload = {'storage': storage, 'parameters': parameters}
+    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     new_raw_configuration = cast(
         dict[str, Any],
