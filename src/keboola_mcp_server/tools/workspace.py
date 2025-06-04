@@ -333,7 +333,8 @@ class WorkspaceManager:
                 return None
 
             else:
-                await asyncio.sleep(min(5.0, timeout_sec))
+                remaining_time = max(0.0, timeout_sec - duration)
+                await asyncio.sleep(min(5.0, remaining_time))
 
     def _init_workspace(self, info: _WspInfo) -> _Workspace:
         """Creates a new `Workspace` instance based on the workspace info."""
