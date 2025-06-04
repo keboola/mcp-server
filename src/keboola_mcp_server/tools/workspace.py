@@ -256,7 +256,7 @@ class WorkspaceManager:
         self._workspace: _Workspace | None = None
         self._table_fqn_cache: dict[str, TableFqn] = {}
 
-    async def _find_info_by_schema(self, schema: str) -> _WspInfo | None:
+    async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
 
         for sapi_wsp_info in await self._client.storage_client.get('workspaces'):
@@ -267,7 +267,7 @@ class WorkspaceManager:
 
         return None
 
-    async def _find_info_by_id(self, workspace_id: str) -> _WspInfo | None:
+    async def _find_ws_by_id(self, workspace_id: str) -> _WspInfo | None:
         """Finds the workspace info by its ID."""
 
         try:
@@ -286,7 +286,7 @@ class WorkspaceManager:
             else:
                 raise e
 
-    async def _find_info_in_branch(self) -> _WspInfo | None:
+    async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the workspace info in the current branch."""
 
         metadata = await self._client.storage_client.get('branch/default/metadata')
@@ -294,12 +294,12 @@ class WorkspaceManager:
             if m.get('key') == self.MCP_META_KEY:
                 workspace_id = m.get('value') or ''
                 workspace_id = workspace_id.strip()
-                if workspace_id and (info := await self._find_info_by_id(workspace_id)) and info.readonly:
+                if workspace_id and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
                     return info
 
         return None
 
-    async def _create_info(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
+    async def _create_ws(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
         """
         Creates a new workspace in the current branch and returns its info.
 
@@ -331,7 +331,7 @@ class WorkspaceManager:
             if job_info['status'] == 'success':
                 workspace_id = job_info['results']['id']
                 LOG.info(f'Created workspace: {workspace_id}')
-                return await self._find_info_by_id(workspace_id)
+                return await self._find_ws_by_id(workspace_id)
 
             elif duration > timeout_sec:
                 LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
@@ -370,7 +370,7 @@ class WorkspaceManager:
             # use the workspace that was explicitly requested
             # this workspace must never be written to the default branch metadata
             LOG.info(f'Looking up workspace by schema: {self._workspace_schema}')
-            if info := await self._find_info_by_schema(self._workspace_schema):
+            if info := await self._find_ws_by_schema(self._workspace_schema):
                 LOG.info(f'Found workspace: {info}')
                 self._workspace = self._init_workspace(info)
                 return self._workspace
@@ -379,7 +379,7 @@ class WorkspaceManager:
                                  f'workspace_schema={self._workspace_schema}')
 
         LOG.info('Looking up workspace in the default branch.')
-        if info := await self._find_info_in_branch():
+        if info := await self._find_ws_in_branch():
             # use the workspace that has already been created by the MCP server and noted to the branch
             LOG.info(f'Found workspace: {info}')
             self._workspace = self._init_workspace(info)
@@ -387,7 +387,7 @@ class WorkspaceManager:
 
         # create a new workspace and note its ID to the branch
         LOG.info('Creating workspace in the default branch.')
-        if info := await self._create_info():
+        if info := await self._create_ws():
             # update the branch metadata with the workspace ID
             meta = await self._client.storage_client.post(
                 endpoint='branch/default/metadata',

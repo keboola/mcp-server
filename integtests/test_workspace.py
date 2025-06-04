@@ -61,7 +61,7 @@ class TestWorkspaceManager:
     async def test_static_workspace(self, workspace_manager: WorkspaceManager, workspace_schema: str):
         assert workspace_manager._workspace_schema == workspace_schema
 
-        info = await workspace_manager._find_info_by_schema(workspace_schema)
+        info = await workspace_manager._find_ws_by_schema(workspace_schema)
         assert info is not None
         assert info.schema == workspace_schema
         assert info.backend in ['snowflake', 'bigquery']
@@ -75,7 +75,7 @@ class TestWorkspaceManager:
         assert dynamic_manager._workspace_schema is None
 
         # check that there is no workspace in the branch
-        info = await dynamic_manager._find_info_in_branch()
+        info = await dynamic_manager._find_ws_in_branch()
         assert info is None
 
         # create workspace
@@ -83,6 +83,6 @@ class TestWorkspaceManager:
         assert workspace is not None
 
         # check that the new workspace is recorded in the branch
-        info = await dynamic_manager._find_info_in_branch()
+        info = await dynamic_manager._find_ws_in_branch()
         assert info is not None
         assert workspace.id == info.id
