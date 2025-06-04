@@ -1,0 +1,160 @@
+import pytest
+from fastmcp import Context
+
+from integtests.conftest import ConfigDef
+from keboola_mcp_server.tools.flow import (
+    FlowToolResponse,
+    create_flow,
+    get_flow_detail,
+    retrieve_flows,
+    update_flow,
+)
+
+
+@pytest.mark.asyncio
+async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    Create a flow and retrieve it using retrieve_flows.
+    :param mcp_context: The test context fixture.
+    :param configs: List of real configuration definitions.
+    :return: None
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+    phases = [
+        {'name': 'Extract', 'dependsOn': [], 'description': 'Extract data'},
+        {'name': 'Transform', 'dependsOn': [1], 'description': 'Transform data'},
+    ]
+    tasks = [
+        {
+            'name': 'Extract Task',
+            'phase': 1,
+            'task': {
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+            },
+        },
+        {
+            'name': 'Transform Task',
+            'phase': 2,
+            'task': {
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+            },
+        },
+    ]
+    flow_name = 'Integration Test Flow'
+    flow_description = 'Flow created by integration test.'
+
+    created = await create_flow(
+        mcp_context,
+        name=flow_name,
+        description=flow_description,
+        phases=phases,
+        tasks=tasks,
+    )
+    assert isinstance(created, FlowToolResponse)
+    assert created.description == flow_description
+    assert created.success is True
+
+    flows = await retrieve_flows(mcp_context)
+    assert any(f.name == flow_name for f in flows)
+
+    found = [f for f in flows if f.name == flow_name][0]
+    detail = await get_flow_detail(mcp_context, configuration_id=found.id)
+    assert detail.phases[0].name == 'Extract'
+    assert detail.phases[1].name == 'Transform'
+    assert detail.tasks[0].task['componentId'] == configs[0].component_id
+
+
+@pytest.mark.asyncio
+async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    Update a flow and verify the update.
+    :param mcp_context: The test context fixture.
+    :param configs: List of real configuration definitions.
+    :return: None
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+    phases = [
+        {'name': 'Phase1', 'dependsOn': [], 'description': 'First phase'},
+    ]
+    tasks = [
+        {
+            'name': 'Task1',
+            'phase': 1,
+            'task': {
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+            },
+        },
+    ]
+    flow_name = 'Flow to Update'
+    flow_description = 'Initial description.'
+    created = await create_flow(
+        mcp_context,
+        name=flow_name,
+        description=flow_description,
+        phases=phases,
+        tasks=tasks,
+    )
+    new_name = 'Updated Flow Name'
+    new_description = 'Updated description.'
+    updated = await update_flow(
+        mcp_context,
+        configuration_id=created.flow_id,
+        name=new_name,
+        description=new_description,
+        phases=phases,
+        tasks=tasks,
+        change_description='Integration test update',
+    )
+    assert isinstance(updated, FlowToolResponse)
+    assert created.flow_id == updated.flow_id
+    assert updated.description == new_description
+    assert updated.success is True
+
+
+@pytest.mark.asyncio
+async def test_retrieve_flows_empty(mcp_context: Context) -> None:
+    """
+    Retrieve flows when none exist (should not error, may return empty list).
+    :param mcp_context: The test context fixture.
+    :return: None
+    """
+    flows = await retrieve_flows(mcp_context)
+    assert isinstance(flows, list)
+
+
+@pytest.mark.asyncio
+async def test_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    Create a flow with invalid structure (should raise ValueError).
+    :param mcp_context: The test context fixture.
+    :param configs: List of real configuration definitions.
+    :return: None
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+    phases = [
+        {'name': 'Phase1', 'dependsOn': [99], 'description': 'Depends on non-existent phase'},
+    ]
+    tasks = [
+        {
+            'name': 'Task1',
+            'phase': 1,
+            'task': {
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+            },
+        },
+    ]
+    with pytest.raises(ValueError, match='depends on non-existent phase'):
+        await create_flow(
+            mcp_context,
+            name='Invalid Flow',
+            description='Should fail',
+            phases=phases,
+            tasks=tasks,
+        )
