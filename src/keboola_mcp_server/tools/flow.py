@@ -112,6 +112,7 @@ async def create_flow(
 
     client = KeboolaClient.from_state(ctx.session.state)
     project_manager = ProjectManager.from_state(ctx.session.state)
+
     LOG.info(f'Creating new flow: {name}')
 
     new_raw_configuration = await client.storage_client.flow_create(
@@ -120,7 +121,8 @@ async def create_flow(
 
     flow_id = str(new_raw_configuration.get('id', ''))
     project_id = await project_manager.get_project()
-    flow_link = get_flow_url(project_id=project_id, flow_id=flow_id)
+    base_url = client.storage_client.base_api_url.split('/v2')[0]
+    flow_link = get_flow_url(base_url=base_url, project_id=project_id, flow_id=flow_id)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'link': flow_link})
 
     LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
@@ -180,7 +182,8 @@ async def update_flow(
 
     flow_id = str(updated_raw_configuration.get('id', ''))  # Could this just be configuration_id instead?
     project_id = await project_manager.get_project()
-    flow_link = get_flow_url(project_id=project_id, flow_id=flow_id)
+    base_url = client.storage_client.base_api_url.split('/v2')[0]
+    flow_link = get_flow_url(base_url=base_url, project_id=project_id, flow_id=flow_id)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'link': flow_link})
 
     LOG.info(f'Updated flow configuration: {flow_id}')
@@ -373,5 +376,5 @@ def _check_circular_dependencies(phases: list[FlowPhase]) -> None:
                 raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
 
 
-def get_flow_url(project_id: str | int, flow_id: str | int):
-    return f'https://connection.keboola.com/admin/projects/{project_id}/flows/{flow_id}'
+def get_flow_url(base_url: str, project_id: str | int, flow_id: str | int):
+    return f'{base_url}/admin/projects/{project_id}/flows/{flow_id}'

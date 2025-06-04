@@ -310,6 +310,10 @@ class AsyncStorageClient(KeboolaServiceClient):
     def branch_id(self) -> str:
         return self._branch_id
 
+    @property
+    def base_api_url(self) -> str:
+        return self.raw_client.base_api_url
+
     @classmethod
     def create(
         cls,
