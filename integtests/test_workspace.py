@@ -2,6 +2,7 @@ import logging
 from typing import Any, Generator, Mapping
 
 import pytest
+import requests
 from kbcstorage.client import Client as SyncStorageClient
 
 from keboola_mcp_server.client import KeboolaClient
@@ -18,16 +19,16 @@ def dynamic_manager(
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
 
-    def _get_workspace_meta() -> Mapping[str, Any] | None:
-        metadata = storage_client.branches.metadata('default')
-        for m in metadata:
+    def _get_workspace_meta() -> list[Mapping[str, Any]]:
+        metadata: list[Mapping[str, Any]] = []
+        for m in storage_client.branches.metadata('default'):
             if m.get('key') == WorkspaceManager.MCP_META_KEY:
-                return m
-        return None
+                metadata.append(m)
+        return metadata
 
-    meta = _get_workspace_meta()
-    if meta:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {meta} in the default branch')
+    metas = _get_workspace_meta()
+    if metas:
+        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {metas} in the default branch')
 
     workspaces = storage_client.workspaces.list()
     # ignore the static workspace
@@ -38,11 +39,20 @@ def dynamic_manager(
     yield WorkspaceManager(keboola_client)
 
     LOG.info(f'Cleaning up workspaces in Keboola project with ID={project_id}')
-    meta = _get_workspace_meta()
-    if meta:
-        storage_client.workspaces.delete(meta['value'])
-        storage_client.branches.requests.delete(
-            f'{storage_client.root_url}/v2/storage/branch/default/requests/{meta["id"]}')
+    metas = _get_workspace_meta()
+    if len(metas) > 1:
+        LOG.info(f'Multiple metadata entries found: {metas}')
+    for meta in metas:
+        try:
+            storage_client.workspaces.delete(meta['value'])
+            LOG.info(f'Deleted workspaces: {meta["value"]}')
+        except requests.HTTPError:
+            LOG.exception(f'Failed to delete workspace {meta["value"]}')
+        try:
+            storage_client.branches._delete(f'{storage_client.branches.base_url}branch/default/metadata/{meta["id"]}')
+            LOG.info(f'Deleted workspaces metadata: {meta["id"]}')
+        except requests.HTTPError as e:
+            LOG.exception(f'Failed to delete workspace metadata {meta["id"]}: {e}')
 
 
 class TestWorkspaceManager:
