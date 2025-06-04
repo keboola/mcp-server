@@ -327,10 +327,12 @@ def validate_storage_configuration(
     storage: Optional[JsonDict],
     initial_message: Optional[str] = None,
 ) -> JsonDict:
-    """Utility function to validate the storage configuration.
+    """
+    Validates the storage configuration and extracts the storage key contents.
     :param storage: The storage configuration to validate received from the agent.
-    :param initial_message: The initial message to include in the error message
-    :returns: The validated storage configuration without the "storage" key only the configuration.
+    :param initial_message: The initial message to include in the error message.
+    :return: The contents of the 'storage' key from the validated configuration,
+              or an empty dict if no storage is provided.
     """
     if not storage or storage is None or storage.get('storage', {}) is None:
         LOG.warning('No storage configuration provided, skipping validation.')
@@ -347,8 +349,13 @@ async def validate_root_parameters_configuration(
     component_id: str,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
-    """Utility function to validate the root parameters configuration.
-    :returns: The validated root parameters configuration without the "parameters" key only the configuration.
+    """
+    Utility function to validate the root parameters configuration.
+    :param client: The Keboola client
+    :param parameters: The parameters of the configuration to validate
+    :param component_id: The ID of the component for which the configuration is provided
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
     """
     initial_message = (initial_message or '') + '\n'
     initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
@@ -362,8 +369,13 @@ async def validate_row_parameters_configuration(
     component_id: str,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
-    """Utility function to validate the row parameters configuration.
-    :returns: The validated row parameters configuration without the "parameters" key only the configuration.
+    """
+    Utility function to validate the row parameters configuration.
+    :param client: The Keboola client
+    :param parameters: The parameters of the configuration to validate
+    :param component_id: The ID of the component for which the configuration is provided
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
     """
     initial_message = (initial_message or '') + '\n'
     initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
@@ -379,12 +391,13 @@ def _validate_parameters_configuration(
     component_id: str,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
-    """Utility function to validate the parameters configuration.
+    """
+    Utility function to validate the parameters configuration.
     :param parameters: The parameters configuration to validate
     :param schema: The schema to validate against
     :param component_id: The ID of the component
     :param initial_message: The initial message to include in the error message
-    :return: The validated parameters configuration without the "parameters" key only the configuration.
+    :return: The contents of the 'parameters' key from the validated configuration
     """
     if not schema:
         LOG.warning(f'No schema provided for component {component_id}, skipping validation.')
