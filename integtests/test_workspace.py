@@ -1,6 +1,14 @@
-import pytest
+import logging
+from typing import Any, Generator, Mapping
 
-from keboola_mcp_server.tools.workspace import ProjectManager
+import pytest
+import requests
+from kbcstorage.client import Client as SyncStorageClient
+
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.tools.workspace import ProjectManager, WorkspaceManager
+
+LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -14,22 +22,11 @@ async def test_project_manager_get_project(project_manager: ProjectManager, kebo
     """
     project_id = await project_manager.get_project_id()
     assert project_id == str(keboola_project.project_id)
-import logging
-from typing import Any, Generator, Mapping
-
-import pytest
-import requests
-from kbcstorage.client import Client as SyncStorageClient
-
-from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.workspace import WorkspaceManager
-
-LOG = logging.getLogger(__name__)
 
 
 @pytest.fixture
 def dynamic_manager(
-        keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
+    keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
 ) -> Generator[WorkspaceManager, Any, None]:
     storage_client = sync_storage_client
     token_info = storage_client.tokens.verify()
