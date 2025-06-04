@@ -1,4 +1,6 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keboola/mcp-server)
+[![smithery badge](https://smithery.ai/badge/keboola-mcp-server)](https://smithery.ai/server/keboola-mcp-server)
+
 
 # Keboola MCP Server
 
