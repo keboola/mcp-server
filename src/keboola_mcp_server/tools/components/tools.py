@@ -311,7 +311,7 @@ async def create_sql_transformation(
     CONSIDERATIONS:
     - The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
       appropriate tool.
-    - Each SQL code block should include one or more statements that share a similar purpose or meaning, and should have
+    - Each SQL code block should include one or more SQL statements that share a similar purpose or meaning, and should have
       a descriptive name that reflects that purpose.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
