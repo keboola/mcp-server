@@ -1,0 +1,19 @@
+{
+    "phases": [
+      {
+        "id": null,
+        "name": "Phase with null id"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task1",
+        "name": "Valid task",
+        "phase": null,
+        "task": {
+          "componentId": "keboola.db-ex-mysql"
+        }
+      }
+    ]
+  }
+  

@@ -1,0 +1,26 @@
+{
+    "_metadata_": {
+      "table": {
+        "id": "tbl_123",
+        "name": "customers",
+        "columns": ["name", "email", "notes"],
+        "primaryKey": ["email"]
+      }
+    },
+    "text_column": "notes",
+    "destination": {
+      "collection_name": "customer_notes",
+      "load_type": "incremental_load",
+      "primary_key": "email",
+      "metadata_columns": ["name"]
+    },
+    "advanced_options": {
+      "batch_size": 100,
+      "enable_chunking": true,
+      "chunking_settings": {
+        "chunk_size": 1000,
+        "chunk_overlap": 100,
+        "chunk_strategy": "paragraph"
+      }
+    }
+  }

@@ -1,0 +1,16 @@
+{
+    "phases": [
+      {
+        "id": "phase1",
+        "name": "Valid Phase"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task1",
+        "name": "Task without 'task' property",
+        "phase": "phase1"
+      }
+    ]
+  }
+  
