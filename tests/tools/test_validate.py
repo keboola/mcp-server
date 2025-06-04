@@ -258,9 +258,9 @@ def test_normalize_schema_invalid_parameters(input_schema: JsonDict):
     ('schema_path', 'json_data'),
     [
         # we pass the schema and json_data which are expected to be valid
-        ('tests/resources/root_parameters_schema.json', {'embedding_settings': {'provider_type': 'openai'}}),
+        ('tests/resources/parameters/root_parameters_schema.json', {'embedding_settings': {'provider_type': 'openai'}}),
         (
-            'tests/resources/row_parameters_schema.json',
+            'tests/resources/parameters/row_parameters_schema.json',
             {'text_column': 'this is the only required field of this schema'},
         ),
     ],
@@ -289,13 +289,21 @@ def test_schema_validation(caplog, schema_path: str, json_data: JsonDict):
         # text_column is required and correctly set to "notes" (exists in columns).
         # primary_key is required only when load_type = incremental_load, and it's provided ("email").
         # Chunking settings are only present when enable_chunking = true, which is respected.
-        ('tests/resources/row_parameters_schema.json', 'tests/resources/row_parameters_valid.json', True),
+        (
+            'tests/resources/parameters/row_parameters_schema.json',
+            'tests/resources/parameters/row_parameters_valid.json',
+            True,
+        ),
         # Missing required field: text_column
         # Missing required field: primary_key (required when load_type = incremental_load)
         # Invalid batch_size: 0 (minimum allowed: 1)
         # Invalid chunk_size: 9000 (maximum allowed: 8000)
         # Invalid chunk_overlap: -10 (minimum allowed: 0)
-        ('tests/resources/row_parameters_schema.json', 'tests/resources/row_parameters_invalid.json', False),
+        (
+            'tests/resources/parameters/row_parameters_schema.json',
+            'tests/resources/parameters/row_parameters_invalid.json',
+            False,
+        ),
     ],
 )
 def test_validate_row_parameters(schema_path: str, data_path: str, valid: bool):
@@ -318,10 +326,18 @@ def test_validate_row_parameters(schema_path: str, data_path: str, valid: bool):
     [
         # embedding_settings is required.
         # When provider_type is "openai", the openai_settings object must include model and #api_key.
-        ('tests/resources/root_parameters_schema.json', 'tests/resources/root_parameters_valid.json', True),
+        (
+            'tests/resources/parameters/root_parameters_schema.json',
+            'tests/resources/parameters/root_parameters_valid.json',
+            True,
+        ),
         # "embedding_settings" is required at the top level.
         # Even though qdrant_settings has all required fields, it doesn't satisfy the top-level schema.
-        ('tests/resources/root_parameters_schema.json', 'tests/resources/root_parameters_invalid.json', False),
+        (
+            'tests/resources/parameters/root_parameters_schema.json',
+            'tests/resources/parameters/root_parameters_invalid.json',
+            False,
+        ),
     ],
 )
 def test_validate_root_parameters(schema_path: str, data_path: str, valid: bool):
