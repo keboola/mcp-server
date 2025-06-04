@@ -249,22 +249,23 @@ class TransformationConfiguration(BaseModel):
 def _clean_bucket_name(bucket_name: str) -> str:
     """
     Utility function to clean the bucket name.
-    Converts the bucket name to lowercase.
-    Removes all characters from bucket_name except alphanumeric, dashes, and underscores.
-    Also removes leading underscores, dashes, and whitespace.
-    Replaces whitespace with dashes.
+    Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
+    Converts spaces to dashes.
+    Removes leading underscores, dashes, and whitespace.
+    Removes any character that is not alphanumeric, dash, or underscore.
     """
-    bucket_name = bucket_name.lower().strip()
-    # Remove leading underscores if present
-    bucket_name = re.sub(r'^_+', '', bucket_name)
+    max_bucket_length = 96
+    bucket_name = bucket_name.strip()
+    # Convert the bucket name to ASCII
     bucket_name = unicodedata.normalize('NFKD', bucket_name)
-    bucket_name = bucket_name.encode('ascii', 'ignore').decode('ascii')
+    bucket_name = bucket_name.encode('ascii', 'ignore').decode('ascii')  # český -> cesky
     # Replace all whitespace (including tabs, newlines) with dashes
     bucket_name = re.sub(r'\s+', '-', bucket_name)
     # Remove any character that is not alphanumeric, dash, or underscore
     bucket_name = re.sub(r'[^a-zA-Z0-9_-]', '', bucket_name)
-    # Remove leading dashes or underscores
-    bucket_name = re.sub(r'^[-_]+', '', bucket_name)
+    # Remove leading underscores if present
+    bucket_name = re.sub(r'^_+', '', bucket_name)
+    bucket_name = bucket_name[:max_bucket_length]
     return bucket_name
 
 

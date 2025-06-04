@@ -99,10 +99,10 @@ def test_get_transformation_configuration(
         ('a_-', 'a_-'),
         ('1234567890', '1234567890'),
         ('test_table_1', 'test_table_1'),
-        ('test:-Table-1!', 'test-table-1'),
-        ('test Test', 'test-test'),
+        ('test:-Table-1!', 'test-Table-1'),
+        ('test Test', 'test-Test'),
         ('__test_test', 'test_test'),
-        ('--test-test', 'test-test'),
+        ('--test-test', '--test-test'),  # it is allowed
         ('+ěščřžýáíé', 'escrzyaie'),
     ],
 )
