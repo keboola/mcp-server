@@ -397,16 +397,20 @@ class AsyncStorageClient(KeboolaServiceClient):
         }
         return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
 
-    async def configuration_delete(self, component_id: str, configuration_id: str) -> None:
+    async def configuration_delete(self, component_id: str, configuration_id: str, skip_trash: bool = False) -> None:
         """
         Deletes a configuration.
 
         :param component_id: The id of the component.
         :param configuration_id: The id of the configuration.
+        :param skip_trash: If True, the configuration is deleted without moving to the trash.
+            (Technically it means the API endpoint is called twice.)
         :raises ValueError: If the component_id or configuration_id is invalid.
         """
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
         await self.delete(endpoint=endpoint)
+        if skip_trash:
+            await self.delete(endpoint=endpoint)
 
     async def configuration_detail(self, component_id: str, configuration_id: str) -> JsonDict:
         """

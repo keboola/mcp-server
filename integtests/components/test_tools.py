@@ -146,7 +146,8 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
         # Delete the configuration
         await client.storage_client.configuration_delete(
             component_id=component_id,
-            configuration_id=created_config.configuration_id
+            configuration_id=created_config.configuration_id,
+            skip_trash=True,
         )
 
 
@@ -231,5 +232,6 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
         # Delete the configuration
         await client.storage_client.configuration_delete(
             component_id=component_id,
-            configuration_id=created_config.configuration_id
+            configuration_id=created_config.configuration_id,
+            skip_trash=True,
         )
