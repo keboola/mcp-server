@@ -1,6 +1,6 @@
 """Unit tests for Flow management tools."""
 
-from datetime import datetime
+from dateutil import parser
 from typing import Any, Dict, List
 
 import pytest
@@ -29,11 +29,6 @@ from keboola_mcp_server.tools.flow import (
 from keboola_mcp_server.tools.workspace import ProjectManager
 
 # --- Fixtures ---
-
-
-def parse_iso_timestamp(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace('Z', '+00:00'))
-
 
 @pytest.fixture
 def mock_project_id() -> str:
@@ -407,7 +402,7 @@ class TestFlowTools:
 
         assert isinstance(result, FlowToolResponse)
         assert result.description == 'Test flow description'
-        assert result.timestamp == parse_iso_timestamp('2025-05-25T06:33:41+0200')
+        assert result.timestamp == parser.isoparse('2025-05-25T06:33:41+0200')
         assert result.success is True
         assert result.link == 'https://connection.keboola.com/admin/projects/1/flows/21703284'
 
@@ -553,7 +548,7 @@ class TestFlowTools:
 
         assert isinstance(result, FlowToolResponse)
         assert result.description == 'Updated description'
-        assert result.timestamp == parse_iso_timestamp('2025-05-25T06:33:41+0200')
+        assert result.timestamp == parser.isoparse('2025-05-25T06:33:41+0200')
         assert result.success is True
         assert result.link == 'https://connection.keboola.com/admin/projects/1/flows/21703284'
 
