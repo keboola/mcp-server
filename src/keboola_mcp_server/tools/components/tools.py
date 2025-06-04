@@ -251,8 +251,8 @@ async def get_component_configuration(
     )
 
 
-async def _set_cfg_creation_metadata(client, component_id, configuration_id):
-    # Set configuration metadata to indicate it was created by MCP
+async def _set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
+    """ Sets configuration metadata to indicate it was created by MCP. """
     try:
         await client.storage_client.configuration_metadata_update(
             component_id=component_id,
@@ -261,6 +261,23 @@ async def _set_cfg_creation_metadata(client, component_id, configuration_id):
         )
     except HTTPStatusError as e:
         LOG.exception(f'Failed to set "KBC.MCP.createdBy" metadata for configuration {configuration_id}: {e}')
+
+
+async def _set_cfg_update_metadata(
+    client: KeboolaClient,
+    component_id: str,
+    configuration_id: str,
+    configuration_version: int,
+) -> None:
+    """ Sets configuration metadata to indicate it was updated by MCP. """
+    try:
+        await client.storage_client.configuration_metadata_update(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            metadata={f'KBC.MCP.updatedBy.version.{configuration_version}': 'true'},
+        )
+    except HTTPStatusError as e:
+        LOG.exception(f'Failed to set "KBC.MCP.updatedBy" metadata for configuration {configuration_id}: {e}')
 
 
 @tool_errors()
@@ -436,6 +453,13 @@ async def update_sql_transformation_configuration(
             'component_id': transformation.component_id,
             'component': transformation,
         }
+    )
+
+    await _set_cfg_update_metadata(
+        client=client,
+        component_id=sql_transformation_id,
+        configuration_id=configuration_id,
+        configuration_version=updated_transformation_configuration.version,
     )
 
     LOG.info(
@@ -630,6 +654,13 @@ async def create_component_row_configuration(
         f'"{new_configuration.configuration_id}".'
     )
 
+    await _set_cfg_update_metadata(
+        client=client,
+        component_id=component_id,
+        configuration_id=new_configuration.configuration_id,
+        configuration_version=new_configuration.version,
+    )
+
     return new_configuration
 
 
@@ -725,6 +756,13 @@ async def update_component_root_configuration(
     LOG.info(
         f'Updated configuration for component "{component_id}" with configuration id '
         f'"{new_configuration.configuration_id}".'
+    )
+
+    await _set_cfg_update_metadata(
+        client=client,
+        component_id=component_id,
+        configuration_id=new_configuration.configuration_id,
+        configuration_version=new_configuration.version,
     )
 
     return new_configuration
@@ -824,6 +862,13 @@ async def update_component_row_configuration(
     LOG.info(
         f'Updated configuration for component "{component_id}" with configuration id '
         f'"{new_configuration.configuration_id}".'
+    )
+
+    await _set_cfg_update_metadata(
+        client=client,
+        component_id=component_id,
+        configuration_id=new_configuration.configuration_id,
+        configuration_version=new_configuration.version,
     )
 
     return new_configuration
