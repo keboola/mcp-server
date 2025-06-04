@@ -12,7 +12,7 @@ from keboola_mcp_server.tools import _validate
     ('schema_name', 'expected_keywords'),
     [
         (
-            _validate.ConfigurationSchemaResourceName.STORAGE,
+            _validate.ConfigurationSchemaResources.STORAGE,
             ['type', 'properties', 'storage', 'input', 'output', 'tables', 'files', 'destination', 'source'],
         )
     ],
@@ -28,13 +28,13 @@ def test_load_schema(schema_name, expected_keywords):
     ('valid_storage_path'),
     [
         # 1. Output table with delete_where using where_filters
-        ('tests/resources/storage_valid_1.json'),
+        ('tests/resources/storage/storage_valid_1.json'),
         # 2. Minimal valid input and output tables
-        ('tests/resources/storage_valid_2.json'),
+        ('tests/resources/storage/storage_valid_2.json'),
         # 3. Input and output files
-        ('tests/resources/storage_valid_3.json'),
+        ('tests/resources/storage/storage_valid_3.json'),
         # 4. Input table with where_column and where_values, output table with schema
-        ('tests/resources/storage_valid_4.json'),
+        ('tests/resources/storage/storage_valid_4.json'),
     ],
 )
 def test_validate_storage_valid(valid_storage_path: str):
@@ -49,24 +49,24 @@ def test_validate_storage_valid(valid_storage_path: str):
     [
         # 1. Input table missing required property (source or source_search)
         # Each item in tables must have either source or source_search (enforced by oneOf). This object has neither.
-        ('tests/resources/storage_invalid_1.json'),
+        ('tests/resources/storage/storage_invalid_1.json'),
         # 2. The table_files item missing required destination (output table_files)
         # Each item in table_files must have both source and destination.
-        ('tests/resources/storage_invalid_2.json'),
+        ('tests/resources/storage/storage_invalid_2.json'),
         # 3. Missing source in input, missing destination in output
-        ('tests/resources/storage_invalid_3.json'),
+        ('tests/resources/storage/storage_invalid_3.json'),
         # 4. Schema present with forbidden properties (output tables)
         # If schema is present, columns (and several other properties) must not be present (enforced by allOf).
-        ('tests/resources/storage_invalid_4.json'),
+        ('tests/resources/storage/storage_invalid_4.json'),
         # 5. Output table missing required property (destination or source)
         # Both destination and source are required for each output table.
-        ('tests/resources/storage_invalid_5.json'),
+        ('tests/resources/storage/storage_invalid_5.json'),
         # 6. The where_operator has an invalid value (input tables)
         # where_operator must be either 'eq' or 'ne', not 'gt'.
-        ('tests/resources/storage_invalid_6.json'),
+        ('tests/resources/storage/storage_invalid_6.json'),
         # 7. The files item missing required source (output files)
         # Each item in files must have a source property
-        ('tests/resources/storage_invalid_7.json'),
+        ('tests/resources/storage/storage_invalid_7.json'),
     ],
 )
 def test_validate_storage_invalid(invalid_storage_path: str):
@@ -105,6 +105,38 @@ def test_validate_parameters_output_format(input_parameters, output_parameters):
     accepting_schema = {'type': 'object', 'additionalProperties': True}  # accepts any json object
     result = _validate.validate_parameters(input_parameters, accepting_schema)
     assert result == output_parameters
+
+
+@pytest.mark.parametrize(
+    ('valid_flow_path'),
+    [
+        ('tests/resources/flow/flow_valid_1.json'),
+        ('tests/resources/flow/flow_valid_2.json'),
+        ('tests/resources/flow/flow_valid_3.json'),
+    ],
+)
+def test_validate_flow_valid(valid_flow_path: str):
+    with open(valid_flow_path, 'r') as f:
+        valid_flow = json.load(f)
+    assert _validate.validate_flow_configuration_against_schema(valid_flow) == valid_flow
+
+
+@pytest.mark.parametrize(
+    'invalid_flow_path',
+    [
+        'tests/resources/flow/flow_invalid_1.json',
+        'tests/resources/flow/flow_invalid_2.json',
+        'tests/resources/flow/flow_invalid_3.json',
+        'tests/resources/flow/flow_invalid_4.json',
+        'tests/resources/flow/flow_invalid_5.json',
+        'tests/resources/flow/flow_invalid_6.json',
+    ],
+)
+def test_validate_flow_invalid(invalid_flow_path: str):
+    with open(invalid_flow_path, 'r') as f:
+        invalid_flow = json.load(f)
+    with pytest.raises(_validate.RecoverableValidationError):
+        _validate.validate_flow_configuration_against_schema(invalid_flow)
 
 
 def test_validate_json_against_schema_invalid_schema(caplog):

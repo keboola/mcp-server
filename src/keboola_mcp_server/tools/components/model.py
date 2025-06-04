@@ -40,7 +40,7 @@ class ReducedComponent(BaseModel):
         default_factory=list,
         description='List of developer portal flags.',
         validation_alias=AliasChoices('flags', 'component_flags', 'componentFlags', 'component-flags'),
-        serialization_alias='componentFlags'
+        serialization_alias='componentFlags',
     )
 
     # Capability flags derived from component_flags
@@ -48,42 +48,42 @@ class ReducedComponent(BaseModel):
         default=False,
         description='Whether the component is row-based (e.g. have configuration rows) or not.',
         validation_alias=AliasChoices('is_row_based', 'isRowBased', 'is-row-based'),
-        serialization_alias='isRowBased'
+        serialization_alias='isRowBased',
     )
 
     has_table_input_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has table input mapping or not.',
         validation_alias=AliasChoices('has_table_input_mapping', 'hasTableInputMapping', 'has-table-input-mapping'),
-        serialization_alias='hasTableInputMapping'
+        serialization_alias='hasTableInputMapping',
     )
 
     has_table_output_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has table output mapping or not.',
         validation_alias=AliasChoices('has_table_output_mapping', 'hasTableOutputMapping', 'has-table-output-mapping'),
-        serialization_alias='hasTableOutputMapping'
+        serialization_alias='hasTableOutputMapping',
     )
 
     has_file_input_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has file input mapping or not.',
         validation_alias=AliasChoices('has_file_input_mapping', 'hasFileInputMapping', 'has-file-input-mapping'),
-        serialization_alias='hasFileInputMapping'
+        serialization_alias='hasFileInputMapping',
     )
 
     has_file_output_mapping: bool = Field(
         default=False,
         description='Whether the component configuration has file output mapping or not.',
         validation_alias=AliasChoices('has_file_output_mapping', 'hasFileOutputMapping', 'has-file-output-mapping'),
-        serialization_alias='hasFileOutputMapping'
+        serialization_alias='hasFileOutputMapping',
     )
 
     has_oauth: bool = Field(
         default=False,
         description='Whether the component configuration requires OAuth authorization or not.',
         validation_alias=AliasChoices('has_oauth', 'hasOauth', 'has-oauth'),
-        serialization_alias='hasOauth'
+        serialization_alias='hasOauth',
     )
 
     @model_validator(mode='after')
@@ -339,20 +339,13 @@ class FlowPhase(BaseModel):
     """Represents a phase in a flow configuration."""
 
     id: Union[int, str] = Field(description='Unique identifier of the phase')
-    name: str = Field(description='Name of the phase')
-    description: Optional[str] = Field(None, description='Description of the phase')
+    name: str = Field(description='Name of the phase', min_length=1)
+    description: str = Field(default_factory=str, description='Description of the phase')
     depends_on: List[Union[int, str]] = Field(
         default_factory=list,
         description='List of phase IDs this phase depends on',
         validation_alias=AliasChoices('dependsOn', 'depends_on', 'depends-on'),
-        serialization_alias='dependsOn'
-    )
-    behavior: Optional[dict[str, Any]] = Field(None, description='Phase behavior configuration')
-    child_behavior: Optional[dict[str, Any]] = Field(
-        None,
-        description='Child task behavior configuration',
-        validation_alias=AliasChoices('childBehavior', 'child_behavior', 'child-behavior'),
-        serialization_alias='childBehavior'
+        serialization_alias='dependsOn',
     )
 
 
@@ -367,9 +360,8 @@ class FlowTask(BaseModel):
         default=False,
         description='Whether to continue if task fails',
         validation_alias=AliasChoices('continueOnFailure', 'continue_on_failure', 'continue-on-failure'),
-        serialization_alias='continueOnFailure'
+        serialization_alias='continueOnFailure',
     )
-    behavior: Optional[dict[str, Any]] = Field(None, description='Task behavior configuration')
     task: dict[str, Any] = Field(description='Task configuration containing componentId, configId, etc.')
 
 
@@ -391,7 +383,7 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
         description='The description of the changes made to the flow configuration',
         default=None,
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
-        serialization_alias='changeDescription'
+        serialization_alias='changeDescription',
     )
     configuration_metadata: list[dict[str, Any]] = Field(
         description='The metadata of the flow configuration',
@@ -426,7 +418,7 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
             configuration=flow_config,
             change_description=raw_config.get('changeDescription'),
             configuration_metadata=raw_config.get('metadata', []),
-            created=raw_config.get('created')
+            created=raw_config.get('created'),
         )
 
 
@@ -435,7 +427,7 @@ class ReducedFlow(BaseModel):
 
     id: str = Field(
         description='Configuration ID of the flow',
-        validation_alias=AliasChoices('id', 'configuration_id', 'configurationId')
+        validation_alias=AliasChoices('id', 'configuration_id', 'configurationId'),
     )
     name: str = Field(description='Name of the flow')
     description: str = Field(description='Description of the flow')
@@ -445,13 +437,13 @@ class ReducedFlow(BaseModel):
         default=False,
         description='Whether the flow is disabled',
         validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
-        serialization_alias='isDisabled'
+        serialization_alias='isDisabled',
     )
     is_deleted: bool = Field(
         default=False,
         description='Whether the flow is deleted',
         validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
-        serialization_alias='isDeleted'
+        serialization_alias='isDeleted',
     )
     phases_count: int = Field(description='Number of phases in the flow')
     tasks_count: int = Field(description='Number of tasks in the flow')
@@ -471,5 +463,5 @@ class ReducedFlow(BaseModel):
             is_disabled=raw_config.get('isDisabled', False),
             is_deleted=raw_config.get('isDeleted', False),
             phases_count=len(config_data.get('phases', [])),
-            tasks_count=len(config_data.get('tasks', []))
+            tasks_count=len(config_data.get('tasks', [])),
         )
