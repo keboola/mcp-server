@@ -31,8 +31,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         default='INFO',
         help='Logging level',
     )
-    parser.add_argument(
-        '--api-url', default='https://connection.keboola.com', metavar='URL', help='Keboola Storage API URL.')
+    parser.add_argument('--api-url', metavar='URL', help='Keboola Storage API URL.')
     parser.add_argument('--storage-token', metavar='STR', help='Keboola Storage API token.')
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')

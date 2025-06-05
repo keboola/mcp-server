@@ -101,9 +101,12 @@ def create_server(config: Config) -> FastMCP:
     """
     config = config.replace_by(os.environ)
 
+    hostname_suffix = os.environ.get('HOSTNAME_SUFFIX')
+    if not config.storage_api_url and hostname_suffix:
+        config = dataclasses.replace(config, storage_api_url=f'https://connection.{hostname_suffix}')
+
     if config.oauth_client_id and config.oauth_client_secret:
         # fall back to HOSTNAME_SUFFIX if no URLs are specified for the OAUth server or the MCP server itself
-        hostname_suffix = os.environ.get('HOSTNAME_SUFFIX')
         if not config.oauth_server_url and hostname_suffix:
             config = dataclasses.replace(config, oauth_server_url=f'https://connection.{hostname_suffix}')
         if not config.mcp_server_url and hostname_suffix:
