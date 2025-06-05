@@ -321,6 +321,35 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "Parameters": {
+      "properties": {
+        "parameters": {
+          "additionalProperties": true,
+          "description": "the parameters of the component configuration",
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "parameters"
+      ],
+      "title": "Parameters",
+      "type": "object"
+    },
+    "Storage": {
+      "properties": {
+        "storage": {
+          "additionalProperties": true,
+          "description": "the storage of the component configuration",
+          "title": "Storage",
+          "type": "object"
+        }
+      },
+      "title": "Storage",
+      "type": "object"
+    }
+  },
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
@@ -338,23 +367,22 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Parameters",
       "description": "The component configuration parameters, adhering to the root_configuration_schema",
-      "title": "Parameters",
-      "type": "object"
+      "title": "Parameters"
     },
     "storage": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Storage",
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage",
-      "type": "object"
+      "title": "Storage"
     }
   },
   "required": [
     "name",
     "description",
     "component_id",
-    "parameters"
+    "parameters",
+    "storage"
   ],
   "type": "object"
 }
@@ -386,6 +414,35 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "Parameters": {
+      "properties": {
+        "parameters": {
+          "additionalProperties": true,
+          "description": "the parameters of the component configuration",
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "parameters"
+      ],
+      "title": "Parameters",
+      "type": "object"
+    },
+    "Storage": {
+      "properties": {
+        "storage": {
+          "additionalProperties": true,
+          "description": "the storage of the component configuration",
+          "title": "Storage",
+          "type": "object"
+        }
+      },
+      "title": "Storage",
+      "type": "object"
+    }
+  },
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
@@ -408,16 +465,14 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Parameters",
       "description": "The component row configuration parameters, adhering to the row_configuration_schema",
-      "title": "Parameters",
-      "type": "object"
+      "title": "Parameters"
     },
     "storage": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Storage",
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage",
-      "type": "object"
+      "title": "Storage"
     }
   },
   "required": [
@@ -425,7 +480,8 @@ EXAMPLES:
     "description",
     "component_id",
     "configuration_id",
-    "parameters"
+    "parameters",
+    "storage"
   ],
   "type": "object"
 }
@@ -939,6 +995,35 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "Parameters": {
+      "properties": {
+        "parameters": {
+          "additionalProperties": true,
+          "description": "the parameters of the component configuration",
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "parameters"
+      ],
+      "title": "Parameters",
+      "type": "object"
+    },
+    "Storage": {
+      "properties": {
+        "storage": {
+          "additionalProperties": true,
+          "description": "the storage of the component configuration",
+          "title": "Storage",
+          "type": "object"
+        }
+      },
+      "title": "Storage",
+      "type": "object"
+    }
+  },
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
@@ -966,16 +1051,14 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Parameters",
       "description": "The component configuration parameters, adhering to the root_configuration_schema schema",
-      "title": "Parameters",
-      "type": "object"
+      "title": "Parameters"
     },
     "storage": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Storage",
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined",
-      "title": "Storage",
-      "type": "object"
+      "title": "Storage"
     }
   },
   "required": [
@@ -984,7 +1067,8 @@ EXAMPLES:
     "change_description",
     "component_id",
     "configuration_id",
-    "parameters"
+    "parameters",
+    "storage"
   ],
   "type": "object"
 }
@@ -1015,6 +1099,35 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "Parameters": {
+      "properties": {
+        "parameters": {
+          "additionalProperties": true,
+          "description": "the parameters of the component configuration",
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "parameters"
+      ],
+      "title": "Parameters",
+      "type": "object"
+    },
+    "Storage": {
+      "properties": {
+        "storage": {
+          "additionalProperties": true,
+          "description": "the storage of the component configuration",
+          "title": "Storage",
+          "type": "object"
+        }
+      },
+      "title": "Storage",
+      "type": "object"
+    }
+  },
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
@@ -1047,16 +1160,14 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Parameters",
       "description": "The component row configuration parameters, adhering to the row_configuration_schema",
-      "title": "Parameters",
-      "type": "object"
+      "title": "Parameters"
     },
     "storage": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Storage",
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage",
-      "type": "object"
+      "title": "Storage"
     }
   },
   "required": [
@@ -1066,7 +1177,8 @@ EXAMPLES:
     "component_id",
     "configuration_id",
     "configuration_row_id",
-    "parameters"
+    "parameters",
+    "storage"
   ],
   "type": "object"
 }
@@ -1241,6 +1353,18 @@ EXAMPLES:
       ],
       "title": "Parameters",
       "type": "object"
+    },
+    "Storage": {
+      "properties": {
+        "storage": {
+          "additionalProperties": true,
+          "description": "the storage of the component configuration",
+          "title": "Storage",
+          "type": "object"
+        }
+      },
+      "title": "Storage",
+      "type": "object"
     }
   },
   "properties": {
@@ -1260,10 +1384,9 @@ EXAMPLES:
       "title": "Parameters"
     },
     "storage": {
-      "additionalProperties": true,
+      "$ref": "#/$defs/Storage",
       "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings.",
-      "title": "Storage",
-      "type": "object"
+      "title": "Storage"
     },
     "updated_description": {
       "default": "",
