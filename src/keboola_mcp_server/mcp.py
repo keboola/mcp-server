@@ -58,8 +58,7 @@ class KeboolaMcpServer(FastMCP):
 
 
 def _create_session_state(config: Config) -> dict[str, Any]:
-    """Creates `KeboolaClient`, `WorkspaceManager` instances and returns
-    them in the session state."""
+    """Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state."""
     LOG.info(f'Creating SessionState from config: {config}.')
 
     state: dict[str, Any] = {}
