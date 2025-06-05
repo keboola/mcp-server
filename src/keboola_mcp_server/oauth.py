@@ -167,12 +167,18 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
                 LOG.exception(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
                 raise HTTPException(400, data.get('error_description', data['error']))
 
+        expires_in = int(data['expires_in'])  # seconds
+        if expires_in <= 0:
+            LOG.exception(f'[handle_oauth_callback] Received already expired token: data={data}')
+            raise HTTPException(400, 'Received already expired token.')
+
         # Store access token - we'll map the MCP token to this later
         access_token = AccessToken(
             token=data['access_token'],
             client_id=self._oauth_client_id,
             scopes=[self._oauth_scope],
-            expires_at=None,  # TODO: set the expiration time from the OAuth server response
+            # this is slightly different from 'expires_at' kept by the OAuth server
+            expires_at=int(time.time() + expires_in),
         )
 
         # Create MCP authorization code
@@ -181,7 +187,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'client_id': state_data['client_id'],
             'redirect_uri': state_data['redirect_uri'],
             'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == 'True'),
-            'expires_at': time.time() + 5 * 60,  # 5 minutes from now
+            'expires_at': int(time.time() + 5 * 60),  # 5 minutes from now
             'scopes': [self.MCP_SERVER_SCOPE],
             'code_challenge': state_data['code_challenge'],
             'oauth_access_token': access_token.model_dump(),
@@ -201,7 +207,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
         """Load an authorization code."""
-        auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
+        try:
+            auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
+        except jwt.InvalidTokenError:
+            LOG.debug(f'[load_authorization_code] Invalid authorization_code: {authorization_code}', exc_info=True)
+            return None
+
         LOG.debug(f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
                   f'auth_code={auth_code}')
         return _ExtendedAuthorizationCode.model_validate(
@@ -222,7 +233,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
             scopes=authorization_code.scopes,
-            expires_at=int(time.time()) + 60 * 60,  # 1 hour from now
+            expires_at=authorization_code.oauth_access_token.expires_at,
             delegate=authorization_code.oauth_access_token,
         )
         access_token_jwt = jwt.encode(access_token.model_dump(), self._jwt_secret)
@@ -230,7 +241,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
             token_type='bearer',
-            expires_in=3600,
+            expires_in=max(0, int(access_token.expires_at - time.time())),
             scope=' '.join(authorization_code.scopes),
         )
 
@@ -240,7 +251,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         """Load and validate an access token."""
-        access_token_raw = jwt.decode(token, self._jwt_secret, algorithms=['HS256'])
+        try:
+            access_token_raw = jwt.decode(token, self._jwt_secret, algorithms=['HS256'])
+        except jwt.InvalidTokenError:
+            LOG.debug(f'[load_access_token] Invalid token: {token}', exc_info=True)
+            return None
+
         access_token = ProxyAccessToken.model_validate(access_token_raw)
         LOG.debug(f'[load_access_token] token={token}, access_token={access_token}')
 
