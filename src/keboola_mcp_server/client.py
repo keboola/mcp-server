@@ -627,6 +627,20 @@ class AsyncStorageClient(KeboolaServiceClient):
             description=description,
             configuration=flow_configuration,
         )
+    
+    async def flow_delete(self, configuration_id: str, skip_trash: bool = False) -> None:
+        """
+        Deletes a flow configuration.
+
+        :param configuration_id: The id of the flow configuration.
+        :param skip_trash: If True, the configuration is deleted without moving to the trash.
+            (Technically it means the API endpoint is called twice.)
+        :raises ValueError: If the configuration_id is invalid.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{ORCHESTRATOR_COMPONENT_ID}/configs/{configuration_id}'
+        await self.delete(endpoint=endpoint)
+        if skip_trash:
+            await self.delete(endpoint=endpoint)
 
     async def flow_detail(self, config_id: str) -> JsonDict:
         """

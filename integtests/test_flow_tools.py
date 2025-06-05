@@ -9,6 +9,7 @@ from keboola_mcp_server.tools.flow import (
     retrieve_flows,
     update_flow,
 )
+from keboola_mcp_server.client import KeboolaClient
 
 
 @pytest.mark.asyncio
@@ -53,18 +54,23 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         phases=phases,
         tasks=tasks,
     )
-    assert isinstance(created, FlowToolResponse)
-    assert created.description == flow_description
-    assert created.success is True
+    flow_id = created.flow_id
+    try:
+        assert isinstance(created, FlowToolResponse)
+        assert created.description == flow_description
+        assert created.success is True
 
-    flows = await retrieve_flows(mcp_context)
-    assert any(f.name == flow_name for f in flows)
-    found = [f for f in flows if f.name == flow_name][0]
-    assert found.id == created.flow_id
-    detail = await get_flow_detail(mcp_context, configuration_id=found.id)
-    assert detail.phases[0].name == 'Extract'
-    assert detail.phases[1].name == 'Transform'
-    assert detail.tasks[0].task['componentId'] == configs[0].component_id
+        flows = await retrieve_flows(mcp_context)
+        assert any(f.name == flow_name for f in flows)
+        found = [f for f in flows if f.name == flow_name][0]
+        assert found.id == created.flow_id
+        detail = await get_flow_detail(mcp_context, configuration_id=found.id)
+        assert detail.phases[0].name == 'Extract'
+        assert detail.phases[1].name == 'Transform'
+        assert detail.tasks[0].task['componentId'] == configs[0].component_id
+    finally:
+        client = KeboolaClient.from_state(mcp_context.session.state)
+        await client.storage_client.flow_delete(flow_id, skip_trash=True)
 
 
 @pytest.mark.asyncio
@@ -99,21 +105,26 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         phases=phases,
         tasks=tasks,
     )
-    new_name = 'Updated Flow Name'
-    new_description = 'Updated description.'
-    updated = await update_flow(
-        mcp_context,
-        configuration_id=created.flow_id,
-        name=new_name,
-        description=new_description,
-        phases=phases,
-        tasks=tasks,
-        change_description='Integration test update',
-    )
-    assert isinstance(updated, FlowToolResponse)
-    assert created.flow_id == updated.flow_id
-    assert updated.description == new_description
-    assert updated.success is True
+    flow_id = created.flow_id
+    try:
+        new_name = 'Updated Flow Name'
+        new_description = 'Updated description.'
+        updated = await update_flow(
+            mcp_context,
+            configuration_id=created.flow_id,
+            name=new_name,
+            description=new_description,
+            phases=phases,
+            tasks=tasks,
+            change_description='Integration test update',
+        )
+        assert isinstance(updated, FlowToolResponse)
+        assert created.flow_id == updated.flow_id
+        assert updated.description == new_description
+        assert updated.success is True
+    finally:
+        client = KeboolaClient.from_state(mcp_context.session.state)
+        await client.storage_client.flow_delete(flow_id, skip_trash=True)
 
 
 @pytest.mark.asyncio
