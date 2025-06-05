@@ -492,7 +492,6 @@ class TestFlowTools:
         keboola_client.storage_client.project_id = mocker.AsyncMock(
             return_value=mock_project_id
         )
-        
 
         result = await update_flow(
             ctx=mcp_context_client,
