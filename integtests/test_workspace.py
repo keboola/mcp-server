@@ -13,7 +13,7 @@ LOG = logging.getLogger(__name__)
 
 @pytest.fixture
 def dynamic_manager(
-    keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
+        keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
 ) -> Generator[WorkspaceManager, Any, None]:
     storage_client = sync_storage_client
     token_info = storage_client.tokens.verify()
