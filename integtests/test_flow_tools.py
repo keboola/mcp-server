@@ -59,8 +59,8 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
 
     flows = await retrieve_flows(mcp_context)
     assert any(f.name == flow_name for f in flows)
-
     found = [f for f in flows if f.name == flow_name][0]
+    assert found.id == created.flow_id
     detail = await get_flow_detail(mcp_context, configuration_id=found.id)
     assert detail.phases[0].name == 'Extract'
     assert detail.phases[1].name == 'Transform'
