@@ -694,6 +694,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint='tokens/verify'))
 
+    async def project_id(self) -> str:
+        """
+        Retrieves the project id.
+        :return: Project id.
+        """
+        raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
+        return str(raw_data['owner']['id'])
+
 
 class JobsQueueClient(KeboolaServiceClient):
     """

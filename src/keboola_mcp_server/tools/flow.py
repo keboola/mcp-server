@@ -20,7 +20,6 @@ from keboola_mcp_server.tools.components.model import (
     FlowTask,
     ReducedFlow,
 )
-from keboola_mcp_server.tools.workspace import ProjectManager
 
 LOG = logging.getLogger(__name__)
 
@@ -115,7 +114,6 @@ async def create_flow(
     validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
-    project_manager = ProjectManager.from_state(ctx.session.state)
 
     LOG.info(f'Creating new flow: {name}')
 
@@ -124,7 +122,7 @@ async def create_flow(
     )
 
     flow_id = str(new_raw_configuration.get('id', ''))
-    project_id = await project_manager.get_project_id()
+    project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url.split('/v2')[0]
     flow_link = get_flow_url(base_url=base_url, project_id=project_id, flow_id=flow_id)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'link': flow_link})
@@ -175,7 +173,7 @@ async def update_flow(
     validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
-    project_manager = ProjectManager.from_state(ctx.session.state)
+
     LOG.info(f'Updating flow configuration: {configuration_id}')
 
     updated_raw_configuration = await client.storage_client.flow_update(
@@ -187,7 +185,7 @@ async def update_flow(
     )
 
     flow_id = str(updated_raw_configuration.get('id', ''))  # Could this just be configuration_id instead?
-    project_id = await project_manager.get_project_id()
+    project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url.split('/v2')[0]
     flow_link = get_flow_url(base_url=base_url, project_id=project_id, flow_id=flow_id)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'link': flow_link})

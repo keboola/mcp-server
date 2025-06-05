@@ -420,24 +420,3 @@ class WorkspaceManager:
     async def get_sql_dialect(self) -> str:
         workspace = await self._get_workspace()
         return workspace.get_sql_dialect()
-
-
-class ProjectManager:
-    STATE_KEY = 'project_manager'
-
-    @classmethod
-    def from_state(cls, state: Mapping[str, Any]) -> 'ProjectManager':
-        instance = state[cls.STATE_KEY]
-        assert isinstance(instance, ProjectManager), f'Expected ProjectManager, got: {instance}'
-        return instance
-
-    def __init__(self, client: KeboolaClient):
-        self._project_id = None
-        self.client = client
-
-    async def get_project_id(self) -> str:
-        if self._project_id is None:
-            # This should probably be handled for exceptions somehow - unclear how at this time
-            project_data = await self.client.storage_client.verify_token()
-            self._project_id = project_data.get('owner', {}).get('id')
-        return str(self._project_id)
