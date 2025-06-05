@@ -1,8 +1,9 @@
 import logging
+import math
 import secrets
 import time
 from http.client import HTTPException
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urljoin
 
 import jwt
@@ -45,6 +46,7 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
 
 class _ExtendedAuthorizationCode(AuthorizationCode):
     oauth_access_token: AccessToken
+    oauth_refresh_token: RefreshToken
 
 
 class ProxyAccessToken(AccessToken):
@@ -54,9 +56,11 @@ class ProxyAccessToken(AccessToken):
     sapi_token: str
 
 
-class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
+class ProxyRefreshToken(RefreshToken):
+    delegate: RefreshToken
 
-    MCP_SERVER_SCOPE: str = 'mcp'
+
+class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
     def __init__(
             self, *,
@@ -187,20 +191,9 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
                 LOG.error(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
                 raise HTTPException(400, data.get('error_description', data['error']))
 
-        expires_in = int(data['expires_in'])  # seconds
-        if expires_in <= 0:
-            LOG.error(f'[handle_oauth_callback] Received already expired token: data={data}')
-            raise HTTPException(400, 'Received already expired token.')
-
         redirect_uri = cast(str, state_data['redirect_uri'])
         scopes = cast(list[str], state_data['scopes'])
-        access_token = AccessToken(
-            token=data['access_token'],
-            client_id=self._oauth_client_id,
-            scopes=scopes,
-            # this is slightly different from 'expires_at' kept by the OAuth server
-            expires_at=int(time.time() + expires_in),
-        )
+        access_token, refresh_token = self._read_oauth_tokens(data, scopes)
 
         # Create MCP authorization code
         # This is deserialized into _ExtendedAuthorizationCode instance in load_authorization_code() function.
@@ -213,6 +206,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'scopes': scopes,
             'code_challenge': state_data['code_challenge'],
             'oauth_access_token': access_token.model_dump(),
+            'oauth_refresh_token': refresh_token.model_dump(),
         }
         auth_code_jwt = jwt.encode(auth_code, self._jwt_secret)
 
@@ -248,35 +242,13 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
 
-        # Create new Storage API token for accessing AI and Jobs Queue services that do not support bearer tokens yet.
-        # TODO: Don't use create_mcp_http_client from a private module.
-        async with create_mcp_http_client() as http_client:
-            response = await http_client.post(
-                self._sapi_tokens_url,
-                json={
-                    'description': 'Created by the MCP server.',
-                    'expiresIn': 60 * 60 * 24,  # 1 day
-                    'canReadAllFileUploads': True,
-                    'canManageBuckets': True,
-                },
-                headers={
-                    'Accept': 'application/json',
-                    'Authorization': f'Bearer {authorization_code.oauth_access_token.token}',
-                },
-            )
+        expires_in = max(0, int(authorization_code.oauth_access_token.expires_at - time.time()))  # seconds
+        sapi_token = await self._create_sapi_token(
+            oauth_access_token=authorization_code.oauth_access_token.token,
+            expires_in=self._ceil_to_hour(expires_in * 2)  # twice as much as the access token's time out
+        )
 
-            if response.status_code != 200:
-                LOG.error('[exchange_authorization_code] Failed create Storage API token, '
-                          f'Storage API response: status={response.status_code}, text={response.text}')
-                raise HTTPException(500, 'Failed to create Storage API token: '
-                                         f'status={response.status_code}, text={response.text}')
-
-            data = response.json()
-            LOG.debug(f'[exchange_authorization_code] Storage API response: {data}')
-
-            sapi_token = data['token']
-
-        # Store MCP token
+        # wrap the access_token from the OAuth into our own access_token
         access_token = ProxyAccessToken(
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
@@ -287,14 +259,26 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         )
         access_token_jwt = jwt.encode(access_token.model_dump(), self._jwt_secret)
 
+        # wrap the refresh_token from the OAuth into our own refresh_token
+        refresh_token = ProxyRefreshToken(
+            token=f'mcp_{secrets.token_hex(32)}',
+            client_id=client.client_id,
+            scopes=authorization_code.scopes,
+            expires_at=authorization_code.oauth_refresh_token.expires_at,
+            delegate=authorization_code.oauth_refresh_token,
+        )
+        refresh_token_jwt = jwt.encode(refresh_token.model_dump(), self._jwt_secret)
+
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
+            refresh_token=refresh_token_jwt,
             token_type='bearer',
-            expires_in=max(0, int(access_token.expires_at - time.time())),
-            scope=' '.join(authorization_code.scopes),
+            expires_in=expires_in,
+            scope=' '.join(access_token.scopes),
         )
 
-        LOG.debug(f'[exchange_authorization_code] access_token={access_token}, oauth_token={oauth_token}')
+        LOG.debug(f'[exchange_authorization_code] access_token={access_token}, refresh_token={refresh_token},'
+                  f'oauth_token={oauth_token}')
 
         return oauth_token
 
@@ -306,24 +290,39 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             LOG.debug(f'[load_access_token] Invalid token: {token}', exc_info=True)
             return None
 
-        access_token = ProxyAccessToken.model_validate(access_token_raw)
-        LOG.debug(f'[load_access_token] token={token}, access_token={access_token}')
+        proxy_token = ProxyAccessToken.model_validate(access_token_raw)
+        LOG.debug(f'[load_access_token] token={token}, proxy_token={proxy_token}')
 
         # Check if expired
         now = time.time()
-        if access_token.expires_at and access_token.expires_at < now:
-            LOG.info(f'[load_access_token] Expired token: access_token.expires_at={access_token.expires_at}, '
+        if proxy_token.expires_at and proxy_token.expires_at < now:
+            LOG.info(f'[load_access_token] Expired token: proxy_token.expires_at={proxy_token.expires_at}, '
                      f'now={now}')
             return None
 
-        return access_token
+        return proxy_token
 
     async def load_refresh_token(
             self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
         """Load a refresh token - not supported."""
-        LOG.debug(f'[load_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}')
-        return None
+        try:
+            refresh_token_raw = jwt.decode(refresh_token, self._jwt_secret, algorithms=['HS256'])
+        except jwt.InvalidTokenError:
+            LOG.debug(f'[load_refresh_token] Invalid token: {refresh_token}', exc_info=True)
+            return None
+
+        proxy_token = ProxyRefreshToken.model_validate(refresh_token_raw)
+        LOG.debug(f'[load_refresh_token] token={refresh_token}, proxy_token={proxy_token}')
+
+        # Check if expired
+        now = time.time()
+        if proxy_token.expires_at and proxy_token.expires_at < now:
+            LOG.info(f'[load_refresh_token] Expired token: proxy_token.expires_at={proxy_token.expires_at}, '
+                     f'now={now}')
+            return None
+
+        return proxy_token
 
     async def exchange_refresh_token(
             self,
@@ -334,7 +333,76 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         """Exchange refresh token"""
         LOG.debug(f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, '
                   f'scopes={scopes}')
-        raise NotImplementedError('Not supported')
+
+        assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
+
+        # get new access and refresh tokens from the OAuth server
+        # TODO: Don't use create_mcp_http_client from a private module.
+        async with create_mcp_http_client() as http_client:
+            response = await http_client.post(
+                self._oauth_server_token_url,
+                data={
+                    'client_id': self._oauth_client_id,
+                    'client_secret': self._oauth_client_secret,
+                    'grant_type': 'refresh_token',
+                    'refresh_token': refresh_token.delegate.token,
+                },
+                headers={'Accept': 'application/json'},
+            )
+
+            if response.status_code != 200:
+                LOG.exception('[exchange_refresh_token] Failed to refresh token, '
+                              f'OAuth server response: status={response.status_code}, text={response.text}')
+                raise HTTPException(400, 'Failed to refresh token: '
+                                         f'status={response.status_code}, text={response.text}')
+
+            data = response.json()
+            LOG.debug(f'[exchange_refresh_token] OAuth server response: {data}')
+
+            if 'error' in data:
+                LOG.exception(f'[exchange_refresh_token] Error when refreshing token: data={data}')
+                raise HTTPException(400, data.get('error_description', data['error']))
+
+        oauth_access_token, oauth_refresh_token = self._read_oauth_tokens(data, scopes or refresh_token.scopes)
+        expires_in = max(0, int(oauth_access_token.expires_at - time.time()))  # seconds
+        sapi_token = await self._create_sapi_token(
+            oauth_access_token=oauth_access_token.token,
+            expires_in=self._ceil_to_hour(expires_in * 2)  # twice as much as the access token's time out
+        )
+
+        # wrap the access_token from the OAuth into our own access_token
+        access_token = ProxyAccessToken(
+            token=f'mcp_{secrets.token_hex(32)}',
+            client_id=client.client_id,
+            scopes=oauth_access_token.scopes,
+            expires_at=oauth_access_token.expires_at,
+            delegate=oauth_access_token,
+            sapi_token=sapi_token
+        )
+        access_token_jwt = jwt.encode(access_token.model_dump(), self._jwt_secret)
+
+        # wrap the refresh_token from the OAuth into our own refresh_token
+        refresh_token = ProxyRefreshToken(
+            token=f'mcp_{secrets.token_hex(32)}',
+            client_id=client.client_id,
+            scopes=oauth_refresh_token.scopes,
+            expires_at=oauth_refresh_token.expires_at,
+            delegate=oauth_refresh_token,
+        )
+        refresh_token_jwt = jwt.encode(refresh_token.model_dump(), self._jwt_secret)
+
+        oauth_token = OAuthToken(
+            access_token=access_token_jwt,
+            refresh_token=refresh_token_jwt,
+            token_type='bearer',
+            expires_in=max(0, int(access_token.expires_at - time.time())),
+            scope=' '.join(access_token.scopes),
+        )
+
+        LOG.debug(f'[exchange_refresh_token] access_token={access_token}, refresh_token={refresh_token}, '
+                  f'oauth_token={oauth_token}')
+
+        return oauth_token
 
     async def revoke_token(
             self, token: str, token_type_hint: str | None = None
@@ -342,3 +410,64 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         """Revoke a token."""
         LOG.debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
         # This is no-op as we don't store the tokens.
+
+    def _read_oauth_tokens(self, data: dict[str, Any], scopes: list[str]) -> tuple[AccessToken, RefreshToken]:
+        expires_in = int(data['expires_in'])  # seconds
+        if expires_in <= 0:
+            LOG.exception(f'[_read_oauth_tokens] Received already expired token: data={data}')
+            raise HTTPException(400, 'Received already expired token.')
+
+        current_time = int(time.time())
+
+        # Store access token - we'll map the MCP token to this later
+        access_token = AccessToken(
+            token=data['access_token'],
+            client_id=self._oauth_client_id,
+            scopes=scopes,
+            # this is slightly different from 'expires_at' kept by the OAuth server
+            expires_at=current_time + expires_in,
+        )
+        refresh_token = RefreshToken(
+            token=data['refresh_token'],
+            client_id=self._oauth_client_id,
+            scopes=scopes,
+            # this is slightly different from 'expires_at' kept by the OAuth server
+            expires_at=current_time + expires_in,
+        )
+
+        return access_token, refresh_token
+
+    async def _create_sapi_token(self, oauth_access_token: str, expires_in: int) -> str:
+        """
+        Creates new Storage API token for accessing AI and Jobs Queue services that do not support bearer tokens yet.
+        """
+        # TODO: Don't use create_mcp_http_client from a private module.
+        async with create_mcp_http_client() as http_client:
+            response = await http_client.post(
+                self._sapi_tokens_url,
+                json={
+                    'description': 'Created by the MCP server.',
+                    'expiresIn': expires_in,
+                    'canReadAllFileUploads': True,
+                    'canManageBuckets': True,
+                },
+                headers={
+                    'Accept': 'application/json',
+                    'Authorization': f'Bearer {oauth_access_token}',
+                },
+            )
+
+            if response.status_code != 200:
+                LOG.error('[_create_sapi_token] Failed create Storage API token, '
+                          f'Storage API response: status={response.status_code}, text={response.text}')
+                raise HTTPException(500, 'Failed to create Storage API token: '
+                                         f'status={response.status_code}, text={response.text}')
+
+            data = response.json()
+            LOG.debug(f'[_create_sapi_token] Storage API response: {data}')
+
+            return data['token']
+
+    @staticmethod
+    def _ceil_to_hour(seconds: int) -> int:
+        return math.ceil(seconds / 3600) * 3600
