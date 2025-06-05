@@ -689,12 +689,12 @@ class AsyncStorageClient(KeboolaServiceClient):
 
     async def project_id(self) -> str:
         """
-        Checks the token privileges and returns information about the project to which the token belongs.
+        Retrieves the project id.
 
-        :return: Token and project information
+        :return: Project id.
         """
         raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
-        return raw_data['owner']['id']
+        return str(raw_data['owner']['id'])
 
 
 class JobsQueueClient(KeboolaServiceClient):
