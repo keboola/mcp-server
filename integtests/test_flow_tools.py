@@ -2,6 +2,7 @@ import pytest
 from fastmcp import Context
 
 from integtests.conftest import ConfigDef
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.flow import (
     FlowToolResponse,
     create_flow,
@@ -9,7 +10,6 @@ from keboola_mcp_server.tools.flow import (
     retrieve_flows,
     update_flow,
 )
-from keboola_mcp_server.client import KeboolaClient
 
 
 @pytest.mark.asyncio

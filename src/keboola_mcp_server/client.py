@@ -627,7 +627,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             description=description,
             configuration=flow_configuration,
         )
-    
+
     async def flow_delete(self, configuration_id: str, skip_trash: bool = False) -> None:
         """
         Deletes a flow configuration.
