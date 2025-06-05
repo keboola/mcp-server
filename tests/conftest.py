@@ -49,8 +49,7 @@ def empty_context(mocker) -> Context:
 
 @pytest.fixture
 def mcp_context_client(
-    keboola_client: KeboolaClient, workspace_manager: WorkspaceManager,
-    empty_context: Context
+    keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, empty_context: Context
 ) -> Context:
     """Fills the empty_context's state with the `KeboolaClient` and `WorkspaceManager` mocks."""
     client_context = empty_context
