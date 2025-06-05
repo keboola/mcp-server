@@ -20,7 +20,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationResponseBase,
     ReducedComponent,
 )
-from keboola_mcp_server.tools.components.tools import get_component_configuration_examples
+from keboola_mcp_server.tools.components.tools import Storage, get_component_configuration_examples
 from keboola_mcp_server.tools.components.utils import TransformationConfiguration, _clean_bucket_name
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
@@ -406,7 +406,7 @@ async def test_update_transformation_configuration(
         mock_configuration['id'],
         new_change_description,
         parameters=TransformationConfiguration.Parameters.model_validate(new_config),
-        storage={},
+        storage=Storage(storage={}),
         updated_description=str(),
         is_disabled=False,
     )
