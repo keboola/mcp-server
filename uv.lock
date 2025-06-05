@@ -41,18 +41,6 @@ wheels = [
 ]
 
 [[package]]
-name = "authlib"
-version = "1.6.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cryptography" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/9d/b1e08d36899c12c8b894a44a5583ee157789f26fc4b176f8e4b6217b56e1/authlib-1.6.0.tar.gz", hash = "sha256:4367d32031b7af175ad3a323d571dc7257b7099d55978087ceae4a0d88cd3210", size = 158371, upload-time = "2025-05-23T00:21:45.011Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/29/587c189bbab1ccc8c86a03a5d0e13873df916380ef1be461ebe6acebf48d/authlib-1.6.0-py2.py3-none-any.whl", hash = "sha256:91685589498f79e8655e8a8947431ad6288831d643f11c55c2143ffcc738048d", size = 239981, upload-time = "2025-05-23T00:21:43.075Z" },
-]
-
-[[package]]
 name = "azure-core"
 version = "1.34.0"
 source = { registry = "https://pypi.org/simple" }
@@ -448,10 +436,9 @@ wheels = [
 
 [[package]]
 name = "fastmcp"
-version = "2.6.0"
+version = "2.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "authlib" },
     { name = "exceptiongroup" },
     { name = "httpx" },
     { name = "mcp" },
@@ -461,9 +448,9 @@ dependencies = [
     { name = "typer" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/54/91/4810d01fc71e48d30e9cf832fb9222e939ff7d9cdcd3d93aaba00d51ba12/fastmcp-2.6.0.tar.gz", hash = "sha256:15ca75ab9b95c3683ada82d7403c82e8fbae74bbded44776990dd192454a8c38", size = 1584748, upload-time = "2025-06-02T22:21:49.432Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/cc/d2c0e63d2b34681bef4e077611dae662ea722add13a83dc4ae08b6e0fd23/fastmcp-2.5.2.tar.gz", hash = "sha256:761c92fb54f561136f631d7d98b4920152978f6f0a66a4cef689a7983fd05c8b", size = 1039189, upload-time = "2025-05-29T18:11:33.088Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/22/35/dadb94a8fafde637929ef876586857282ce5cc18ff1714a84dffe07cf220/fastmcp-2.6.0-py3-none-any.whl", hash = "sha256:67124db82b7eeb7612e4a6858d051a3c03beb9c4375e4a4011798bce37c841f8", size = 125646, upload-time = "2025-06-02T22:21:47.625Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/ac/caa94ff747e2136829ac2fea33b9583e086ca5431451751bcb2f773e087f/fastmcp-2.5.2-py3-none-any.whl", hash = "sha256:4ea46ef35c1308b369eff7c8a10e4c9639bed046fd646449c1227ac7c3856d83", size = 107502, upload-time = "2025-05-29T18:11:31.577Z" },
 ]
 
 [[package]]
@@ -926,7 +913,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "0.30.2"
+version = "0.32.2"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
@@ -967,7 +954,7 @@ tests = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'codestyle'", specifier = "~=25.1" },
-    { name = "fastmcp", specifier = "~=2.2" },
+    { name = "fastmcp", specifier = "~=2.5,<2.6" },
     { name = "flake8", marker = "extra == 'codestyle'", specifier = "~=7.2" },
     { name = "flake8-bugbear", marker = "extra == 'codestyle'", specifier = "~=24.12" },
     { name = "flake8-colors", marker = "extra == 'codestyle'", specifier = "~=0.1" },
