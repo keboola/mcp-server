@@ -379,6 +379,7 @@ class TestFlowTools:
         assert result.description == 'Test flow description'
         assert result.timestamp == parser.isoparse('2025-05-25T06:33:41+0200')
         assert result.success is True
+        assert len(result.links) == 3
 
         keboola_client.storage_client.flow_create.assert_called_once()
         call_args = keboola_client.storage_client.flow_create.call_args
@@ -507,6 +508,7 @@ class TestFlowTools:
         assert result.description == 'Updated description'
         assert result.timestamp == parser.isoparse('2025-05-25T06:33:41+0200')
         assert result.success is True
+        assert len(result.links) == 3
 
         keboola_client.storage_client.flow_update.assert_called_once()
         call_args = keboola_client.storage_client.flow_update.call_args

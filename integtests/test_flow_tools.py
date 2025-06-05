@@ -59,6 +59,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert isinstance(created, FlowToolResponse)
         assert created.description == flow_description
         assert created.success is True
+        assert len(created.links) == 3
 
         flows = await retrieve_flows(mcp_context)
         assert any(f.name == flow_name for f in flows)
@@ -122,6 +123,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         assert created.flow_id == updated.flow_id
         assert updated.description == new_description
         assert updated.success is True
+        assert len(updated.links) == 3
     finally:
         client = KeboolaClient.from_state(mcp_context.session.state)
         await client.storage_client.flow_delete(flow_id, skip_trash=True)
