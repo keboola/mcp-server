@@ -432,12 +432,12 @@ class ProjectManager:
         return instance
 
     def __init__(self, client: KeboolaClient):
-        self.project = None
+        self._project_id = None
         self.client = client
 
     async def get_project_id(self) -> str:
-        if self.project is None:
+        if self._project_id is None:
             # This should probably be handled for exceptions somehow - unclear how at this time
             project_data = await self.client.storage_client.verify_token()
-            self.project = project_data.get('owner', {}).get('id')
-        return str(self.project)
+            self._project_id = project_data.get('owner', {}).get('id')
+        return str(self._project_id)
