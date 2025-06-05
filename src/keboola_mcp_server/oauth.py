@@ -27,6 +27,7 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
         # So, instead we require the clients to send their redirect URI in the authorization request,
         # and we just use that.
         if redirect_uri is not None:
+            LOG.debug(f'[validate_redirect_uri] redirect_uri={redirect_uri}]')
             return redirect_uri
         else:
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
