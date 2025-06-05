@@ -631,10 +631,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param config_id: The ID of the flow configuration to retrieve
         :return: Flow configuration details
         """
-        return await self.configuration_detail(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=config_id
-        )
+        return await self.configuration_detail(component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=config_id)
 
     async def flow_list(self) -> list[JsonDict]:
         """
@@ -689,6 +686,15 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Token and project information
         """
         return cast(JsonDict, await self.get(endpoint='tokens/verify'))
+
+    async def project_id(self) -> str:
+        """
+        Checks the token privileges and returns information about the project to which the token belongs.
+
+        :return: Token and project information
+        """
+        raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
+        return raw_data['owner']['id']
 
 
 class JobsQueueClient(KeboolaServiceClient):
