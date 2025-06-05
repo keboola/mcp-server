@@ -287,8 +287,7 @@ def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> W
 
 @pytest.fixture
 def mcp_context(
-    mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager,
-    keboola_project: ProjectDef
+    mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, keboola_project: ProjectDef
 ) -> Context:
     """
     MCP context containing the Keboola client and workspace manager.
