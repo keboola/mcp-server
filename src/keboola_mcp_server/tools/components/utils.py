@@ -353,7 +353,7 @@ def _validate_storage_necessity(
     """
     Validates the storage necessity for the component.
     """
-    if not storage or not storage.get('storage', {}):
+    if not storage or storage.get('storage') == {}:
         # necessary storage for writer and transformation components
         if component.component_type in ['writer', 'transformation']:
             raise ValueError(

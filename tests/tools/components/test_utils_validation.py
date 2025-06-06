@@ -34,9 +34,11 @@ def test_validate_storage_configuration_output(
     [
         ('writer', {}, False),
         ('transformation', {}, False),
+        ('transformation', {'storage': {}}, False),
         ('extractor', {}, True),
         ('application', {}, True),
-        ('storage', {'input': {'tables': []}, 'output': {'tables': []}}, True),
+        ('transformation', {'input': {'tables': []}, 'output': {'tables': []}}, True),
+        ('transformation', {'storage': {'input': {'tables': []}, 'output': {'tables': []}}}, True),
     ],
 )
 def test_validate_storage_necessity(
