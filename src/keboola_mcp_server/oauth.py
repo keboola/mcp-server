@@ -115,15 +115,18 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         }
         state_jwt = jwt.encode(state, self._jwt_secret)
 
+        scopes = [self._oauth_scope]
+        if client.scope:
+            scopes.append(client.scope)
+
         # create the authorization URL
         params = {
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
+            'scope': ' '.join(scopes),
             'state': state_jwt
         }
-        if client.scope:
-            params['scope'] = client.scope
 
         auth_url = f'{self._oauth_server_auth_url}?{urlencode(params)}'
 
@@ -172,8 +175,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             )
 
             if response.status_code != 200:
-                LOG.exception('[handle_oauth_callback] Failed to exchange code for token, '
-                              f'OAuth server response: status={response.status_code}, text={response.text}')
+                LOG.error('[handle_oauth_callback] Failed to exchange code for token, '
+                          f'OAuth server response: status={response.status_code}, text={response.text}')
                 raise HTTPException(400, 'Failed to exchange code for token: '
                                          f'status={response.status_code}, text={response.text}')
 
@@ -181,19 +184,25 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             LOG.debug(f'[handle_oauth_callback] OAuth server response: {data}')
 
             if 'error' in data:
-                LOG.exception(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
+                LOG.error(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
                 raise HTTPException(400, data.get('error_description', data['error']))
 
         expires_in = int(data['expires_in'])  # seconds
         if expires_in <= 0:
-            LOG.exception(f'[handle_oauth_callback] Received already expired token: data={data}')
+            LOG.error(f'[handle_oauth_callback] Received already expired token: data={data}')
             raise HTTPException(400, 'Received already expired token.')
 
-        # Store access token - we'll map the MCP token to this later
+        try:
+            rich_client_id = jwt.decode(state_data['client_id'], self._jwt_secret, algorithms=['HS256'])
+        except jwt.InvalidTokenError:
+            LOG.error(f'[handle_oauth_callback] Invalid client_id: {state_data["client_id"]}', exc_info=True)
+            raise HTTPException(400, 'Invalid client ID.')
+
+        scope = rich_client_id['scope']
         access_token = AccessToken(
             token=data['access_token'],
             client_id=self._oauth_client_id,
-            scopes=[self._oauth_scope],
+            scopes=[scope] if scope else [],
             # this is slightly different from 'expires_at' kept by the OAuth server
             expires_at=int(time.time() + expires_in),
         )
@@ -205,7 +214,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'redirect_uri': state_data['redirect_uri'],
             'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == 'True'),
             'expires_at': int(time.time() + 5 * 60),  # 5 minutes from now
-            'scopes': [self.MCP_SERVER_SCOPE],
+            'scopes': [scope] if scope else [],
             'code_challenge': state_data['code_challenge'],
             'oauth_access_token': access_token.model_dump(),
         }
