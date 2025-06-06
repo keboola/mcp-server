@@ -15,13 +15,13 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, AnyUrl
 
 LOG = logging.getLogger(__name__)
 
 
 class _OAuthClientInformationFull(OAuthClientInformationFull):
-    def validate_redirect_uri(self, redirect_uri: AnyHttpUrl | None) -> AnyHttpUrl:
+    def validate_redirect_uri(self, redirect_uri: AnyUrl | None) -> AnyUrl:
         # Ideally, this should verify the redirect_uri against the URI registered by the client.
         # That, however, would require a persistent registry of clients.
         # So, instead we require the clients to send their redirect URI in the authorization request,
@@ -217,7 +217,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         LOG.debug(f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
                   f'auth_code={auth_code}')
         return _ExtendedAuthorizationCode.model_validate(
-            auth_code | {'redirect_uri': AnyHttpUrl(auth_code['redirect_uri'])}
+            auth_code | {'redirect_uri': AnyUrl(auth_code['redirect_uri'])}
         )
 
     async def exchange_authorization_code(
