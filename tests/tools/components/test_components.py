@@ -270,7 +270,6 @@ async def test_create_transformation_configuration(
     # Set up the mock for ai_service_client
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
-    keboola_client.storage_client.get = mocker.AsyncMock(return_value={'components': [component]})
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration['name']
@@ -377,7 +376,7 @@ async def test_update_transformation_configuration(
     mock_configuration['configuration'] = new_config
     mock_configuration['changeDescription'] = new_change_description
     mock_component['id'] = expected_component_id
-    keboola_client.storage_client.get = mocker.AsyncMock(return_value={'components': []})
+
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=mock_configuration)
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
