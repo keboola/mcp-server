@@ -404,13 +404,7 @@ def get_flows_url(base_url: str, project_id: str) -> str:
 
 
 def get_flow_urls(base_url: str, project_id: str, flow_id: str | int, flow_name: str) -> list[FlowURL]:
-    flow_url = FlowURL.model_validate(
-        {'type': 'ui-detail', 'title': f'Flow: {flow_name}', 'url': get_flow_url(base_url, project_id, flow_id)}
-    )
-    flows_url = FlowURL.model_validate(
-        {'type': 'ui-dashboard', 'title': 'Flows in the project', 'url': get_flows_url(base_url, project_id)}
-    )
-    documentation_url = FlowURL.model_validate(
-        {'type': 'docs', 'title': 'Documentation for Keboola Flows', 'url': FLOW_DOCUMENTATION_URL}
-    )
+    flow_url = FlowURL(type='ui-detail', title=f'Flow: {flow_name}', url=get_flow_url(base_url, project_id, flow_id))
+    flows_url = FlowURL(type='ui-dashboard', title='Flows in the project', url=get_flows_url(base_url, project_id))
+    documentation_url = FlowURL(type='docs', title='Documentation for Keboola Flows', url=FLOW_DOCUMENTATION_URL)
     return [flow_url, flows_url, documentation_url]
