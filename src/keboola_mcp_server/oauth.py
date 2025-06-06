@@ -74,7 +74,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             # and return the registered redirect URI.
             redirect_uris=[AnyHttpUrl('http://foo')],
             client_id=client_id,
-            scope=self.MCP_SERVER_SCOPE
+            # scope=self.MCP_SERVER_SCOPE
         )
         LOG.debug(f'Client loaded: client_id={client_id}')
         return client
@@ -106,7 +106,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
-            'scope': self._oauth_scope,
+            # 'scope': self._oauth_scope,
             'state': state_jwt
         }
         auth_url = f'{self._oauth_server_auth_url}?{urlencode(params)}'
