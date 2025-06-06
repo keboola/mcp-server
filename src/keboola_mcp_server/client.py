@@ -325,7 +325,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
     @property
     def base_api_url(self) -> str:
-        return self.raw_client.base_api_url
+        return self.raw_client.base_api_url.split('/v2')[0]
 
     @classmethod
     def create(
