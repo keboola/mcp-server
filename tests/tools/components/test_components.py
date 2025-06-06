@@ -150,7 +150,6 @@ async def test_retrieve_components_configurations_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    mock_branch_id: str,
     assert_retrieve_components: Callable[
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
@@ -160,7 +159,7 @@ async def test_retrieve_components_configurations_from_ids(
     keboola_client = KeboolaClient.from_state(context.session.state)
 
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=mock_configurations)
-    keboola_client.storage_client.get = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
 
     result = await retrieve_components_configurations(context, component_ids=[mock_component['id']])
 
@@ -168,9 +167,7 @@ async def test_retrieve_components_configurations_from_ids(
 
     # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
-    keboola_client.storage_client.get.assert_called_once_with(
-        endpoint=f'branch/{mock_branch_id}/components/{mock_component["id"]}'
-    )
+    keboola_client.storage_client.component_detail.assert_called_once_with(component_id=mock_component['id'])
 
 
 @pytest.mark.asyncio
@@ -179,7 +176,6 @@ async def test_retrieve_transformations_configurations_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    mock_branch_id: str,
     assert_retrieve_components: Callable[
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
@@ -189,16 +185,14 @@ async def test_retrieve_transformations_configurations_from_ids(
     keboola_client = KeboolaClient.from_state(context.session.state)
 
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=mock_configurations)
-    keboola_client.storage_client.get = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
 
     result = await retrieve_transformations_configurations(context, transformation_ids=[mock_component['id']])
 
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
-    keboola_client.storage_client.get.assert_called_once_with(
-        endpoint=f'branch/{mock_branch_id}/components/{mock_component["id"]}'
-    )
+    keboola_client.storage_client.component_detail.assert_called_once_with(component_id=mock_component['id'])
 
 
 @pytest.mark.asyncio
