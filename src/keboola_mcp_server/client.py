@@ -637,10 +637,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             (Technically it means the API endpoint is called twice.)
         :raises ValueError: If the configuration_id is invalid.
         """
-        endpoint = f'branch/{self.branch_id}/components/{ORCHESTRATOR_COMPONENT_ID}/configs/{configuration_id}'
-        await self.delete(endpoint=endpoint)
-        if skip_trash:
-            await self.delete(endpoint=endpoint)
+        await self.configuration_delete(ORCHESTRATOR_COMPONENT_ID, configuration_id, skip_trash)
 
     async def flow_detail(self, config_id: str) -> JsonDict:
         """
