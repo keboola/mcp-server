@@ -66,7 +66,7 @@ class FlowToolResponse(BaseModel):
         validation_alias=AliasChoices('timestamp', 'created'),
     )
     success: bool = Field(default=True, description='Indicates if the update succeeded.')
-    links: list[FlowURL] = Field(..., description='The urls relevant to the tool call.')
+    links: list[FlowURL] = Field(..., description='The URLs relevant to the tool call.')
 
 
 @tool_errors()
