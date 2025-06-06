@@ -100,7 +100,7 @@ async def create_flow(
     - Each task and phase must include at least: `id` and `name`.
     - Each task must reference an existing component configuration in the project.
     - Items in the `dependsOn` phase field reference ids of other phases.
-    - Links contained in the resposne should ALWAYS be presented to the user
+    - Links contained in the response should ALWAYS be presented to the user
 
     USAGE:
     Use this tool to automate multi-step data workflows. This is ideal for:
@@ -170,7 +170,7 @@ async def update_flow(
     - Each task must reference an existing component configuration in the project.
     - Items in the `dependsOn` phase field reference ids of other phases.
     - The flow specified by `configuration_id` must already exist in the project.
-    - Links contained in the resposne should ALWAYS be presented to the user
+    - Links contained in the response should ALWAYS be presented to the user
 
     USAGE:
     Use this tool to update an existing flow.
