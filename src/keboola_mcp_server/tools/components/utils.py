@@ -325,15 +325,18 @@ ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
 
 def validate_storage_configuration(
     storage: Optional[JsonDict],
+    component: Component,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
     """
-    Validates the storage configuration and extracts the storage key contents.
+    Validates the storage configuration and checks if it is necessary for the component.
     :param storage: The storage configuration to validate received from the agent.
+    :param component: The component for which the storage is provided
     :param initial_message: The initial message to include in the error message.
     :return: The contents of the 'storage' key from the validated configuration,
               or an empty dict if no storage is provided.
     """
+    _validate_storage_necessity(storage=storage, component=component)
     if not storage or storage is None or storage.get('storage', {}) is None:
         LOG.warning('No storage configuration provided, skipping validation.')
         return {}
@@ -343,45 +346,57 @@ def validate_storage_configuration(
     return cast(JsonDict, normalized_storage['storage'])
 
 
-async def validate_root_parameters_configuration(
-    client: KeboolaClient,
+def _validate_storage_necessity(
+    storage: Optional[JsonDict],
+    component: Component,
+):
+    """
+    Validates the storage necessity for the component.
+    """
+    if not storage or not storage.get('storage', {}):
+        # necessary storage for writer and transformation components
+        if component.component_type in ['writer', 'transformation']:
+            raise ValueError(
+                f'Storage configuration is empty, but it is required for component {component.component_id} of type '
+                f'{component.component_type}.'
+            )
+
+
+def validate_root_parameters_configuration(
     parameters: JsonDict,
-    component_id: str,
+    component: Component,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
     """
     Utility function to validate the root parameters configuration.
-    :param client: The Keboola client
     :param parameters: The parameters of the configuration to validate
-    :param component_id: The ID of the component for which the configuration is provided
+    :param component: The component for which the configuration is provided
     :param initial_message: The initial message to include in the error message
     :return: The contents of the 'parameters' key from the validated configuration
     """
     initial_message = (initial_message or '') + '\n'
-    initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
-    component = await _get_component(client=client, component_id=component_id)
-    return _validate_parameters_configuration(parameters, component.configuration_schema, component_id, initial_message)
+    initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component.component_id)
+    return _validate_parameters_configuration(
+        parameters, component.configuration_schema, component.component_id, initial_message
+    )
 
 
-async def validate_row_parameters_configuration(
-    client: KeboolaClient,
+def validate_row_parameters_configuration(
     parameters: JsonDict,
-    component_id: str,
+    component: Component,
     initial_message: Optional[str] = None,
 ) -> JsonDict:
     """
     Utility function to validate the row parameters configuration.
-    :param client: The Keboola client
     :param parameters: The parameters of the configuration to validate
-    :param component_id: The ID of the component for which the configuration is provided
+    :param component: The component for which the configuration is provided
     :param initial_message: The initial message to include in the error message
     :return: The contents of the 'parameters' key from the validated configuration
     """
     initial_message = (initial_message or '') + '\n'
-    initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
-    component = await _get_component(client=client, component_id=component_id)
+    initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component.component_id)
     return _validate_parameters_configuration(
-        parameters, component.configuration_row_schema, component_id, initial_message
+        parameters, component.configuration_row_schema, component.component_id, initial_message
     )
 
 
