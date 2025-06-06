@@ -357,8 +357,8 @@ def _validate_storage_necessity(
         # necessary storage for writer and transformation components
         if component.component_type in ['writer', 'transformation']:
             raise ValueError(
-                f'Storage configuration is empty, but it is required for component {component.component_id} of type '
-                f'{component.component_type}.'
+                f'Storage configuration cannot be empty for component {component.component_id} of type '
+                f'{component.component_type}. Please provide the storage configuration within the tool call.'
             )
 
 

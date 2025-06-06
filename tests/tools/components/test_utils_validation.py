@@ -49,7 +49,7 @@ def test_validate_storage_necessity(
     if is_valid:
         utils._validate_storage_necessity(storage=storage, component=component)
     else:
-        with pytest.raises(ValueError, match='Storage configuration is empty') as exception:
+        with pytest.raises(ValueError, match='Storage configuration cannot be empty') as exception:
             utils._validate_storage_necessity(storage=storage, component=component)
         assert f'{component.component_id}' in str(exception)
         assert f'{component.component_type}' in str(exception)
