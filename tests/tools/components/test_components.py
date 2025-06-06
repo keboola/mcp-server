@@ -90,7 +90,6 @@ async def test_retrieve_components_configurations_by_types(
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
-    mock_branch_id: str,
     assert_retrieve_components: Callable[
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
@@ -109,12 +108,11 @@ async def test_retrieve_components_configurations_by_types(
     assert_retrieve_components(result, mock_components, mock_configurations)
 
     # Verify the calls were made with the correct arguments
-    # TODO: use `assert_has_calls`
-    calls = keboola_client.storage_client.component_list.call_args_list
-    assert len(calls) == 3
-    assert calls[0].kwargs == {'component_type': 'application', 'include': ['configuration']}
-    assert calls[1].kwargs == {'component_type': 'extractor', 'include': ['configuration']}
-    assert calls[2].kwargs == {'component_type': 'writer', 'include': ['configuration']}
+    keboola_client.storage_client.component_list.assert_has_calls([
+        mocker.call(component_type='application', include=['configuration']),
+        mocker.call(component_type='extractor', include=['configuration']),
+        mocker.call(component_type='writer', include=['configuration']),
+    ])
 
 
 @pytest.mark.asyncio
@@ -123,7 +121,6 @@ async def test_retrieve_transformations_configurations(
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
-    mock_branch_id: str,
     assert_retrieve_components: Callable[
         [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
     ],
@@ -142,10 +139,9 @@ async def test_retrieve_transformations_configurations(
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
     # Verify the calls were made with the correct arguments
-    # TODO: use `assert_has_calls`
-    calls = keboola_client.storage_client.component_list.call_args_list
-    assert len(calls) == 1
-    assert calls[0].kwargs == {'component_type': 'transformation', 'include': ['configuration']}
+    keboola_client.storage_client.component_list.assert_called_once_with(
+        component_type='transformation', include=['configuration']
+    )
 
 
 @pytest.mark.asyncio
@@ -172,10 +168,9 @@ async def test_retrieve_components_configurations_from_ids(
 
     # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
-    calls = keboola_client.storage_client.get.call_args_list
-    # TODO: use `assert_has_calls`
-    assert len(calls) == 1
-    assert calls[0].kwargs['endpoint'] == f'branch/{mock_branch_id}/components/{mock_component["id"]}'
+    keboola_client.storage_client.get.assert_called_once_with(
+        endpoint=f'branch/{mock_branch_id}/components/{mock_component["id"]}'
+    )
 
 
 @pytest.mark.asyncio
@@ -213,7 +208,6 @@ async def test_get_component_configuration(
     mock_configuration: dict[str, Any],
     mock_component: dict[str, Any],
     mock_metadata: list[dict[str, Any]],
-    mock_branch_id: str,
 ):
     """Test get_component_configuration tool."""
     context = mcp_context_components_configs
@@ -243,13 +237,10 @@ async def test_get_component_configuration(
     assert result.component.component_name == mock_component['name']
 
     # Verify the calls were made with the correct arguments
-    calls = keboola_client.storage_client.configuration_detail.call_args_list
-    # TODO: use `assert_has_calls`
-    assert len(calls) == 1
-    assert calls[0].kwargs == {
-        'component_id': mock_component['id'],
-        'configuration_id': mock_configuration['id']
-    }
+    keboola_client.storage_client.configuration_detail.assert_called_once_with(
+        component_id=mock_component['id'],
+        configuration_id=mock_configuration['id']
+    )
 
 
 @pytest.mark.parametrize(
@@ -268,7 +259,6 @@ async def test_create_transformation_configuration(
     sql_dialect: str,
     expected_component_id: str,
     expected_configuration_id: str,
-    mock_branch_id: str,
 ):
     """Test create_transformation_configuration tool."""
     context = mcp_context_components_configs
