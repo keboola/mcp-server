@@ -69,19 +69,33 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        try:
+            rich_client_id = jwt.decode(client_id, self._jwt_secret, algorithms=['HS256'])
+        except jwt.InvalidTokenError:
+            LOG.debug(f'[get_client] Invalid client_id: {client_id}', exc_info=True)
+            return None
+
         client = _OAuthClientInformationFull(
             # Use a fake redirect URI. Normally, we would retrieve the client from a persistent registry
             # and return the registered redirect URI.
             redirect_uris=[AnyHttpUrl('http://foo')],
             client_id=client_id,
-            # scope=self.MCP_SERVER_SCOPE
+            scope=rich_client_id['scope'],
         )
-        LOG.debug(f'Client loaded: client_id={client_id}')
+        LOG.debug(f'Client loaded: rich_client_id={rich_client_id}, client_id={client_id}')
         return client
 
     async def register_client(self, client_info: OAuthClientInformationFull):
         # This is a no-op. We don't register clients otherwise we would need a persistent registry.
-        LOG.debug(f'Client registered: client_id={client_info.client_id}')
+        orig_client_id = client_info.client_id
+        rich_client_id = {
+            'orig_client_id': orig_client_id,
+            'scope': client_info.scope,
+        }
+        rich_client_id_jwt = jwt.encode(rich_client_id, self._jwt_secret)
+        client_info.client_id = rich_client_id_jwt
+
+        LOG.debug(f'Client registered: rich_client_id={rich_client_id}, client_id={client_info.client_id}')
 
     async def authorize(
             self, client: OAuthClientInformationFull, params: AuthorizationParams
@@ -106,9 +120,11 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
-            # 'scope': self._oauth_scope,
             'state': state_jwt
         }
+        if client.scope:
+            params['scope'] = client.scope
+
         auth_url = f'{self._oauth_server_auth_url}?{urlencode(params)}'
 
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
