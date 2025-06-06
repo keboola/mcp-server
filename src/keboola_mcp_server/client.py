@@ -323,6 +323,10 @@ class AsyncStorageClient(KeboolaServiceClient):
     def branch_id(self) -> str:
         return self._branch_id
 
+    @property
+    def base_api_url(self) -> str:
+        return self.raw_client.base_api_url.split('/v2')[0]
+
     @classmethod
     def create(
         cls,
@@ -415,7 +419,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_id: The id of the configuration.
         :param skip_trash: If True, the configuration is deleted without moving to the trash.
             (Technically it means the API endpoint is called twice.)
-        :raises ValueError: If the component_id or configuration_id is invalid.
+        :raises httpx.HTTPStatusError: If the (component_id, configuration_id) is not found.
         """
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
         await self.delete(endpoint=endpoint)
@@ -624,6 +628,17 @@ class AsyncStorageClient(KeboolaServiceClient):
             configuration=flow_configuration,
         )
 
+    async def flow_delete(self, configuration_id: str, skip_trash: bool = False) -> None:
+        """
+        Deletes a flow configuration.
+
+        :param configuration_id: The id of the flow configuration.
+        :param skip_trash: If True, the configuration is deleted without moving to the trash.
+            (Technically it means the API endpoint is called twice.)
+        :raises httpx.HTTPStatusError: If the configuration_id is not found.
+        """
+        await self.configuration_delete(ORCHESTRATOR_COMPONENT_ID, configuration_id, skip_trash)
+
     async def flow_detail(self, config_id: str) -> JsonDict:
         """
         Retrieves a specific flow (orchestrator) configuration.
@@ -689,6 +704,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Token and project information
         """
         return cast(JsonDict, await self.get(endpoint='tokens/verify'))
+
+    async def project_id(self) -> str:
+        """
+        Retrieves the project id.
+        :return: Project id.
+        """
+        raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
+        return str(raw_data['owner']['id'])
 
 
 class JobsQueueClient(KeboolaServiceClient):

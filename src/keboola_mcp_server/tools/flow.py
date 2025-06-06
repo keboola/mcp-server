@@ -2,11 +2,12 @@
 
 import json
 import logging
+from datetime import datetime
 from importlib import resources
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Literal, Sequence, cast
 
 from fastmcp import Context, FastMCP
-from pydantic import Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
@@ -24,6 +25,15 @@ LOG = logging.getLogger(__name__)
 
 RESOURCES = 'keboola_mcp_server.resources'
 FLOW_SCHEMA_RESOURCE = 'flow-schema.json'
+FLOW_DOCUMENTATION_URL = 'https://help.keboola.com/flows/'
+
+URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
+
+
+class FlowURL(BaseModel):
+    type: URLType = Field(..., description='The type of the URL.')
+    title: str = Field(..., description='The name of the URL.')
+    url: str = Field(..., description='The URL.')
 
 
 def _load_schema() -> JsonDict:
@@ -47,6 +57,18 @@ def add_flow_tools(mcp: FastMCP) -> None:
     LOG.info('Flow tools initialized.')
 
 
+class FlowToolResponse(BaseModel):
+    flow_id: str = Field(..., description='The id of the flow.', validation_alias=AliasChoices('id', 'flow_id'))
+    description: str = Field(..., description='The description of the Flow.')
+    timestamp: datetime = Field(
+        ...,
+        description='The timestamp of the operation.',
+        validation_alias=AliasChoices('timestamp', 'created'),
+    )
+    success: bool = Field(default=True, description='Indicates if the operation succeeded.')
+    links: list[FlowURL] = Field(..., description='The URLs relevant to the tool call.')
+
+
 @tool_errors()
 @with_session_state()
 async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow.')]:
@@ -64,7 +86,7 @@ async def create_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
-) -> Annotated[FlowConfiguration, Field(description='Created flow configuration.')]:
+) -> Annotated[FlowToolResponse, Field(description='Response object for flow creation.')]:
     """
     Creates a new flow configuration in Keboola.
     A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
@@ -78,6 +100,7 @@ async def create_flow(
     - Each task and phase must include at least: `id` and `name`.
     - Each task must reference an existing component configuration in the project.
     - Items in the `dependsOn` phase field reference ids of other phases.
+    - Links contained in the response should ALWAYS be presented to the user
 
     USAGE:
     Use this tool to automate multi-step data workflows. This is ideal for:
@@ -104,16 +127,22 @@ async def create_flow(
     validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
+
     LOG.info(f'Creating new flow: {name}')
 
     new_raw_configuration = await client.storage_client.flow_create(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
-    flow_response = FlowConfigurationResponse.from_raw_config(new_raw_configuration)
+    flow_id = str(new_raw_configuration['id'])
+    flow_name = new_raw_configuration['name']
+    project_id = await client.storage_client.project_id()
+    base_url = client.storage_client.base_api_url
+    flow_links = get_flow_urls(base_url=base_url, project_id=project_id, flow_id=flow_id, flow_name=flow_name)
+    tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
-    LOG.info(f'Created flow "{name}" with configuration ID "{flow_response.configuration_id}"')
-    return flow_response.configuration
+    LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
+    return tool_response
 
 
 @tool_errors()
@@ -126,7 +155,7 @@ async def update_flow(
     phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')],
     change_description: Annotated[str, Field(description='Description of changes made.')],
-) -> Annotated[FlowConfiguration, Field(description='Updated flow configuration.')]:
+) -> Annotated[FlowToolResponse, Field(description='Response object for flow update.')]:
     """
     Updates an existing flow configuration in Keboola.
     A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
@@ -141,6 +170,7 @@ async def update_flow(
     - Each task must reference an existing component configuration in the project.
     - Items in the `dependsOn` phase field reference ids of other phases.
     - The flow specified by `configuration_id` must already exist in the project.
+    - Links contained in the response should ALWAYS be presented to the user
 
     USAGE:
     Use this tool to update an existing flow.
@@ -158,6 +188,7 @@ async def update_flow(
     validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
+
     LOG.info(f'Updating flow configuration: {configuration_id}')
 
     updated_raw_configuration = await client.storage_client.flow_update(
@@ -168,10 +199,15 @@ async def update_flow(
         flow_configuration=flow_configuration,  # Direct configuration
     )
 
-    updated_flow_response = FlowConfigurationResponse.from_raw_config(updated_raw_configuration)
+    flow_id = str(updated_raw_configuration['id'])
+    flow_name = updated_raw_configuration['name']
+    project_id = await client.storage_client.project_id()
+    base_url = client.storage_client.base_api_url
+    flow_links = get_flow_urls(base_url=base_url, project_id=project_id, flow_id=flow_id, flow_name=flow_name)
+    tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
 
-    LOG.info(f'Updated flow configuration: {configuration_id}')
-    return updated_flow_response.configuration
+    LOG.info(f'Updated flow configuration: {flow_id}')
+    return tool_response
 
 
 @tool_errors()
@@ -357,3 +393,18 @@ def _check_circular_dependencies(phases: list[FlowPhase]) -> None:
             if cycle_path is not None:
                 cycle_str = ' -> '.join(str(pid) for pid in cycle_path)
                 raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
+
+
+def get_flow_url(base_url: str, project_id: str, flow_id: str | int) -> str:
+    return f'{base_url}/admin/projects/{project_id}/flows/{flow_id}'
+
+
+def get_flows_url(base_url: str, project_id: str) -> str:
+    return f'{base_url}/admin/projects/{project_id}/flows'
+
+
+def get_flow_urls(base_url: str, project_id: str, flow_id: str | int, flow_name: str) -> list[FlowURL]:
+    flow_url = FlowURL(type='ui-detail', title=f'Flow: {flow_name}', url=get_flow_url(base_url, project_id, flow_id))
+    flows_url = FlowURL(type='ui-dashboard', title='Flows in the project', url=get_flows_url(base_url, project_id))
+    documentation_url = FlowURL(type='docs', title='Documentation for Keboola Flows', url=FLOW_DOCUMENTATION_URL)
+    return [flow_url, flows_url, documentation_url]

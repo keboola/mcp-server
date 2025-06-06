@@ -3,6 +3,7 @@
 from typing import Any, Dict, List
 
 import pytest
+from dateutil import parser
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
@@ -15,6 +16,7 @@ from keboola_mcp_server.tools.components.model import (
     ReducedFlow,
 )
 from keboola_mcp_server.tools.flow import (
+    FlowToolResponse,
     _check_circular_dependencies,
     _ensure_phase_ids,
     _ensure_task_ids,
@@ -26,6 +28,12 @@ from keboola_mcp_server.tools.flow import (
 )
 
 # --- Fixtures ---
+
+
+@pytest.fixture
+def mock_project_id() -> str:
+    """Mocks a project id."""
+    return '1'
 
 
 @pytest.fixture
@@ -348,11 +356,15 @@ class TestFlowTools:
         sample_phases: List[Dict[str, Any]],
         sample_tasks: List[Dict[str, Any]],
         mock_raw_flow_config: Dict[str, Any],
+        mock_project_id: str
     ):
         """Test flow creation."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.flow_create = mocker.AsyncMock(
             return_value=mock_raw_flow_config
+        )
+        keboola_client.storage_client.project_id = mocker.AsyncMock(
+            return_value=mock_project_id
         )
 
         result = await create_flow(
@@ -363,9 +375,11 @@ class TestFlowTools:
             tasks=sample_tasks,
         )
 
-        assert isinstance(result, FlowConfiguration)
-        assert len(result.phases) == 2
-        assert len(result.tasks) == 2
+        assert isinstance(result, FlowToolResponse)
+        assert result.description == 'Test flow description'
+        assert result.timestamp == parser.isoparse('2025-05-25T06:33:41+0200')
+        assert result.success is True
+        assert len(result.links) == 3
 
         keboola_client.storage_client.flow_create.assert_called_once()
         call_args = keboola_client.storage_client.flow_create.call_args
@@ -468,11 +482,16 @@ class TestFlowTools:
         sample_phases: List[Dict[str, Any]],
         sample_tasks: List[Dict[str, Any]],
         mock_raw_flow_config: Dict[str, Any],
+        mock_project_id: str
     ):
         """Test flow update."""
+        mock_raw_flow_config['description'] = 'Updated description'
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.flow_update = mocker.AsyncMock(
             return_value=mock_raw_flow_config
+        )
+        keboola_client.storage_client.project_id = mocker.AsyncMock(
+            return_value=mock_project_id
         )
 
         result = await update_flow(
@@ -485,7 +504,11 @@ class TestFlowTools:
             change_description='Updated flow structure',
         )
 
-        assert isinstance(result, FlowConfiguration)
+        assert isinstance(result, FlowToolResponse)
+        assert result.description == 'Updated description'
+        assert result.timestamp == parser.isoparse('2025-05-25T06:33:41+0200')
+        assert result.success is True
+        assert len(result.links) == 3
 
         keboola_client.storage_client.flow_update.assert_called_once()
         call_args = keboola_client.storage_client.flow_update.call_args
@@ -591,7 +614,7 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
         phases=[],
         tasks=[],
     )
-    assert isinstance(created, FlowConfiguration)
+    assert isinstance(created, FlowToolResponse)
 
     flows = await retrieve_flows(ctx=mcp_context_client)
     assert len(flows) == 1
@@ -606,7 +629,7 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
         tasks=[{'name': 'Test Task', 'phase': 1, 'task': {'componentId': 'test.component'}}],
         change_description='Added test phase and task',
     )
-    assert isinstance(updated, FlowConfiguration)
+    assert isinstance(updated, FlowToolResponse)
 
     detail = await get_flow_detail(ctx=mcp_context_client, configuration_id='123456')
     assert isinstance(detail, FlowConfiguration)
