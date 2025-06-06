@@ -3,7 +3,7 @@
 import importlib.metadata
 import logging
 import os
-from typing import Any, Mapping, Optional, Union, cast
+from typing import Any, Literal, Mapping, Optional, Union, cast
 
 import httpx
 from pydantic import BaseModel, Field
@@ -14,6 +14,8 @@ JsonPrimitive = Union[int, float, str, bool, None]
 JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
 JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
+
+ComponentResource = Literal['configuration', 'rows', 'state']
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 
@@ -390,6 +392,24 @@ class AsyncStorageClient(KeboolaServiceClient):
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
         return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
+
+    async def component_list(
+        self, component_type: str, include: list[ComponentResource] | None = None
+    ) -> list[JsonDict]:
+        """
+        Lists all components of a given type.
+
+        :param component_type: The type of the component (extractor, writer, application, etc.)
+        :param include: Comma separated list of resources to include.
+            Available resources: configuration, rows and state.
+        :return: List of components as dictionary
+        """
+        endpoint = f'branch/{self.branch_id}/components'
+        params = {'componentType': component_type}
+        if include is not None and isinstance(include, list):
+            params['include'] = ','.join(include)
+
+        return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
 
     async def configuration_create(
         self,
