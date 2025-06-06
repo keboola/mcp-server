@@ -393,6 +393,15 @@ class AsyncStorageClient(KeboolaServiceClient):
             params['include'] = ','.join(include)
         return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
 
+    async def component_detail(self, component_id: str) -> JsonDict:
+        """
+        Retrieves information about a given component.
+
+        :param component_id: The id of the component
+        :return: Component details as a dictionary
+        """
+        return cast(JsonDict, await self.get(endpoint=f'branch/{self.branch_id}/components/{component_id}'))
+
     async def component_list(
         self, component_type: str, include: list[ComponentResource] | None = None
     ) -> list[JsonDict]:

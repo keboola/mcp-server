@@ -113,12 +113,7 @@ async def _retrieve_components_configurations_by_ids(
         # retrieve configurations for component ids
         raw_configurations = await client.storage_client.configuration_list(component_id=component_id)
         # retrieve components
-        raw_component = cast(
-            JsonDict,
-            await client.storage_client.get(
-                endpoint=f'branch/{client.storage_client.branch_id}/components/{component_id}'
-            ),
-        )
+        raw_component = await client.storage_client.component_detail(component_id=component_id)
         # build component configurations list grouped by components
         raw_configuration_responses = [
             ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
@@ -173,8 +168,7 @@ async def _get_component(
                 f'Falling back to Storage API.'
             )
 
-            endpoint = f'branch/{client.storage_client.branch_id}/components/{component_id}'
-            raw_component = await client.storage_client.get(endpoint=endpoint)
+            raw_component = await client.storage_client.component_detail(component_id=component_id)
             LOG.info(f'Retrieved component {component_id} from Storage API.')
             return Component.model_validate(raw_component)
         else:
