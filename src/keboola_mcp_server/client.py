@@ -419,7 +419,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_id: The id of the configuration.
         :param skip_trash: If True, the configuration is deleted without moving to the trash.
             (Technically it means the API endpoint is called twice.)
-        :raises ValueError: If the component_id or configuration_id is invalid.
+        :raises httpx.HTTPStatusError: If the (component_id, configuration_id) is not found.
         """
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
         await self.delete(endpoint=endpoint)
@@ -635,7 +635,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_id: The id of the flow configuration.
         :param skip_trash: If True, the configuration is deleted without moving to the trash.
             (Technically it means the API endpoint is called twice.)
-        :raises ValueError: If the configuration_id is invalid.
+        :raises httpx.HTTPStatusError: If the configuration_id is not found.
         """
         await self.configuration_delete(ORCHESTRATOR_COMPONENT_ID, configuration_id, skip_trash)
 
