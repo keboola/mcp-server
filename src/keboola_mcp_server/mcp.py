@@ -3,23 +3,24 @@ This module overrides FastMCP.add_tool() to improve conversion of tool function 
 into tool descriptions.
 It also provides a decorator that MCP tool functions can use to inject session state into their Context parameter.
 """
-
+import dataclasses
 import inspect
 import logging
-import os
 import textwrap
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.types import find_kwarg_by_type
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.types import AnyFunction, ToolAnnotations
 from starlette.requests import Request
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
+from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -146,13 +147,18 @@ def with_session_state() -> AnyFunction:
             if not getattr(ctx.session, 'state', None):
                 # This is here to allow mocking the context.session.state in tests.
                 config = ServerState.from_context(ctx).config
-                config = config.replace_by(os.environ)
                 accept_secrets_in_url = config.accept_secrets_in_url
 
                 if http_rq := _get_http_request():
                     config = config.replace_by(http_rq.headers)
                     if accept_secrets_in_url:
                         config = config.replace_by(http_rq.query_params)
+
+                    if 'user' in http_rq.scope and isinstance(http_rq.user, AuthenticatedUser):
+                        user = cast(AuthenticatedUser, http_rq.user)
+                        LOG.debug(f'Injecting SAPI token for access token: {user.access_token}')
+                        assert isinstance(user.access_token, ProxyAccessToken)
+                        config = dataclasses.replace(config, storage_token=f'Bearer {user.access_token.delegate.token}')
 
                 # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
                 #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.

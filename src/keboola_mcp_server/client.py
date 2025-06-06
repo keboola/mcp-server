@@ -106,10 +106,13 @@ class RawKeboolaClient:
     ) -> None:
         self.base_api_url = base_api_url
         self.headers = {
-            'X-StorageApi-Token': api_token,
             'Content-Type': 'application/json',
             'Accept-encoding': 'gzip',
         }
+        if api_token.startswith('Bearer '):
+            self.headers['Authorization'] = api_token
+        else:
+            self.headers['X-StorageAPI-Token'] = api_token
         self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
         if headers:
             self.headers.update(headers)
