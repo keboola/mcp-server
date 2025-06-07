@@ -196,7 +196,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             rich_client_id = jwt.decode(state_data['client_id'], self._jwt_secret, algorithms=['HS256'])
         except jwt.InvalidTokenError:
             LOG.error(f'[handle_oauth_callback] Invalid client_id: {state_data["client_id"]}', exc_info=True)
-            raise HTTPException(400, 'Invalid client ID.')
+            raise HTTPException(401, 'Invalid client ID.')
 
         scope = rich_client_id['scope']
         access_token = AccessToken(
