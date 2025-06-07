@@ -129,11 +129,11 @@ def create_server(config: Config) -> FastMCP:
             client_registration_options=ClientRegistrationOptions(
                 enabled=True,
                 client_secret_expiry_seconds=5 * 60,  # 5 minutes
-                valid_scopes=[SimpleOAuthProvider.MCP_SERVER_SCOPE],
-                default_scopes=[SimpleOAuthProvider.MCP_SERVER_SCOPE],
+                valid_scopes=None,
+                default_scopes=None,
             ),
             revocation_options=None,  # no clients revocation; clients expire
-            required_scopes=[SimpleOAuthProvider.MCP_SERVER_SCOPE],
+            required_scopes=None,
         )
         LOG.debug(f'auth_settings={auth_settings}')
     else:
