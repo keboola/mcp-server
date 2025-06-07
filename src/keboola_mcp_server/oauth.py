@@ -69,33 +69,36 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        try:
-            rich_client_id = jwt.decode(client_id, self._jwt_secret, algorithms=['HS256'])
-        except jwt.InvalidTokenError:
-            LOG.debug(f'[get_client] Invalid client_id: {client_id}', exc_info=True)
-            return None
+        # try:
+        #     rich_client_id = jwt.decode(client_id, self._jwt_secret, algorithms=['HS256'])
+        # except jwt.InvalidTokenError:
+        #     LOG.debug(f'[get_client] Invalid client_id: {client_id}', exc_info=True)
+        #     return None
 
         client = _OAuthClientInformationFull(
             # Use a fake redirect URI. Normally, we would retrieve the client from a persistent registry
             # and return the registered redirect URI.
             redirect_uris=[AnyHttpUrl('http://foo')],
             client_id=client_id,
-            scope=rich_client_id['scope'],
+            # scope=rich_client_id['scope'],
         )
-        LOG.debug(f'Client loaded: rich_client_id={rich_client_id}, client_id={client_id}')
+        # LOG.debug(f'Client loaded: rich_client_id={rich_client_id}, client_id={client_id}')
+        LOG.debug(f'Client loaded: client_id={client_id}')
         return client
 
     async def register_client(self, client_info: OAuthClientInformationFull):
         # This is a no-op. We don't register clients otherwise we would need a persistent registry.
-        orig_client_id = client_info.client_id
-        rich_client_id = {
-            'orig_client_id': orig_client_id,
-            'scope': client_info.scope,
-        }
-        rich_client_id_jwt = jwt.encode(rich_client_id, self._jwt_secret)
-        client_info.client_id = rich_client_id_jwt
+        LOG.debug(f'Client registered: client_id={client_info.client_id}')
 
-        LOG.debug(f'Client registered: rich_client_id={rich_client_id}, client_id={client_info.client_id}')
+        # orig_client_id = client_info.client_id
+        # rich_client_id = {
+        #     'orig_client_id': orig_client_id,
+        #     'scope': client_info.scope,
+        # }
+        # rich_client_id_jwt = jwt.encode(rich_client_id, self._jwt_secret)
+        # client_info.client_id = rich_client_id_jwt
+        #
+        # LOG.debug(f'Client registered: rich_client_id={rich_client_id}, client_id={client_info.client_id}')
 
     async def authorize(
             self, client: OAuthClientInformationFull, params: AuthorizationParams
@@ -115,16 +118,16 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         }
         state_jwt = jwt.encode(state, self._jwt_secret)
 
-        scopes = [self._oauth_scope]
-        if client.scope:
-            scopes.append(client.scope)
+        # scopes = [self._oauth_scope]
+        # if client.scope:
+        #     scopes.append(client.scope)
 
         # create the authorization URL
         params = {
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
-            'scope': ' '.join(scopes),
+            # 'scope': ' '.join(scopes),
             'state': state_jwt
         }
 
@@ -192,17 +195,18 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             LOG.error(f'[handle_oauth_callback] Received already expired token: data={data}')
             raise HTTPException(400, 'Received already expired token.')
 
-        try:
-            rich_client_id = jwt.decode(state_data['client_id'], self._jwt_secret, algorithms=['HS256'])
-        except jwt.InvalidTokenError:
-            LOG.error(f'[handle_oauth_callback] Invalid client_id: {state_data["client_id"]}', exc_info=True)
-            raise HTTPException(401, 'Invalid client ID.')
-
-        scope = rich_client_id['scope']
+        # try:
+        #     rich_client_id = jwt.decode(state_data['client_id'], self._jwt_secret, algorithms=['HS256'])
+        # except jwt.InvalidTokenError:
+        #     LOG.error(f'[handle_oauth_callback] Invalid client_id: {state_data["client_id"]}', exc_info=True)
+        #     raise HTTPException(401, 'Invalid client ID.')
+        #
+        # scope = rich_client_id['scope']
         access_token = AccessToken(
             token=data['access_token'],
             client_id=self._oauth_client_id,
-            scopes=[scope] if scope else [],
+            # scopes=[scope] if scope else [],
+            scopes=[],
             # this is slightly different from 'expires_at' kept by the OAuth server
             expires_at=int(time.time() + expires_in),
         )
@@ -214,7 +218,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'redirect_uri': state_data['redirect_uri'],
             'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == 'True'),
             'expires_at': int(time.time() + 5 * 60),  # 5 minutes from now
-            'scopes': [scope] if scope else [],
+            # 'scopes': [scope] if scope else [],
+            'scopes': [],
             'code_challenge': state_data['code_challenge'],
             'oauth_access_token': access_token.model_dump(),
         }
