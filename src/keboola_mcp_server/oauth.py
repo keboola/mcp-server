@@ -2,7 +2,8 @@ import logging
 import secrets
 import time
 from http.client import HTTPException
-from urllib.parse import urlencode, urljoin
+from typing import cast
+from urllib.parse import urljoin
 
 import jwt
 from mcp.server.auth.provider import (
@@ -108,9 +109,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # We don't store the authentication states that we create here to avoid having to persist them.
         # Instead, we encode them to JWT and pass them back to the client.
         # The states expire after 5 minutes.
+        scopes = cast(list[str], params.scopes or [])
         state = {
             'redirect_uri': str(params.redirect_uri),
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
+            # the scopes sent by the MCP server's OAuth client (e.g. claude.ai)
+            'scopes': scopes,
             'code_challenge': params.code_challenge,
             'state': params.state,
             'client_id': client.client_id,
@@ -118,21 +122,23 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         }
         state_jwt = jwt.encode(state, self._jwt_secret)
 
-        # scopes = [self._oauth_scope]
-        # if client.scope:
-        #     scopes.append(client.scope)
-
         # create the authorization URL
-        params = {
+        mcp_url_params = {
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
-            # 'scope': ' '.join(scopes),
             'state': state_jwt
         }
+        if scopes:
+            # Some OAuth clients check that the scope we pass to Keboola OAuth server is identical
+            # to their scope (e.g. claude.ai checks that).
+            # It makes sense, because the user should give their authorization to the original scope
+            # of the AI assistant.
+            # So, it's important to store the scopes in the `state` as well as in the redirect URI's query parameters.
+            # TODO: We should expand the scope by adding Keboola's extra scopes (e.g. email). But we don'd do this now.
+            mcp_url_params['scope'] = ' '.join(scopes)
 
-        auth_url = f'{self._oauth_server_auth_url}?{urlencode(params)}'
-
+        auth_url = construct_redirect_uri(self._oauth_server_auth_url, **mcp_url_params)
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
 
         return auth_url
@@ -202,34 +208,32 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         #     raise HTTPException(401, 'Invalid client ID.')
         #
         # scope = rich_client_id['scope']
+        redirect_uri = cast(str, state_data['redirect_uri'])
+        scopes = cast(list[str], state_data['scopes'])
         access_token = AccessToken(
             token=data['access_token'],
             client_id=self._oauth_client_id,
-            # scopes=[scope] if scope else [],
-            scopes=[],
+            scopes=scopes,
             # this is slightly different from 'expires_at' kept by the OAuth server
             expires_at=int(time.time() + expires_in),
         )
 
         # Create MCP authorization code
-        redirecty_uri = state_data['redirect_uri']
+        # This is deserialized into _ExtendedAuthorizationCode instance in load_authorization_code() function.
         auth_code = {
             'code': f'mcp_{secrets.token_hex(16)}',
             'client_id': state_data['client_id'],
-            'redirect_uri': redirecty_uri,
+            'redirect_uri': redirect_uri,
             'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == 'True'),
             'expires_at': int(time.time() + 5 * 60),  # 5 minutes from now
-            # 'scopes': [scope] if scope else [],
-            'scopes': ['claudeai', self._oauth_scope] if 'claude' in redirecty_uri else [],
+            'scopes': scopes,
             'code_challenge': state_data['code_challenge'],
             'oauth_access_token': access_token.model_dump(),
         }
         auth_code_jwt = jwt.encode(auth_code, self._jwt_secret)
 
         mcp_redirect_uri = construct_redirect_uri(
-            redirect_uri_base=state_data['redirect_uri'],
-            code=auth_code_jwt,
-            state=state_data['state']
+            redirect_uri_base=redirect_uri, code=auth_code_jwt, state=state_data['state'],
         )
         LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
 
