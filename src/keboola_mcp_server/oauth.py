@@ -78,7 +78,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         LOG.debug(f'Client loaded: client_id={client_id}')
         return client
 
-    async def register_client(self, client_info: OAuthClientInformationFull):
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         # This is a no-op. We don't register clients otherwise we would need a persistent registry.
         LOG.debug(f'Client registered: client_id={client_info.client_id}')
 
@@ -101,14 +101,14 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         state_jwt = jwt.encode(state, self._jwt_secret)
 
         # create the authorization URL
-        params = {
+        url_params = {
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
             'scope': self._oauth_scope,
             'state': state_jwt
         }
-        auth_url = f'{self._oauth_server_auth_url}?{urlencode(params)}'
+        auth_url = f'{self._oauth_server_auth_url}?{urlencode(url_params)}'
 
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
 
