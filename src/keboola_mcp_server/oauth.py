@@ -138,10 +138,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'redirect_uri': self._mcp_callback_url,
             'state': state_jwt
         }
-        if scopes:
-            # It's important to store the scopes in the `state` as well as in the redirect URI's query parameters.
-            # TODO: We should expand the scope by adding Keboola's extra scopes (e.g. email). But we don'd do this now.
-            mcp_url_params['scope'] = ' '.join(scopes)
+        # send no scopes to Keboola OAuth server and let it use its own default scope
+        # if scopes:
+        #     # It's important to store the scopes in the `state` as well as in the redirect URI's query parameters.
+        #     # TODO: We should expand the scope by adding Keboola's extra scopes (e.g. email).
+        #     #   But we don'd do this now.
+        #     mcp_url_params['scope'] = ' '.join(scopes)
 
         auth_url = construct_redirect_uri(self._oauth_server_auth_url, **mcp_url_params)
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
