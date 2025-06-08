@@ -212,14 +212,15 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         )
 
         # Create MCP authorization code
+        redirecty_uri = state_data['redirect_uri']
         auth_code = {
             'code': f'mcp_{secrets.token_hex(16)}',
             'client_id': state_data['client_id'],
-            'redirect_uri': state_data['redirect_uri'],
+            'redirect_uri': redirecty_uri,
             'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == 'True'),
             'expires_at': int(time.time() + 5 * 60),  # 5 minutes from now
             # 'scopes': [scope] if scope else [],
-            'scopes': [],
+            'scopes': ['claudeai', self._oauth_scope] if 'claude' in redirecty_uri else [],
             'code_challenge': state_data['code_challenge'],
             'oauth_access_token': access_token.model_dump(),
         }
