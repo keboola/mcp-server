@@ -88,7 +88,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         LOG.debug(f'Client loaded: client_id={client_id}')
         return client
 
-    async def register_client(self, client_info: OAuthClientInformationFull):
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         # This is a no-op. We don't register clients otherwise we would need a persistent registry.
         LOG.debug(f'Client registered: client_id={client_info.client_id}')
 
@@ -114,7 +114,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         state_jwt = jwt.encode(state, self._jwt_secret)
 
         # create the authorization URL
-        mcp_url_params = {
+        url_params = {
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
@@ -122,7 +122,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             # send no scopes to Keboola OAuth server and let it use its own default scope
         }
 
-        auth_url = construct_redirect_uri(self._oauth_server_auth_url, **mcp_url_params)
+        auth_url = construct_redirect_uri(self._oauth_server_auth_url, **url_params)
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
 
         return auth_url

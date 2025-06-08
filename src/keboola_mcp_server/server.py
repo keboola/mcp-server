@@ -171,6 +171,7 @@ def create_server(config: Config) -> FastMCP:
             raise HTTPException(400, 'Missing code or state parameter')
 
         try:
+            assert oauth_provider  # this must have been set if we are handling OAuth callbacks
             redirect_uri = await oauth_provider.handle_oauth_callback(code, state)
             return RedirectResponse(status_code=302, url=redirect_uri)
         except HTTPException:
