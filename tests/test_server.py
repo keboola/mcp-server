@@ -185,7 +185,7 @@ async def test_keboola_injection_and_lifespan(
         workspace = WorkspaceManager.from_state(ctx.session.state)
         assert isinstance(workspace, WorkspaceManager)
 
-        # chack that the server state config contains the initial params + the environment params
+        # check that the server state config contains the initial params + the environment params
         server_state = ServerState.from_context(ctx)
         assert asdict(server_state.config) == asdict(config) | os_environ_params
 
