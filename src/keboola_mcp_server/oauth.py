@@ -22,6 +22,15 @@ LOG = logging.getLogger(__name__)
 
 
 class _OAuthClientInformationFull(OAuthClientInformationFull):
+    def validate_scope(self, requested_scope: str | None) -> list[str] | None:
+        # This is supposed to verify that the requested scopes are a subset of the scopes that the client registered.
+        # That, however, would require a persistent registry of clients.
+        # So, instead we pretend that all the requested scopes have been registered.
+        if requested_scope:
+            return requested_scope.split(' ')
+        else:
+            return None
+
     def validate_redirect_uri(self, redirect_uri: AnyUrl | None) -> AnyUrl:
         # Ideally, this should verify the redirect_uri against the URI registered by the client.
         # That, however, would require a persistent registry of clients.
@@ -130,11 +139,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'state': state_jwt
         }
         if scopes:
-            # Some OAuth clients check that the scope we pass to Keboola OAuth server is identical
-            # to their scope (e.g. claude.ai checks that).
-            # It makes sense, because the user should give their authorization to the original scope
-            # of the AI assistant.
-            # So, it's important to store the scopes in the `state` as well as in the redirect URI's query parameters.
+            # It's important to store the scopes in the `state` as well as in the redirect URI's query parameters.
             # TODO: We should expand the scope by adding Keboola's extra scopes (e.g. email). But we don'd do this now.
             mcp_url_params['scope'] = ' '.join(scopes)
 
