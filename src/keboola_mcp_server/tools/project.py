@@ -60,7 +60,7 @@ class ProjectInfo(BaseModel):
 @with_session_state()
 async def get_project_info(
     ctx: Context,
-) -> Annotated[dict, Field(description='Structured project info including ID, name, description, and SQL dialect.')]:
+) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
     """Return structured project information pulled from multiple endpoints."""
     client = KeboolaClient.from_state(ctx.session.state)
     storage = client.storage_client
@@ -86,6 +86,6 @@ async def get_project_info(
         'links': links,
     }
 
-    validated = ProjectInfo.model_validate(combined)
+    project_info = ProjectInfo.model_validate(combined)
     LOG.info('Returning unified project info.')
-    return validated
+    return project_info
