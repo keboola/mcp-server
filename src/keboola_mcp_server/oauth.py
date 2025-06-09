@@ -49,6 +49,9 @@ class _ExtendedAuthorizationCode(AuthorizationCode):
 
 class ProxyAccessToken(AccessToken):
     delegate: AccessToken
+    # This token is created by the MCP server and used for calling AI Service and Jobs Queue,
+    # which do not support 'Authorization: Bearer <access-token>' header yet.
+    sapi_token: str
 
 
 class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
@@ -56,13 +59,16 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     MCP_SERVER_SCOPE: str = 'mcp'
 
     def __init__(
-            self, *, mcp_callback_url: str,
+            self, *,
+            storage_api_url: str,
+            mcp_callback_url: str,
             client_id: str, client_secret: str, server_url: str, scope: str,
-            jwt_secret: str | None = None
+            jwt_secret: str | None = None,
     ) -> None:
         """
         Creates OAuth provider implementation.
 
+        :param storage_api_url: The URL of the Storage API service.
         :param mcp_callback_url: The URL where the OAuth server redirects to after the user authorizes.
         :param client_id: The client ID registered with the OAuth server.
         :param client_secret: The client secret registered with the OAuth server
@@ -70,6 +76,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         :param scope: The scope of access to request from the OAuth server.
         :param jwt_secret: The secret key for encoding and decoding JWT tokens.
         """
+        self._sapi_tokens_url = urljoin(storage_api_url, '/v2/storage/tokens')
         self._mcp_callback_url = mcp_callback_url
         self._oauth_client_id = client_id
         self._oauth_client_secret = client_secret
@@ -152,8 +159,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
         # Exchange the authorization code for the access token with OAuth server.
         # TODO: Don't use create_mcp_http_client from a private module.
-        async with create_mcp_http_client() as client:
-            response = await client.post(
+        async with create_mcp_http_client() as http_client:
+            response = await http_client.post(
                 self._oauth_server_token_url,
                 data={
                     'client_id': self._oauth_client_id,
@@ -241,6 +248,34 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
 
+        # Create new Storage API token for accessing AI and Jobs Queue services that do not support bearer tokens yet.
+        # TODO: Don't use create_mcp_http_client from a private module.
+        async with create_mcp_http_client() as http_client:
+            response = await http_client.post(
+                self._sapi_tokens_url,
+                json={
+                    'description': 'Created by the MCP server.',
+                    'expiresIn': 60 * 60 * 24,  # 1 day
+                    'canReadAllFileUploads': True,
+                    'canManageBuckets': True,
+                },
+                headers={
+                    'Accept': 'application/json',
+                    'Authorization': f'Bearer {authorization_code.oauth_access_token.token}',
+                },
+            )
+
+            if response.status_code != 200:
+                LOG.error('[exchange_authorization_code] Failed create Storage API token, '
+                          f'Storage API response: status={response.status_code}, text={response.text}')
+                raise HTTPException(500, 'Failed to create Storage API token: '
+                                         f'status={response.status_code}, text={response.text}')
+
+            data = response.json()
+            LOG.debug(f'[exchange_authorization_code] Storage API response: {data}')
+
+            sapi_token = data['token']
+
         # Store MCP token
         access_token = ProxyAccessToken(
             token=f'mcp_{secrets.token_hex(32)}',
@@ -248,6 +283,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             scopes=authorization_code.scopes,
             expires_at=authorization_code.oauth_access_token.expires_at,
             delegate=authorization_code.oauth_access_token,
+            sapi_token=sapi_token
         )
         access_token_jwt = jwt.encode(access_token.model_dump(), self._jwt_secret)
 
