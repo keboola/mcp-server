@@ -256,8 +256,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
                 json={
                     'description': 'Created by the MCP server.',
                     'expiresIn': 60 * 60 * 24,  # 1 day
-                    'canReadAllFileUploads': true,
-                    'canManageBuckets': true,
+                    'canReadAllFileUploads': True,
+                    'canManageBuckets': True,
                 },
                 headers={
                     'Accept': 'application/json',
