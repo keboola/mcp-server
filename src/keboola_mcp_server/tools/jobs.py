@@ -32,15 +32,15 @@ def add_job_tools(mcp: FastMCP) -> None:
 # Job Base Models ########################################
 
 JOB_STATUS = Literal[
-    'waiting',      # job is waiting for other jobs to finish
-    'processing',   # job is being executed
-    'success',      # job finished successfully
-    'error',        # job finished with error
-    'created',      # job is created but not started executing
-    'warning',      # job finished but one of its child jobs failed
+    'waiting',  # job is waiting for other jobs to finish
+    'processing',  # job is being executed
+    'success',  # job finished successfully
+    'error',  # job finished with error
+    'created',  # job is created but not started executing
+    'warning',  # job finished but one of its child jobs failed
     'terminating',  # user requested to abort the job
-    'cancelled',    # job was aborted before execution began
-    'terminated',   # job was aborted during execution
+    'cancelled',  # job was aborted before execution began
+    'terminated',  # job was aborted during execution
 ]
 
 
@@ -103,7 +103,7 @@ class JobDetail(JobListItem):
         serialization_alias='tableId',
         default=None,
     )
-    config_data: Optional[list[Any]] = Field(
+    config_data: Optional[dict[str, Any]] = Field(
         description='The data of the configuration.',
         validation_alias=AliasChoices('configData', 'config_data', 'config-data'),
         serialization_alias='configData',
@@ -134,17 +134,19 @@ class JobDetail(JobListItem):
         default=None,
     )
 
-    @field_validator('result', mode='before')
+    @field_validator('result', 'config_data', mode='before')
     @classmethod
-    def validate_result_field(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
-        # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
-        # Why? Because the result is expected to be an Object, but create job endpoint sends [], perhaps it means
-        # "empty". This avoids type errors.
+    def validate_dict_fields(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
+        # Ensures that if the result or config_data field is passed as an empty list [] or None,
+        # it gets converted to an empty dict {}.Why? Because the result is expected to be an Object, but create job
+        # endpoint sends [], perhaps it means "empty". This avoids type errors.
         if not isinstance(current_value, dict):
             if not current_value:
                 return dict()
             if isinstance(current_value, list):
-                raise ValueError(f'Field "result" cannot be a list, expecting dictionary, got: {current_value}.')
+                raise ValueError(
+                    'Field "result" or "config_data" cannot be a list, expecting dictionary, ' f'got: {current_value}.'
+                )
         return current_value
 
 
