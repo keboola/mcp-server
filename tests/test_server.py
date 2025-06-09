@@ -40,6 +40,7 @@ class TestServer:
             'get_flow_detail',
             'get_flow_schema',
             'get_job_detail',
+            'get_project_info',
             'get_sql_dialect',
             'get_table_detail',
             'query_table',
