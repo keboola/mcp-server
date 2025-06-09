@@ -112,6 +112,7 @@ class MetadataField:
     """
 
     DESCRIPTION = 'KBC.description'
+    PROJECT_DESCRIPTION = 'KBC.projectDescription'
 
     # set for configurations created by MCP tools;
     # expected value: 'true'

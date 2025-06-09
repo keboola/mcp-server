@@ -130,8 +130,7 @@ async def create_flow(
     flow_name = new_raw_configuration['name']
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
-    flow_links = LinksManager().get_flow_links(base_url=base_url, project_id=project_id,
-                                               flow_id=flow_id, flow_name=flow_name)
+    flow_links = LinksManager(base_url).get_flow_links(project_id=project_id, flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
@@ -196,8 +195,7 @@ async def update_flow(
     flow_name = updated_raw_configuration['name']
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
-    flow_links = LinksManager().get_flow_links(base_url=base_url, project_id=project_id,
-                                               flow_id=flow_id, flow_name=flow_name)
+    flow_links = LinksManager(base_url).get_flow_links(project_id=project_id, flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Updated flow configuration: {flow_id}')
