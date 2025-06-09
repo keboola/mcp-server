@@ -36,6 +36,15 @@ class Config:
     bearer_token: Optional[str] = None
     """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
 
+    def __post_init__(self):
+        for f in dataclasses.fields(self):
+            if 'url' not in f.name or f.name == 'accept_secrets_in_url':
+                continue
+            value = getattr(self, f.name)
+            if value and not value.startswith(('http://', 'https://')):
+                value = f'https://{value}'
+                object.__setattr__(self, f.name, value)
+
     @staticmethod
     def _normalize(name: str) -> str:
         """Removes dashes and underscores from the input string and turns it into lowercase."""
