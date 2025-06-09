@@ -45,6 +45,7 @@ class KeboolaClient:
 
         :param storage_api_token: Keboola Storage API token
         :param storage_api_url: Keboola Storage API URL
+        :param bearer_token: Keboola Bearer token from OAuth
         """
         self.token = storage_api_token
         # Ensure the base URL has a scheme

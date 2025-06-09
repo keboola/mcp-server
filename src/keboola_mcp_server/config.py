@@ -36,7 +36,7 @@ class Config:
     bearer_token: Optional[str] = None
     """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for f in dataclasses.fields(self):
             if 'url' not in f.name or f.name == 'accept_secrets_in_url':
                 continue
@@ -99,7 +99,7 @@ class Config:
         """
         return dataclasses.replace(self, **self._read_options(d))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         params: list[str] = []
         for f in dataclasses.fields(self):
             value = getattr(self, f.name)
