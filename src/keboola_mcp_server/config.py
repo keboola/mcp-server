@@ -21,6 +21,18 @@ class Config:
     """Workspace schema to access the buckets, tables and execute sql queries."""
     accept_secrets_in_url: Optional[bool] = None
     """If true, the configuration values are also read from the URL query parameters."""
+    oauth_client_id: Optional[str] = None
+    """OAuth client ID registered in the Keboola OAuth Server."""
+    oauth_client_secret: Optional[str] = None
+    """OAuth client secret registered in the Keboola OAuth Server."""
+    oauth_server_url: Optional[str] = None
+    """The URL of the OAuth server to authenticate with."""
+    oauth_scope: Optional[str] = None
+    """The OAuth scope to request from the OAuth server."""
+    mcp_server_url: Optional[str] = None
+    """The URL where the MCP server si reachable."""
+    jwt_secret: Optional[str] = None
+    """The secret key for encoding and decoding JWT tokens."""
 
     @staticmethod
     def _normalize(name: str) -> str:
@@ -81,7 +93,7 @@ class Config:
         for f in dataclasses.fields(self):
             value = getattr(self, f.name)
             if value:
-                if 'token' in f.name or 'password' in f.name:
+                if 'token' in f.name or 'password' in f.name or 'secret' in f.name:
                     params.append(f"{f.name}='****'")
                 else:
                     if isinstance(value, str):
