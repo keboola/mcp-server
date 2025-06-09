@@ -69,7 +69,7 @@ class TestWorkspaceManagerSnowflake:
 
     @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
-        keboola_client.storage_client.get.return_value = [
+        keboola_client.storage_client.workspace_list.return_value = [
             {
                 'id': 1234,
                 'connection': {
@@ -77,6 +77,7 @@ class TestWorkspaceManagerSnowflake:
                     'backend': 'snowflake',
                     'user': 'user_1234',
                 },
+                'readOnlyStorageAccess': True,
             }
         ]
 
@@ -161,7 +162,7 @@ class TestWorkspaceManagerSnowflake:
             ),
             (
                 'create table foo (id integer, name varchar);',
-                QueryResult(status='ok', message='1 table created'),
+                QueryResult(status='ok', data=None, message='1 table created'),
             ),
             (
                 'bla bla bla',
@@ -181,7 +182,7 @@ class TestWorkspaceManagerSnowflake:
 class TestWorkspaceManagerBigQuery:
     @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
-        keboola_client.storage_client.get.return_value = [
+        keboola_client.storage_client.workspace_list.return_value = [
             {
                 'id': 1234,
                 'connection': {
@@ -189,6 +190,7 @@ class TestWorkspaceManagerBigQuery:
                     'backend': 'bigquery',
                     'user': json.dumps({'project_id': 'project_1234'}),
                 },
+                'readOnlyStorageAccess': True,
             }
         ]
 
@@ -258,7 +260,7 @@ class TestWorkspaceManagerBigQuery:
             ),
             (
                 'bla bla bla',
-                QueryResult(status='error', message='400 Invalid SQL...'),
+                QueryResult(status='error', data=None, message='400 Invalid SQL...'),
             ),
         ],
     )
