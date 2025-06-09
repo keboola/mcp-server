@@ -7,7 +7,10 @@ from httpx import HTTPStatusError
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.tools._validate import validate_parameters, validate_storage
+from keboola_mcp_server.tools._validate import (
+    validate_parameters_configuration_against_schema,
+    validate_storage_configuration_against_schema,
+)
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
@@ -336,22 +339,28 @@ def validate_storage_configuration(
     :return: The contents of the 'storage' key from the validated configuration,
               or an empty dict if no storage is provided.
     """
-    # Missing storage key is allowed and not considered an error. (we care only if storage = {} or None if present)
-    _allow_missing_storage_key = True
-    if not storage or not storage.get('storage', _allow_missing_storage_key):
-        # necessary storage for writer and transformation components
+    # As expected by the storage schema, we normalize storage to {'storage': storage | {} | None}
+    # since the agent bot can input storage as {'storage': storage} or just storage
+    normalized_storage = {'storage': storage.get('storage', storage) if storage is not None else {}}
+
+    if not normalized_storage['storage']:  # only when storage = {} | None
+        # storage is necessary for components of writer or transformation type
         if component.component_type in ['writer', 'transformation']:
             raise ValueError(
                 f'Storage configuration cannot be empty for component {component.component_id} of type '
                 f'{component.component_type}. Please provide the storage configuration within the tool call.'
             )
         else:
-            LOG.warning('No storage configuration provided, skipping validation.')
-            return {}
+            LOG.warning(
+                'No storage configuration provided for component %s of type %s.',
+                component.component_id,
+                component.component_type,
+            )
+        normalized_storage['storage'] = {}  # None -> {}
 
     initial_message = (initial_message or '') + '\n'
     initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
-    normalized_storage = validate_storage(storage, initial_message)
+    normalized_storage = validate_storage_configuration_against_schema(normalized_storage, initial_message)
     return cast(JsonDict, normalized_storage['storage'])
 
 
@@ -407,10 +416,13 @@ def _validate_parameters_configuration(
     :param initial_message: The initial message to include in the error message
     :return: The contents of the 'parameters' key from the validated configuration
     """
+    # As expected by the component parameter schema, we use only the parameters configurations without the "parameters"
+    # key since the agent bot can input parameters as {'parameters': parameters} or just parameters
+    expected_parameters = cast(JsonDict, parameters.get('parameters', parameters))
+
     if not schema:
         LOG.warning(f'No schema provided for component {component_id}, skipping validation.')
-        return parameters
+        return expected_parameters
 
-    # we expect the parameters to be a dictionary of parameter configurations without the "parameters" key
-    normalized_parameters = validate_parameters(parameters, schema, initial_message)
-    return cast(JsonDict, normalized_parameters['parameters'])
+    expected_parameters = validate_parameters_configuration_against_schema(expected_parameters, schema, initial_message)
+    return expected_parameters

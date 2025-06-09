@@ -41,7 +41,7 @@ def test_validate_storage_valid(valid_storage_path: str):
     with open(valid_storage_path, 'r') as f:
         valid_storage = json.load(f)
     # returns the same valid storage no exception is raised
-    assert _validate.validate_storage(valid_storage) == valid_storage
+    assert _validate.validate_storage_configuration_against_schema(valid_storage) == valid_storage
 
 
 @pytest.mark.parametrize(
@@ -74,7 +74,9 @@ def test_validate_storage_invalid(invalid_storage_path: str):
     with open(invalid_storage_path, 'r') as f:
         invalid_storage = json.load(f)
     with pytest.raises(_validate.RecoverableValidationError) as exc_info:
-        _validate.validate_storage(invalid_storage, initial_message='This is a test message')
+        _validate.validate_storage_configuration_against_schema(
+            invalid_storage, initial_message='This is a test message'
+        )
     err = exc_info.value
     assert 'This is a test message' in str(err)
     assert f'{json.dumps(invalid_storage, indent=2)}' in str(err)
@@ -83,27 +85,29 @@ def test_validate_storage_invalid(invalid_storage_path: str):
 @pytest.mark.parametrize(
     ('input_storage', 'output_storage'),
     [
-        ({'input': {}, 'output': {}}, {'storage': {'input': {}, 'output': {}}}),
+        ({'input': {}, 'output': {}}, {'input': {}, 'output': {}}),
         ({'storage': {'input': {}, 'output': {}}}, {'storage': {'input': {}, 'output': {}}}),
     ],
 )
 def test_validate_storage_output_format(input_storage, output_storage):
-    """We expect the json will be validated and the output will be normalized"""
-    result = _validate.validate_storage(input_storage)
+    """Test that storage configuration validation preserves the input format - whether the input contains a 'storage'
+    key or not, the output will match the input structure exactly."""
+    result = _validate.validate_storage_configuration_against_schema(input_storage)
     assert result == output_storage
 
 
 @pytest.mark.parametrize(
     ('input_parameters', 'output_parameters'),
     [
-        ({'a': 1}, {'parameters': {'a': 1}}),
+        ({'a': 1}, {'a': 1}),
         ({'parameters': {'a': 1, 'b': 2}}, {'parameters': {'a': 1, 'b': 2}}),
     ],
 )
 def test_validate_parameters_output_format(input_parameters, output_parameters):
-    """We expect the json will be validated and the output will be normalized"""
+    """Test that parameters configuration validation preserves the input format - whether the input contains a
+    'parameters' key or not, the output will match the input structure exactly."""
     accepting_schema = {'type': 'object', 'additionalProperties': True}  # accepts any json object
-    result = _validate.validate_parameters(input_parameters, accepting_schema)
+    result = _validate.validate_parameters_configuration_against_schema(input_parameters, accepting_schema)
     assert result == output_parameters
 
 
@@ -313,12 +317,12 @@ def test_validate_row_parameters(schema_path: str, data_path: str, valid: bool):
         data = json.load(f)
     if valid:
         try:
-            _validate.validate_parameters(data, schema)
+            _validate.validate_parameters_configuration_against_schema(data, schema)
         except jsonschema.ValidationError:
             pytest.fail('ValidationError was raised when it should not have been')
     else:
         with pytest.raises(jsonschema.ValidationError):
-            _validate.validate_parameters(data, schema)
+            _validate.validate_parameters_configuration_against_schema(data, schema)
 
 
 @pytest.mark.parametrize(
@@ -347,9 +351,9 @@ def test_validate_root_parameters(schema_path: str, data_path: str, valid: bool)
         data = json.load(f)
     if valid:
         try:
-            _validate.validate_parameters(data, schema)
+            _validate.validate_parameters_configuration_against_schema(data, schema)
         except jsonschema.ValidationError:
             pytest.fail('ValidationError was raised when it should not have been')
     else:
         with pytest.raises(jsonschema.ValidationError):
-            _validate.validate_parameters(data, schema)
+            _validate.validate_parameters_configuration_against_schema(data, schema)

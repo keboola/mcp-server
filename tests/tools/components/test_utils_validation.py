@@ -1,8 +1,10 @@
+import json
 from typing import Optional
 
 import pytest
 
 from keboola_mcp_server.client import JsonDict
+from keboola_mcp_server.tools._validate import RecoverableValidationError
 from keboola_mcp_server.tools.components import utils
 from keboola_mcp_server.tools.components.model import AllComponentTypes, Component
 
@@ -20,9 +22,9 @@ from keboola_mcp_server.tools.components.model import AllComponentTypes, Compone
 def test_validate_storage_configuration_output(
     mock_component: dict, input_storage: Optional[JsonDict], output_storage: Optional[JsonDict]
 ):
-    """testing normalized and returned structures {storage: {...}} vs {...}"""
+    """testing expected storage output for a given storage input"""
     component_raw = mock_component.copy()
-    component_raw['type'] = 'extractor'  # set storage to {} to pass the validation for storage necessity
+    component_raw['type'] = 'extractor'  # we need extractor to pass the validation for storage necessity
     component = Component.model_validate(component_raw)
     result = utils.validate_storage_configuration(input_storage, component)
     expected = output_storage  # we expect unwrapped structure
@@ -100,9 +102,7 @@ async def test_validate_row_parameters_configuration_output(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('input_schema', [None, {}])
-async def test_validate_parameters_configuration_no_schema(
-    mock_component: dict, input_schema: Optional[JsonDict]
-):
+async def test_validate_parameters_configuration_no_schema(mock_component: dict, input_schema: Optional[JsonDict]):
     """We expect passing the validation when no schema is provided"""
     input_parameters: JsonDict = {'a': 1}
     component = Component.model_validate(mock_component)
@@ -110,3 +110,35 @@ async def test_validate_parameters_configuration_no_schema(
     result = utils.validate_row_parameters_configuration(input_parameters, component)
     expected = input_parameters  # we expect unwrapped structure
     assert result == expected
+
+
+@pytest.mark.parametrize(
+    ('file_path', 'is_parameter_key_present', 'is_valid'),
+    [
+        ('tests/resources/parameters/root_parameters_invalid.json', True, False),
+        ('tests/resources/parameters/root_parameters_invalid.json', False, False),
+        ('tests/resources/parameters/root_parameters_valid.json', True, True),
+        ('tests/resources/parameters/root_parameters_valid.json', False, True),
+    ],
+)
+def test_validate_parameters_root_real_scenario(
+    mock_component: dict, file_path: str, is_parameter_key_present: bool, is_valid: bool
+):
+    """We test the validation of the root parameters configuration for a real scenario
+    regardless of the parameters key presence we expect the same output"""
+    with open(file_path, 'r') as f:
+        input_parameters = json.load(f)
+    assert 'parameters' not in input_parameters  # we do not expect the parameters key in the input
+    with open('tests/resources/parameters/root_parameters_schema.json', 'r') as f:
+        input_schema = json.load(f)
+
+    component = Component.model_validate(mock_component)
+    component.configuration_schema = input_schema
+    modified_input_parameters = {'parameters': input_parameters} if is_parameter_key_present else input_parameters
+    if is_valid:
+        ret_params = utils.validate_root_parameters_configuration(modified_input_parameters, component)
+        assert ret_params == input_parameters
+    else:
+        with pytest.raises(RecoverableValidationError) as exception:
+            utils.validate_root_parameters_configuration(modified_input_parameters, component, 'test oops')
+        assert 'test oops' in str(exception.value)

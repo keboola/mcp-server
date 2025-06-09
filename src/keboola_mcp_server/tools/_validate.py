@@ -10,8 +10,6 @@ from typing import Callable, Optional, cast
 
 import jsonschema
 import jsonschema.validators
-from jsonschema import TypeChecker
-from jsonschema.validators import extend
 
 from keboola_mcp_server.client import JsonDict, JsonPrimitive, JsonStruct
 
@@ -86,6 +84,9 @@ class RecoverableValidationError(jsonschema.ValidationError):
 
 class KeboolaParametersValidator:
     """
+    We use this validator to load parameters' schema that has been fetched from AI service for a given component ID and
+    to validate the parameters configuration (json data) received from the Agent against the loaded schema.
+
     A custom JSON Schema validator that handles UI elements and schema normalization:
     1. Ignores 'button' type (UI-only construct)
     2. Normalizes schema by:
@@ -96,17 +97,19 @@ class KeboolaParametersValidator:
     @classmethod
     def validate(cls, instance: JsonDict, schema: JsonDict) -> None:
         """
-        Validate the instance against the schema.
+        Validate the json data instance against the schema.
+        :param instance: The json data to validate
+        :param schema: The schema to validate against
         """
         sanitized_schema = cls.sanitize_schema(schema)
         base_validator = jsonschema.validators.validator_for(sanitized_schema)
-        keboola_validator = extend(
+        keboola_validator = jsonschema.validators.extend(
             base_validator, type_checker=base_validator.TYPE_CHECKER.redefine('button', cls.check_button_type)
         )
         return keboola_validator(sanitized_schema).validate(instance)
 
     @staticmethod
-    def check_button_type(checker: TypeChecker, instance: object) -> bool:
+    def check_button_type(checker: jsonschema.TypeChecker, instance: object) -> bool:
         """
         Dummy button type checker.
         We accept button as a type since it is a UI construct and not a data type.
@@ -164,34 +167,40 @@ class KeboolaParametersValidator:
         return sanitized_schema
 
 
-def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
+def validate_storage_configuration_against_schema(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
     """Validate the storage configuration using jsonschema.
     :param storage: The storage configuration to validate
     :param initial_message: The initial message to include in the error message
-    :returns: The validated storage configuration normalized to {"storage" : {...}}
+    :returns: The validated storage configuration (json data as the input) if the validation succeeds
     """
     schema = _load_schema(ConfigurationSchemaResources.STORAGE)
-    # we expect the storage to be a dictionary of storage configurations with the "storage" key
-    normalized_storage_data = {'storage': storage.get('storage', storage)}
     _validate_json_against_schema(
-        json_data=normalized_storage_data,
+        json_data=storage,
         schema=schema,
         initial_message=initial_message,
     )
-    return normalized_storage_data
+    return storage
 
 
-def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
+def validate_parameters_configuration_against_schema(
+    parameters: JsonDict,
+    schema: JsonDict,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
     """
     Validate the parameters configuration using jsonschema.
     :parameters: json data to validate
     :schema: json schema to validate against (root or row parameter configuration schema)
     :initial_message: initial message to include in the error message
-    :returns: The validated parameters configuration normalized to {"parameters" : {...}}
+    :returns: The validated parameters configuration (json data as the input) if the validation succeeds
     """
-    expected_input = cast(JsonDict, parameters.get('parameters', parameters))
-    _validate_json_against_schema(expected_input, schema, initial_message, KeboolaParametersValidator.validate)
-    return {'parameters': expected_input}  # normalized to {"parameters" : {...}}
+    _validate_json_against_schema(
+        json_data=parameters,
+        schema=schema,
+        initial_message=initial_message,
+        validate_fn=KeboolaParametersValidator.validate,
+    )
+    return parameters
 
 
 def validate_flow_configuration_against_schema(flow: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
