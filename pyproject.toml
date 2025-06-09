@@ -21,6 +21,7 @@ dependencies = [
     "google-cloud-bigquery ~= 3.31",
     "jsonschema~=4.23",
     "pyjwt~=2.10",
+    "json-log-formatter ~= 1.0",
 ]
 [project.optional-dependencies]
 codestyle = [

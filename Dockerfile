@@ -30,6 +30,7 @@ WORKDIR /app
 ENV LOG_CONFIG=/app/logging-json.conf
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
+COPY logging-json.conf /app/logging-json.conf
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"

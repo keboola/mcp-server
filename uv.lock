@@ -866,6 +866,12 @@ wheels = [
 ]
 
 [[package]]
+name = "json-log-formatter"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/ef/324f4a28ed0152a32b80685b26316b604218e4ac77487ea82719c3c28bc6/json_log_formatter-1.1.1.tar.gz", hash = "sha256:0815e3b4469e5c79cf3f6dc8a0613ba6601f4a7464f85ba03655cfa6e3e17d10", size = 5896, upload-time = "2025-02-27T22:56:15.643Z" }
+
+[[package]]
 name = "jsonschema"
 version = "4.24.0"
 source = { registry = "https://pypi.org/simple" }
@@ -913,12 +919,13 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "0.33.3"
+version = "0.33.4"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "google-cloud-bigquery" },
     { name = "httpx" },
+    { name = "json-log-formatter" },
     { name = "jsonschema" },
     { name = "mcp" },
     { name = "pyjwt" },
@@ -968,6 +975,7 @@ requires-dist = [
     { name = "google-cloud-bigquery", specifier = "~=3.31" },
     { name = "httpx", specifier = "~=0.28" },
     { name = "isort", marker = "extra == 'codestyle'", specifier = "~=6.0" },
+    { name = "json-log-formatter", specifier = "~=1.0" },
     { name = "jsonschema", specifier = "~=4.23" },
     { name = "kbcstorage", marker = "extra == 'integtests'", specifier = "~=0.9" },
     { name = "mcp", specifier = "==1.9.3" },
