@@ -336,30 +336,23 @@ def validate_storage_configuration(
     :return: The contents of the 'storage' key from the validated configuration,
               or an empty dict if no storage is provided.
     """
-    _validate_storage_necessity(storage=storage, component=component)
-    if not storage or storage is None or storage.get('storage', {}) is None:
-        LOG.warning('No storage configuration provided, skipping validation.')
-        return {}
-    initial_message = (initial_message or '') + '\n'
-    initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
-    normalized_storage = validate_storage(storage, initial_message)
-    return cast(JsonDict, normalized_storage['storage'])
-
-
-def _validate_storage_necessity(
-    storage: Optional[JsonDict],
-    component: Component,
-):
-    """
-    Validates the storage necessity for the component.
-    """
-    if not storage or storage.get('storage') == {}:
+    # Missing storage key is allowed and not considered an error. (we care only if storage = {} or None if present)
+    _allow_missing_storage_key = True
+    if not storage or not storage.get('storage', _allow_missing_storage_key):
         # necessary storage for writer and transformation components
         if component.component_type in ['writer', 'transformation']:
             raise ValueError(
                 f'Storage configuration cannot be empty for component {component.component_id} of type '
                 f'{component.component_type}. Please provide the storage configuration within the tool call.'
             )
+        else:
+            LOG.warning('No storage configuration provided, skipping validation.')
+            return {}
+
+    initial_message = (initial_message or '') + '\n'
+    initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
+    normalized_storage = validate_storage(storage, initial_message)
+    return cast(JsonDict, normalized_storage['storage'])
 
 
 def validate_root_parameters_configuration(

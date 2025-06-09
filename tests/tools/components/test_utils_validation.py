@@ -2,7 +2,7 @@ from typing import Optional
 
 import pytest
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.client import JsonDict
 from keboola_mcp_server.tools.components import utils
 from keboola_mcp_server.tools.components.model import AllComponentTypes, Component
 
@@ -35,13 +35,14 @@ def test_validate_storage_configuration_output(
         ('writer', {}, False),
         ('transformation', {}, False),
         ('transformation', {'storage': {}}, False),
+        ('transformation', {'storage': None}, False),
         ('extractor', {}, True),
         ('application', {}, True),
         ('transformation', {'input': {'tables': []}, 'output': {'tables': []}}, True),
         ('transformation', {'storage': {'input': {'tables': []}, 'output': {'tables': []}}}, True),
     ],
 )
-def test_validate_storage_necessity(
+def test_validate_storage_configuration_necessity(
     mock_component: dict, component_type: AllComponentTypes, storage: Optional[JsonDict], is_valid: bool
 ):
     """testing storage necessity validation"""
@@ -49,10 +50,10 @@ def test_validate_storage_necessity(
     component_raw['type'] = component_type
     component = Component.model_validate(component_raw)
     if is_valid:
-        utils._validate_storage_necessity(storage=storage, component=component)
+        utils.validate_storage_configuration(storage=storage, component=component)
     else:
         with pytest.raises(ValueError, match='Storage configuration cannot be empty') as exception:
-            utils._validate_storage_necessity(storage=storage, component=component)
+            utils.validate_storage_configuration(storage=storage, component=component)
         assert f'{component.component_id}' in str(exception)
         assert f'{component.component_type}' in str(exception)
 
@@ -66,7 +67,7 @@ def test_validate_storage_necessity(
     ],
 )
 async def test_validate_root_parameters_configuration_output(
-    mock_component: dict, input_parameters: JsonDict, output_parameters: JsonDict, keboola_client: KeboolaClient
+    mock_component: dict, input_parameters: JsonDict, output_parameters: JsonDict
 ):
     """testing returned format structures  {...}"""
     accepting_schema = {'type': 'object', 'additionalProperties': True}  # accepts any json object
@@ -86,7 +87,7 @@ async def test_validate_root_parameters_configuration_output(
     ],
 )
 async def test_validate_row_parameters_configuration_output(
-    mock_component: dict, input_parameters: JsonDict, output_parameters: JsonDict, keboola_client: KeboolaClient
+    mock_component: dict, input_parameters: JsonDict, output_parameters: JsonDict
 ):
     """testing normalized and returned structures {parameters: {...}} vs {...}"""
     accepting_schema = {'type': 'object', 'additionalProperties': True}  # accepts any json object
@@ -100,7 +101,7 @@ async def test_validate_row_parameters_configuration_output(
 @pytest.mark.asyncio
 @pytest.mark.parametrize('input_schema', [None, {}])
 async def test_validate_parameters_configuration_no_schema(
-    mock_component: dict, input_schema: Optional[JsonDict], keboola_client: KeboolaClient
+    mock_component: dict, input_schema: Optional[JsonDict]
 ):
     """We expect passing the validation when no schema is provided"""
     input_parameters: JsonDict = {'a': 1}
