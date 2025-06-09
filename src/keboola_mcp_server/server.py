@@ -1,19 +1,22 @@
 """MCP server implementation for Keboola Connection."""
-
+import dataclasses
 import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from importlib.metadata import distribution
-from typing import Callable, Optional
+from typing import Callable
 
 from fastmcp import FastMCP
-from pydantic import AliasChoices, BaseModel, Field
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
+from pydantic import AliasChoices, AnyHttpUrl, BaseModel, Field
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState
+from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
@@ -90,29 +93,92 @@ def create_keboola_lifespan(
     return keboola_lifespan
 
 
-def create_server(config: Optional[Config] = None) -> FastMCP:
+def create_server(config: Config) -> FastMCP:
     """Create and configure the MCP server.
 
-    Args:
-        config: Server configuration. If None, loads from environment.
-
-    Returns:
-        Configured FastMCP server instance
+    :param config: Server configuration.
+    :return: Configured FastMCP server instance.
     """
+    config = config.replace_by(os.environ)
+
+    hostname_suffix = os.environ.get('HOSTNAME_SUFFIX')
+    if not config.storage_api_url and hostname_suffix:
+        config = dataclasses.replace(config, storage_api_url=f'https://connection.{hostname_suffix}')
+
+    if config.oauth_client_id and config.oauth_client_secret:
+        # fall back to HOSTNAME_SUFFIX if no URLs are specified for the OAUth server or the MCP server itself
+        if not config.oauth_server_url and hostname_suffix:
+            config = dataclasses.replace(config, oauth_server_url=f'https://connection.{hostname_suffix}')
+        if not config.mcp_server_url and hostname_suffix:
+            config = dataclasses.replace(config, mcp_server_url=f'https://mcp.{hostname_suffix}')
+        if not config.oauth_scope:
+            config = dataclasses.replace(config, oauth_scope='email')
+
+        oauth_provider = SimpleOAuthProvider(
+            client_id=config.oauth_client_id,
+            client_secret=config.oauth_client_secret,
+            server_url=config.oauth_server_url,
+            scope=config.oauth_scope,
+            # This URL must be reachable from the internet.
+            # The path corresponds to oauth_callback_handler() set up below.
+            mcp_callback_url=config.mcp_server_url.rstrip('/') + '/oauth/callback',
+            jwt_secret=config.jwt_secret,
+        )
+        auth_settings = AuthSettings(
+            issuer_url=AnyHttpUrl(config.mcp_server_url),
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                client_secret_expiry_seconds=5 * 60,  # 5 minutes
+                valid_scopes=[SimpleOAuthProvider.MCP_SERVER_SCOPE],
+                default_scopes=[SimpleOAuthProvider.MCP_SERVER_SCOPE],
+            ),
+            revocation_options=None,  # no clients revocation; clients expire
+            required_scopes=[SimpleOAuthProvider.MCP_SERVER_SCOPE],
+        )
+        LOG.debug(f'auth_settings={auth_settings}')
+    else:
+        oauth_provider = None
+        auth_settings = None
+
     # Initialize FastMCP server with system lifespan
-    mcp = KeboolaMcpServer(name='Keboola Explorer', lifespan=create_keboola_lifespan(config))
+    LOG.info(f'Creating server with config: {config}')
+    mcp = KeboolaMcpServer(
+        name='Keboola Explorer',
+        lifespan=create_keboola_lifespan(config),
+        auth_server_provider=oauth_provider,
+        auth=auth_settings,
+    )
 
     @mcp.custom_route('/health-check', methods=['GET'])
     async def get_status(_rq: Request) -> Response:
         """Checks the service is up and running."""
         resp = StatusApiResp(status='ok')
-        return Response(resp.model_dump_json(by_alias=True), media_type='application/json')
+        return JSONResponse(resp.model_dump(by_alias=True))
 
     @mcp.custom_route('/', methods=['GET'])
     async def get_info(_rq: Request) -> Response:
         """Returns basic information about the service."""
         resp = ServiceInfoApiResp(app_version=os.getenv('APP_VERSION') or _DEFAULT_APP_VERSION)
-        return Response(resp.model_dump_json(by_alias=True), media_type='application/json')
+        return JSONResponse(resp.model_dump(by_alias=True))
+
+    @mcp.custom_route('/oauth/callback', methods=['GET'])
+    async def oauth_callback_handler(request: Request) -> Response:
+        """Handle GitHub OAuth callback."""
+        code = request.query_params.get('code')
+        state = request.query_params.get('state')
+
+        if not code or not state:
+            raise HTTPException(400, 'Missing code or state parameter')
+
+        try:
+            assert oauth_provider  # this must have been set if we are handling OAuth callbacks
+            redirect_uri = await oauth_provider.handle_oauth_callback(code, state)
+            return RedirectResponse(status_code=302, url=redirect_uri)
+        except HTTPException:
+            raise
+        except Exception as e:
+            LOG.exception(f'Failed to handle OAuth callback: {e}')
+            return JSONResponse(status_code=500, content={'message': f'Unexpected error: {e}'})
 
     add_component_tools(mcp)
     add_doc_tools(mcp)

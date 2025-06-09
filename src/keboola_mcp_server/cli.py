@@ -13,14 +13,7 @@ LOG = logging.getLogger(__name__)
 
 
 def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
-    """Parse command line arguments.
-
-    Args:
-        args: Command line arguments. If None, uses sys.argv[1:].
-
-    Returns:
-        Parsed arguments
-    """
+    """Parses command line arguments."""
     parser = argparse.ArgumentParser(
         prog='python -m keboola-mcp-server',
         description='Keboola MCP Server',
@@ -38,11 +31,10 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         default='INFO',
         help='Logging level',
     )
-    parser.add_argument(
-        '--api-url', default='https://connection.keboola.com', metavar='URL', help='Keboola Storage API URL.')
+    parser.add_argument('--api-url', metavar='URL', help='Keboola Storage API URL.')
     parser.add_argument('--storage-token', metavar='STR', help='Keboola Storage API token.')
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
-    parser.add_argument('--host', default='127.0.0.1', metavar='STR', help='The host to listen on.')
+    parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
     parser.add_argument(
         '--accept-secrets-in-url', action='store_true',
@@ -54,11 +46,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
 
 
 async def run_server(args: Optional[list[str]] = None) -> None:
-    """Run the MCP server in async mode.
-
-    Args:
-        args: Command line arguments. If None, uses sys.argv[1:].
-    """
+    """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
 
     # Configure logging
@@ -77,10 +65,11 @@ async def run_server(args: Optional[list[str]] = None) -> None:
     )
 
     try:
-        # Create and run server
-        LOG.info(f'Creating server with config: {config}')
+        # Create and run the server
         keboola_mcp_server = create_server(config)
         if parsed_args.transport == 'stdio':
+            if config.oauth_client_id or config.oauth_client_secret:
+                raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
         else:
             await keboola_mcp_server.run_async(
