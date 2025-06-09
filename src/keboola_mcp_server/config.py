@@ -33,6 +33,8 @@ class Config:
     """The URL where the MCP server si reachable."""
     jwt_secret: Optional[str] = None
     """The secret key for encoding and decoding JWT tokens."""
+    bearer_token: Optional[str] = None
+    """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
 
     @staticmethod
     def _normalize(name: str) -> str:
