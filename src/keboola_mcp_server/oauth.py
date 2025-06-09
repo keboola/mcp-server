@@ -2,7 +2,8 @@ import logging
 import secrets
 import time
 from http.client import HTTPException
-from urllib.parse import urlencode, urljoin
+from typing import cast
+from urllib.parse import urljoin
 
 import jwt
 from mcp.server.auth.provider import (
@@ -15,18 +16,28 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, AnyUrl
 
 LOG = logging.getLogger(__name__)
 
 
 class _OAuthClientInformationFull(OAuthClientInformationFull):
-    def validate_redirect_uri(self, redirect_uri: AnyHttpUrl | None) -> AnyHttpUrl:
+    def validate_scope(self, requested_scope: str | None) -> list[str] | None:
+        # This is supposed to verify that the requested scopes are a subset of the scopes that the client registered.
+        # That, however, would require a persistent registry of clients.
+        # So, instead we pretend that all the requested scopes have been registered.
+        if requested_scope:
+            return requested_scope.split(' ')
+        else:
+            return None
+
+    def validate_redirect_uri(self, redirect_uri: AnyUrl | None) -> AnyUrl:
         # Ideally, this should verify the redirect_uri against the URI registered by the client.
         # That, however, would require a persistent registry of clients.
         # So, instead we require the clients to send their redirect URI in the authorization request,
         # and we just use that.
         if redirect_uri is not None:
+            LOG.debug(f'[validate_redirect_uri] redirect_uri={redirect_uri}]')
             return redirect_uri
         else:
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
@@ -73,7 +84,6 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             # and return the registered redirect URI.
             redirect_uris=[AnyHttpUrl('http://foo')],
             client_id=client_id,
-            scope=self.MCP_SERVER_SCOPE
         )
         LOG.debug(f'Client loaded: client_id={client_id}')
         return client
@@ -90,9 +100,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         # We don't store the authentication states that we create here to avoid having to persist them.
         # Instead, we encode them to JWT and pass them back to the client.
         # The states expire after 5 minutes.
+        scopes = cast(list[str], params.scopes or [])
         state = {
             'redirect_uri': str(params.redirect_uri),
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
+            # the scopes sent by the MCP server's OAuth client (e.g. claude.ai)
+            'scopes': scopes,
             'code_challenge': params.code_challenge,
             'state': params.state,
             'client_id': client.client_id,
@@ -105,11 +118,11 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
-            'scope': self._oauth_scope,
-            'state': state_jwt
+            'state': state_jwt,
+            # send no scopes to Keboola OAuth server and let it use its own default scope
         }
-        auth_url = f'{self._oauth_server_auth_url}?{urlencode(url_params)}'
 
+        auth_url = construct_redirect_uri(self._oauth_server_auth_url, **url_params)
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
 
         return auth_url
@@ -155,8 +168,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             )
 
             if response.status_code != 200:
-                LOG.exception('[handle_oauth_callback] Failed to exchange code for token, '
-                              f'OAuth server response: status={response.status_code}, text={response.text}')
+                LOG.error('[handle_oauth_callback] Failed to exchange code for token, '
+                          f'OAuth server response: status={response.status_code}, text={response.text}')
                 raise HTTPException(400, 'Failed to exchange code for token: '
                                          f'status={response.status_code}, text={response.text}')
 
@@ -164,40 +177,40 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             LOG.debug(f'[handle_oauth_callback] OAuth server response: {data}')
 
             if 'error' in data:
-                LOG.exception(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
+                LOG.error(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
                 raise HTTPException(400, data.get('error_description', data['error']))
 
         expires_in = int(data['expires_in'])  # seconds
         if expires_in <= 0:
-            LOG.exception(f'[handle_oauth_callback] Received already expired token: data={data}')
+            LOG.error(f'[handle_oauth_callback] Received already expired token: data={data}')
             raise HTTPException(400, 'Received already expired token.')
 
-        # Store access token - we'll map the MCP token to this later
+        redirect_uri = cast(str, state_data['redirect_uri'])
+        scopes = cast(list[str], state_data['scopes'])
         access_token = AccessToken(
             token=data['access_token'],
             client_id=self._oauth_client_id,
-            scopes=[self._oauth_scope],
+            scopes=scopes,
             # this is slightly different from 'expires_at' kept by the OAuth server
             expires_at=int(time.time() + expires_in),
         )
 
         # Create MCP authorization code
+        # This is deserialized into _ExtendedAuthorizationCode instance in load_authorization_code() function.
         auth_code = {
             'code': f'mcp_{secrets.token_hex(16)}',
             'client_id': state_data['client_id'],
-            'redirect_uri': state_data['redirect_uri'],
+            'redirect_uri': redirect_uri,
             'redirect_uri_provided_explicitly': (state_data['redirect_uri_provided_explicitly'] == 'True'),
             'expires_at': int(time.time() + 5 * 60),  # 5 minutes from now
-            'scopes': [self.MCP_SERVER_SCOPE],
+            'scopes': scopes,
             'code_challenge': state_data['code_challenge'],
             'oauth_access_token': access_token.model_dump(),
         }
         auth_code_jwt = jwt.encode(auth_code, self._jwt_secret)
 
         mcp_redirect_uri = construct_redirect_uri(
-            redirect_uri_base=state_data['redirect_uri'],
-            code=auth_code_jwt,
-            state=state_data['state']
+            redirect_uri_base=redirect_uri, code=auth_code_jwt, state=state_data['state'],
         )
         LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
 
@@ -216,7 +229,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         LOG.debug(f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
                   f'auth_code={auth_code}')
         return _ExtendedAuthorizationCode.model_validate(
-            auth_code | {'redirect_uri': AnyHttpUrl(auth_code['redirect_uri'])}
+            auth_code | {'redirect_uri': AnyUrl(auth_code['redirect_uri'])}
         )
 
     async def exchange_authorization_code(
