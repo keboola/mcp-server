@@ -4,13 +4,14 @@ import json
 import logging
 from datetime import datetime
 from importlib import resources
-from typing import Annotated, Any, Literal, Sequence, cast
+from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.links import Link, LinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools._validate import validate_flow_configuration_against_schema
 from keboola_mcp_server.tools.components.model import (
@@ -25,15 +26,6 @@ LOG = logging.getLogger(__name__)
 
 RESOURCES = 'keboola_mcp_server.resources'
 FLOW_SCHEMA_RESOURCE = 'flow-schema.json'
-FLOW_DOCUMENTATION_URL = 'https://help.keboola.com/flows/'
-
-URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
-
-
-class FlowURL(BaseModel):
-    type: URLType = Field(..., description='The type of the URL.')
-    title: str = Field(..., description='The name of the URL.')
-    url: str = Field(..., description='The URL.')
 
 
 def _load_schema() -> JsonDict:
@@ -66,7 +58,7 @@ class FlowToolResponse(BaseModel):
         validation_alias=AliasChoices('timestamp', 'created'),
     )
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
-    links: list[FlowURL] = Field(..., description='The URLs relevant to the tool call.')
+    links: list[Link] = Field(..., description='The URLs relevant to the tool call.')
 
 
 @tool_errors()
@@ -138,7 +130,8 @@ async def create_flow(
     flow_name = new_raw_configuration['name']
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
-    flow_links = get_flow_urls(base_url=base_url, project_id=project_id, flow_id=flow_id, flow_name=flow_name)
+    flow_links = LinksManager().get_flow_links(base_url=base_url, project_id=project_id,
+                                               flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
@@ -203,7 +196,8 @@ async def update_flow(
     flow_name = updated_raw_configuration['name']
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
-    flow_links = get_flow_urls(base_url=base_url, project_id=project_id, flow_id=flow_id, flow_name=flow_name)
+    flow_links = LinksManager().get_flow_links(base_url=base_url, project_id=project_id,
+                                               flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Updated flow configuration: {flow_id}')
@@ -393,18 +387,3 @@ def _check_circular_dependencies(phases: list[FlowPhase]) -> None:
             if cycle_path is not None:
                 cycle_str = ' -> '.join(str(pid) for pid in cycle_path)
                 raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
-
-
-def get_flow_url(base_url: str, project_id: str, flow_id: str | int) -> str:
-    return f'{base_url}/admin/projects/{project_id}/flows/{flow_id}'
-
-
-def get_flows_url(base_url: str, project_id: str) -> str:
-    return f'{base_url}/admin/projects/{project_id}/flows'
-
-
-def get_flow_urls(base_url: str, project_id: str, flow_id: str | int, flow_name: str) -> list[FlowURL]:
-    flow_url = FlowURL(type='ui-detail', title=f'Flow: {flow_name}', url=get_flow_url(base_url, project_id, flow_id))
-    flows_url = FlowURL(type='ui-dashboard', title='Flows in the project', url=get_flows_url(base_url, project_id))
-    documentation_url = FlowURL(type='docs', title='Documentation for Keboola Flows', url=FLOW_DOCUMENTATION_URL)
-    return [flow_url, flows_url, documentation_url]
