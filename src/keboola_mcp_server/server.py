@@ -12,7 +12,7 @@ from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from pydantic import AliasChoices, AnyHttpUrl, BaseModel, Field
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState
@@ -180,6 +180,17 @@ def create_server(config: Config) -> FastMCP:
         except Exception as e:
             LOG.exception(f'Failed to handle OAuth callback: {e}')
             return JSONResponse(status_code=500, content={'message': f'Unexpected error: {e}'})
+
+    @mcp.custom_route('/favicon.ico', methods=['GET'])
+    async def favicon_ico(_rq: Request) -> Response:
+        """Serve favicon.ico file."""
+        import pathlib
+        static_dir = pathlib.Path(__file__).parent / 'resources' / 'static'
+        favicon_path = static_dir / 'favicon.ico'
+        if favicon_path.exists():
+            return FileResponse(favicon_path, media_type='image/x-icon')
+        else:
+            raise HTTPException(404, 'Favicon not found')
 
     add_component_tools(mcp)
     add_doc_tools(mcp)
