@@ -39,7 +39,7 @@ Add this configuration:
 ```
 
 > [!NOTE]
-> When you are already a Keboola user, make sure to change MCP url stack in configuration JSON correspondingly (see [Keboola regions](https://github.com/keboola/mcp-server/edit/codex/update-readme-for-simplified-mcp-setup/README.md?pr=%2Fkeboola%2Fmcp-server%2Fpull%2F152#keboola-region) section).
+> When you are already a Keboola user, make sure to change MCP url stack in configuration JSON correspondingly (see [Keboola regions](#keboola-region) section).
 
 ### Other ways how to connect
 <details>
@@ -383,7 +383,7 @@ What buckets and tables are in my Keboola project?
 |-------|----------|
 | **Authentication Errors** | Verify `KBC_STORAGE_TOKEN` is valid |
 | **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct |
-| **Connection Timeout** | Check network connectivity |
+| **Connection Timeout** | Check network connectivity | 
 
 ## Development
 
@@ -424,7 +424,9 @@ versions when creating a release (`uv lock --upgrade`).
 
 ## Support and Feedback
 
-**⭐ The primary way to get help, report bugs, or request features is by [opening an issue on GitHub](https://github.com/keboola/mcp-server/issues/new). ⭐**
+**⭐ The primary way to get help, report bugs, or request features is via our [Keboola Discord server](https://discord.com/invite/keboola). ⭐** 
+
+You can also [open an issue on GitHub](https://github.com/keboola/mcp-server/issues/new).
 
 The development team actively monitors issues and will respond as quickly as possible. For general information about Keboola, please use the resources below.
 
@@ -433,7 +435,7 @@ The development team actively monitors issues and will respond as quickly as pos
 - [User Documentation](https://docs.keboola.com/)
 - [Developer Documentation](https://developers.keboola.com/)
 - [Keboola Platform](https://www.keboola.com)
-- [Issue Tracker](https://github.com/keboola/mcp-server/issues/new) ← **Primary contact method for MCP Server**
+- [Issue Tracker](https://github.com/keboola/mcp-server/issues/new)
 
 ## Connect
 
