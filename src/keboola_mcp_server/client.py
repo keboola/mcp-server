@@ -853,6 +853,19 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}'))
 
+    async def workspace_query(self, workspace_id: int, query: str) -> JsonDict:
+        """
+        Executes a query in a given workspace.
+
+        :param workspace_id: The id of the workspace
+        :param query: The query to execute
+        :return: The SAPI call response - query result or raise an error.
+        """
+        return cast(JsonDict, await self.post(
+            endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}/query',
+            data={'query': query},
+        ))
+
     async def workspace_list(self) -> list[JsonDict]:
         """
         Lists all workspaces in the project.
