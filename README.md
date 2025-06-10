@@ -22,7 +22,7 @@ Use Keboola's hosted MCP server to connect your client in seconds.
 
 Click to install:
 
-[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJjb21tYW5kIjoibnB4IG1jcC1yZW1vdGUgaHR0cHM6Ly9tY3AudXMtZWFzdDQuZ2NwLmtlYm9vbGEuY29tL3NzZSJ9)
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
 
 ### Other MCP Clients
 
@@ -32,7 +32,7 @@ Add this configuration:
 {
   "mcpServers": {
     "keboola": {
-      "command": "npx mcp-remote https://mcp.us-east4.gcp.keboola.com/"
+      "url": "https://mcp.us-east4.gcp.keboola.com/sse"
     }
   }
 }
