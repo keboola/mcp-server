@@ -404,6 +404,7 @@ The development team actively monitors issues and will respond as quickly as pos
 
 ## Connect
 
+- [Discord](https://discord.com/invite/keboola)
 - [LinkedIn](https://www.linkedin.com/company/keboola)
 - [Twitter](https://x.com/keboola)
 - [Changelog](https://changelog.keboola.com/)
