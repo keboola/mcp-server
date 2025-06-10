@@ -400,6 +400,35 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonList, await self.get(endpoint='buckets'))
 
+    async def bucket_metadata_get(self, bucket_id: str) -> list[JsonDict]:
+        """
+        Retrieves metadata for a given bucket.
+
+        :param bucket_id: The id of the bucket
+        :return: Bucket metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/metadata'))
+
+    async def bucket_metadata_update(
+        self,
+        bucket_id: str,
+        metadata: dict[str, Any],
+        provider: str = 'user',
+    ) -> list[JsonDict]:
+        """
+        Updates metadata for a given bucket.
+
+        :param bucket_id: The id of the bucket
+        :param metadata: The metadata to update.
+        :param provider: The provider of the metadata ('user' by default).
+        :return: Bucket metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        payload = {
+            'provider': provider,
+            'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
+        }
+        return cast(list[JsonDict], await self.post(endpoint=f'buckets/{bucket_id}/metadata', data=payload))
+
     async def bucket_table_list(self, bucket_id: str, include: list[str] | None = None) -> list[JsonDict]:
         """
         Lists all tables in a given bucket.
@@ -760,6 +789,46 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Table details as dictionary
         """
         return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
+
+    async def table_metadata_get(self, table_id: str) -> list[JsonDict]:
+        """
+        Retrieves metadata for a given table.
+
+        :param table_id: The id of the table
+        :return: Table metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        return cast(list[JsonDict], await self.get(endpoint=f'tables/{table_id}/metadata'))
+
+    async def table_metadata_update(
+        self,
+        table_id: str,
+        metadata: dict[str, Any] | None = None,
+        columns_metadata: dict[str, list[dict[str, Any]]] | None = None,
+        provider: str = 'user',
+    ) -> JsonDict:
+        """
+        Updates metadata for a given table. At least one of the `metadata` or `columns_metadata` arguments
+        must be provided.
+
+        :param table_id: The id of the table
+        :param metadata: The metadata to update.
+        :param columns_metadata: The column metadata to update. Mapping of column names to a list of dictionaries.
+            Each dictionary contains the 'key' and 'value' keys.
+        :param provider: The provider of the metadata ('user' by default).
+        :return: Dictionary with 'metadata' key under which the table metadata is stored as a list of dictionaries.
+            Each dictionary contains the 'key' and 'value' keys. Under 'columnsMetadata' key, the column metadata
+            is stored as a mapping of column names to a list of dictionaries.
+        """
+        if not metadata and not columns_metadata:
+            raise ValueError('At least one of the `metadata` or `columns_metadata` arguments must be provided.')
+
+        payload: dict[str, Any] = {'provider': provider}
+        if metadata:
+            payload['metadata'] = [{'key': key, 'value': value} for key, value in metadata.items()]
+        if columns_metadata:
+            payload['columnsMetadata'] = columns_metadata
+
+        return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
 
     async def workspace_create(self, async_run: bool = True, read_only_storage_access: bool = False) -> JsonDict:
         """
