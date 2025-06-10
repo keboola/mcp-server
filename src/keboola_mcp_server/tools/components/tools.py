@@ -1,7 +1,7 @@
 import json
 import logging
-from typing import Annotated, Any, Sequence, cast
 from datetime import datetime
+from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from httpx import HTTPStatusError
@@ -10,6 +10,7 @@ from pydantic import Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.links import LinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.model import (
     Component,
@@ -17,9 +18,9 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationResponse,
     ComponentRootConfiguration,
     ComponentRowConfiguration,
+    ComponentToolResponse,
     ComponentType,
     ComponentWithConfigurations,
-    ComponentToolResponse,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
@@ -34,7 +35,6 @@ from keboola_mcp_server.tools.components.utils import (
     validate_storage_configuration,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
-from keboola_mcp_server.links import LinksManager
 
 LOG = logging.getLogger(__name__)
 
@@ -196,7 +196,12 @@ async def get_component(
 @with_session_state()
 async def get_component_configuration(
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-    configuration_id: Annotated[str, Field(description='ID of the component/transformation configuration',)],
+    configuration_id: Annotated[
+        str,
+        Field(
+            description='ID of the component/transformation configuration',
+        ),
+    ],
     ctx: Context,
 ) -> Annotated[ComponentConfigurationOutput, Field(description='The component/transformation and its configuration.')]:
     """
@@ -257,7 +262,7 @@ async def get_component_configuration(
 
 
 async def _set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
-    """ Sets configuration metadata to indicate it was created by MCP. """
+    """Sets configuration metadata to indicate it was created by MCP."""
     try:
         await client.storage_client.configuration_metadata_update(
             component_id=component_id,
@@ -276,7 +281,7 @@ async def _set_cfg_update_metadata(
     configuration_id: str,
     configuration_version: int,
 ) -> None:
-    """ Sets configuration metadata to indicate it was updated by MCP. """
+    """Sets configuration metadata to indicate it was updated by MCP."""
     updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{configuration_version}'
     try:
         await client.storage_client.configuration_metadata_update(
@@ -285,9 +290,7 @@ async def _set_cfg_update_metadata(
             metadata={updated_by_md_key: 'true'},
         )
     except HTTPStatusError as e:
-        LOG.exception(
-            f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}'
-        )
+        LOG.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
 
 
 @tool_errors()
@@ -296,7 +299,9 @@ async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the SQL transformation.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
+        ),
     ],
     description: Annotated[
         str,
@@ -325,7 +330,9 @@ async def create_sql_transformation(
             ),
         ),
     ] = tuple(),
-) -> Annotated[ComponentToolResponse, Field(description='Response object for created SQL Transformation Configuration.')]:
+) -> Annotated[
+    ComponentToolResponse, Field(description='Response object for created SQL Transformation Configuration.')
+]:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
     description, and optionally a list of created table names if and only if they are generated within the SQL
@@ -385,11 +392,7 @@ async def create_sql_transformation(
         configuration_id=configuration_id,
     )
 
-    LOG.info(
-        f'Created new transformation "{component_id}" with configuration id '
-        f'"{configuration_id}".'
-    )
-
+    LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
 
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
@@ -446,9 +449,13 @@ async def update_sql_transformation_configuration(
     ] = '',
     is_disabled: Annotated[
         bool,
-        Field(description='Whether to disable the transformation configuration. Default is False.',),
+        Field(
+            description='Whether to disable the transformation configuration. Default is False.',
+        ),
     ] = False,
-) -> Annotated[ComponentToolResponse, Field(description='Response object for updated SQL Transformation Configuration.')]:
+) -> Annotated[
+    ComponentToolResponse, Field(description='Response object for updated SQL Transformation Configuration.')
+]:
     """
     Updates an existing SQL transformation configuration, optionally updating the description and disabling the
     configuration.
@@ -486,14 +493,13 @@ async def update_sql_transformation_configuration(
         updated_description=updated_description if updated_description else None,
         is_disabled=is_disabled,
     )
-    
+
     await _set_cfg_update_metadata(
         client=client,
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
         configuration_version=updated_raw_configuration.get('version'),
     )
-
 
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
@@ -505,8 +511,9 @@ async def update_sql_transformation_configuration(
     )
 
     LOG.info(
-            f'Updated transformation configuration: {updated_raw_configuration["id"]} for '
-            f'component: {updated_raw_configuration["component_id"]}.')
+        f'Updated transformation configuration: {updated_raw_configuration["id"]} for '
+        f'component: {updated_raw_configuration["component_id"]}.'
+    )
 
     return ComponentToolResponse(
         component_id=sql_transformation_id,
@@ -524,7 +531,9 @@ async def create_component_root_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -593,16 +602,16 @@ async def create_component_root_configuration(
 
     configuration_id = new_raw_configuration['id']
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".'
-    )
+    LOG.info(f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     await _set_cfg_creation_metadata(client, component_id, configuration_id)
 
     # Build configuration link using LinksManager
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
-    links = LinksManager(base_url).get_component_configuration_links(project_id=project_id, component_id=component_id, configuration_id=configuration_id, configuration_name=name)
+    links = LinksManager(base_url).get_component_configuration_links(
+        project_id=project_id, component_id=component_id, configuration_id=configuration_id, configuration_name=name
+    )
 
     return ComponentToolResponse(
         component_id=component_id,
@@ -620,7 +629,9 @@ async def create_component_row_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -633,7 +644,9 @@ async def create_component_row_configuration(
     component_id: Annotated[str, Field(description='The ID of the component for which to create the configuration.')],
     configuration_id: Annotated[
         str,
-        Field(description='The ID of the configuration for which to create the configuration row.',),
+        Field(
+            description='The ID of the configuration for which to create the configuration row.',
+        ),
     ],
     parameters: Annotated[
         dict[str, Any],
@@ -697,8 +710,8 @@ async def create_component_row_configuration(
     )
 
     LOG.info(
-    f'Created new configuration for component "{component_id}" with configuration id '
-    f'"{configuration_id}".')
+        f'Created new configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".'
+    )
 
     await _set_cfg_update_metadata(
         client=client,
@@ -732,7 +745,9 @@ async def update_component_root_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -807,10 +822,8 @@ async def update_component_root_configuration(
             updated_description=description,
         ),
     )
-    
-    LOG.info(
-        f'Updated configuration for component "{component_id}" with configuration id '
-        f'"{configuration_id}".')
+
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
     await _set_cfg_update_metadata(
         client=client,
@@ -856,7 +869,9 @@ async def update_component_row_configuration(
     ],
     change_description: Annotated[
         str,
-        Field(description='Description of the change made to the component configuration.',),
+        Field(
+            description='Description of the change made to the component configuration.',
+        ),
     ],
     component_id: Annotated[str, Field(description='The ID of the component to update.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
@@ -922,9 +937,7 @@ async def update_component_row_configuration(
         ),
     )
 
-    LOG.info(
-        f'Updated configuration for component "{component_id}" with configuration id '
-        f'"{configuration_id}".')
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
     await _set_cfg_update_metadata(
         client=client,
