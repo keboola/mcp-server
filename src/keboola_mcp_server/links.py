@@ -18,6 +18,14 @@ class LinksManager:
     def __init__(self, base_url: str):
         self.base_url = base_url
 
+    def get_component_configuration_url(self, project_id: str, component_id: str, configuration_id: str) -> str:
+        """Get the UI detail URL for a specific component configuration."""
+        return f'{self.base_url}/admin/projects/{project_id}/components/{component_id}/{configuration_id}'
+
+    def get_component_configurations_dashboard_url(self, project_id: str, component_id: str) -> str:
+        """Get the UI dashboard URL for all configurations of a component."""
+        return f'{self.base_url}/admin/projects/{project_id}/components/{component_id}'
+    
     def get_flow_url(self, project_id: str, flow_id: str | int) -> str:
         """Get the UI detail URL for a specific flow."""
         return f'{self.base_url}/admin/projects/{project_id}/flows/{flow_id}'
@@ -43,3 +51,12 @@ class LinksManager:
         )
         documentation_url = Link(type='docs', title='Documentation for Keboola Flows', url=self.FLOW_DOCUMENTATION_URL)
         return [flow_url, flows_url, documentation_url]
+
+    def get_component_configuration_links(self, project_id: str, component_id: str, configuration_id: str, configuration_name: str) -> list[Link]:
+        """Get a list of relevant links for a component configuration (UI detail and dashboard)."""
+        config_url = self.get_component_configuration_url(project_id, component_id, configuration_id)
+        dashboard_url = self.get_component_configurations_dashboard_url(project_id, component_id)
+        return [
+            Link(type='ui-detail', title=f'Configuration: {configuration_name}', url=config_url),
+            Link(type='ui-dashboard', title='Component Configurations Dashboard', url=dashboard_url),
+        ]
