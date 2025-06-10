@@ -116,6 +116,7 @@ def create_server(config: Config) -> FastMCP:
             config = dataclasses.replace(config, oauth_scope='email')
 
         oauth_provider = SimpleOAuthProvider(
+            storage_api_url=config.storage_api_url,
             client_id=config.oauth_client_id,
             client_secret=config.oauth_client_secret,
             server_url=config.oauth_server_url,

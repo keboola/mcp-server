@@ -38,12 +38,14 @@ class KeboolaClient:
         self,
         storage_api_token: str,
         storage_api_url: str,
+        bearer_token: str | None = None
     ) -> None:
         """
         Initialize the client.
 
         :param storage_api_token: Keboola Storage API token
         :param storage_api_url: Keboola Storage API URL
+        :param bearer_token: The access token issued by Keboola OAuth server
         """
         self.token = storage_api_token
         # Ensure the base URL has a scheme
@@ -58,8 +60,9 @@ class KeboolaClient:
         ai_service_api_url = f'{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
 
         # Initialize clients for individual services
+        bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else storage_api_token
         self.storage_client = AsyncStorageClient.create(
-            root_url=storage_api_url, token=self.token, headers=self._get_headers()
+            root_url=storage_api_url, token=bearer_or_sapi_token, headers=self._get_headers()
         )
         self.jobs_queue_client = JobsQueueClient.create(
             root_url=queue_api_url, token=self.token, headers=self._get_headers()

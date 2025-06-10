@@ -68,7 +68,7 @@ def _create_session_state(config: Config) -> dict[str, Any]:
             raise ValueError('Storage API token is not provided.')
         if not config.storage_api_url:
             raise ValueError('Storage API URL is not provided.')
-        client = KeboolaClient(config.storage_token, config.storage_api_url)
+        client = KeboolaClient(config.storage_token, config.storage_api_url, bearer_token=config.bearer_token)
         state[KeboolaClient.STATE_KEY] = client
         LOG.info('Successfully initialized Storage API client.')
     except Exception as e:
@@ -156,9 +156,13 @@ def with_session_state() -> AnyFunction:
 
                     if 'user' in http_rq.scope and isinstance(http_rq.user, AuthenticatedUser):
                         user = cast(AuthenticatedUser, http_rq.user)
-                        LOG.debug(f'Injecting SAPI token for access token: {user.access_token}')
+                        LOG.debug(f'Injecting bearer and SAPI tokens from ProxyAccessToken: {user.access_token}')
                         assert isinstance(user.access_token, ProxyAccessToken)
-                        config = dataclasses.replace(config, storage_token=f'Bearer {user.access_token.delegate.token}')
+                        config = dataclasses.replace(
+                            config,
+                            storage_token=user.access_token.sapi_token,
+                            bearer_token=user.access_token.delegate.token
+                        )
 
                 # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
                 #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
