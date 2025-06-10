@@ -3,6 +3,8 @@
 import argparse
 import asyncio
 import logging
+import os
+import pathlib
 import sys
 from typing import Optional
 
@@ -41,6 +43,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         help='(NOT RECOMMENDED) Read Storage API token and other configuration parameters from the query part '
              'of the MCP server URL. Please note that the URL query parameters are not secure '
              'for sending sensitive information.')
+    parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
 
     return parser.parse_args(args)
 
@@ -49,12 +52,16 @@ async def run_server(args: Optional[list[str]] = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
 
-    # Configure logging
-    logging.basicConfig(
-        format='%(asctime)s %(name)s %(levelname)s: %(message)s',
-        level=parsed_args.log_level,
-        stream=sys.stderr,
-    )
+    if parsed_args.log_config:
+        logging.config.fileConfig(parsed_args.log_config, disable_existing_loggers=False)
+    elif os.environ.get('LOG_CONFIG'):
+        logging.config.fileConfig(os.environ['LOG_CONFIG'], disable_existing_loggers=False)
+    else:
+        logging.basicConfig(
+            format='%(asctime)s %(name)s %(levelname)s: %(message)s',
+            level=parsed_args.log_level,
+            stream=sys.stderr,
+        )
 
     # Create config from the CLI arguments
     config = Config(
