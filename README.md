@@ -8,11 +8,38 @@ Keboola MCP Server is an open-source bridge between your Keboola project and mod
 
 ## Features
 
-- **Storage**: Query tables directly and manage table or bucket descriptions  
-- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations  
+- **Storage**: Query tables directly and manage table or bucket descriptions
+- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations
 - **SQL**: Create SQL transformations with natural language
-- **Jobs**: Run components and transformations, and retrieve job execution details  
+- **Jobs**: Run components and transformations, and retrieve job execution details
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
+
+## Quick MCP Setup (Remote Server)
+
+Use Keboola's hosted MCP server to connect your client in seconds.
+
+### Cursor
+
+Click to install:
+
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJjb21tYW5kIjoibnB4IG1jcC1yZW1vdGUgaHR0cHM6Ly9tY3AtZWFzdDQuZ2NwLmtlYm9vbGEuY29tL3NzZSJ9)
+
+### Other MCP Clients
+
+Add this configuration:
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "npx mcp-remote https://mcp-east4.gcp.keboola.com/sse"
+    }
+  }
+}
+```
+
+<details>
+<summary>Running MCP Server Locally</summary>
 
 ## Preparations
 
@@ -268,6 +295,8 @@ docker run -it \
 | Developing MCP locally | No (Claude starts it) | Point config to python path |
 | Testing CLI manually | Yes | Use terminal to run |
 | Using Docker | Yes | Run docker container |
+
+</details>
 
 ## Using MCP Server
 
