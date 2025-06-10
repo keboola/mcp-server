@@ -11,7 +11,7 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.links import Link, LinksManager
+from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools._validate import validate_flow_configuration_against_schema
 from keboola_mcp_server.tools.components.model import (
@@ -58,7 +58,7 @@ class FlowToolResponse(BaseModel):
         validation_alias=AliasChoices('timestamp', 'created'),
     )
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
-    links: list[Link] = Field(..., description='The URLs relevant to the tool call.')
+    links: list[Link] = Field(..., description='The links relevant to the tool call.')
 
 
 @tool_errors()
@@ -130,7 +130,7 @@ async def create_flow(
     flow_name = new_raw_configuration['name']
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
-    flow_links = LinksManager(base_url).get_flow_links(project_id=project_id, flow_id=flow_id, flow_name=flow_name)
+    flow_links = ProjectLinksManager(base_url, project_id).get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
@@ -195,7 +195,7 @@ async def update_flow(
     flow_name = updated_raw_configuration['name']
     project_id = await client.storage_client.project_id()
     base_url = client.storage_client.base_api_url
-    flow_links = LinksManager(base_url).get_flow_links(project_id=project_id, flow_id=flow_id, flow_name=flow_name)
+    flow_links = ProjectLinksManager(base_url, project_id).get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Updated flow configuration: {flow_id}')

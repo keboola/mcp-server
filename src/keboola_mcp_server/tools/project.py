@@ -7,7 +7,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.links import Link, LinksManager
+from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
@@ -76,7 +76,7 @@ async def get_project_info(
     base_url = storage.base_api_url
     project_id = project_data['id']
 
-    links = LinksManager(base_url).get_project_links(project_id)
+    links = ProjectLinksManager(base_url, project_id).get_project_links()
 
     combined = {
         **project_data,
