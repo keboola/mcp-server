@@ -4,9 +4,9 @@ from typing import Optional
 import pytest
 
 from keboola_mcp_server.client import JsonDict
-from keboola_mcp_server.tools._validate import RecoverableValidationError
 from keboola_mcp_server.tools.components import utils
 from keboola_mcp_server.tools.components.model import AllComponentTypes, Component
+from keboola_mcp_server.tools.validation import RecoverableValidationError
 
 
 @pytest.mark.parametrize(

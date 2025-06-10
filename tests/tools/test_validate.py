@@ -5,20 +5,20 @@ import jsonschema
 import pytest
 
 from keboola_mcp_server.client import JsonDict
-from keboola_mcp_server.tools import _validate
+from keboola_mcp_server.tools import validation
 
 
 @pytest.mark.parametrize(
     ('schema_name', 'expected_keywords'),
     [
         (
-            _validate.ConfigurationSchemaResources.STORAGE,
+            validation.ConfigurationSchemaResources.STORAGE,
             ['type', 'properties', 'storage', 'input', 'output', 'tables', 'files', 'destination', 'source'],
         )
     ],
 )
 def test_load_schema(schema_name, expected_keywords):
-    schema = _validate._load_schema(schema_name)
+    schema = validation._load_schema(schema_name)
     assert schema is not None
     for keyword in expected_keywords:
         assert keyword in str(schema)
@@ -41,7 +41,7 @@ def test_validate_storage_valid(valid_storage_path: str):
     with open(valid_storage_path, 'r') as f:
         valid_storage = json.load(f)
     # returns the same valid storage no exception is raised
-    assert _validate.validate_storage_configuration_against_schema(valid_storage) == valid_storage
+    assert validation.validate_storage_configuration_against_schema(valid_storage) == valid_storage
 
 
 @pytest.mark.parametrize(
@@ -73,8 +73,8 @@ def test_validate_storage_invalid(invalid_storage_path: str):
     """We expect the json will not be validated and raise a RecoverableValidationError"""
     with open(invalid_storage_path, 'r') as f:
         invalid_storage = json.load(f)
-    with pytest.raises(_validate.RecoverableValidationError) as exc_info:
-        _validate.validate_storage_configuration_against_schema(
+    with pytest.raises(validation.RecoverableValidationError) as exc_info:
+        validation.validate_storage_configuration_against_schema(
             invalid_storage, initial_message='This is a test message'
         )
     err = exc_info.value
@@ -92,7 +92,7 @@ def test_validate_storage_invalid(invalid_storage_path: str):
 def test_validate_storage_output_format(input_storage, output_storage):
     """Test that storage configuration validation preserves the input format - whether the input contains a 'storage'
     key or not, the output will match the input structure exactly."""
-    result = _validate.validate_storage_configuration_against_schema(input_storage)
+    result = validation.validate_storage_configuration_against_schema(input_storage)
     assert result == output_storage
 
 
@@ -107,7 +107,7 @@ def test_validate_parameters_output_format(input_parameters, output_parameters):
     """Test that parameters configuration validation preserves the input format - whether the input contains a
     'parameters' key or not, the output will match the input structure exactly."""
     accepting_schema = {'type': 'object', 'additionalProperties': True}  # accepts any json object
-    result = _validate.validate_parameters_configuration_against_schema(input_parameters, accepting_schema)
+    result = validation.validate_parameters_configuration_against_schema(input_parameters, accepting_schema)
     assert result == output_parameters
 
 
@@ -122,7 +122,7 @@ def test_validate_parameters_output_format(input_parameters, output_parameters):
 def test_validate_flow_valid(valid_flow_path: str):
     with open(valid_flow_path, 'r') as f:
         valid_flow = json.load(f)
-    assert _validate.validate_flow_configuration_against_schema(valid_flow) == valid_flow
+    assert validation.validate_flow_configuration_against_schema(valid_flow) == valid_flow
 
 
 @pytest.mark.parametrize(
@@ -139,8 +139,8 @@ def test_validate_flow_valid(valid_flow_path: str):
 def test_validate_flow_invalid(invalid_flow_path: str):
     with open(invalid_flow_path, 'r') as f:
         invalid_flow = json.load(f)
-    with pytest.raises(_validate.RecoverableValidationError):
-        _validate.validate_flow_configuration_against_schema(invalid_flow)
+    with pytest.raises(validation.RecoverableValidationError):
+        validation.validate_flow_configuration_against_schema(invalid_flow)
 
 
 def test_validate_json_against_schema_invalid_schema(caplog):
@@ -150,7 +150,7 @@ def test_validate_json_against_schema_invalid_schema(caplog):
     """
     corrupted_schema = {'type': 'int', 'minimum': 5}
     with caplog.at_level(logging.ERROR):
-        _validate._validate_json_against_schema(
+        validation._validate_json_against_schema(
             json_data={'foo': 1}, schema=corrupted_schema, initial_message='This is a test message'
         )
     assert f'schema: {corrupted_schema}' in caplog.text
@@ -158,7 +158,7 @@ def test_validate_json_against_schema_invalid_schema(caplog):
 
 def test_recoverable_validation_error_str():
     err = jsonschema.ValidationError('Validation error', instance={'foo': 1})
-    rve = _validate.RecoverableValidationError.create_from_values(
+    rve = validation.RecoverableValidationError.create_from_values(
         err, invalid_json={'foo': 1}, initial_message='Initial msg'
     )
     s = str(rve)
@@ -240,7 +240,7 @@ def test_recoverable_validation_error_str():
     ],
 )
 def test_normalize_schema(input_schema: JsonDict, expected_schema: JsonDict):
-    result = _validate.KeboolaParametersValidator.sanitize_schema(input_schema)
+    result = validation.KeboolaParametersValidator.sanitize_schema(input_schema)
     assert result == expected_schema
 
 
@@ -255,7 +255,7 @@ def test_normalize_schema(input_schema: JsonDict, expected_schema: JsonDict):
 )
 def test_normalize_schema_invalid_parameters(input_schema: JsonDict):
     with pytest.raises(jsonschema.SchemaError):
-        _validate.KeboolaParametersValidator.sanitize_schema(input_schema)
+        validation.KeboolaParametersValidator.sanitize_schema(input_schema)
 
 
 @pytest.mark.parametrize(
@@ -276,12 +276,12 @@ def test_schema_validation(caplog, schema_path: str, json_data: JsonDict):
 
     with caplog.at_level(logging.ERROR):
         # we expect the error logging when schema is invalid but not failure since it is not an Agent error
-        _validate._validate_json_against_schema(json_data, schema, validate_fn=jsonschema.validate)
+        validation._validate_json_against_schema(json_data, schema, validate_fn=jsonschema.validate)
     assert f'schema: {schema}' in caplog.text
 
     try:
-        _validate._validate_json_against_schema(
-            json_data, schema, validate_fn=_validate.KeboolaParametersValidator.validate
+        validation._validate_json_against_schema(
+            json_data, schema, validate_fn=validation.KeboolaParametersValidator.validate
         )
     except jsonschema.ValidationError:
         pytest.fail('ValidationError was raised when it should not have been')
@@ -317,12 +317,12 @@ def test_validate_row_parameters(schema_path: str, data_path: str, valid: bool):
         data = json.load(f)
     if valid:
         try:
-            _validate.validate_parameters_configuration_against_schema(data, schema)
+            validation.validate_parameters_configuration_against_schema(data, schema)
         except jsonschema.ValidationError:
             pytest.fail('ValidationError was raised when it should not have been')
     else:
         with pytest.raises(jsonschema.ValidationError):
-            _validate.validate_parameters_configuration_against_schema(data, schema)
+            validation.validate_parameters_configuration_against_schema(data, schema)
 
 
 @pytest.mark.parametrize(
@@ -351,9 +351,9 @@ def test_validate_root_parameters(schema_path: str, data_path: str, valid: bool)
         data = json.load(f)
     if valid:
         try:
-            _validate.validate_parameters_configuration_against_schema(data, schema)
+            validation.validate_parameters_configuration_against_schema(data, schema)
         except jsonschema.ValidationError:
             pytest.fail('ValidationError was raised when it should not have been')
     else:
         with pytest.raises(jsonschema.ValidationError):
-            _validate.validate_parameters_configuration_against_schema(data, schema)
+            validation.validate_parameters_configuration_against_schema(data, schema)

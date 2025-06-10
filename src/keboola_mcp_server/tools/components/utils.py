@@ -7,10 +7,6 @@ from httpx import HTTPStatusError
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.tools._validate import (
-    validate_parameters_configuration_against_schema,
-    validate_storage_configuration_against_schema,
-)
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
@@ -19,6 +15,10 @@ from keboola_mcp_server.tools.components.model import (
     ComponentType,
     ComponentWithConfigurations,
     ReducedComponent,
+)
+from keboola_mcp_server.tools.validation import (
+    validate_parameters_configuration_against_schema,
+    validate_storage_configuration_against_schema,
 )
 
 LOG = logging.getLogger(__name__)
