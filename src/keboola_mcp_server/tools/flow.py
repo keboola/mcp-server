@@ -119,6 +119,7 @@ async def create_flow(
     validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Creating new flow: {name}')
 
@@ -128,9 +129,7 @@ async def create_flow(
 
     flow_id = str(new_raw_configuration['id'])
     flow_name = new_raw_configuration['name']
-    project_id = await client.storage_client.project_id()
-    base_url = client.storage_client.base_api_url
-    flow_links = ProjectLinksManager(base_url, project_id).get_flow_links(flow_id=flow_id, flow_name=flow_name)
+    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
@@ -180,6 +179,7 @@ async def update_flow(
     validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Updating flow configuration: {configuration_id}')
 
@@ -193,9 +193,7 @@ async def update_flow(
 
     flow_id = str(updated_raw_configuration['id'])
     flow_name = updated_raw_configuration['name']
-    project_id = await client.storage_client.project_id()
-    base_url = client.storage_client.base_api_url
-    flow_links = ProjectLinksManager(base_url, project_id).get_flow_links(flow_id=flow_id, flow_name=flow_name)
+    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Updated flow configuration: {flow_id}')

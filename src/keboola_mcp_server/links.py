@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from keboola_mcp_server.client import KeboolaClient
+
 URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
 
 
@@ -18,6 +20,12 @@ class ProjectLinksManager:
     def __init__(self, base_url: str, project_id: str):
         self.base_url = base_url
         self.project_id = project_id
+
+    @classmethod
+    async def from_client(cls, client: KeboolaClient) -> 'ProjectLinksManager':
+        base_url = client.storage_client.base_api_url
+        project_id = await client.storage_client.project_id()
+        return ProjectLinksManager(base_url, project_id)
 
     def get_flow_url(self, flow_id: str | int) -> str:
         """Get the UI detail URL for a specific flow."""

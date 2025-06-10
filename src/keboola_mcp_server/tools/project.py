@@ -63,6 +63,7 @@ async def get_project_info(
 ) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
     """Return structured project information pulled from multiple endpoints."""
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     storage = client.storage_client
 
     token_data = await storage.verify_token()
@@ -73,10 +74,7 @@ async def get_project_info(
     description = next((item['value'] for item in metadata if item.get('key') == MetadataField.PROJECT_DESCRIPTION), '')
 
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
-    base_url = storage.base_api_url
-    project_id = project_data['id']
-
-    links = ProjectLinksManager(base_url, project_id).get_project_links()
+    links = links_manager.get_project_links()
 
     combined = {
         **project_data,

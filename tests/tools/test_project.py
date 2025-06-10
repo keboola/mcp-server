@@ -40,7 +40,8 @@ async def test_get_project_info(
     ]
     mock_links_manager = mocker.Mock()
     mock_links_manager.get_project_links.return_value = links
-    mocker.patch('keboola_mcp_server.tools.project.ProjectLinksManager', return_value=mock_links_manager)
+    mocker.patch('keboola_mcp_server.tools.project.ProjectLinksManager.from_client',
+                 new=mocker.AsyncMock(return_value=mock_links_manager))
 
     # Call the tool
     result = await get_project_info(mcp_context_client)
