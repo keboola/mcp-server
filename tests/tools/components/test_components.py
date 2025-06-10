@@ -18,6 +18,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
     ComponentConfigurationResponseBase,
+    ComponentToolResponse,
     ReducedComponent,
 )
 from keboola_mcp_server.tools.components.tools import get_component_configuration_examples
@@ -401,7 +402,7 @@ async def test_update_transformation_configuration(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=mock_configuration)
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
-    updated_configuration = await update_sql_transformation_configuration(
+    configuration_response = await update_sql_transformation_configuration(
         context,
         mock_configuration['id'],
         new_change_description,
@@ -411,13 +412,12 @@ async def test_update_transformation_configuration(
         is_disabled=False,
     )
 
-    assert isinstance(updated_configuration, ComponentConfigurationResponse)
-    assert updated_configuration.configuration == new_config
-    assert updated_configuration.component_id == expected_component_id
-    assert updated_configuration.configuration_id == mock_configuration['id']
-    assert updated_configuration.change_description == new_change_description
+    assert isinstance(configuration_response, ComponentToolResponse)
+    assert configuration_response.component_id == expected_component_id
+    assert configuration_response.configuration_id == mock_configuration['id']
+    assert configuration_response.success is True
+    assert len(configuration_response.links) == 2
 
-    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=expected_component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
         component_id=expected_component_id,
         configuration_id=mock_configuration['id'],

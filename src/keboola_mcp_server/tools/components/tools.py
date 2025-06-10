@@ -512,7 +512,7 @@ async def update_sql_transformation_configuration(
 
     LOG.info(
         f'Updated transformation configuration: {updated_raw_configuration["id"]} for '
-        f'component: {updated_raw_configuration["component_id"]}.'
+        f'component: {sql_transformation_id}.'
     )
 
     return ComponentToolResponse(
