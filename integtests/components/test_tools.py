@@ -15,6 +15,8 @@ from keboola_mcp_server.tools.components import (
 )
 from keboola_mcp_server.tools.components.model import ComponentConfigurationOutput, ComponentRootConfiguration
 from keboola_mcp_server.tools.components.tools import (
+    Parameters,
+    Storage,
     create_component_root_configuration,
     update_component_root_configuration,
 )
@@ -98,8 +100,8 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
 
     test_name = 'Test Configuration'
     test_description = 'Test configuration created by automated test'
-    test_parameters = {}
-    test_storage = {}
+    test_parameters = Parameters(parameters={})
+    test_storage = Storage(storage={})
 
     # Create the configuration
     created_config = await create_component_root_configuration(
@@ -110,17 +112,17 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
         parameters=test_parameters,
         storage=test_storage
     )
+    client = KeboolaClient.from_state(mcp_context.session.state)
     try:
         assert isinstance(created_config, ComponentRootConfiguration)
         assert created_config.configuration_name == test_name
         assert created_config.configuration_description == test_description
         assert created_config.component_id == component_id
         assert created_config.configuration_id is not None
-        assert created_config.parameters == test_parameters
-        assert created_config.storage == test_storage
+        assert created_config.parameters == test_parameters.model_dump()
+        assert created_config.storage == test_storage.model_dump()
 
         # Verify the configuration exists in the backend by fetching it
-        client = KeboolaClient.from_state(mcp_context.session.state)
         config_detail = await client.storage_client.configuration_detail(
             component_id=component_id,
             configuration_id=created_config.configuration_id
@@ -165,8 +167,8 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
         name='Initial Test Configuration',
         description='Initial test configuration created by automated test',
         component_id=component_id,
-        parameters={'initial_param': 'initial_value'},
-        storage={'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}}
+        parameters=Parameters(parameters={'initial_param': 'initial_value'}),
+        storage=Storage(storage={'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}})
     )
     assert created_config.configuration_id is not None
     client = KeboolaClient.from_state(mcp_context.session.state)

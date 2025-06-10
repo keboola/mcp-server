@@ -4,7 +4,7 @@ from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from httpx import HTTPStatusError
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.config import MetadataField
@@ -38,6 +38,14 @@ LOG = logging.getLogger(__name__)
 # Add component tools to the MCP server #########################################
 
 RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
+
+
+class Parameters(BaseModel):
+    parameters: dict[str, Any] = Field(description='the parameters of the component configuration')
+
+
+class Storage(BaseModel):
+    storage: dict[str, Any] = Field(default_factory=dict, description='the storage of the component configuration')
 
 
 def add_component_tools(mcp: FastMCP) -> None:
@@ -193,7 +201,12 @@ async def get_component(
 @with_session_state()
 async def get_component_configuration(
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-    configuration_id: Annotated[str, Field(description='ID of the component/transformation configuration',)],
+    configuration_id: Annotated[
+        str,
+        Field(
+            description='ID of the component/transformation configuration',
+        ),
+    ],
     ctx: Context,
 ) -> Annotated[ComponentConfigurationOutput, Field(description='The component/transformation and its configuration.')]:
     """
@@ -254,7 +267,7 @@ async def get_component_configuration(
 
 
 async def _set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
-    """ Sets configuration metadata to indicate it was created by MCP. """
+    """Sets configuration metadata to indicate it was created by MCP."""
     try:
         await client.storage_client.configuration_metadata_update(
             component_id=component_id,
@@ -273,7 +286,7 @@ async def _set_cfg_update_metadata(
     configuration_id: str,
     configuration_version: int,
 ) -> None:
-    """ Sets configuration metadata to indicate it was updated by MCP. """
+    """Sets configuration metadata to indicate it was updated by MCP."""
     updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{configuration_version}'
     try:
         await client.storage_client.configuration_metadata_update(
@@ -282,9 +295,7 @@ async def _set_cfg_update_metadata(
             metadata={updated_by_md_key: 'true'},
         )
     except HTTPStatusError as e:
-        LOG.exception(
-            f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}'
-        )
+        LOG.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
 
 
 @tool_errors()
@@ -293,7 +304,9 @@ async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the SQL transformation.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
+        ),
     ],
     description: Annotated[
         str,
@@ -415,7 +428,7 @@ async def update_sql_transformation_configuration(
         ),
     ],
     storage: Annotated[
-        dict[str, Any],
+        Storage,
         Field(
             description=(
                 'The updated "storage" part of the transformation configuration that contains the newly '
@@ -432,7 +445,9 @@ async def update_sql_transformation_configuration(
     ] = '',
     is_disabled: Annotated[
         bool,
-        Field(description='Whether to disable the transformation configuration. Default is False.',),
+        Field(
+            description='Whether to disable the transformation configuration. Default is False.',
+        ),
     ] = False,
 ) -> Annotated[ComponentConfigurationResponse, Field(description='Updated transformation configuration.')]:
     """
@@ -456,11 +471,13 @@ async def update_sql_transformation_configuration(
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-
+    storage_cfg = validate_storage_configuration(
+        storage=storage.model_dump(), initial_message='The "storage" field is not valid.'
+    )
+    parameters_cfg = parameters.model_dump()
     updated_configuration = {
-        'parameters': parameters.model_dump(),
-        'storage': storage,
+        'parameters': parameters_cfg,
+        'storage': storage_cfg,
     }
 
     LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
@@ -502,7 +519,9 @@ async def create_component_root_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -514,13 +533,12 @@ async def create_component_root_configuration(
     ],
     component_id: Annotated[str, Field(description='The ID of the component for which to create the configuration.')],
     parameters: Annotated[
-        dict[str, Any],
+        Parameters,
         Field(description='The component configuration parameters, adhering to the root_configuration_schema'),
     ],
     storage: Annotated[
-        dict[str, Any],
+        Storage,
         Field(
-            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
@@ -549,15 +567,17 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_root_parameters_configuration(
+    storage_cfg = validate_storage_configuration(
+        storage=storage.model_dump(), initial_message='The "storage" field is not valid.'
+    )
+    parameters_cfg = await validate_root_parameters_configuration(
         client=client,
-        parameters=parameters,
+        parameters=parameters.model_dump(),
         component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    configuration_payload = {'storage': storage_cfg, 'parameters': parameters_cfg}
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -577,9 +597,7 @@ async def create_component_root_configuration(
     )
     configuration_id = new_configuration.configuration_id
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".'
-    )
+    LOG.info(f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     await _set_cfg_creation_metadata(client, component_id, configuration_id)
 
@@ -592,7 +610,9 @@ async def create_component_row_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -605,16 +625,17 @@ async def create_component_row_configuration(
     component_id: Annotated[str, Field(description='The ID of the component for which to create the configuration.')],
     configuration_id: Annotated[
         str,
-        Field(description='The ID of the configuration for which to create the configuration row.',),
+        Field(
+            description='The ID of the configuration for which to create the configuration row.',
+        ),
     ],
     parameters: Annotated[
-        dict[str, Any],
+        Parameters,
         Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
     ],
     storage: Annotated[
-        dict[str, Any],
+        Storage,
         Field(
-            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
@@ -647,15 +668,17 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_row_parameters_configuration(
+    storage_cfg = validate_storage_configuration(
+        storage=storage.model_dump(), initial_message='The "storage" field is not valid.'
+    )
+    parameters_cfg = await validate_row_parameters_configuration(
         client=client,
-        parameters=parameters,
+        parameters=parameters.model_dump(),
         component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    configuration_payload = {'storage': storage_cfg, 'parameters': parameters_cfg}
 
     # Try to create the new configuration and return the new object if successful
     # or log an error and raise an exception if not
@@ -698,7 +721,9 @@ async def update_component_root_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -715,13 +740,12 @@ async def update_component_root_configuration(
     component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     parameters: Annotated[
-        dict[str, Any],
+        Parameters,
         Field(description='The component configuration parameters, adhering to the root_configuration_schema schema'),
     ],
     storage: Annotated[
-        dict[str, Any],
+        Storage,
         Field(
-            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that are not row-based and have tables or file '
@@ -752,15 +776,17 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_root_parameters_configuration(
+    storage_cfg = validate_storage_configuration(
+        storage=storage.model_dump(), initial_message='The "storage" field is not valid.'
+    )
+    parameters_cfg = await validate_root_parameters_configuration(
         client=client,
-        parameters=parameters,
+        parameters=parameters.model_dump(),
         component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    configuration_payload = {'storage': storage_cfg, 'parameters': parameters_cfg}
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -814,19 +840,20 @@ async def update_component_row_configuration(
     ],
     change_description: Annotated[
         str,
-        Field(description='Description of the change made to the component configuration.',),
+        Field(
+            description='Description of the change made to the component configuration.',
+        ),
     ],
     component_id: Annotated[str, Field(description='The ID of the component to update.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     configuration_row_id: Annotated[str, Field(description='The ID of the configuration row to update.')],
     parameters: Annotated[
-        dict[str, Any],
+        Parameters,
         Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
     ],
     storage: Annotated[
-        dict[str, Any],
+        Storage,
         Field(
-            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
@@ -857,15 +884,17 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_row_parameters_configuration(
+    storage_cfg = validate_storage_configuration(
+        storage=storage.model_dump(), initial_message='The "storage" field is not valid.'
+    )
+    parameters_cfg = await validate_row_parameters_configuration(
         client=client,
-        parameters=parameters,
+        parameters=parameters.model_dump(),
         component_id=component_id,
         initial_message='Field "parameters" is not valid.\n',
     )
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    configuration_payload = {'storage': storage_cfg, 'parameters': parameters_cfg}
 
     new_raw_configuration = cast(
         dict[str, Any],
