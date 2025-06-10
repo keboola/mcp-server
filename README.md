@@ -22,7 +22,7 @@ Use Keboola's hosted MCP server to connect your client in seconds.
 
 Click to install:
 
-[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJjb21tYW5kIjoibnB4IG1jcC1yZW1vdGUgaHR0cHM6Ly9tY3AtZWFzdDQuZ2NwLmtlYm9vbGEuY29tL3NzZSJ9)
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJjb21tYW5kIjoibnB4IG1jcC1yZW1vdGUgaHR0cHM6Ly9tY3AudXMtZWFzdDQuZ2NwLmtlYm9vbGEuY29tL3NzZSJ9)
 
 ### Other MCP Clients
 
@@ -32,12 +32,16 @@ Add this configuration:
 {
   "mcpServers": {
     "keboola": {
-      "command": "npx mcp-remote https://mcp-east4.gcp.keboola.com/sse"
+      "command": "npx mcp-remote https://mcp.us-east4.gcp.keboola.com/"
     }
   }
 }
 ```
 
+> [!NOTE]
+> When you are already a Keboola user, make sure to change MCP url stack in configuration JSON correspondingly (see [Keboola regions](https://github.com/keboola/mcp-server/edit/codex/update-readme-for-simplified-mcp-setup/README.md?pr=%2Fkeboola%2Fmcp-server%2Fpull%2F152#keboola-region) section).
+
+### Other ways how to connect
 <details>
 <summary>Running MCP Server Locally</summary>
 
