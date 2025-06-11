@@ -59,6 +59,7 @@ def mock_job() -> dict[str, Any]:
         'durationSeconds': 100,
         'result': {'import': 'successful'},
         'metrics': {'rows': 1000},
+        'links': []
     }
 
 
