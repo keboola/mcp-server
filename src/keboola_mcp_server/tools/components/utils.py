@@ -24,6 +24,10 @@ from keboola_mcp_server.tools.validation import (
 LOG = logging.getLogger(__name__)
 
 
+SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
+BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
+
+
 def _handle_component_types(
     types: Optional[Union[ComponentType, Sequence[ComponentType]]],
 ) -> Sequence[ComponentType]:
@@ -198,9 +202,9 @@ def _get_sql_transformation_id_from_sql_dialect(
     :raises ValueError: If the SQL dialect is not supported
     """
     if sql_dialect.lower() == 'snowflake':
-        return 'keboola.snowflake-transformation'
+        return SNOWFLAKE_TRANSFORMATION_ID
     elif sql_dialect.lower() == 'bigquery':
-        return 'keboola.google-bigquery-transformation'
+        return BIGQUERY_TRANSFORMATION_ID
     else:
         raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
 
@@ -341,25 +345,31 @@ def validate_storage_configuration(
     """
     # As expected by the storage schema, we normalize storage to {'storage': storage | {} | None}
     # since the agent bot can input storage as {'storage': storage} or just storage
-    normalized_storage = {'storage': storage.get('storage', storage) if storage is not None else {}}
+    storage_cfg = cast(Optional[JsonDict], storage.get('storage', storage) if storage else {})
 
-    if not normalized_storage['storage']:  # only when storage = {} | None
-        # storage is necessary for components of writer or transformation type
-        if component.component_type in ['writer', 'transformation']:
+    # If storage is None, we set it to an empty dict
+    if storage_cfg is None:
+        LOG.warning(
+            'No storage configuration provided for component %s of type %s.',
+            component.component_id,
+            component.component_type,
+        )
+        storage_cfg = {}
+    # Only for SQL transformations
+    if component.component_id in [SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID]:
+        # For SQL transformations, we want to have input or output config in the storage
+        if not storage_cfg or ('output' not in storage_cfg and 'input' not in storage_cfg):
             raise ValueError(
-                f'Storage configuration cannot be empty for component {component.component_id} of type '
-                f'{component.component_type}. Please provide the storage configuration within the tool call.'
+                f'Storage configuration of {component.component_id} SQL transformation cannot be empty and must '
+                'contain either input or output configuration.'
             )
-        else:
-            LOG.warning(
-                'No storage configuration provided for component %s of type %s.',
-                component.component_id,
-                component.component_type,
-            )
-        normalized_storage['storage'] = {}  # None -> {}
+    # Only for writers
+    if component.component_type == 'writer':
+        pass
 
     initial_message = (initial_message or '') + '\n'
     initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
+    normalized_storage = cast(JsonDict, {'storage': storage_cfg})
     normalized_storage = validate_storage_configuration_against_schema(normalized_storage, initial_message)
     return cast(JsonDict, normalized_storage['storage'])
 
