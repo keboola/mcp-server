@@ -4,7 +4,7 @@ import unicodedata
 from typing import Any, Optional, Sequence, Union, cast, get_args
 
 from httpx import HTTPStatusError
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.tools._validate import validate_parameters, validate_storage
@@ -212,13 +212,21 @@ class TransformationConfiguration(BaseModel):
         """The parameters for the transformation."""
 
         class Block(BaseModel):
-            """The block for the transformation."""
+            """The transformation block."""
 
             class Code(BaseModel):
-                """The code for the transformation block."""
+                """The code block for the transformation block."""
 
-                name: str = Field(description='The name of the current code script')
-                script: list[str] = Field(description='List of current code statements')
+                name: str = Field(description='The name of the current code block describing the purpose of the block')
+                sql_statements: Sequence[str] = Field(
+                    description=(
+                        'The executable SQL query statements written in the current SQL dialect. '
+                        'Each statement must be executable and a separate item in the list.'
+                    ),
+                    # We use sql_statements for readability but serialize to script due to api expected request
+                    serialization_alias='script',
+                    validation_alias=AliasChoices('sql_statements', 'script'),
+                )
 
             name: str = Field(description='The name of the current block')
             codes: list[Code] = Field(description='The code scripts')
