@@ -148,8 +148,8 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
 
         assert isinstance(metadata, list)
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-        sync_flow = await get_flow_detail(mcp_context, configuration_id=flow_id)
-        updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow.version}'
+        sync_flow = await client.storage_client.flow_detail(flow_id)
+        updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow["version"]}'
         assert updated_by_md_key in metadata_dict
         assert metadata_dict[updated_by_md_key] == 'true'
 
