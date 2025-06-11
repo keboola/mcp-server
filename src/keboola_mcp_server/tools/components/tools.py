@@ -27,11 +27,13 @@ from keboola_mcp_server.tools.components.utils import (
     _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
+)
+from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.tools.validation import (
     validate_root_parameters_configuration,
     validate_row_parameters_configuration,
     validate_storage_configuration,
 )
-from keboola_mcp_server.tools.sql import get_sql_dialect
 
 LOG = logging.getLogger(__name__)
 
