@@ -394,6 +394,7 @@ async def test_update_transformation_configuration(
 
     new_config = {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]}
     new_change_description = 'foo fooo'
+    new_storage = {'input': {'tables': []}, 'output': {'tables': []}}
     mock_configuration['configuration'] = new_config
     mock_configuration['changeDescription'] = new_change_description
     mock_component['id'] = expected_component_id
@@ -406,7 +407,7 @@ async def test_update_transformation_configuration(
         mock_configuration['id'],
         new_change_description,
         parameters=TransformationConfiguration.Parameters.model_validate(new_config),
-        storage={},
+        storage=new_storage,
         updated_description=str(),
         is_disabled=False,
     )
@@ -417,12 +418,12 @@ async def test_update_transformation_configuration(
     assert updated_configuration.configuration_id == mock_configuration['id']
     assert updated_configuration.change_description == new_change_description
 
-    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=expected_component_id)
+    keboola_client.ai_service_client.get_component_detail.assert_called_with(component_id=expected_component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
         component_id=expected_component_id,
         configuration_id=mock_configuration['id'],
         change_description=new_change_description,
-        configuration={'parameters': new_config, 'storage': {}},
+        configuration={'parameters': new_config, 'storage': new_storage},
         updated_description=None,
         is_disabled=False,
     )

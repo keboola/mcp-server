@@ -13,7 +13,6 @@ from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools._validate import validate_flow_configuration_against_schema
 from keboola_mcp_server.tools.components.model import (
     FlowConfiguration,
     FlowConfigurationResponse,
@@ -21,6 +20,7 @@ from keboola_mcp_server.tools.components.model import (
     FlowTask,
     ReducedFlow,
 )
+from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
 LOG = logging.getLogger(__name__)
 

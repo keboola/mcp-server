@@ -51,6 +51,9 @@ filtering.
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
+### Other Tools
+- [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
+
 ---
 
 # Storage Tools
@@ -448,6 +451,7 @@ CONSIDERATIONS:
 - Each task and phase must include at least: `id` and `name`.
 - Each task must reference an existing component configuration in the project.
 - Items in the `dependsOn` phase field reference ids of other phases.
+- Links contained in the response should ALWAYS be presented to the user
 
 USAGE:
 Use this tool to automate multi-step data workflows. This is ideal for:
@@ -515,10 +519,10 @@ description, and optionally a list of created table names if and only if they ar
 statements.
 
 CONSIDERATIONS:
-- The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
+- Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
+  semantically related SQL statements.
+- Each SQL query statement must be executable and follow the current SQL dialect, which can be retrieved using
   appropriate tool.
-- Each SQL code block should include one or more SQL statements that share a similar purpose or meaning, and should
-  have a descriptive name that reflects that purpose.
 - When referring to the input tables within the SQL query, use fully qualified table names, which can be
   retrieved using appropriate tools.
 - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
@@ -543,25 +547,25 @@ EXAMPLES:
 {
   "$defs": {
     "Code": {
-      "description": "The code for the transformation block.",
+      "description": "The code block for the transformation block.",
       "properties": {
         "name": {
-          "description": "The name of the current code script",
+          "description": "The name of the current code block describing the purpose of the block",
           "title": "Name",
           "type": "string"
         },
-        "script": {
-          "description": "List of current code statements",
+        "sql_statements": {
+          "description": "The executable SQL query statements written in the current SQL dialect. Each statement must be executable and a separate item in the list.",
           "items": {
             "type": "string"
           },
-          "title": "Script",
+          "title": "Sql Statements",
           "type": "array"
         }
       },
       "required": [
         "name",
-        "script"
+        "sql_statements"
       ],
       "title": "Code",
       "type": "object"
@@ -578,12 +582,12 @@ EXAMPLES:
       "title": "Description",
       "type": "string"
     },
-    "code_blocks": {
-      "description": "The executable SQL query code blocks, each containing a descriptive name and a list of semantically related statements written in the current SQL dialect. Each code block is a separate item in the list.",
+    "sql_code_blocks": {
+      "description": "The executable SQL query code blocks, each containing a descriptive name and a sequence of semantically related sql statements written in the current SQL dialect. Each sql statement isexecutable and a separate item in the list of sql statements.",
       "items": {
         "$ref": "#/$defs/Code"
       },
-      "title": "Code Blocks",
+      "title": "Sql Code Blocks",
       "type": "array"
     },
     "created_table_names": {
@@ -599,7 +603,7 @@ EXAMPLES:
   "required": [
     "name",
     "description",
-    "code_blocks"
+    "sql_code_blocks"
   ],
   "type": "object"
 }
@@ -1090,6 +1094,7 @@ CONSIDERATIONS:
 - Each task must reference an existing component configuration in the project.
 - Items in the `dependsOn` phase field reference ids of other phases.
 - The flow specified by `configuration_id` must already exist in the project.
+- Links contained in the response should ALWAYS be presented to the user
 
 USAGE:
 Use this tool to update an existing flow.
@@ -1159,10 +1164,13 @@ Updates an existing SQL transformation configuration, optionally updating the de
 configuration.
 
 CONSIDERATIONS:
-- The parameters configuration must include blocks and codes of SQL statements.
-- The Codes within the block should be semantically related and have a descriptive name.
-- The SQL code statements should follow the current SQL dialect, which can be retrieved using appropriate tool.
-- The storage configuration must not be empty, and it should include input and output tables with correct mappings.
+- The parameters configuration must include blocks with codes of SQL statements. Using one block with many codes of
+  SQL statemetns is prefered and commonly used unless specified otherwise by the user.
+- Each code contains SQL statements that are semantically related and have a descriptive name.
+- Each SQL statement must be executable and follow the current SQL dialect, which can be retrieved using
+  appropriate tool.
+- The storage configuration must not be empty, and it should include input or output tables with correct mappings
+  for the transformation.
 - When the behavior of the transformation is not changed, the updated_description can be empty string.
 
 EXAMPLES:
@@ -1177,7 +1185,7 @@ EXAMPLES:
 {
   "$defs": {
     "Block": {
-      "description": "The block for the transformation.",
+      "description": "The transformation block.",
       "properties": {
         "name": {
           "description": "The name of the current block",
@@ -1201,25 +1209,25 @@ EXAMPLES:
       "type": "object"
     },
     "Code": {
-      "description": "The code for the transformation block.",
+      "description": "The code block for the transformation block.",
       "properties": {
         "name": {
-          "description": "The name of the current code script",
+          "description": "The name of the current code block describing the purpose of the block",
           "title": "Name",
           "type": "string"
         },
-        "script": {
-          "description": "List of current code statements",
+        "sql_statements": {
+          "description": "The executable SQL query statements written in the current SQL dialect. Each statement must be executable and a separate item in the list.",
           "items": {
             "type": "string"
           },
-          "title": "Script",
+          "title": "Sql Statements",
           "type": "array"
         }
       },
       "required": [
         "name",
-        "script"
+        "sql_statements"
       ],
       "title": "Code",
       "type": "object"
@@ -1471,6 +1479,24 @@ Answers a question using the Keboola documentation as a source.
   "required": [
     "query"
   ],
+  "type": "object"
+}
+```
+
+---
+
+# Other Tools
+<a name="get_project_info"></a>
+## get_project_info
+**Description**:
+
+Return structured project information pulled from multiple endpoints.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
   "type": "object"
 }
 ```

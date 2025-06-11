@@ -27,11 +27,13 @@ from keboola_mcp_server.tools.components.utils import (
     _handle_component_types,
     _retrieve_components_configurations_by_ids,
     _retrieve_components_configurations_by_types,
+)
+from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.tools.validation import (
     validate_root_parameters_configuration,
     validate_row_parameters_configuration,
     validate_storage_configuration,
 )
-from keboola_mcp_server.tools.sql import get_sql_dialect
 
 LOG = logging.getLogger(__name__)
 
@@ -460,7 +462,13 @@ async def update_sql_transformation_configuration(
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
+    transformation = await _get_component(client=client, component_id=sql_transformation_id)
+
+    storage = validate_storage_configuration(
+        component=transformation,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
 
     updated_configuration = {
         'parameters': parameters.model_dump(by_alias=True),
@@ -477,7 +485,6 @@ async def update_sql_transformation_configuration(
         is_disabled=is_disabled,
     )
 
-    transformation = await _get_component(client=client, component_id=sql_transformation_id)
     updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
         updated_raw_configuration
         | {
@@ -553,11 +560,16 @@ async def create_component_root_configuration(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_root_parameters_configuration(
-        client=client,
+    component = await _get_component(client=client, component_id=component_id)
+
+    storage_cfg = validate_storage_configuration(
+        component=component,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
+    parameters = validate_root_parameters_configuration(
+        component=component,
         parameters=parameters,
-        component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
@@ -651,11 +663,16 @@ async def create_component_row_configuration(
         f'and configuration {configuration_id}.'
     )
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_row_parameters_configuration(
-        client=client,
+    component = await _get_component(client=client, component_id=component_id)
+
+    storage_cfg = validate_storage_configuration(
+        component=component,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
+    parameters = validate_row_parameters_configuration(
+        component=component,
         parameters=parameters,
-        component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
@@ -756,11 +773,16 @@ async def update_component_root_configuration(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_root_parameters_configuration(
-        client=client,
+    component = await _get_component(client=client, component_id=component_id)
+
+    storage_cfg = validate_storage_configuration(
+        component=component,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
+    parameters = validate_root_parameters_configuration(
+        component=component,
         parameters=parameters,
-        component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
@@ -861,11 +883,17 @@ async def update_component_row_configuration(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_row_parameters_configuration(
-        client=client,
+
+    component = await _get_component(client=client, component_id=component_id)
+
+    storage_cfg = validate_storage_configuration(
+        component=component,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
+    parameters = validate_row_parameters_configuration(
+        component=component,
         parameters=parameters,
-        component_id=component_id,
         initial_message='Field "parameters" is not valid.\n',
     )
 
