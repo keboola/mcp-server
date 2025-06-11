@@ -63,7 +63,7 @@ def test_get_transformation_configuration(
     """Test get_transformation_configuration tool which should return the correct transformation configuration
     given the sql statement created_table_names and transformation_name."""
 
-    codes = [TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=sql_statements)]
+    codes = [TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=sql_statements)]
     configuration = _get_transformation_configuration(
         codes=codes,
         transformation_name=transformation_name,
@@ -77,7 +77,7 @@ def test_get_transformation_configuration(
     assert len(configuration.parameters.blocks) == 1
     assert len(configuration.parameters.blocks[0].codes) == 1
     assert configuration.parameters.blocks[0].codes[0].name == 'Code 0'
-    assert configuration.parameters.blocks[0].codes[0].script == sql_statements
+    assert configuration.parameters.blocks[0].codes[0].sql_statements == sql_statements
     # given output_table_mappings, assert following tables are created
     assert configuration.storage is not None
     assert configuration.storage.input is not None
@@ -109,3 +109,30 @@ def test_get_transformation_configuration(
 def test_clean_bucket_name(input_str: str, expected_str: str):
     """Test clean_bucket_name function."""
     assert _clean_bucket_name(input_str) == expected_str
+
+
+@pytest.mark.parametrize(
+    'input_sql_statements_name',
+    [
+        'sql_statements',
+        'script',
+    ],
+)
+def test_transformation_configuration_serialization(input_sql_statements_name: str):
+    """Test transformation configuration serialization."""
+    transformation_params_cfg = {
+        'parameters': {
+            'blocks': [
+                {'name': 'Block 0', 'codes': [{'name': 'Code 0', input_sql_statements_name: ['SELECT * FROM test']}]}
+            ]
+        },
+        'storage': {},
+    }
+    configuration = TransformationConfiguration.model_validate(transformation_params_cfg)
+    assert configuration.parameters.blocks[0].codes[0].name == 'Code 0'
+    assert configuration.parameters.blocks[0].codes[0].sql_statements == ['SELECT * FROM test']
+    returned_params_cfg = configuration.model_dump(by_alias=True)
+    assert returned_params_cfg['parameters']['blocks'][0]['codes'][0]['name'] == 'Code 0'
+    # for both sql_statements and script, we expect the same result script for api request
+
+    assert returned_params_cfg['parameters']['blocks'][0]['codes'][0]['script'] == ['SELECT * FROM test']
