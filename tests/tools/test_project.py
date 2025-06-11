@@ -10,7 +10,7 @@ from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 
 @pytest.mark.asyncio
-async def test_get_project_info(mocker: MockerFixture,mcp_context_client: Context) -> None:
+async def test_get_project_info(mocker: MockerFixture, mcp_context_client: Context) -> None:
     """
     Test get_project_info returns correct ProjectInfo with mocked dependencies.
     :return: None

@@ -2,7 +2,7 @@ import logging
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
@@ -28,30 +28,23 @@ def add_project_tools(mcp: FastMCP) -> None:
 class ProjectInfo(BaseModel):
     project_id: str | int = Field(
         ...,
-        description='The id of the project.',
-        validation_alias=AliasChoices('id', 'project_id', 'projectId', 'project-id'),
+        description='The id of the project.'
     )
     project_name: str = Field(
         ...,
-        description='The name of the project.',
-        validation_alias=AliasChoices('name', 'project_name', 'projectName', 'project-name'),
+        description='The name of the project.'
     )
     project_description: str = Field(
         ...,
         description='The description of the project.',
-        validation_alias=AliasChoices(
-            'description', 'project_description', 'projectDescription', 'project-description'
-        ),
     )
     organization_id: str | int = Field(
         ...,
-        description='The ID of the organization this project belongs to.',
-        validation_alias=AliasChoices('organization_id', 'organizationId', 'organization-id'),
+        description='The ID of the organization this project belongs to.'
     )
     sql_dialect: str = Field(
         ...,
-        description='The sql dialect used in the project.',
-        validation_alias=AliasChoices('sql_dialect', 'sqlDialect', 'sql-dialect'),
+        description='The sql dialect used in the project.'
     )
     links: list[Link] = Field(..., description='The links relevant to the tool call.')
 
@@ -76,14 +69,11 @@ async def get_project_info(
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
     links = links_manager.get_project_links()
 
-    combined = {
-        **project_data,
-        'organizationId': organization_id,
-        'projectDescription': description,
-        'sqlDialect': sql_dialect,
-        'links': links,
-    }
-
-    project_info = ProjectInfo.model_validate(combined)
+    project_info = ProjectInfo(project_id=project_data['id'],
+                               project_name=project_data['name'],
+                               project_description=description,
+                               organization_id=organization_id,
+                               sql_dialect=sql_dialect,
+                               links=links)
     LOG.info('Returning unified project info.')
     return project_info
