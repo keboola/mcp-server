@@ -10,10 +10,10 @@ from typing import Callable, Optional, cast
 
 import jsonschema
 import jsonschema.validators
-from jsonschema import TypeChecker
-from jsonschema.validators import extend
 
 from keboola_mcp_server.client import JsonDict, JsonPrimitive, JsonStruct
+from keboola_mcp_server.tools.components.model import Component
+from keboola_mcp_server.tools.components.utils import BIGQUERY_TRANSFORMATION_ID, SNOWFLAKE_TRANSFORMATION_ID
 
 LOG = logging.getLogger(__name__)
 
@@ -86,6 +86,9 @@ class RecoverableValidationError(jsonschema.ValidationError):
 
 class KeboolaParametersValidator:
     """
+    We use this validator to load parameters' schema that has been fetched from AI service for a given component ID and
+    to validate the parameters configuration (json data) received from the Agent against the loaded schema.
+
     A custom JSON Schema validator that handles UI elements and schema normalization:
     1. Ignores 'button' type (UI-only construct)
     2. Normalizes schema by:
@@ -96,17 +99,19 @@ class KeboolaParametersValidator:
     @classmethod
     def validate(cls, instance: JsonDict, schema: JsonDict) -> None:
         """
-        Validate the instance against the schema.
+        Validate the json data instance against the schema.
+        :param instance: The json data to validate
+        :param schema: The schema to validate against
         """
         sanitized_schema = cls.sanitize_schema(schema)
         base_validator = jsonschema.validators.validator_for(sanitized_schema)
-        keboola_validator = extend(
+        keboola_validator = jsonschema.validators.extend(
             base_validator, type_checker=base_validator.TYPE_CHECKER.redefine('button', cls.check_button_type)
         )
         return keboola_validator(sanitized_schema).validate(instance)
 
     @staticmethod
-    def check_button_type(checker: TypeChecker, instance: object) -> bool:
+    def check_button_type(checker: jsonschema.TypeChecker, instance: object) -> bool:
         """
         Dummy button type checker.
         We accept button as a type since it is a UI construct and not a data type.
@@ -164,34 +169,42 @@ class KeboolaParametersValidator:
         return sanitized_schema
 
 
-def validate_storage(storage: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
+def _validate_storage_configuration_against_schema(
+    storage: JsonDict, initial_message: Optional[str] = None
+) -> JsonDict:
     """Validate the storage configuration using jsonschema.
     :param storage: The storage configuration to validate
     :param initial_message: The initial message to include in the error message
-    :returns: The validated storage configuration normalized to {"storage" : {...}}
+    :returns: The validated storage configuration (json data as the input) if the validation succeeds
     """
     schema = _load_schema(ConfigurationSchemaResources.STORAGE)
-    # we expect the storage to be a dictionary of storage configurations with the "storage" key
-    normalized_storage_data = {'storage': storage.get('storage', storage)}
     _validate_json_against_schema(
-        json_data=normalized_storage_data,
+        json_data=storage,
         schema=schema,
         initial_message=initial_message,
     )
-    return normalized_storage_data
+    return storage
 
 
-def validate_parameters(parameters: JsonDict, schema: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
+def _validate_parameters_configuration_against_schema(
+    parameters: JsonDict,
+    schema: JsonDict,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
     """
     Validate the parameters configuration using jsonschema.
     :parameters: json data to validate
     :schema: json schema to validate against (root or row parameter configuration schema)
     :initial_message: initial message to include in the error message
-    :returns: The validated parameters configuration normalized to {"parameters" : {...}}
+    :returns: The validated parameters configuration (json data as the input) if the validation succeeds
     """
-    expected_input = cast(JsonDict, parameters.get('parameters', parameters))
-    _validate_json_against_schema(expected_input, schema, initial_message, KeboolaParametersValidator.validate)
-    return {'parameters': expected_input}  # normalized to {"parameters" : {...}}
+    _validate_json_against_schema(
+        json_data=parameters,
+        schema=schema,
+        initial_message=initial_message,
+        validate_fn=KeboolaParametersValidator.validate,
+    )
+    return parameters
 
 
 def validate_flow_configuration_against_schema(flow: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
@@ -237,3 +250,120 @@ def _validate_json_against_schema(
 def _load_schema(json_schema_name: ConfigurationSchemaResources) -> JsonDict:
     with resources.open_text(RESOURCES, json_schema_name.value, encoding='utf-8') as f:
         return json.load(f)
+
+
+STORAGE_VALIDATION_INITIAL_MESSAGE = 'The provided storage configuration input does not follow the storage schema.\n'
+ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
+    'The provided Root parameters configuration input does not follow the Root parameter json schema for component '
+    'id: {component_id}.\n'
+)
+ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
+    'The provided Row parameters configuration input does not follow the Row parameter json schema for component '
+    'id: {component_id}.\n'
+)
+
+
+def validate_storage_configuration(
+    storage: Optional[JsonDict],
+    component: Component,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """
+    Validates the storage configuration and checks if it is necessary for the component.
+    :param storage: The storage configuration to validate received from the agent.
+    :param component: The component for which the storage is provided
+    :param initial_message: The initial message to include in the error message.
+    :return: The contents of the 'storage' key from the validated configuration,
+              or an empty dict if no storage is provided.
+    """
+    # As expected by the storage schema, we normalize storage to {'storage': storage | {} | None}
+    # since the agent bot can input storage as {'storage': storage} or just storage
+    storage_cfg = cast(Optional[JsonDict], storage.get('storage', storage) if storage else {})
+
+    # If storage is None, we set it to an empty dict
+    if storage_cfg is None:
+        LOG.warning(
+            f'No storage configuration provided for component {component.component_id} of type '
+            f'{component.component_type}.'
+        )
+        storage_cfg = {}
+    # Only for SQL transformations
+    if component.component_id in [SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID]:
+        # For SQL transformations, we want to have atleast one of the input or output config in the storage
+        if not storage_cfg or ('output' not in storage_cfg and 'input' not in storage_cfg):
+            raise ValueError(
+                f'Storage configuration of {component.component_id} SQL transformation cannot be empty and must '
+                'contain either input or output configuration.'
+            )
+
+    initial_message = (initial_message or '') + '\n'
+    initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
+    normalized_storage = cast(JsonDict, {'storage': storage_cfg})
+    normalized_storage = _validate_storage_configuration_against_schema(normalized_storage, initial_message)
+    return cast(JsonDict, normalized_storage['storage'])
+
+
+def validate_root_parameters_configuration(
+    parameters: JsonDict,
+    component: Component,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """
+    Utility function to validate the root parameters configuration.
+    :param parameters: The parameters of the configuration to validate
+    :param component: The component for which the configuration is provided
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
+    """
+    initial_message = (initial_message or '') + '\n'
+    initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component.component_id)
+    return _validate_parameters_configuration(
+        parameters, component.configuration_schema, component.component_id, initial_message
+    )
+
+
+def validate_row_parameters_configuration(
+    parameters: JsonDict,
+    component: Component,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """
+    Utility function to validate the row parameters configuration.
+    :param parameters: The parameters of the configuration to validate
+    :param component: The component for which the configuration is provided
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
+    """
+    initial_message = (initial_message or '') + '\n'
+    initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component.component_id)
+    return _validate_parameters_configuration(
+        parameters, component.configuration_row_schema, component.component_id, initial_message
+    )
+
+
+def _validate_parameters_configuration(
+    parameters: JsonDict,
+    schema: Optional[JsonDict],
+    component_id: str,
+    initial_message: Optional[str] = None,
+) -> JsonDict:
+    """
+    Utility function to validate the parameters configuration.
+    :param parameters: The parameters configuration to validate
+    :param schema: The schema to validate against
+    :param component_id: The ID of the component
+    :param initial_message: The initial message to include in the error message
+    :return: The contents of the 'parameters' key from the validated configuration
+    """
+    # As expected by the component parameter schema, we use only the parameters configurations without the "parameters"
+    # key since the agent bot can input parameters as {'parameters': parameters} or just parameters
+    expected_parameters = cast(JsonDict, parameters.get('parameters', parameters))
+
+    if not schema:
+        LOG.warning(f'No schema provided for component {component_id}, skipping validation.')
+        return expected_parameters
+
+    expected_parameters = _validate_parameters_configuration_against_schema(
+        expected_parameters, schema, initial_message
+    )
+    return expected_parameters

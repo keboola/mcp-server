@@ -5,8 +5,6 @@ import logging
 import time
 from typing import Any, Literal, Mapping, Optional, Sequence
 
-from google.api_core.exceptions import BadRequest
-from google.cloud.bigquery import Client, Row
 from httpx import HTTPStatusError
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
@@ -163,10 +161,11 @@ class _SnowflakeWorkspace(_Workspace):
 class _BigQueryWorkspace(_Workspace):
     _BQ_FIELDS = {'_timestamp'}
 
-    def __init__(self, workspace_id: int, dataset_id: str, project_id: str):
+    def __init__(self, workspace_id: int, dataset_id: str, project_id: str, client: KeboolaClient):
         super().__init__(workspace_id)
         self._dataset_id = dataset_id  # default dataset created for the workspace
         self._project_id = project_id
+        self._client = client
 
     def get_sql_dialect(self) -> str:
         return 'BigQuery'
@@ -198,28 +197,10 @@ class _BigQueryWorkspace(_Workspace):
             return None
 
     async def execute_query(self, sql_query: str) -> QueryResult:
-        # TODO: make this code async; Google's BigQuery client for python doesn't seem to use async/await,
-        #  but it provides callbacks.
-        try:
-            client = Client()
-            bq_job = client.query(query=sql_query)  # API request
-            bq_result = bq_job.result()  # Waits for query to finish
-
-            columns: dict[str, Any] = {}  # unique column names, keeps insertion order
-            data: list[Mapping[str, Any]] = []
-            for bq_row in bq_result:
-                assert isinstance(bq_row, Row)
-                for k in bq_row.keys():
-                    columns[k] = None
-                data.append({field: value for field, value in bq_row.items() if field not in self._BQ_FIELDS})
-
-            result = QueryResult(status='ok', data=SqlSelectData(columns=list(columns.keys()), rows=data))
-
-        except BadRequest as e:
-            LOG.exception(f'Failed to run query: {sql_query}')
-            result = QueryResult(status='error', message=str(e))
-
-        return result
+        resp = await self._client.storage_client.post(
+            f'branch/default/workspaces/{self.id}/query', {'query': sql_query}
+        )
+        return TypeAdapter(QueryResult).validate_python(resp)
 
 
 @dataclass(frozen=True)
@@ -351,6 +332,7 @@ class WorkspaceManager:
                     workspace_id=info.id,
                     dataset_id=info.schema,
                     project_id=project_id,
+                    client=self._client,
                 )
 
             else:

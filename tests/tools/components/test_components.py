@@ -298,8 +298,8 @@ async def test_create_transformation_configuration(
     bucket_name = _clean_bucket_name(transformation_name)
     description = mock_configuration['description']
     code_blocks = [
-        TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=['SELECT * FROM test']),
-        TransformationConfiguration.Parameters.Block.Code(name='Code 1', script=['SELECT * FROM test2']),
+        TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=['SELECT * FROM test']),
+        TransformationConfiguration.Parameters.Block.Code(name='Code 1', sql_statements=['SELECT * FROM test2']),
     ]
     created_table_name = 'test_table_1'
 
@@ -308,7 +308,7 @@ async def test_create_transformation_configuration(
         ctx=context,
         name=transformation_name,
         description=description,
-        code_blocks=code_blocks,
+        sql_code_blocks=code_blocks,
         created_table_names=[created_table_name],
     )
 
@@ -330,7 +330,7 @@ async def test_create_transformation_configuration(
                 'blocks': [
                     {
                         'name': 'Blocks',
-                        'codes': [{'name': code.name, 'script': code.script} for code in code_blocks],
+                        'codes': [{'name': code.name, 'script': code.sql_statements} for code in code_blocks],
                     }
                 ]
             },
@@ -366,8 +366,8 @@ async def test_create_transformation_configuration_fail(
             ctx=context,
             name='test_name',
             description='test_description',
-            code_blocks=[
-                TransformationConfiguration.Parameters.Block.Code(name='Code 0', script=['SELECT * FROM test'])
+            sql_code_blocks=[
+                TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=['SELECT * FROM test'])
             ],
         )
 
@@ -394,6 +394,7 @@ async def test_update_transformation_configuration(
 
     new_config = {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]}
     new_change_description = 'foo fooo'
+    new_storage = {'input': {'tables': []}, 'output': {'tables': []}}
     mock_configuration['configuration'] = new_config
     mock_configuration['changeDescription'] = new_change_description
     mock_component['id'] = expected_component_id
@@ -406,7 +407,7 @@ async def test_update_transformation_configuration(
         mock_configuration['id'],
         new_change_description,
         parameters=TransformationConfiguration.Parameters.model_validate(new_config),
-        storage={},
+        storage=new_storage,
         updated_description=str(),
         is_disabled=False,
     )
@@ -417,12 +418,12 @@ async def test_update_transformation_configuration(
     assert updated_configuration.configuration_id == mock_configuration['id']
     assert updated_configuration.change_description == new_change_description
 
-    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=expected_component_id)
+    keboola_client.ai_service_client.get_component_detail.assert_called_with(component_id=expected_component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
         component_id=expected_component_id,
         configuration_id=mock_configuration['id'],
         change_description=new_change_description,
-        configuration={'parameters': new_config, 'storage': {}},
+        configuration={'parameters': new_config, 'storage': new_storage},
         updated_description=None,
         is_disabled=False,
     )
