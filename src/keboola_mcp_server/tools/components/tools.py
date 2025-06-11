@@ -304,12 +304,13 @@ async def create_sql_transformation(
             ),
         ),
     ],
-    code_blocks: Annotated[
+    sql_code_blocks: Annotated[
         Sequence[TransformationConfiguration.Parameters.Block.Code],
         Field(
             description=(
-                'The executable SQL query code blocks, each containing a descriptive name and a list of semantically '
-                'related statements written in the current SQL dialect. Each code block is a separate item in the list.'
+                'The executable SQL query code blocks, each containing a descriptive name and a sequence of '
+                'semantically related sql statements written in the current SQL dialect. Each sql statement is'
+                'executable and a separate item in the list of sql statements.'
             ),
         ),
     ],
@@ -329,10 +330,10 @@ async def create_sql_transformation(
     statements.
 
     CONSIDERATIONS:
-    - The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
+    - Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
+      semantically related SQL statements.
+    - Each SQL query statement must be executable and follow the current SQL dialect, which can be retrieved using
       appropriate tool.
-    - Each SQL code block should include one or more SQL statements that share a similar purpose or meaning, and should
-      have a descriptive name that reflects that purpose.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
@@ -361,7 +362,7 @@ async def create_sql_transformation(
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
     transformation_configuration_payload = _get_transformation_configuration(
-        codes=code_blocks, transformation_name=name, output_tables=created_table_names
+        codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -371,7 +372,7 @@ async def create_sql_transformation(
         component_id=component_id,
         name=name,
         description=description,
-        configuration=transformation_configuration_payload.model_dump(),
+        configuration=transformation_configuration_payload.model_dump(by_alias=True),
     )
 
     component = await _get_component(client=client, component_id=component_id)
@@ -440,10 +441,13 @@ async def update_sql_transformation_configuration(
     configuration.
 
     CONSIDERATIONS:
-    - The parameters configuration must include blocks and codes of SQL statements.
-    - The Codes within the block should be semantically related and have a descriptive name.
-    - The SQL code statements should follow the current SQL dialect, which can be retrieved using appropriate tool.
-    - The storage configuration must not be empty, and it should include input and output tables with correct mappings.
+    - The parameters configuration must include blocks with codes of SQL statements. Using one block with many codes of
+      SQL statemetns is prefered and commonly used unless specified otherwise by the user.
+    - Each code contains SQL statements that are semantically related and have a descriptive name.
+    - Each SQL statement must be executable and follow the current SQL dialect, which can be retrieved using
+      appropriate tool.
+    - The storage configuration must not be empty, and it should include input or output tables with correct mappings
+      for the transformation.
     - When the behavior of the transformation is not changed, the updated_description can be empty string.
 
     EXAMPLES:
@@ -465,7 +469,7 @@ async def update_sql_transformation_configuration(
     )
 
     updated_configuration = {
-        'parameters': parameters.model_dump(),
+        'parameters': parameters.model_dump(by_alias=True),
         'storage': storage,
     }
 
