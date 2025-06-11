@@ -10,6 +10,7 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, with_session_state
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
@@ -71,6 +72,7 @@ class BucketDetail(BaseModel):
         validation_alias=AliasChoices('tablesCount', 'tables_count', 'tables-count'),
         serialization_alias='tablesCount',
     )
+    links: list[Link] = Field(..., description='The links relevant to the tool call.')
 
     @model_validator(mode='before')
     @classmethod
@@ -156,10 +158,13 @@ async def get_bucket_detail(
 ) -> BucketDetail:
     """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     assert isinstance(client, KeboolaClient)
     raw_bucket = await client.storage_client.bucket_detail(bucket_id)
+    links = links_manager.get_bucket_links(bucket_id, raw_bucket.get('name') or bucket_id)
+    bucket = BucketDetail.model_validate(raw_bucket | {'links': links})
 
-    return BucketDetail.model_validate(raw_bucket)
+    return bucket
 
 
 @tool_errors()
@@ -167,10 +172,20 @@ async def get_bucket_detail(
 async def retrieve_buckets(ctx: Context) -> list[BucketDetail]:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = await client.storage_client.bucket_list()
 
-    return [BucketDetail.model_validate(raw_bucket) for raw_bucket in raw_bucket_data]
+    enriched_buckets = []
+    for raw_bucket in raw_bucket_data:
+        bucket_id = raw_bucket['id']
+        bucket_name = raw_bucket.get('name') or bucket_id
+        links = links_manager.get_bucket_links(bucket_id=bucket_id, bucket_name=bucket_name)
+        enriched_raw_bucket = raw_bucket | {'links': links}
+        bucket = BucketDetail.model_validate(enriched_raw_bucket)
+        enriched_buckets.append(bucket)
+
+    return enriched_buckets
 
 
 @tool_errors()

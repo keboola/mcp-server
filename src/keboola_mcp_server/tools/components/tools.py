@@ -9,6 +9,7 @@ from pydantic import Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.model import (
     Component,
@@ -209,6 +210,7 @@ async def get_component_configuration(
         - returns the component/transformation configuration pair
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     component = await _get_component(client=client, component_id=component_id)
     raw_configuration = cast(
         JsonDict,
@@ -246,10 +248,14 @@ async def get_component_configuration(
             )
             row_configurations.append(row_configuration)
 
+    links = links_manager.get_component_configuration_links(component_id,
+                                                            configuration_id,
+                                                            raw_configuration.get('name', ''))
     return ComponentConfigurationOutput(
         root_configuration=root_configuration,
         row_configurations=row_configurations,
         component=component,
+        links=links
     )
 
 

@@ -3,6 +3,7 @@ from typing import Any, List, Literal, Optional, Union
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.links import Link
 
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
@@ -289,6 +290,7 @@ class ComponentConfigurationOutput(BaseModel):
         description='The component this configuration belongs to',
         default=None,
     )
+    links: list[Link] = Field(..., description='The links relevant to the tool call.')
 
 
 class ComponentConfigurationMetadata(BaseModel):

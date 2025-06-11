@@ -7,6 +7,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 
 LOG = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ class JobDetail(JobListItem):
         serialization_alias='result',
         default=None,
     )
+    links: list[Link] = Field(..., description='The links relevant to the tool call.')
 
     @field_validator('result', 'config_data', mode='before')
     @classmethod
@@ -264,10 +266,12 @@ async def get_job_detail(
     - If job_id = "123", then the details of the job with id "123" will be retrieved.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     raw_job = await client.jobs_queue_client.get_job_detail(job_id)
+    links = links_manager.get_job_links(job_id)
     LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
-    return JobDetail.model_validate(raw_job)
+    return JobDetail.model_validate(raw_job | {'links': links})
 
 
 @tool_errors()
