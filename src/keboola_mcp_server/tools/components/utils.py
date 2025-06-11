@@ -365,6 +365,7 @@ def validate_storage_configuration(
             )
     # Only for writers
     if component.component_type == 'writer':
+        # TODO: validate the storage configuration for writers, will be added soon
         pass
 
     initial_message = (initial_message or '') + '\n'

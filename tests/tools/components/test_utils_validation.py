@@ -34,14 +34,13 @@ def test_validate_storage_configuration_output(
 @pytest.mark.parametrize(
     ('component_type', 'storage', 'is_valid'),
     [
-        ('writer', {}, False),
         ('transformation', {}, False),
         ('transformation', {'storage': {}}, False),
         ('transformation', {'storage': None}, False),
         ('extractor', {}, True),
         ('application', {}, True),
         ('transformation', {'input': {'tables': []}, 'output': {'tables': []}}, True),
-        ('transformation', {'storage': {'input': {'tables': []}, 'output': {'tables': []}}}, True),
+        ('transformation', {'storage': {'output': {'tables': []}}}, True),
     ],
 )
 def test_validate_storage_configuration_necessity(
@@ -50,14 +49,20 @@ def test_validate_storage_configuration_necessity(
     """testing storage necessity validation"""
     component_raw = mock_component.copy()
     component_raw['type'] = component_type
+    if component_type == 'transformation':
+        component_raw['id'] = utils.BIGQUERY_TRANSFORMATION_ID
     component = Component.model_validate(component_raw)
     if is_valid:
         utils.validate_storage_configuration(storage=storage, component=component)
     else:
-        with pytest.raises(ValueError, match='Storage configuration cannot be empty') as exception:
+        with pytest.raises(ValueError, match='Storage configuration of') as exception:
             utils.validate_storage_configuration(storage=storage, component=component)
         assert f'{component.component_id}' in str(exception)
         assert f'{component.component_type}' in str(exception)
+        assert (
+            'SQL transformation cannot be empty and must contain either input or output configuration.'
+            in str(exception)
+        )
 
 
 @pytest.mark.asyncio
