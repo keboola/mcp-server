@@ -690,6 +690,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
     async def job_detail(self, job_id: str | int) -> JsonDict:
         """
+        NOTE: To get info for regular jobs, use the Job Queue API.
         Retrieves information about a given job.
 
         :param job_id: The id of the job

@@ -1,10 +1,10 @@
 import logging
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
@@ -60,20 +60,29 @@ async def get_project_info(
     storage = client.storage_client
 
     token_data = await storage.verify_token()
-    project_data = token_data.get('owner', {})
-    organization_id = token_data.get('organization', {}).get('id', '')
+    project_data = cast(JsonDict, token_data.get('owner', {}))
+    project_id = cast(str, project_data.get('id', ''))
+    project_name = cast(str, project_data.get('name', ''))
 
-    metadata = await storage.get('branch/default/metadata')
-    description = next((item['value'] for item in metadata if item.get('key') == MetadataField.PROJECT_DESCRIPTION), '')
+    organization_data = cast(JsonDict, token_data.get('organization', {}))
+    organization_id = cast(str, organization_data.get('id', ''))
+
+    metadata = await storage.branch_metadata_get()
+    description = cast(
+        str,
+        next((item['value'] for item in metadata if item.get('key') == MetadataField.PROJECT_DESCRIPTION), '')
+    )
 
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
     links = links_manager.get_project_links()
 
-    project_info = ProjectInfo(project_id=project_data['id'],
-                               project_name=project_data['name'],
-                               project_description=description,
-                               organization_id=organization_id,
-                               sql_dialect=sql_dialect,
-                               links=links)
+    project_info = ProjectInfo(
+        project_id=project_id,
+        project_name=project_name,
+        project_description=description,
+        organization_id=organization_id,
+        sql_dialect=sql_dialect,
+        links=links,
+    )
     LOG.info('Returning unified project info.')
     return project_info
