@@ -342,6 +342,151 @@ class TestRawKeboolaClientErrorHandling:
             assert "POST error message" in str(exception)
 
 
+# --- Test Cases for Enhanced Tool Error Decorator ---
+
+
+class TestEnhancedToolErrorDecorator:
+    """Test suite for enhanced tool_errors decorator handling KeboolaHTTPException."""
+
+    @pytest.fixture
+    def function_that_raises_keboola_http_500_with_exception_id(self, mock_httpstatus_error_500):
+        """A function that raises KeboolaHTTPException with HTTP 500 and exception ID."""
+        async def func():
+            from keboola_mcp_server.errors import KeboolaHTTPException
+            exception_id = "test-exc-500-123"
+            error_details = {"message": "Database connection timeout"}
+            raise KeboolaHTTPException(mock_httpstatus_error_500, exception_id, error_details)
+        return func
+
+    @pytest.fixture
+    def function_that_raises_keboola_http_500_without_exception_id(self, mock_httpstatus_error_500):
+        """A function that raises KeboolaHTTPException with HTTP 500 but no exception ID."""
+        async def func():
+            from keboola_mcp_server.errors import KeboolaHTTPException
+            error_details = {"message": "Internal server error"}
+            raise KeboolaHTTPException(mock_httpstatus_error_500, None, error_details)
+        return func
+
+    @pytest.fixture
+    def function_that_raises_keboola_http_404(self, mock_httpstatus_error_404):
+        """A function that raises KeboolaHTTPException with HTTP 404."""
+        async def func():
+            from keboola_mcp_server.errors import KeboolaHTTPException
+            exception_id = "test-exc-404-123"  # Should be ignored for non-500 errors
+            error_details = {"message": "Resource not found"}
+            raise KeboolaHTTPException(mock_httpstatus_error_404, exception_id, error_details)
+        return func
+
+    @pytest.fixture
+    def function_that_raises_standard_http_error(self, mock_httpstatus_error_404):
+        """A function that raises standard HTTPStatusError."""
+        async def func():
+            raise mock_httpstatus_error_404
+        return func
+
+    @pytest.mark.asyncio
+    async def test_tool_errors_decorator_with_keboola_http_500_and_exception_id(self, function_that_raises_keboola_http_500_with_exception_id):
+        """Test that tool_errors decorator includes exception ID in recovery message for HTTP 500 errors."""
+        decorated_func = tool_errors(
+            default_recovery="Please try again later."
+        )(function_that_raises_keboola_http_500_with_exception_id)
+
+        with pytest.raises(ToolException) as exc_info:
+            await decorated_func()
+
+        # Check that exception ID is included in the recovery message for HTTP 500
+        error_message = str(exc_info.value)
+        assert "test-exc-500-123" in error_message
+        assert "Exception ID: test-exc-500-123" in error_message
+        assert "Database connection timeout" in error_message
+
+    @pytest.mark.asyncio
+    async def test_tool_errors_decorator_with_keboola_http_500_without_exception_id(self, function_that_raises_keboola_http_500_without_exception_id):
+        """Test that tool_errors decorator handles HTTP 500 errors without exception ID gracefully."""
+        decorated_func = tool_errors(
+            default_recovery="Please try again later."
+        )(function_that_raises_keboola_http_500_without_exception_id)
+
+        with pytest.raises(ToolException) as exc_info:
+            await decorated_func()
+
+        # Check that no exception ID is included when not available
+        error_message = str(exc_info.value)
+        assert "Exception ID:" not in error_message
+        assert "Internal server error" in error_message
+        assert "Please try again later." in error_message
+
+    @pytest.mark.asyncio
+    async def test_tool_errors_decorator_with_keboola_http_404_does_not_include_exception_id(self, function_that_raises_keboola_http_404):
+        """Test that tool_errors decorator does NOT include exception ID for non-500 HTTP errors."""
+        decorated_func = tool_errors(
+            default_recovery="Please check your request and try again."
+        )(function_that_raises_keboola_http_404)
+
+        with pytest.raises(ToolException) as exc_info:
+            await decorated_func()
+
+        # Check that exception ID is NOT included for non-500 errors
+        error_message = str(exc_info.value)
+        assert "test-exc-404-123" not in error_message
+        assert "Exception ID:" not in error_message
+        assert "Resource not found" in error_message
+        assert "Please check your request and try again." in error_message
+
+    @pytest.mark.asyncio
+    async def test_tool_errors_decorator_with_standard_http_error_maintains_existing_behavior(self, function_that_raises_standard_http_error):
+        """Test that tool_errors decorator maintains existing behavior for standard HTTPStatusError."""
+        decorated_func = tool_errors(
+            default_recovery="Standard HTTP error recovery message."
+        )(function_that_raises_standard_http_error)
+
+        with pytest.raises(ToolException) as exc_info:
+            await decorated_func()
+
+        # Check that standard behavior is preserved
+        error_message = str(exc_info.value)
+        assert "Exception ID:" not in error_message
+        assert "Standard HTTP error recovery message." in error_message
+
+    @pytest.mark.asyncio
+    async def test_tool_errors_decorator_with_recovery_instructions_for_keboola_http_exception(self, function_that_raises_keboola_http_500_with_exception_id):
+        """Test that tool_errors decorator uses specific recovery instructions for KeboolaHTTPException."""
+        from keboola_mcp_server.errors import KeboolaHTTPException
+        
+        decorated_func = tool_errors(
+            default_recovery="Default recovery.",
+            recovery_instructions={
+                KeboolaHTTPException: "The request failed due to a server error. Please check the exception ID for debugging."
+            }
+        )(function_that_raises_keboola_http_500_with_exception_id)
+
+        with pytest.raises(ToolException) as exc_info:
+            await decorated_func()
+
+        # Check that specific recovery instruction is used and exception ID is included
+        error_message = str(exc_info.value)
+        assert "test-exc-500-123" in error_message
+        assert "Exception ID: test-exc-500-123" in error_message
+        assert "The request failed due to a server error" in error_message
+
+    @pytest.mark.asyncio
+    async def test_tool_errors_decorator_logging_includes_exception_id(self, caplog, function_that_raises_keboola_http_500_with_exception_id):
+        """Test that logging includes exception ID for HTTP 500 errors."""
+        decorated_func = tool_errors(
+            default_recovery="Please try again later."
+        )(function_that_raises_keboola_http_500_with_exception_id)
+
+        with caplog.at_level(logging.ERROR):
+            try:
+                await decorated_func()
+            except ToolException:
+                pass
+
+        # Check that exception ID appears in logs
+        assert "test-exc-500-123" in caplog.text
+        assert "Exception ID: test-exc-500-123" in caplog.text
+
+
 # --- Fixtures ---
 @pytest.fixture
 def function_with_value_error():
