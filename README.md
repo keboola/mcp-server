@@ -222,7 +222,7 @@ python -m keboola_mcp_server.cli --api-url https://connection.YOUR_REGION.kebool
 
 ### Option D: Using Docker
 
-```bash
+```shell
 docker pull keboola/mcp-server:latest
 
 docker run -it \
@@ -230,7 +230,7 @@ docker run -it \
   -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
   keboola/mcp-server:latest \
   --api-url https://connection.YOUR_REGION.keboola.com
-
+```
 
 ### Do I Need to Start the Server Myself?
 
@@ -284,7 +284,7 @@ What buckets and tables are in my Keboola project?
 
 ## Supported Tools
 
-**Note:** Keboola MCP is pre-1.0, so some breaking changes might occur. Your AI agents will automatically adjust to new tools.
+**Note:** Your AI agents will automatically adjust to new tools.
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -369,7 +369,7 @@ The development team actively monitors issues and will respond as quickly as pos
 
 ## Resources
 
-- [User Documentation](https://docs.keboola.com/)
+- [User Documentation](https://help.keboola.com/)
 - [Developer Documentation](https://developers.keboola.com/)
 - [Keboola Platform](https://www.keboola.com)
 - [Issue Tracker](https://github.com/keboola/mcp-server/issues/new) ← **Primary contact method for MCP Server**
