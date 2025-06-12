@@ -62,12 +62,14 @@ For instructions on how to create and manage Storage API tokens, refer to the [o
 
 ### KBC_WORKSPACE_SCHEMA
 
-This identifies your workspace in Keboola and is required for SQL queries:
+This identifies your workspace in Keboola and is used for SQL queries. However, this is **only required if you're using a custom storage token** instead of the Master Token:
 
-Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA.
+- If using [Master Token](https://help.keboola.com/management/project/tokens/#master-tokens): The workspace is created automatically behind the scenes
+- If using [custom storage token](https://help.keboola.com/management/project/tokens/#limited-tokens): Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA
 
-**Note**: Check Grant read-only access to all Project data option when creating the workspace
-**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name.
+**Note**: When creating a workspace manually, check Grant read-only access to all Project data option
+
+**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
 
 ### Keboola Region
 
