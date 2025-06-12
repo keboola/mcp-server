@@ -8,6 +8,8 @@ from typing import Any, Literal, Mapping, Optional, Union, cast
 import httpx
 from pydantic import BaseModel, Field
 
+from .errors import KeboolaHTTPException
+
 LOG = logging.getLogger(__name__)
 
 JsonPrimitive = Union[int, float, str, bool, None]
@@ -122,6 +124,37 @@ class RawKeboolaClient:
         if headers:
             self.headers.update(headers)
 
+    def _handle_http_error(self, response: httpx.Response) -> None:
+        """Enhanced error handling that extracts API error details for HTTP 500 errors only."""
+        
+        # Only enhance HTTP 500 errors with exception ID extraction
+        if response.status_code == 500:
+            try:
+                # Try to parse error response for HTTP 500 errors
+                error_data = response.json()
+                exception_id = error_data.get('exceptionId')
+                error_details = {
+                    'message': error_data.get('message'),
+                    'error_code': error_data.get('errorCode'),
+                    'request_id': error_data.get('requestId')
+                }
+            except (ValueError, KeyError):
+                # Fallback to basic error handling
+                exception_id = None
+                error_details = None
+            
+            # Create enhanced exception for HTTP 500 errors
+            original_exception = httpx.HTTPStatusError(
+                f"Server error '{response.status_code} {response.reason_phrase}' for url '{response.url}'",
+                request=response.request,
+                response=response
+            )
+            
+            raise KeboolaHTTPException(original_exception, exception_id, error_details)
+        else:
+            # For all other HTTP errors, use standard HTTPStatusError
+            response.raise_for_status()
+
     async def get(
         self,
         endpoint: str,
@@ -143,7 +176,10 @@ class RawKeboolaClient:
                 params=params,
                 headers=headers,
             )
-            response.raise_for_status()
+            
+            if response.is_error:
+                self._handle_http_error(response)
+            
             return cast(JsonStruct, response.json())
 
     async def post(
@@ -170,7 +206,10 @@ class RawKeboolaClient:
                 headers=headers,
                 json=data or {},
             )
-            response.raise_for_status()
+            
+            if response.is_error:
+                self._handle_http_error(response)
+            
             return cast(JsonStruct, response.json())
 
     async def put(
@@ -197,7 +236,10 @@ class RawKeboolaClient:
                 headers=headers,
                 json=data or {},
             )
-            response.raise_for_status()
+            
+            if response.is_error:
+                self._handle_http_error(response)
+            
             return cast(JsonStruct, response.json())
 
     async def delete(
@@ -218,7 +260,9 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
             )
-            response.raise_for_status()
+            
+            if response.is_error:
+                self._handle_http_error(response)
 
             if response.content:
                 return cast(JsonStruct, response.json())
