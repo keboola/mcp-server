@@ -195,9 +195,7 @@ class _BigQueryWorkspace(_Workspace):
             return None
 
     async def execute_query(self, sql_query: str) -> QueryResult:
-        resp = await self._client.storage_client.post(
-            f'branch/default/workspaces/{self.id}/query', {'query': sql_query}
-        )
+        resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
         return TypeAdapter(QueryResult).validate_python(resp)
 
 
