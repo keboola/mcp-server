@@ -128,15 +128,14 @@ async def create_flow(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
-    new_flow = FlowConfigurationResponse.from_raw_config(new_raw_configuration)
     await _set_cfg_creation_metadata(
         client,
         component_id=ORCHESTRATOR_COMPONENT_ID,
-        configuration_id=new_flow.configuration_id,
+        configuration_id=str(new_raw_configuration['id']),
     )
 
     flow_id = str(new_raw_configuration['id'])
-    flow_name = new_raw_configuration['name']
+    flow_name = str(new_raw_configuration['name'])
     flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
@@ -198,16 +197,16 @@ async def update_flow(
         change_description=change_description,
         flow_configuration=flow_configuration,  # Direct configuration
     )
-    updated_flow = FlowConfigurationResponse.from_raw_config(updated_raw_configuration)
+
     await _set_cfg_update_metadata(
         client,
         component_id=ORCHESTRATOR_COMPONENT_ID,
-        configuration_id=updated_flow.configuration_id,
-        configuration_version=updated_flow.version,
+        configuration_id=str(updated_raw_configuration['id']),
+        configuration_version=cast(int, updated_raw_configuration['version']),
     )
 
     flow_id = str(updated_raw_configuration['id'])
-    flow_name = updated_raw_configuration['name']
+    flow_name = str(updated_raw_configuration['name'])
     flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
 
