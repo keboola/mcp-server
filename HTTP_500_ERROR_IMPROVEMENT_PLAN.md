@@ -249,22 +249,30 @@ async def query_table(ctx: Context, sql_query: str) -> QueryResult:
 - Integrates seamlessly with all HTTP methods (GET, POST, PUT, DELETE)
 - Maintains full backward compatibility with existing error handling patterns
 
-#### 1.3 Test-First: Enhanced Tool Error Decorator
+#### 1.3 Test-First: Enhanced Tool Error Decorator ✅ COMPLETED
 **Test Phase:**
-- [ ] Write unit tests for enhanced `@tool_errors` decorator
-- [ ] Test HTTP 500 error handling with exception ID inclusion in recovery message
-- [ ] Test HTTP 500 error handling without exception ID (fallback)
-- [ ] Test that other HTTP errors maintain existing behavior
-- [ ] Test logging includes exception ID when available
-- [ ] Test integration with existing recovery instructions
-- [ ] Define success criteria: Recovery messages include exception ID for HTTP 500 errors only
+- [x] Write unit tests for enhanced `@tool_errors` decorator
+- [x] Test HTTP 500 error handling with exception ID inclusion in recovery message
+- [x] Test HTTP 500 error handling without exception ID (fallback)
+- [x] Test that other HTTP errors maintain existing behavior
+- [x] Test logging includes exception ID when available
+- [x] Test integration with existing recovery instructions
+- [x] Define success criteria: Recovery messages include exception ID for HTTP 500 errors only
 
 **Implementation Phase:**
-- [ ] Enhance `@tool_errors` decorator to handle `KeboolaHTTPException`
-- [ ] Add special recovery message formatting for HTTP 500 errors only
-- [ ] Update logging to include exception ID when available
-- [ ] Ensure other HTTP errors maintain existing behavior
-- [ ] Run tests to verify implementation meets criteria
+- [x] Enhance `@tool_errors` decorator to handle `KeboolaHTTPException`
+- [x] Add special recovery message formatting for HTTP 500 errors only
+- [x] Update logging to include exception ID when available
+- [x] Ensure other HTTP errors maintain existing behavior
+- [x] Run tests to verify implementation meets criteria
+
+**Results:** All 6 enhanced tool decorator tests passing. The enhanced `@tool_errors` decorator correctly:
+- Includes exception ID in recovery messages specifically for HTTP 500 errors
+- Appends "For debugging, reference Exception ID: {exception_id}" to recovery messages for HTTP 500 errors only
+- Maintains existing behavior for all other HTTP errors (4xx, other 5xx) without adding exception ID
+- Preserves standard behavior for non-HTTP exceptions (ValueError, etc.)
+- Integrates seamlessly with existing recovery instruction patterns
+- Logs exception ID information for HTTP 500 errors in both main error message and recovery message
 
 ### Phase 2: Test-Driven Development - Integration and Validation (Week 2)
 

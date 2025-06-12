@@ -49,8 +49,8 @@ def tool_errors(
     recovery_instructions: Optional[dict[Type[Exception], str]] = None,
 ) -> Callable[[F], F]:
     """
-    The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
-
+    Enhanced MCP tool function decorator with improved HTTP 500 error handling.
+    
     :param default_recovery: A fallback recovery instruction to use when no specific instruction
                              is found for the exception.
     :param recovery_instructions: A dictionary mapping exception types to recovery instructions.
@@ -66,12 +66,18 @@ def tool_errors(
             except Exception as e:
                 logging.exception(f'Failed to run tool {func.__name__}: {e}')
 
+                # Enhanced recovery message for HTTP 500 errors
                 recovery_msg = default_recovery
                 if recovery_instructions:
                     for exc_type, msg in recovery_instructions.items():
                         if isinstance(e, exc_type):
                             recovery_msg = msg
                             break
+                
+                # Special handling for KeboolaHTTPException (HTTP 500 errors only)
+                if isinstance(e, KeboolaHTTPException) and e.original_exception.response.status_code == 500:
+                    if e.exception_id:
+                        recovery_msg = f"{recovery_msg or 'Please try again later.'} For support reference Exception ID: {e.exception_id}"
 
                 if not recovery_msg:
                     raise e
