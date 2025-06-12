@@ -74,11 +74,11 @@ class ProjectLinksManager:
     def get_project_url(self) -> str:
         """Return the UI URL for accessing the project."""
         return f'{self.base_url}/admin/projects/{self.project_id}'
-    
+
     def get_table_url(self, bucket_id: str, table_name: str) -> str:
         """Return the UI URL for accessing the table of a bucket."""
         return f'{self.base_url}/admin/projects/{self.project_id}/storage/{bucket_id}/table/{table_name}'
-    
+
     def get_project_links(self) -> list[Link]:
         """Return a list of relevant links for a project."""
         return [self._detail_link('Project Dashboard', '', self.get_project_url())]
@@ -91,11 +91,19 @@ class ProjectLinksManager:
             self._docs_link('Documentation for Keboola Flows', self.FLOW_DOCUMENTATION_URL),
         ]
 
-    def get_component_configuration_links(self, component_id: str, configuration_id: str, configuration_name: str) -> list[Link]:
+    def get_component_configuration_links(
+        self, component_id: str, configuration_id: str, configuration_name: str
+    ) -> list[Link]:
         """Links for component config: detail, dashboard."""
         return [
-            self._detail_link('Configuration', configuration_name, self.get_component_configuration_url(component_id, configuration_id)),
-            self._dashboard_link('Component Configurations Dashboard', self.get_component_configurations_dashboard_url(component_id)),
+            self._detail_link(
+                'Configuration',
+                configuration_name,
+                self.get_component_configuration_url(component_id, configuration_id),
+            ),
+            self._dashboard_link(
+                'Component Configurations Dashboard', self.get_component_configurations_dashboard_url(component_id)
+            ),
         ]
 
     def get_job_links(self, job_id: str) -> list[Link]:
@@ -113,7 +121,7 @@ class ProjectLinksManager:
         ]
 
     def get_table_links(self, bucket_id: str, table_name: str) -> list[Link]:
-            """Links for table: detail."""
-            return [
-                self._detail_link('Table', table_name, self.get_table_url(bucket_id, table_name)),
-            ]
+        """Links for table: detail."""
+        return [
+            self._detail_link('Table', table_name, self.get_table_url(bucket_id, table_name)),
+        ]
