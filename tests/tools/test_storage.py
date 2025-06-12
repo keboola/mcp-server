@@ -51,6 +51,7 @@ def mock_table_data() -> Mapping[str, Any]:
         'rows_count': 100,
         'data_size_bytes': 1000,
         'columns': ['id', 'name', 'value'],
+        'bucket': {'id': 1}
     }
 
     return {
@@ -261,7 +262,7 @@ async def test_get_table_detail(
     ('sapi_response', 'expected'),
     [
         (
-            [{'id': 'in.c-bucket.foo', 'name': 'foo', 'display_name': 'foo'}],
+            [{'id': 'in.c-bucket.foo', 'name': 'foo', 'display_name': 'foo', 'bucket': {'id': 1}}],
             [TableDetail(id='in.c-bucket.foo', name='foo', display_name='foo')],
         ),
         (
@@ -270,6 +271,7 @@ async def test_get_table_detail(
                     'id': 'in.c-bucket.bar',
                     'name': 'bar',
                     'display_name': 'foo',
+                    'bucket': {'id': 1},
                     'metadata': [{'key': 'KBC.description', 'value': 'Nice Bar'}],
                 }
             ],
