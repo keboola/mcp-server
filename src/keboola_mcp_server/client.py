@@ -400,6 +400,15 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonList, await self.get(endpoint='buckets'))
 
+    async def bucket_metadata_delete(self, bucket_id: str, metadata_id: str) -> None:
+        """
+        Deletes metadata for a given bucket.
+
+        :param bucket_id: The id of the bucket
+        :param metadata_id: The id of the metadata
+        """
+        await self.delete(endpoint=f'buckets/{bucket_id}/metadata/{metadata_id}')
+
     async def bucket_metadata_get(self, bucket_id: str) -> list[JsonDict]:
         """
         Retrieves metadata for a given bucket.
@@ -790,6 +799,15 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Table details as dictionary
         """
         return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
+
+    async def table_metadata_delete(self, table_id: str, metadata_id: str) -> None:
+        """
+        Deletes metadata for a given table.
+
+        :param table_id: The id of the table
+        :param metadata_id: The id of the metadata
+        """
+        await self.delete(endpoint=f'tables/{table_id}/metadata/{metadata_id}')
 
     async def table_metadata_get(self, table_id: str) -> list[JsonDict]:
         """
