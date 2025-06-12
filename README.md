@@ -282,7 +282,7 @@ What buckets and tables are in my Keboola project?
 
 ## Supported Tools
 
-**Note:** Keboola MCP is pre-1.0, so some breaking changes might occur. Your AI agents will automatically adjust to new tools.
+**Note:** Your AI agents will automatically adjust to new tools.
 
 | Category | Tool | Description |
 |----------|------|-------------|
