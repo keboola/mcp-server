@@ -367,7 +367,7 @@ The development team actively monitors issues and will respond as quickly as pos
 
 ## Resources
 
-- [User Documentation](https://docs.keboola.com/)
+- [User Documentation](https://help.keboola.com/)
 - [Developer Documentation](https://developers.keboola.com/)
 - [Keboola Platform](https://www.keboola.com)
 - [Issue Tracker](https://github.com/keboola/mcp-server/issues/new) ← **Primary contact method for MCP Server**
