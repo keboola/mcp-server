@@ -2,9 +2,39 @@ import logging
 from functools import wraps
 from typing import Any, Callable, Optional, Type, TypeVar, cast
 
+import httpx
+
 LOG = logging.getLogger(__name__)
 
 F = TypeVar('F', bound=Callable[..., Any])
+
+
+class KeboolaHTTPException(httpx.HTTPStatusError):
+    """Enhanced HTTP exception that includes Keboola API error details for HTTP 500 errors."""
+    
+    def __init__(self, original_exception: httpx.HTTPStatusError, exception_id: str | None = None, error_details: dict | None = None):
+        self.exception_id = exception_id
+        self.error_details = error_details or {}
+        self.original_exception = original_exception
+        
+        # Build enhanced error message
+        message = self._build_error_message()
+        super().__init__(message, request=original_exception.request, response=original_exception.response)
+    
+    def _build_error_message(self) -> str:
+        """Build a comprehensive error message including exceptionId for HTTP 500 errors."""
+        base_message = str(self.original_exception)
+        
+        # Only enhance HTTP 500 errors with exception ID
+        if self.original_exception.response.status_code == 500 and self.exception_id:
+            base_message += f" (Exception ID: {self.exception_id})"
+        
+        if self.error_details:
+            # Add relevant error details without exposing sensitive information
+            if 'message' in self.error_details:
+                base_message += f" - {self.error_details['message']}"
+        
+        return base_message
 
 
 class ToolException(Exception):
