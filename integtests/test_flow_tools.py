@@ -84,7 +84,6 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert MetadataField.CREATED_BY_MCP in metadata_dict
         assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
     finally:
-        client = KeboolaClient.from_state(mcp_context.session.state)
         await client.storage_client.flow_delete(flow_id, skip_trash=True)
 
 
@@ -154,7 +153,6 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         assert metadata_dict[updated_by_md_key] == 'true'
 
     finally:
-        client = KeboolaClient.from_state(mcp_context.session.state)
         await client.storage_client.flow_delete(flow_id, skip_trash=True)
 
 
