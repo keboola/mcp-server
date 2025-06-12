@@ -225,22 +225,29 @@ async def query_table(ctx: Context, sql_query: str) -> QueryResult:
 - Filters error details appropriately
 - Maintains compatibility with existing `HTTPStatusError` interface
 
-#### 1.2 Test-First: Enhanced HTTP Client Error Handling
+#### 1.2 Test-First: Enhanced HTTP Client Error Handling ✅ COMPLETED
 **Test Phase:**
-- [ ] Write unit tests for `_handle_http_error` method
-- [ ] Test HTTP 500 error handling with valid JSON response containing exceptionId
-- [ ] Test HTTP 500 error handling with malformed JSON response (fallback)
-- [ ] Test HTTP 500 error handling with missing exceptionId
-- [ ] Test that other HTTP errors (4xx, other 5xx) continue to use standard HTTPStatusError
-- [ ] Test integration with all HTTP methods (get, post, put, delete)
-- [ ] Define success criteria: Only HTTP 500 errors get enhanced, others remain unchanged
+- [x] Write unit tests for `_handle_http_error` method
+- [x] Test HTTP 500 error handling with valid JSON response containing exceptionId
+- [x] Test HTTP 500 error handling with malformed JSON response (fallback)
+- [x] Test HTTP 500 error handling with missing exceptionId
+- [x] Test that other HTTP errors (4xx, other 5xx) continue to use standard HTTPStatusError
+- [x] Test integration with all HTTP methods (get, post, put, delete)
+- [x] Define success criteria: Only HTTP 500 errors get enhanced, others remain unchanged
 
 **Implementation Phase:**
-- [ ] Add `_handle_http_error` method to `RawKeboolaClient`
-- [ ] Implement HTTP 500-specific error handling logic
-- [ ] Update all HTTP methods to use enhanced error handling
-- [ ] Ensure other HTTP errors continue to use standard `HTTPStatusError`
-- [ ] Run tests to verify implementation meets criteria
+- [x] Add `_handle_http_error` method to `RawKeboolaClient`
+- [x] Implement HTTP 500-specific error handling logic
+- [x] Update all HTTP methods to use enhanced error handling
+- [x] Ensure other HTTP errors continue to use standard `HTTPStatusError`
+- [x] Run tests to verify implementation meets criteria
+
+**Results:** All 7 HTTP client tests passing. The enhanced error handling correctly:
+- Extracts exception ID from HTTP 500 error responses when available
+- Falls back gracefully when JSON parsing fails or exception ID is missing
+- Preserves standard HTTPStatusError behavior for all other HTTP status codes (4xx, other 5xx)
+- Integrates seamlessly with all HTTP methods (GET, POST, PUT, DELETE)
+- Maintains full backward compatibility with existing error handling patterns
 
 #### 1.3 Test-First: Enhanced Tool Error Decorator
 **Test Phase:**

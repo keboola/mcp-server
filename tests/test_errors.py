@@ -247,6 +247,13 @@ class TestRawKeboolaClientErrorHandling:
         """Test that HTTP 404 errors use standard HTTPStatusError."""
         mock_http_response_404.request = mock_http_request
         
+        # Configure the mock to raise HTTPStatusError when raise_for_status is called
+        mock_http_response_404.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Client error '404 Not Found' for url 'https://api.example.com/test'",
+            request=mock_http_request,
+            response=mock_http_response_404
+        )
+        
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
             raw_client._handle_http_error(mock_http_response_404)
         
@@ -257,6 +264,13 @@ class TestRawKeboolaClientErrorHandling:
     def test_handle_http_error_502_uses_standard_exception(self, raw_client, mock_http_response_502, mock_http_request):
         """Test that other HTTP 5xx errors (non-500) use standard HTTPStatusError."""
         mock_http_response_502.request = mock_http_request
+        
+        # Configure the mock to raise HTTPStatusError when raise_for_status is called
+        mock_http_response_502.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Server error '502 Bad Gateway' for url 'https://api.example.com/test'",
+            request=mock_http_request,
+            response=mock_http_response_502
+        )
         
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
             raw_client._handle_http_error(mock_http_response_502)
