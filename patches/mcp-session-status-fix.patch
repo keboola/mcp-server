@@ -1,0 +1,31 @@
+diff --git a/src/mcp/server/sse.py b/src/mcp/server/sse.py
+index 1234567..abcdefg 100644
+--- a/src/mcp/server/sse.py
++++ b/src/mcp/server/sse.py
+@@ -150,7 +150,7 @@ class SSEServer:
+         """Handle incoming messages."""
+         session = self._sessions.get(session_id)
+         if not session:
+-            raise HTTPException(status_code=404, detail="Could not find session")
++            raise HTTPException(status_code=401, detail="Could not find session")
+         
+         # Process the message
+         return await self._handle_message(session, message)
+@@ -200,7 +200,7 @@ class SSEServer:
+         """Get session by ID."""
+         session = self._sessions.get(session_id)
+         if not session:
+-            logger.warning(f"Could not find session for ID: {session_id}")
++            logger.warning(f"Session not found or expired for ID: {session_id}")
+         return session
+     
+     async def _cleanup_expired_sessions(self):
+@@ -250,7 +250,7 @@ class SSETransport:
+         """Send a message to the server."""
+         session_id = self._get_session_id()
+         if not session_id:
+-            raise ConnectionError("No active session")
++            raise ConnectionError("Session not found or expired")
+         
+         # Send message via SSE
+         return await self._send_sse_message(session_id, message) 
