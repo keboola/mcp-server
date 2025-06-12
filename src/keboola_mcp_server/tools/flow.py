@@ -9,7 +9,7 @@ from typing import Annotated, Any, Sequence, cast
 from fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
@@ -20,6 +20,7 @@ from keboola_mcp_server.tools.components.model import (
     FlowTask,
     ReducedFlow,
 )
+from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
 LOG = logging.getLogger(__name__)
@@ -127,8 +128,14 @@ async def create_flow(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
+    await _set_cfg_creation_metadata(
+        client,
+        component_id=ORCHESTRATOR_COMPONENT_ID,
+        configuration_id=str(new_raw_configuration['id']),
+    )
+
     flow_id = str(new_raw_configuration['id'])
-    flow_name = new_raw_configuration['name']
+    flow_name = str(new_raw_configuration['name'])
     flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
@@ -191,8 +198,15 @@ async def update_flow(
         flow_configuration=flow_configuration,  # Direct configuration
     )
 
+    await _set_cfg_update_metadata(
+        client,
+        component_id=ORCHESTRATOR_COMPONENT_ID,
+        configuration_id=str(updated_raw_configuration['id']),
+        configuration_version=cast(int, updated_raw_configuration['version']),
+    )
+
     flow_id = str(updated_raw_configuration['id'])
-    flow_name = updated_raw_configuration['name']
+    flow_name = str(updated_raw_configuration['name'])
     flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
 
