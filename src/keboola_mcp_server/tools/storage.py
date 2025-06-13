@@ -206,8 +206,6 @@ async def get_table_detail(
         | {
             'columns': column_info,
             'fully_qualified_name': table_fqn.identifier if table_fqn else None,
-        }
-        | {
             'links': links
         }
     )

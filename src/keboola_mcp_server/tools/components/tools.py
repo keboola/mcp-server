@@ -248,9 +248,11 @@ async def get_component_configuration(
             )
             row_configurations.append(row_configuration)
 
-    links = links_manager.get_component_configuration_links(component_id,
-                                                            configuration_id,
-                                                            raw_configuration.get('name', ''))
+    links = links_manager.get_component_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=raw_configuration.get('name', '')
+    )
     return ComponentConfigurationOutput(
         root_configuration=root_configuration,
         row_configurations=row_configurations,
