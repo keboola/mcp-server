@@ -225,13 +225,11 @@ async def update_bucket_description(
 ]:
     """Update the description for a given Keboola bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
-    metadata_endpoint = f'buckets/{bucket_id}/metadata'
+    response = await client.storage_client.bucket_metadata_update(
+        bucket_id=bucket_id,
+        metadata={MetadataField.DESCRIPTION: description},
+    )
 
-    data = {
-        'provider': 'user',
-        'metadata': [{'key': MetadataField.DESCRIPTION, 'value': description}],
-    }
-    response = cast(list[JsonDict], await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
 
     return UpdateDescriptionResponse.model_validate(description_entry)
@@ -249,13 +247,11 @@ async def update_table_description(
 ]:
     """Update the description for a given Keboola table."""
     client = KeboolaClient.from_state(ctx.session.state)
-    metadata_endpoint = f'tables/{table_id}/metadata'
-
-    data = {
-        'provider': 'user',
-        'metadata': [{'key': MetadataField.DESCRIPTION, 'value': description}],
-    }
-    response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
+    response = await client.storage_client.table_metadata_update(
+        table_id=table_id,
+        metadata={MetadataField.DESCRIPTION: description},
+        columns_metadata={},
+    )
     raw_metadata = cast(list[JsonDict], response.get('metadata', []))
     description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
 
@@ -275,22 +271,15 @@ async def update_column_description(
 ]:
     """Update the description for a given column in a Keboola table."""
     client = KeboolaClient.from_state(ctx.session.state)
-    metadata_endpoint = f'tables/{table_id}/metadata'
 
-    data = {
-        'provider': 'user',
-        'columnsMetadata': {
-            f'{column_name}': [
-                {
-                    'key': MetadataField.DESCRIPTION,
-                    'value': description,
-                    'columnName': column_name,
-                }
+    response = await client.storage_client.table_metadata_update(
+        table_id=table_id,
+        columns_metadata={
+            column_name: [
+                {'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}
             ]
         },
-    }
-
-    response = cast(JsonDict, await client.storage_client.post(endpoint=metadata_endpoint, data=data))
+    )
     column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
     description_entry = next(
         entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION

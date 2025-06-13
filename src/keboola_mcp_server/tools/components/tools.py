@@ -214,9 +214,7 @@ async def get_component_configuration(
     component = await _get_component(client=client, component_id=component_id)
     raw_configuration = cast(
         JsonDict,
-        await client.storage_client.get(
-            endpoint=f'branch/{client.storage_client.branch_id}/components/{component_id}/configs/{configuration_id}'
-        ),
+        await client.storage_client.configuration_detail(component_id=component_id, configuration_id=configuration_id),
     )
     configuration_response = ComponentConfigurationResponse.model_validate(
         raw_configuration | {'component_id': component_id}
