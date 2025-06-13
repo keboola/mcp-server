@@ -290,7 +290,7 @@ class ComponentConfigurationOutput(BaseModel):
         description='The component this configuration belongs to',
         default=None,
     )
-    links: list[Link] = Field(..., description='The links relevant to the tool call.')
+    links: list[Link] = Field(..., description='The links relevant to the component configuration.')
 
 
 class ComponentConfigurationMetadata(BaseModel):

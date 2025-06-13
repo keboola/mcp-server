@@ -72,7 +72,7 @@ class BucketDetail(BaseModel):
         validation_alias=AliasChoices('tablesCount', 'tables_count', 'tables-count'),
         serialization_alias='tablesCount',
     )
-    links: Optional[list[Link]] = Field(default=None, description='The links relevant to the tool call.')
+    links: Optional[list[Link]] = Field(default=None, description='The links relevant to the bucket.')
 
     @model_validator(mode='before')
     @classmethod
@@ -137,7 +137,7 @@ class TableDetail(BaseModel):
         validation_alias=AliasChoices('fullyQualifiedName', 'fully_qualified_name', 'fully-qualified-name'),
         serialization_alias='fullyQualifiedName',
     )
-    links: Optional[list[Link]] = Field(default=None, description='The links relevant to the tool call.')
+    links: Optional[list[Link]] = Field(default=None, description='The links relevant to the table.')
 
     @model_validator(mode='before')
     @classmethod

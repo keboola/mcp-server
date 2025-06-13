@@ -134,7 +134,7 @@ class JobDetail(JobListItem):
         serialization_alias='result',
         default=None,
     )
-    links: list[Link] = Field(..., description='The links relevant to the tool call.')
+    links: list[Link] = Field(..., description='The links relevant to the job.')
 
     @field_validator('result', 'config_data', mode='before')
     @classmethod
