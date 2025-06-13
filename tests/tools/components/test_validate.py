@@ -378,7 +378,7 @@ def test_validate_storage_configuration_output(
     component_raw = mock_component.copy()
     component_raw['type'] = 'extractor'  # we need extractor to pass the validation for storage necessity
     component = Component.model_validate(component_raw)
-    result = validation.validate_storage_configuration(input_storage, component)
+    result = validation._validate_storage_configuration(input_storage, component)
     expected = output_storage  # we expect unwrapped structure
     assert result == expected
 
@@ -462,19 +462,19 @@ def test_validate_storage_of_row_based_and_root_based_writers(
         if not is_writer_row_based and is_storage_row_based:
             # check logging if we are validating row-based storage for non-row-based writer
             with caplog.at_level(logging.WARNING):
-                validation.validate_storage_configuration(
-                    storage=storage, component=component, validating_row_storage=is_storage_row_based
+                validation._validate_storage_configuration(
+                    storage=storage, component=component, is_row_storage=is_storage_row_based
                 )
                 assert 'Validating "storage" for row configuration of non-row-based writer' in caplog.text
         else:
             # We expect passing without errors and warning loggings
-            validation.validate_storage_configuration(
-                storage=storage, component=component, validating_row_storage=is_storage_row_based
+            validation._validate_storage_configuration(
+                storage=storage, component=component, is_row_storage=is_storage_row_based
             )
     else:
         with pytest.raises(ValueError, match=error_message) as exception:
-            validation.validate_storage_configuration(
-                storage=storage, component=component, validating_row_storage=is_storage_row_based
+            validation._validate_storage_configuration(
+                storage=storage, component=component, is_row_storage=is_storage_row_based
             )
         assert component.component_id in str(exception.value)
 
@@ -504,13 +504,13 @@ def test_validate_storage_of_sql_transformation(mock_component: dict, storage: O
         component_raw['id'] = transformation_id
         component = Component.model_validate(component_raw)
         if is_valid:
-            validation.validate_storage_configuration(storage=storage, component=component)
+            validation._validate_storage_configuration(storage=storage, component=component)
         else:
             with pytest.raises(
                 ValueError,
                 match='The "storage" must contain either "input" or "output" mappings in the configuration of the SQL ',
             ) as exception:
-                validation.validate_storage_configuration(storage=storage, component=component)
+                validation._validate_storage_configuration(storage=storage, component=component)
             assert f'{component.component_id}' in str(exception.value)
             assert 'SQL transformation' in str(exception.value)
 
