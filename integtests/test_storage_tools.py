@@ -25,7 +25,6 @@ async def test_retrieve_buckets(mcp_context: Context, buckets: list[BucketDef]):
         assert hasattr(item, 'links')
         assert item.links is None
 
-
     assert len(result) == len(buckets)
 
 
