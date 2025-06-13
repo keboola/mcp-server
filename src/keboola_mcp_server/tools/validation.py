@@ -284,17 +284,16 @@ def validate_storage_configuration(
     # If storage is None, we set it to an empty dict
     if storage_cfg is None:
         LOG.warning(
-            f'No storage configuration provided for component {component.component_id} of type '
+            f'No "storage" configuration provided for component {component.component_id} of type '
             f'{component.component_type}.'
         )
         storage_cfg = {}
-    # Only for SQL transformations
+    # Only for SQL transformations - storage must contain either input or output mappings
     if component.component_id in [SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID]:
-        # For SQL transformations, we want to have atleast one of the input or output config in the storage
-        if not storage_cfg or ('output' not in storage_cfg and 'input' not in storage_cfg):
+        if not storage_cfg.get('input') and not storage_cfg.get('output'):
             raise ValueError(
-                f'Storage configuration of {component.component_id} SQL transformation cannot be empty and must '
-                'contain either input or output configuration.'
+                f'The "storage" must contain either "input" or "output" mappings in the configuration of the SQL '
+                f'transformation "{component.component_id}".'
             )
     # For row-based writers - ROOT must have an empty storage, ROW must have non-empty input in storage
     if component.component_type == 'writer' and component.is_row_based:
