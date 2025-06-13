@@ -468,6 +468,7 @@ async def update_sql_transformation_configuration(
         component=transformation,
         storage=storage,
         initial_message='The "storage" field is not valid.',
+        validating_row_storage=False,
     )
 
     updated_configuration = {
@@ -566,6 +567,7 @@ async def create_component_root_configuration(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',
+        validating_row_storage=False,
     )
     parameters = validate_root_parameters_configuration(
         component=component,
@@ -669,6 +671,7 @@ async def create_component_row_configuration(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',
+        validating_row_storage=True,
     )
     parameters = validate_row_parameters_configuration(
         component=component,
@@ -779,6 +782,7 @@ async def update_component_root_configuration(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',
+        validating_row_storage=False,
     )
     parameters = validate_root_parameters_configuration(
         component=component,
@@ -890,6 +894,7 @@ async def update_component_row_configuration(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',
+        validating_row_storage=True,
     )
     parameters = validate_row_parameters_configuration(
         component=component,
