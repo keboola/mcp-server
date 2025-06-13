@@ -267,6 +267,7 @@ def validate_storage_configuration(
     storage: Optional[JsonDict],
     component: Component,
     initial_message: Optional[str] = None,
+    validating_row_storage: bool = False,
 ) -> JsonDict:
     """
     Validates the storage configuration and checks if it is necessary for the component.
@@ -294,6 +295,34 @@ def validate_storage_configuration(
             raise ValueError(
                 f'Storage configuration of {component.component_id} SQL transformation cannot be empty and must '
                 'contain either input or output configuration.'
+            )
+    # For row-based writers - ROOT must have an empty storage, ROW must have non-empty input in storage
+    if component.component_type == 'writer' and component.is_row_based:
+        if not validating_row_storage and storage_cfg != {}:
+            # ROOT storage is not empty but the writer is row-based - this is not allowed
+            raise ValueError(
+                'The "storage" must be empty for root configuration of the writer component '
+                f'"{component.component_id}" since it is row-based. In this case, storage should only be defined '
+                'in its outgoing row configurations.'
+            )
+        elif validating_row_storage and not storage_cfg.get('input'):
+            # ROW storage does not contain input configuration for row-based writer - this is not allowed
+            raise ValueError(
+                f'The "storage" must contain "input" mappings for the row configuration of the writer component '
+                f'"{component.component_id}".'
+            )
+    # Only for non-row-based writers - ROOT must have non-empty input in storage
+    if component.component_type == 'writer' and not component.is_row_based:
+        if validating_row_storage:
+            LOG.warning(
+                f'Validating "storage" for row configuration of non-row-based writer {component.component_id} is not '
+                'semantically correct. Possible cause: agent error or wrong component flag. Proceeding with validation.'
+            )
+        if not validating_row_storage and not storage_cfg.get('input'):
+            # ROOT storage does not contain input configuration for non-row-based writer - this is not allowed
+            raise ValueError(
+                f'The "storage" must contain "input" mappings for the root configuration of the writer component '
+                f'"{component.component_id}".'
             )
 
     initial_message = (initial_message or '') + '\n'
