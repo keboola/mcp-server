@@ -38,7 +38,8 @@ async def test_get_bucket_detail(mcp_context: Context, keboola_project: ProjectD
         assert result.id == bucket.bucket_id
         assert hasattr(result, 'links')
         assert isinstance(result.links, list)
-        assert result.links, 'Links list should not be empty.'
+        assert len(result.links) == 2
+
         # check links
         detail_link = result.links[0]
         assert detail_link.type == 'ui-detail'
@@ -51,8 +52,9 @@ async def test_get_bucket_detail(mcp_context: Context, keboola_project: ProjectD
 
 
 @pytest.mark.asyncio
-async def test_get_table_detail(mcp_context: Context, tables: list[TableDef]):
+async def test_get_table_detail(mcp_context: Context, keboola_project: ProjectDef, tables: list[TableDef]):
     """Tests that for each test table, `get_table_detail` returns a `TableDetail` instance with correct fields."""
+    project_id = keboola_project.project_id
 
     for table in tables:
         with table.file_path.open('r', encoding='utf-8') as f:
@@ -65,16 +67,17 @@ async def test_get_table_detail(mcp_context: Context, tables: list[TableDef]):
         assert result.name == table.table_name
         assert result.columns is not None
         assert {col.name for col in result.columns} == columns
+
+        # check links
         assert hasattr(result, 'links')
         assert isinstance(result.links, list)
-        assert result.links, 'Links list should not be empty.'
-        for link in result.links:
-            assert hasattr(link, 'type')
-            assert hasattr(link, 'title')
-            assert hasattr(link, 'url')
-            assert isinstance(link.type, str)
-            assert isinstance(link.title, str)
-            assert isinstance(link.url, str)
+        assert len(result.links) == 1
+        detail_link = result.links[0]
+        assert detail_link.type == 'ui-detail'
+        assert detail_link.url == (
+            f'https://connection.keboola.com/admin/projects/{project_id}'
+            f'/storage/{table.bucket_id}/table/{table.table_name}'
+        )
 
 
 @pytest.mark.asyncio
