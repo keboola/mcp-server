@@ -34,7 +34,10 @@ def dynamic_manager(
     # ignore the static workspace
     workspaces = [w for w in workspaces if w['connection']['schema'] != workspace_schema]
     if workspaces:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(workspaces)} extra workspaces')
+        pytest.fail(
+            f'Expecting empty Keboola project {project_id}, but found {len(workspaces)} extra workspaces: '
+            f'{[{"id": w["id"], "name": w["name"]} for w in workspaces]}'
+        )
 
     yield WorkspaceManager(keboola_client)
 

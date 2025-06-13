@@ -31,10 +31,10 @@ class TableFqn:
             f'{self.quote_char}{n}{self.quote_char}' for n in [self.db_name, self.schema_name, self.table_name]
         )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.identifier
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.__repr__()
 
 
@@ -152,9 +152,7 @@ class _SnowflakeWorkspace(_Workspace):
             return None
 
     async def execute_query(self, sql_query: str) -> QueryResult:
-        resp = await self._client.storage_client.post(
-            f'branch/default/workspaces/{self.id}/query', {'query': sql_query}
-        )
+        resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
         return TypeAdapter(QueryResult).validate_python(resp)
 
 
@@ -197,9 +195,7 @@ class _BigQueryWorkspace(_Workspace):
             return None
 
     async def execute_query(self, sql_query: str) -> QueryResult:
-        resp = await self._client.storage_client.post(
-            f'branch/default/workspaces/{self.id}/query', {'query': sql_query}
-        )
+        resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
         return TypeAdapter(QueryResult).validate_python(resp)
 
 
@@ -240,7 +236,7 @@ class WorkspaceManager:
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
 
-        for sapi_wsp_info in await self._client.storage_client.get('workspaces'):
+        for sapi_wsp_info in await self._client.storage_client.workspace_list():
             assert isinstance(sapi_wsp_info, dict)
             wi = _WspInfo.from_sapi_info(sapi_wsp_info)
             if wi.id and wi.backend and wi.schema and wi.schema == schema:
@@ -248,11 +244,11 @@ class WorkspaceManager:
 
         return None
 
-    async def _find_ws_by_id(self, workspace_id: str) -> _WspInfo | None:
+    async def _find_ws_by_id(self, workspace_id: int) -> _WspInfo | None:
         """Finds the workspace info by its ID."""
 
         try:
-            sapi_wsp_info = await self._client.storage_client.get(f'workspaces/{workspace_id}')
+            sapi_wsp_info = await self._client.storage_client.workspace_detail(workspace_id)
             assert isinstance(sapi_wsp_info, dict)
             wi = _WspInfo.from_sapi_info(sapi_wsp_info)
 
@@ -270,11 +266,10 @@ class WorkspaceManager:
     async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the workspace info in the current branch."""
 
-        metadata = await self._client.storage_client.get('branch/default/metadata')
+        metadata = await self._client.storage_client.branch_metadata_get()
         for m in metadata:
             if m.get('key') == self.MCP_META_KEY:
-                workspace_id = m.get('value') or ''
-                workspace_id = workspace_id.strip()
+                workspace_id = m.get('value')
                 if workspace_id and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
                     return info
 
@@ -288,18 +283,16 @@ class WorkspaceManager:
         :return: The workspace info if the workspace was created successfully, None otherwise.
         """
 
-        resp = await self._client.storage_client.post(
-            endpoint='branch/default/workspaces',
-            params={'async': True},
-            data={'readOnlyStorageAccess': True},
-        )
+        resp = await self._client.storage_client.workspace_create(async_run=True, read_only_storage_access=True)
+        assert 'id' in resp, f'Expected job ID in response: {resp}'
+        assert isinstance(resp['id'], int)
 
         job_id = resp['id']
         start_ts = time.perf_counter()
         LOG.info(f'Requested new workspace: job_id={job_id}, timeout={timeout_sec:.2f} seconds')
 
         while True:
-            job_info = await self._client.storage_client.get(f'jobs/{job_id}')
+            job_info = await self._client.storage_client.job_detail(job_id)
             job_status = job_info['status']
 
             duration = time.perf_counter() - start_ts
@@ -307,6 +300,11 @@ class WorkspaceManager:
                      f'duration={duration:.2f} seconds, timeout={timeout_sec:.2f} seconds')
 
             if job_info['status'] == 'success':
+                assert 'results' in job_info, f'Expected `results` in job info: {job_info}'
+                assert isinstance(job_info['results'], dict)
+                assert 'id' in job_info['results'], f'Expected `id` in `results` in job info: {job_info}'
+                assert isinstance(job_info['results']['id'], int)
+
                 workspace_id = job_info['results']['id']
                 LOG.info(f'Created workspace: {workspace_id}')
                 return await self._find_ws_by_id(workspace_id)
@@ -354,8 +352,10 @@ class WorkspaceManager:
                 self._workspace = self._init_workspace(info)
                 return self._workspace
             else:
-                raise ValueError(f'No Keboola workspace found or the workspace has no read-only storage access: '
-                                 f'workspace_schema={self._workspace_schema}')
+                raise ValueError(
+                    f'No Keboola workspace found or the workspace has no read-only storage access: '
+                    f'workspace_schema={self._workspace_schema}'
+                )
 
         LOG.info('Looking up workspace in the default branch.')
         if info := await self._find_ws_in_branch():
@@ -368,10 +368,7 @@ class WorkspaceManager:
         LOG.info('Creating workspace in the default branch.')
         if info := await self._create_ws():
             # update the branch metadata with the workspace ID
-            meta = await self._client.storage_client.post(
-                endpoint='branch/default/metadata',
-                data={'metadata': [{'key': self.MCP_META_KEY, 'value': info.id}]}
-            )
+            meta = await self._client.storage_client.branch_metadata_update({self.MCP_META_KEY: info.id})
             LOG.info(f'Set metadata in the default branch: {meta}')
             # use the newly created workspace
             self._workspace = self._init_workspace(info)

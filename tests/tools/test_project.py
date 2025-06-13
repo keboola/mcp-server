@@ -25,7 +25,7 @@ async def test_get_project_info(mocker: MockerFixture, mcp_context_client: Conte
     ]
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.verify_token = mocker.AsyncMock(return_value=token_data)
-    keboola_client.storage_client.get = mocker.AsyncMock(return_value=metadata)
+    keboola_client.storage_client.branch_metadata_get = mocker.AsyncMock(return_value=metadata)
     keboola_client.storage_client.base_api_url = 'https://connection.test.keboola.com'
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
@@ -37,8 +37,10 @@ async def test_get_project_info(mocker: MockerFixture, mcp_context_client: Conte
     ]
     mock_links_manager = mocker.Mock()
     mock_links_manager.get_project_links.return_value = links
-    mocker.patch('keboola_mcp_server.tools.project.ProjectLinksManager.from_client',
-                 new=mocker.AsyncMock(return_value=mock_links_manager))
+    mocker.patch(
+        'keboola_mcp_server.tools.project.ProjectLinksManager.from_client',
+        new=mocker.AsyncMock(return_value=mock_links_manager)
+    )
 
     # Call the tool
     result = await get_project_info(mcp_context_client)

@@ -1,7 +1,7 @@
 import logging
 import re
 import unicodedata
-from typing import Any, Optional, Sequence, Union, cast, get_args
+from typing import Optional, Sequence, Union, cast, get_args
 
 from httpx import HTTPStatusError
 from pydantic import AliasChoices, BaseModel, Field
@@ -55,18 +55,13 @@ async def _retrieve_components_configurations_by_types(
     :param component_types: The component types/type to retrieve
     :return: A list of items, each containing a component and its associated configurations
     """
-    endpoint = f'branch/{client.storage_client.branch_id}/components'
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
-
     components_with_configurations = []
 
-    for _type in component_types:
-        params = {
-            'include': 'configuration',
-            'componentType': _type,
-        }
-        raw_components_with_configurations_by_type = cast(
-            list[dict[str, Any]], await client.storage_client.get(endpoint, params=params)
+    for comp_type in component_types:
+
+        raw_components_with_configurations_by_type = await client.storage_client.component_list(
+            component_type=comp_type, include=['configuration']
         )
         # extend the list with the raw components with configurations
         # TODO: ugly, refactor
@@ -75,9 +70,9 @@ async def _retrieve_components_configurations_by_types(
             # associated configurations
             raw_configuration_responses = [
                 ComponentConfigurationResponse.model_validate(
-                    {**raw_configuration, 'component_id': raw_component['id']}
+                    raw_configuration | {'component_id': raw_component['id']}
                 )
-                for raw_configuration in raw_component.get('configurations', [])
+                for raw_configuration in cast(list[JsonDict], raw_component.get('configurations', []))
             ]
             configurations_metadata = [
                 ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
@@ -118,12 +113,7 @@ async def _retrieve_components_configurations_by_ids(
         # retrieve configurations for component ids
         raw_configurations = await client.storage_client.configuration_list(component_id=component_id)
         # retrieve components
-        raw_component = cast(
-            JsonDict,
-            await client.storage_client.get(
-                endpoint=f'branch/{client.storage_client.branch_id}/components/{component_id}'
-            ),
-        )
+        raw_component = await client.storage_client.component_detail(component_id=component_id)
         # build component configurations list grouped by components
         raw_configuration_responses = [
             ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
@@ -178,8 +168,7 @@ async def _get_component(
                 f'Falling back to Storage API.'
             )
 
-            endpoint = f'branch/{client.storage_client.branch_id}/components/{component_id}'
-            raw_component = await client.storage_client.get(endpoint=endpoint)
+            raw_component = await client.storage_client.component_detail(component_id=component_id)
             LOG.info(f'Retrieved component {component_id} from Storage API.')
             return Component.model_validate(raw_component)
         else:
