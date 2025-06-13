@@ -3,7 +3,7 @@ import csv
 import pytest
 from fastmcp import Context
 
-from integtests.conftest import BucketDef, TableDef
+from integtests.conftest import BucketDef, TableDef, ProjectDef
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
     TableDetail,
@@ -29,8 +29,9 @@ async def test_retrieve_buckets(mcp_context: Context, buckets: list[BucketDef]):
 
 
 @pytest.mark.asyncio
-async def test_get_bucket_detail(mcp_context: Context, buckets: list[BucketDef]):
+async def test_get_bucket_detail(mcp_context: Context, keboola_project: ProjectDef, buckets: list[BucketDef]):
     """Tests that for each test bucket, `get_bucket_detail` returns a `BucketDetail` instance."""
+    project_id = keboola_project.project_id
     for bucket in buckets:
         result = await get_bucket_detail(bucket.bucket_id, mcp_context)
         assert isinstance(result, BucketDetail)
@@ -41,10 +42,10 @@ async def test_get_bucket_detail(mcp_context: Context, buckets: list[BucketDef])
         # check links
         detail_link = result.links[0]
         assert detail_link.type == 'ui-detail'
-        assert detail_link.url == f'https://connection.keboola.com/admin/projects/10390/storage/{bucket.bucket_id}'
+        assert detail_link.url == f'https://connection.keboola.com/admin/projects/{project_id}/storage/{bucket.bucket_id}'
         dashboard_link = result.links[1]
         assert dashboard_link.type == 'ui-dashboard'
-        assert dashboard_link.url == 'https://connection.keboola.com/admin/projects/10390/storage'
+        assert dashboard_link.url == f'https://connection.keboola.com/admin/projects/{project_id}/storage'
 
 
 @pytest.mark.asyncio
