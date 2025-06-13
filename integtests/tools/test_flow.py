@@ -4,6 +4,7 @@ from fastmcp import Context
 from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.errors import ToolException
 from keboola_mcp_server.tools.flow import (
     FlowToolResponse,
     RetrieveFlowsOutput,
@@ -171,7 +172,7 @@ async def test_retrieve_flows_empty(mcp_context: Context) -> None:
 @pytest.mark.asyncio
 async def test_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
-    Create a flow with invalid structure (should raise ValueError).
+    Create a flow with invalid structure (should raise ToolException wrapping ValueError).
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
     :return: None
@@ -191,7 +192,7 @@ async def test_flow_invalid_structure(mcp_context: Context, configs: list[Config
             },
         },
     ]
-    with pytest.raises(ValueError, match='depends on non-existent phase'):
+    with pytest.raises(ToolException, match='depends on non-existent phase'):
         await create_flow(
             mcp_context,
             name='Invalid Flow',

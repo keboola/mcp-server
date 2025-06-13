@@ -41,6 +41,7 @@ class ToolException(Exception):
     """Custom tool exception class that wraps tool execution errors."""
 
     def __init__(self, original_exception: Exception, recovery_instruction: str):
+        self.recovery_message = recovery_instruction
         super().__init__(f'{str(original_exception)} | Recovery: {recovery_instruction}')
 
 
@@ -79,8 +80,9 @@ def tool_errors(
                     if e.exception_id:
                         recovery_msg = f"{recovery_msg or 'Please try again later.'} For support reference Exception ID: {e.exception_id}"
 
+                # Always provide a default recovery message if none is specified
                 if not recovery_msg:
-                    raise e
+                    recovery_msg = "Please try again later."
 
                 raise ToolException(e, recovery_msg) from e
 
