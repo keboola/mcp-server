@@ -103,7 +103,7 @@ class ProjectLinksManager:
                 url=self.get_component_configurations_dashboard_url(component_id),
             ),
         ]
-    
+
     def get_job_links(self, job_id: str) -> list[Link]:
         return [
             Link.detail(label='Job', name=job_id, url=self.get_job_url(job_id)),
