@@ -317,8 +317,9 @@ def validate_storage_configuration(
                 f'Validating "storage" for row configuration of non-row-based writer {component.component_id} is not '
                 'semantically correct. Possible cause: agent error or wrong component flag. Proceeding with validation.'
             )
-        if not validating_row_storage and not storage_cfg.get('input'):
+        if not storage_cfg.get('input'):
             # ROOT storage does not contain input configuration for non-row-based writer - this is not allowed
+            # (We also can get here when bot tries to create a row config for non-row-based writer {both require input})
             raise ValueError(
                 f'The "storage" must contain "input" mappings for the root configuration of the writer component '
                 f'"{component.component_id}".'
