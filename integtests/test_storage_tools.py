@@ -3,7 +3,7 @@ import csv
 import pytest
 from fastmcp import Context
 
-from integtests.conftest import BucketDef, TableDef, ProjectDef
+from integtests.conftest import BucketDef, ProjectDef, TableDef
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
     TableDetail,
@@ -42,7 +42,9 @@ async def test_get_bucket_detail(mcp_context: Context, keboola_project: ProjectD
         # check links
         detail_link = result.links[0]
         assert detail_link.type == 'ui-detail'
-        assert detail_link.url == f'https://connection.keboola.com/admin/projects/{project_id}/storage/{bucket.bucket_id}'
+        assert (
+            detail_link.url == f'https://connection.keboola.com/admin/projects/{project_id}/storage/{bucket.bucket_id}'
+        )
         dashboard_link = result.links[1]
         assert dashboard_link.type == 'ui-dashboard'
         assert dashboard_link.url == f'https://connection.keboola.com/admin/projects/{project_id}/storage'
