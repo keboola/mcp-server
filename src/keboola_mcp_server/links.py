@@ -12,6 +12,18 @@ class Link(BaseModel):
     title: str = Field(..., description='The name of the URL.')
     url: str = Field(..., description='The URL.')
 
+    @classmethod
+    def detail(cls, label: str, name: str, url: str) -> 'Link':
+        return cls(type='ui-detail', title=f'{label}: {name}', url=url)
+
+    @classmethod
+    def dashboard(cls, title: str, url: str) -> 'Link':
+        return cls(type='ui-dashboard', title=title, url=url)
+
+    @classmethod
+    def docs(cls, title: str, url: str) -> 'Link':
+        return cls(type='docs', title=title, url=url)
+
 
 class ProjectLinksManager:
 
@@ -26,18 +38,6 @@ class ProjectLinksManager:
         base_url = client.storage_client.base_api_url
         project_id = await client.storage_client.project_id()
         return ProjectLinksManager(base_url, project_id)
-
-    def _detail_link(self, label: str, name: str, url: str) -> Link:
-        """Builds object detail link."""
-        return Link(type='ui-detail', title=f'{label}: {name}', url=url)
-
-    def _dashboard_link(self, title: str, url: str) -> Link:
-        """Builds object dashboard link."""
-        return Link(type='ui-dashboard', title=title, url=url)
-
-    def _docs_link(self, title: str, url: str) -> Link:
-        """Builds object documentation link."""
-        return Link(type='docs', title=title, url=url)
 
     def get_component_configuration_url(self, component_id: str, configuration_id: str) -> str:
         """Get the UI detail URL for a specific component configuration."""
@@ -80,48 +80,43 @@ class ProjectLinksManager:
         return f'{self.base_url}/admin/projects/{self.project_id}/storage/{bucket_id}/table/{table_name}'
 
     def get_project_links(self) -> list[Link]:
-        """Return a list of relevant links for a project."""
-        return [self._detail_link('Project Dashboard', '', self.get_project_url())]
+        return [Link.detail(label='Project Dashboard', name='', url=self.get_project_url())]
 
     def get_flow_links(self, flow_id: str | int, flow_name: str) -> list[Link]:
-        """Links for flow: detail, dashboard, documentation."""
         return [
-            self._detail_link('Flow', flow_name, self.get_flow_url(flow_id)),
-            self._dashboard_link('Flows in the project', self.get_flows_dashboard_url()),
-            self._docs_link('Documentation for Keboola Flows', self.FLOW_DOCUMENTATION_URL),
+            Link.detail(label='Flow', name=flow_name, url=self.get_flow_url(flow_id)),
+            Link.dashboard(title='Flows in the project', url=self.get_flows_dashboard_url()),
+            Link.docs(title='Documentation for Keboola Flows', url=self.FLOW_DOCUMENTATION_URL),
         ]
 
     def get_component_configuration_links(
         self, component_id: str, configuration_id: str, configuration_name: str
     ) -> list[Link]:
-        """Links for component config: detail, dashboard."""
         return [
-            self._detail_link(
-                'Configuration',
-                configuration_name,
-                self.get_component_configuration_url(component_id, configuration_id),
+            Link.detail(
+                label='Configuration',
+                name=configuration_name,
+                url=self.get_component_configuration_url(component_id, configuration_id),
             ),
-            self._dashboard_link(
-                'Component Configurations Dashboard', self.get_component_configurations_dashboard_url(component_id)
+            Link.dashboard(
+                title='Component Configurations Dashboard',
+                url=self.get_component_configurations_dashboard_url(component_id),
             ),
         ]
-
+    
     def get_job_links(self, job_id: str) -> list[Link]:
-        """Links for job: detail, dashboard."""
         return [
-            self._detail_link('Job', job_id, self.get_job_url(job_id)),
-            self._dashboard_link('Jobs Dashboard', self.get_jobs_dashboard_url()),
+            Link.detail(label='Job', name=job_id, url=self.get_job_url(job_id)),
+            Link.dashboard(title='Jobs Dashboard', url=self.get_jobs_dashboard_url()),
         ]
 
     def get_bucket_links(self, bucket_id: str, bucket_name: str) -> list[Link]:
-        """Links for bucket: detail, dashboard."""
         return [
-            self._detail_link('Bucket', bucket_name, self.get_bucket_url(bucket_id)),
-            self._dashboard_link('Buckets in the project', self.get_buckets_dashboard_url()),
+            Link.detail(label='Bucket', name=bucket_name, url=self.get_bucket_url(bucket_id)),
+            Link.dashboard(title='Buckets in the project', url=self.get_buckets_dashboard_url()),
         ]
 
     def get_table_links(self, bucket_id: str, table_name: str) -> list[Link]:
-        """Links for table: detail."""
         return [
-            self._detail_link('Table', table_name, self.get_table_url(bucket_id, table_name)),
+            Link.detail(label='Table', name=table_name, url=self.get_table_url(bucket_id, table_name)),
         ]
