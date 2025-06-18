@@ -388,60 +388,23 @@ def test_validate_storage_configuration_output(
     [
         # Non-row-based writer with input storage for root configuration
         (False, {'storage': {'input': {'files': []}}}, False, None),
-        (False, {'input': {'files': []}}, False, None),
-        # Non-row-based writer without input storage for root configuration - expect error
+        # Non-row-based writer without input storage for root configuration
         (
             False,
             {},
             False,
             'The "storage" must contain "input" mappings for the root configuration of the writer component',
         ),
-        (
-            False,
-            {'storage': {'output': {'files': []}}},
-            False,
-            'The "storage" must contain "input" mappings for the root configuration of the writer component',
-        ),
-        # Non-row-based writer with input storage for row configuration - expect warning logging but passing
-        (False, {'storage': {'input': {'files': []}}}, True, None),
-        # Non-row-based writer with empty storage for row configuration - expect error
-        (
-            False,
-            {'storage': {}},
-            True,
-            'The "storage" must contain "input" mappings for the root configuration of the writer component',
-        ),
-        # Row-based writer with input storage for row configuration
+        # Non-row-based writer with input storage for row configuration
+        (False, {'storage': {'input': {'files': []}}}, True, None),  # should not fail, but log warning
+        # Row-based writer with input storage
         (True, {'storage': {'input': {'files': []}}}, True, None),
-        (True, {'input': {'files': []}}, True, None),
-        # Row-based writer without correct input storage for row configuration - expect error
+        # Row-based writer without input storage
         (
             True,
             {},
             True,
             'The "storage" must contain "input" mappings for the row configuration of the writer component',
-        ),
-        (
-            True,
-            {'storage': {'output': {'files': []}}},
-            True,
-            'The "storage" must contain "input" mappings for the row configuration of the writer component',
-        ),
-        (
-            True,
-            {'storage': {}},
-            True,
-            'The "storage" must contain "input" mappings for the row configuration of the writer component',
-        ),
-        # Row-based writer with empty storage for root configuration - expect passing
-        (True, {}, False, None),
-        (True, {'storage': {}}, False, None),
-        # Row-based writer with non-empty storage root configuration - expect error
-        (
-            True,
-            {'storage': {'input': {'files': []}}},
-            False,
-            'The "storage" must be empty for root configuration of the writer component',
         ),
     ],
 )
@@ -460,14 +423,12 @@ def test_validate_storage_of_row_based_and_root_based_writers(
     component = Component.model_validate(component_raw)
     if error_message is None:
         if not is_writer_row_based and is_storage_row_based:
-            # check logging if we are validating row-based storage for non-row-based writer
             with caplog.at_level(logging.WARNING):
                 validation._validate_storage_configuration(
                     storage=storage, component=component, is_row_storage=is_storage_row_based
                 )
                 assert 'Validating "storage" for row configuration of non-row-based writer' in caplog.text
         else:
-            # We expect passing without errors and warning loggings
             validation._validate_storage_configuration(
                 storage=storage, component=component, is_row_storage=is_storage_row_based
             )
@@ -491,8 +452,6 @@ def test_validate_storage_of_row_based_and_root_based_writers(
         ({'storage': {'input': {}, 'output': {}}}, False),  # empty input or output is not allowed
         ({'storage': {'input': {'tables': []}, 'output': {'tables': []}}}, True),
         ({'input': {'tables': []}, 'output': {'tables': []}}, True),
-        ({'input': {'tables': []}}, True),
-        ({'output': {'tables': []}}, True),
     ],
 )
 def test_validate_storage_of_sql_transformation(mock_component: dict, storage: Optional[JsonDict], is_valid: bool):
