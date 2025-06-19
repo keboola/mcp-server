@@ -6,6 +6,7 @@ from http.client import HTTPException
 from typing import Any, cast
 from urllib.parse import urljoin
 
+import httpx
 import jwt
 from mcp.server.auth.provider import (
     AccessToken,
@@ -15,7 +16,6 @@ from mcp.server.auth.provider import (
     RefreshToken,
     construct_redirect_uri,
 )
-from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl, AnyUrl
 
@@ -162,8 +162,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             raise HTTPException(400, 'Invalid state parameter')
 
         # Exchange the authorization code for the access token with OAuth server.
-        # TODO: Don't use create_mcp_http_client from a private module.
-        async with create_mcp_http_client() as http_client:
+        async with self._create_http_client() as http_client:
             response = await http_client.post(
                 self._oauth_server_token_url,
                 data={
@@ -337,8 +336,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
 
         # get new access and refresh tokens from the OAuth server
-        # TODO: Don't use create_mcp_http_client from a private module.
-        async with create_mcp_http_client() as http_client:
+        async with self._create_http_client() as http_client:
             response = await http_client.post(
                 self._oauth_server_token_url,
                 data={
@@ -441,8 +439,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         """
         Creates new Storage API token for accessing AI and Jobs Queue services that do not support bearer tokens yet.
         """
-        # TODO: Don't use create_mcp_http_client from a private module.
-        async with create_mcp_http_client() as http_client:
+        async with self._create_http_client() as http_client:
             response = await http_client.post(
                 self._sapi_tokens_url,
                 json={
@@ -471,3 +468,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     @staticmethod
     def _ceil_to_hour(seconds: int) -> int:
         return math.ceil(seconds / 3600) * 3600
+
+    @staticmethod
+    def _create_http_client():
+        return httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30.0))
