@@ -151,7 +151,7 @@ def with_session_state() -> AnyFunction:
                 accept_secrets_in_url = config.accept_secrets_in_url
 
                 # IMPORTANT: Be careful what functions you use for accessing the HTTP request when handling SSE traffic.
-                # The SSE is asynchronous.
+                # The SSE is asynchronous and it maintains two connections for each client.
                 # A tool call is requested using 'POST /messages' endpoint, but the tool itself is called outside
                 # the scope of this HTTP call and its result is returned as a message on the long-living connection
                 # opened by the initial `POST /sse` call.
