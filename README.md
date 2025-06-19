@@ -154,25 +154,20 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 ```json
 {
   "mcpServers": {
-    "keboola": {
+    "keboola":{
       "command": "wsl.exe",
       "args": [
-        "bash",
-        "-c",
-        "'source /wsl_path/to/keboola-mcp-server/.env",
-        "&&",
-        "/wsl_path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
+          "bash",
+          "-c '",
+          "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
+          "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
+          "/snap/bin/uvx -m keboola_mcp_server.cli",
+          "--api-url https://connection.YOUR_REGION.keboola.com",
+          "'"
       ]
-    }
+    },
   }
 }
-```
-
-Where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
-
-```bash
-export KBC_STORAGE_TOKEN="your_keboola_storage_token"
-export KBC_WORKSPACE_SCHEMA="your_workspace_schema"
 ```
 
 ### Option B: Local Development Mode
