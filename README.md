@@ -147,6 +147,8 @@ Config file locations:
 }
 ```
 
+**Note**: Use short, descriptive names for MCP servers. Since the full tool name includes the server name and must stay under ~60 characters, longer names may be filtered out in Cursor and will not be displayed to the Agent.
+
 #### Cursor Configuration for Windows WSL
 
 When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this configuration:
