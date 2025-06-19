@@ -31,8 +31,9 @@ from keboola_mcp_server.tools.components.utils import (
 from keboola_mcp_server.tools.sql import get_sql_dialect
 from keboola_mcp_server.tools.validation import (
     validate_root_parameters_configuration,
+    validate_root_storage_configuration,
     validate_row_parameters_configuration,
-    validate_storage_configuration,
+    validate_row_storage_configuration,
 )
 
 LOG = logging.getLogger(__name__)
@@ -462,7 +463,7 @@ async def update_sql_transformation_configuration(
 
     transformation = await _get_component(client=client, component_id=sql_transformation_id)
 
-    storage = validate_storage_configuration(
+    storage = validate_root_storage_configuration(
         component=transformation,
         storage=storage,
         initial_message='The "storage" field is not valid.',
@@ -560,7 +561,7 @@ async def create_component_root_configuration(
 
     component = await _get_component(client=client, component_id=component_id)
 
-    storage_cfg = validate_storage_configuration(
+    storage_cfg = validate_root_storage_configuration(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',
@@ -663,7 +664,7 @@ async def create_component_row_configuration(
 
     component = await _get_component(client=client, component_id=component_id)
 
-    storage_cfg = validate_storage_configuration(
+    storage_cfg = validate_row_storage_configuration(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',
@@ -773,7 +774,7 @@ async def update_component_root_configuration(
 
     component = await _get_component(client=client, component_id=component_id)
 
-    storage_cfg = validate_storage_configuration(
+    storage_cfg = validate_root_storage_configuration(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',
@@ -884,7 +885,7 @@ async def update_component_row_configuration(
 
     component = await _get_component(client=client, component_id=component_id)
 
-    storage_cfg = validate_storage_configuration(
+    storage_cfg = validate_row_storage_configuration(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',

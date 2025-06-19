@@ -7,7 +7,7 @@ import pytest
 
 from keboola_mcp_server.client import JsonDict
 from keboola_mcp_server.tools import validation
-from keboola_mcp_server.tools.components.model import AllComponentTypes, Component
+from keboola_mcp_server.tools.components.model import Component
 
 
 @pytest.mark.parametrize(
@@ -378,42 +378,100 @@ def test_validate_storage_configuration_output(
     component_raw = mock_component.copy()
     component_raw['type'] = 'extractor'  # we need extractor to pass the validation for storage necessity
     component = Component.model_validate(component_raw)
-    result = validation.validate_storage_configuration(input_storage, component)
+    result = validation._validate_storage_configuration(input_storage, component)
     expected = output_storage  # we expect unwrapped structure
     assert result == expected
 
 
 @pytest.mark.parametrize(
-    ('component_type', 'storage', 'is_valid'),
+    ('is_writer_row_based', 'storage', 'is_storage_row_based', 'error_message'),
     [
-        ('transformation', {}, False),
-        ('transformation', {'storage': {}}, False),
-        ('transformation', {'storage': None}, False),
-        ('extractor', {}, True),
-        ('application', {}, True),
-        ('transformation', {'input': {'tables': []}, 'output': {'tables': []}}, True),
-        ('transformation', {'storage': {'output': {'tables': []}}}, True),
+        # Non-row-based writer with input storage for root configuration
+        (False, {'storage': {'input': {'files': []}}}, False, None),
+        # Non-row-based writer without input storage for root configuration
+        (
+            False,
+            {},
+            False,
+            'The "storage" must contain "input" mappings for the root configuration of the writer component',
+        ),
+        # Non-row-based writer with input storage for row configuration
+        (False, {'storage': {'input': {'files': []}}}, True, None),  # should not fail, but log warning
+        # Row-based writer with input storage
+        (True, {'storage': {'input': {'files': []}}}, True, None),
+        # Row-based writer without input storage
+        (
+            True,
+            {},
+            True,
+            'The "storage" must contain "input" mappings for the row configuration of the writer component',
+        ),
     ],
 )
-def test_validate_storage_configuration_necessity(
-    mock_component: dict, component_type: AllComponentTypes, storage: Optional[JsonDict], is_valid: bool
+def test_validate_storage_of_row_based_and_root_based_writers(
+    caplog,
+    mock_component: dict,
+    is_writer_row_based: bool,
+    storage: Optional[JsonDict],
+    is_storage_row_based: bool,
+    error_message: Optional[str],
 ):
     """testing storage necessity validation"""
     component_raw = mock_component.copy()
-    component_raw['type'] = component_type
-    if component_type == 'transformation':
-        component_raw['id'] = validation.BIGQUERY_TRANSFORMATION_ID
+    component_raw['type'] = 'writer'
+    component_raw['component_flags'] = ['genericDockerUI-rows'] if is_writer_row_based else []
     component = Component.model_validate(component_raw)
-    if is_valid:
-        validation.validate_storage_configuration(storage=storage, component=component)
+    if error_message is None:
+        if not is_writer_row_based and is_storage_row_based:
+            with caplog.at_level(logging.WARNING):
+                validation._validate_storage_configuration(
+                    storage=storage, component=component, is_row_storage=is_storage_row_based
+                )
+                assert 'Validating "storage" for row configuration of non-row-based writer' in caplog.text
+        else:
+            validation._validate_storage_configuration(
+                storage=storage, component=component, is_row_storage=is_storage_row_based
+            )
     else:
-        with pytest.raises(ValueError, match='Storage configuration of') as exception:
-            validation.validate_storage_configuration(storage=storage, component=component)
-        assert f'{component.component_id}' in str(exception)
-        assert f'{component.component_type}' in str(exception)
-        assert 'SQL transformation cannot be empty and must contain either input or output configuration.' in str(
-            exception
-        )
+        with pytest.raises(ValueError, match=error_message) as exception:
+            validation._validate_storage_configuration(
+                storage=storage, component=component, is_row_storage=is_storage_row_based
+            )
+        assert component.component_id in str(exception.value)
+
+
+@pytest.mark.parametrize(
+    ('storage', 'is_valid'),
+    [
+        ({}, False),
+        ({'storage': None}, False),
+        ({'storage': {}}, False),
+        ({'storage': {'input': {}}}, False),
+        ({'storage': {'output': {}}}, False),
+        ({'storage': {'anything-else': {}}}, False),
+        ({'storage': {'input': {}, 'output': {}}}, False),  # empty input or output is not allowed
+        ({'storage': {'input': {'tables': []}, 'output': {'tables': []}}}, True),
+        ({'input': {'tables': []}, 'output': {'tables': []}}, True),
+    ],
+)
+def test_validate_storage_of_sql_transformation(mock_component: dict, storage: Optional[JsonDict], is_valid: bool):
+    """testing storage necessity validation"""
+    component_raw = mock_component.copy()
+    component_raw['type'] = 'transformation'
+    # we test the validation for both SQL transformations
+    for transformation_id in [validation.BIGQUERY_TRANSFORMATION_ID, validation.SNOWFLAKE_TRANSFORMATION_ID]:
+        component_raw['id'] = transformation_id
+        component = Component.model_validate(component_raw)
+        if is_valid:
+            validation._validate_storage_configuration(storage=storage, component=component)
+        else:
+            with pytest.raises(
+                ValueError,
+                match='The "storage" must contain either "input" or "output" mappings in the configuration of the SQL ',
+            ) as exception:
+                validation._validate_storage_configuration(storage=storage, component=component)
+            assert f'{component.component_id}' in str(exception.value)
+            assert 'SQL transformation' in str(exception.value)
 
 
 @pytest.mark.asyncio
