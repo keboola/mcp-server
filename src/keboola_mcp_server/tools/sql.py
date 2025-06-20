@@ -8,7 +8,7 @@ from pydantic import Field
 
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools.workspace import SqlSelectData, WorkspaceManager
+from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
