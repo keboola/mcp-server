@@ -21,6 +21,29 @@ class Config:
     """Workspace schema to access the buckets, tables and execute sql queries."""
     accept_secrets_in_url: Optional[bool] = None
     """If true, the configuration values are also read from the URL query parameters."""
+    oauth_client_id: Optional[str] = None
+    """OAuth client ID registered in the Keboola OAuth Server."""
+    oauth_client_secret: Optional[str] = None
+    """OAuth client secret registered in the Keboola OAuth Server."""
+    oauth_server_url: Optional[str] = None
+    """The URL of the OAuth server to authenticate with."""
+    oauth_scope: Optional[str] = None
+    """The OAuth scope to request from the OAuth server."""
+    mcp_server_url: Optional[str] = None
+    """The URL where the MCP server si reachable."""
+    jwt_secret: Optional[str] = None
+    """The secret key for encoding and decoding JWT tokens."""
+    bearer_token: Optional[str] = None
+    """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
+
+    def __post_init__(self) -> None:
+        for f in dataclasses.fields(self):
+            if 'url' not in f.name or f.name == 'accept_secrets_in_url':
+                continue
+            value = getattr(self, f.name)
+            if value and not value.startswith(('http://', 'https://')):
+                value = f'https://{value}'
+                object.__setattr__(self, f.name, value)
 
     @staticmethod
     def _normalize(name: str) -> str:
@@ -76,12 +99,12 @@ class Config:
         """
         return dataclasses.replace(self, **self._read_options(d))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         params: list[str] = []
         for f in dataclasses.fields(self):
             value = getattr(self, f.name)
             if value:
-                if 'token' in f.name or 'password' in f.name:
+                if 'token' in f.name or 'password' in f.name or 'secret' in f.name:
                     params.append(f"{f.name}='****'")
                 else:
                     if isinstance(value, str):
@@ -100,6 +123,7 @@ class MetadataField:
     """
 
     DESCRIPTION = 'KBC.description'
+    PROJECT_DESCRIPTION = 'KBC.projectDescription'
 
     # set for configurations created by MCP tools;
     # expected value: 'true'

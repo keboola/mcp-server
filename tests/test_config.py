@@ -76,4 +76,16 @@ class TestConfig:
     def test_no_token_password_in_repr(self) -> None:
         config = Config(storage_token='foo')
         assert str(config) == ("Config(storage_api_url=None, storage_token='****', workspace_schema=None, "
-                               'accept_secrets_in_url=None)')
+                               'accept_secrets_in_url=None, oauth_client_id=None, oauth_client_secret=None, '
+                               'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
+                               'jwt_secret=None, bearer_token=None)')
+
+    def test_url_field(self):
+        config = Config(
+            storage_api_url='foo.bar',
+            oauth_server_url='foo.bar',
+            mcp_server_url='foo.bar',
+        )
+        assert config.storage_api_url == 'https://foo.bar'
+        assert config.oauth_server_url == 'https://foo.bar'
+        assert config.mcp_server_url == 'https://foo.bar'

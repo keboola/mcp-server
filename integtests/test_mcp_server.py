@@ -10,7 +10,7 @@ from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import ComponentConfigurationOutput
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import WorkspaceManager
 
 
 @pytest.mark.asyncio
@@ -53,7 +53,7 @@ async def test_sse_setup(
         config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
 
     # we delete env vars to ensure the server uses http request
-    mocker.patch('keboola_mcp_server.mcp.os.environ', {})
+    mocker.patch('keboola_mcp_server.server.os.environ', {})
 
     server = create_server(config)
     component_config = configs[0]
@@ -90,7 +90,7 @@ async def test_http_setup(
         config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
 
     # we delete env vars to ensure the server uses http request
-    mocker.patch('keboola_mcp_server.mcp.os.environ', {})
+    mocker.patch('keboola_mcp_server.server.os.environ', {})
 
     server = create_server(config)
     component_config = configs[0]
@@ -121,7 +121,7 @@ async def test_http_multiple_clients(
     # we pass empty config and test if it is set from the headers
     config = Config()
     # we delete env vars to ensure the server uses http request
-    mocker.patch('keboola_mcp_server.mcp.os.environ', {})
+    mocker.patch('keboola_mcp_server.server.os.environ', {})
 
     server = create_server(config)
     component_config = configs[0]
@@ -203,7 +203,7 @@ async def test_http_server_header_and_query_params_client(
     config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
 
     # we delete env vars to ensure the server uses http request
-    mocker.patch('keboola_mcp_server.mcp.os.environ', {})
+    mocker.patch('keboola_mcp_server.server.os.environ', {})
 
     server = create_server(config)
     component_config = configs[0]

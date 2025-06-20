@@ -33,7 +33,7 @@ statements.
 - [retrieve_components_configurations](#retrieve_components_configurations): Retrieves configurations of components present in the project,
 optionally filtered by component types or specific component IDs.
 - [retrieve_flows](#retrieve_flows): Retrieves flow configurations from the project.
-- [retrieve_transformations](#retrieve_transformations): Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
+- [retrieve_transformations](#retrieve_transformations): Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
 - [update_component_root_configuration](#update_component_root_configuration): Updates a specific component configuration using given by component ID, and configuration ID.
 - [update_component_row_configuration](#update_component_row_configuration): Updates a specific component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
@@ -50,6 +50,9 @@ filtering.
 
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
+
+### Other Tools
+- [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
 
 ---
 
@@ -344,18 +347,10 @@ EXAMPLES:
       "type": "object"
     },
     "storage": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
+      "additionalProperties": true,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage"
+      "title": "Storage",
+      "type": "object"
     }
   },
   "required": [
@@ -422,18 +417,10 @@ EXAMPLES:
       "type": "object"
     },
     "storage": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
+      "additionalProperties": true,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage"
+      "title": "Storage",
+      "type": "object"
     }
   },
   "required": [
@@ -464,6 +451,7 @@ CONSIDERATIONS:
 - Each task and phase must include at least: `id` and `name`.
 - Each task must reference an existing component configuration in the project.
 - Items in the `dependsOn` phase field reference ids of other phases.
+- Links contained in the response should ALWAYS be presented to the user
 
 USAGE:
 Use this tool to automate multi-step data workflows. This is ideal for:
@@ -531,13 +519,15 @@ description, and optionally a list of created table names if and only if they ar
 statements.
 
 CONSIDERATIONS:
-- The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
+- Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
+  semantically related SQL statements.
+- Each SQL query statement must be executable and follow the current SQL dialect, which can be retrieved using
   appropriate tool.
 - When referring to the input tables within the SQL query, use fully qualified table names, which can be
   retrieved using appropriate tools.
 - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
   fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
-- Unless otherwise specified by user, transformation name and description are generated based on the sql query
+- Unless otherwise specified by user, transformation name and description are generated based on the SQL query
   and user intent.
 
 USAGE:
@@ -555,6 +545,32 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "Code": {
+      "description": "The code block for the transformation block.",
+      "properties": {
+        "name": {
+          "description": "The name of the current code block describing the purpose of the block",
+          "title": "Name",
+          "type": "string"
+        },
+        "sql_statements": {
+          "description": "The executable SQL query statements written in the current SQL dialect. Each statement must be executable and a separate item in the list.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Sql Statements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "sql_statements"
+      ],
+      "title": "Code",
+      "type": "object"
+    }
+  },
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the SQL transformation.",
@@ -566,12 +582,12 @@ EXAMPLES:
       "title": "Description",
       "type": "string"
     },
-    "sql_statements": {
-      "description": "The executable SQL query statements written in the current SQL dialect. Each statement should be a separate item in the list.",
+    "sql_code_blocks": {
+      "description": "The executable SQL query code blocks, each containing a descriptive name and a sequence of semantically related sql statements written in the current SQL dialect. Each sql statement isexecutable and a separate item in the list of sql statements.",
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/Code"
       },
-      "title": "Sql Statements",
+      "title": "Sql Code Blocks",
       "type": "array"
     },
     "created_table_names": {
@@ -587,7 +603,7 @@ EXAMPLES:
   "required": [
     "name",
     "description",
-    "sql_statements"
+    "sql_code_blocks"
   ],
   "type": "object"
 }
@@ -865,7 +881,7 @@ Retrieves flow configurations from the project.
 ## retrieve_transformations
 **Description**:
 
-Retrieves transformations configurations in the project, optionally filtered by specific transformation IDs.
+Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
 
 USAGE:
 - Use when you want to see transformation configurations in the project for given transformation_ids.
@@ -944,12 +960,12 @@ EXAMPLES:
       "type": "string"
     },
     "component_id": {
-      "description": "The ID of the component which you'd like to update",
+      "description": "The ID of the component the configuration belongs to.",
       "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
-      "description": "The ID of the configuration which you'd like to update.",
+      "description": "The ID of the configuration to update.",
       "title": "Configuration Id",
       "type": "string"
     },
@@ -960,18 +976,10 @@ EXAMPLES:
       "type": "object"
     },
     "storage": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
+      "additionalProperties": true,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined",
-      "title": "Storage"
+      "title": "Storage",
+      "type": "object"
     }
   },
   "required": [
@@ -1028,17 +1036,17 @@ EXAMPLES:
       "type": "string"
     },
     "component_id": {
-      "description": "The ID of the component which you'd like to update",
+      "description": "The ID of the component to update.",
       "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
-      "description": "The ID of the configuration which you'd like to update.",
+      "description": "The ID of the configuration to update.",
       "title": "Configuration Id",
       "type": "string"
     },
     "configuration_row_id": {
-      "description": "The ID of the configuration row which you'd like to update.",
+      "description": "The ID of the configuration row to update.",
       "title": "Configuration Row Id",
       "type": "string"
     },
@@ -1049,18 +1057,10 @@ EXAMPLES:
       "type": "object"
     },
     "storage": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
+      "additionalProperties": true,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage"
+      "title": "Storage",
+      "type": "object"
     }
   },
   "required": [
@@ -1094,6 +1094,7 @@ CONSIDERATIONS:
 - Each task must reference an existing component configuration in the project.
 - Items in the `dependsOn` phase field reference ids of other phases.
 - The flow specified by `configuration_id` must already exist in the project.
+- Links contained in the response should ALWAYS be presented to the user
 
 USAGE:
 Use this tool to update an existing flow.
@@ -1163,13 +1164,18 @@ Updates an existing SQL transformation configuration, optionally updating the de
 configuration.
 
 CONSIDERATIONS:
-- The configuration JSON data must follow the current Keboola transformation configuration schema.
-- The SQL code statements should follow the current SQL dialect, which can be retrieved using appropriate tool.
+- The parameters configuration must include blocks with codes of SQL statements. Using one block with many codes of
+  SQL statemetns is prefered and commonly used unless specified otherwise by the user.
+- Each code contains SQL statements that are semantically related and have a descriptive name.
+- Each SQL statement must be executable and follow the current SQL dialect, which can be retrieved using
+  appropriate tool.
+- The storage configuration must not be empty, and it should include input or output tables with correct mappings
+  for the transformation.
 - When the behavior of the transformation is not changed, the updated_description can be empty string.
 
 EXAMPLES:
 - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
-    - set the transformation_id and configuration_id accordingly and update configuration parameters based on
+    - set the transformation configuration_id accordingly and update parameters and storage tool arguments based on
       the [USER INTENT]
     - returns the updated transformation configuration if successful.
 
@@ -1177,6 +1183,74 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "Block": {
+      "description": "The transformation block.",
+      "properties": {
+        "name": {
+          "description": "The name of the current block",
+          "title": "Name",
+          "type": "string"
+        },
+        "codes": {
+          "description": "The code scripts",
+          "items": {
+            "$ref": "#/$defs/Code"
+          },
+          "title": "Codes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "codes"
+      ],
+      "title": "Block",
+      "type": "object"
+    },
+    "Code": {
+      "description": "The code block for the transformation block.",
+      "properties": {
+        "name": {
+          "description": "The name of the current code block describing the purpose of the block",
+          "title": "Name",
+          "type": "string"
+        },
+        "sql_statements": {
+          "description": "The executable SQL query statements written in the current SQL dialect. Each statement must be executable and a separate item in the list.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Sql Statements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "sql_statements"
+      ],
+      "title": "Code",
+      "type": "object"
+    },
+    "Parameters": {
+      "description": "The parameters for the transformation.",
+      "properties": {
+        "blocks": {
+          "description": "The blocks for the transformation",
+          "items": {
+            "$ref": "#/$defs/Block"
+          },
+          "title": "Blocks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "blocks"
+      ],
+      "title": "Parameters",
+      "type": "object"
+    }
+  },
   "properties": {
     "configuration_id": {
       "description": "ID of the transformation configuration to update",
@@ -1188,10 +1262,15 @@ EXAMPLES:
       "title": "Change Description",
       "type": "string"
     },
-    "updated_configuration": {
+    "parameters": {
+      "$ref": "#/$defs/Parameters",
+      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings.",
+      "title": "Parameters"
+    },
+    "storage": {
       "additionalProperties": true,
-      "description": "Updated transformation configuration JSON object containing both updated settings applied and all existing settings preserved.",
-      "title": "Updated Configuration",
+      "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings.",
+      "title": "Storage",
       "type": "object"
     },
     "updated_description": {
@@ -1210,7 +1289,8 @@ EXAMPLES:
   "required": [
     "configuration_id",
     "change_description",
-    "updated_configuration"
+    "parameters",
+    "storage"
   ],
   "type": "object"
 }
@@ -1399,6 +1479,24 @@ Answers a question using the Keboola documentation as a source.
   "required": [
     "query"
   ],
+  "type": "object"
+}
+```
+
+---
+
+# Other Tools
+<a name="get_project_info"></a>
+## get_project_info
+**Description**:
+
+Return structured project information pulled from multiple endpoints.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
   "type": "object"
 }
 ```

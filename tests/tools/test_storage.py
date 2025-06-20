@@ -20,7 +20,7 @@ from keboola_mcp_server.tools.storage import (
     update_column_description,
     update_table_description,
 )
-from keboola_mcp_server.tools.workspace import TableFqn, WorkspaceManager
+from keboola_mcp_server.workspace import TableFqn, WorkspaceManager
 
 
 def parse_iso_timestamp(ts: str) -> datetime:
@@ -298,7 +298,9 @@ async def test_update_bucket_description_success(
     """Test successful update of bucket description."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_bucket_description_response)
+    keboola_client.storage_client.bucket_metadata_update = mocker.AsyncMock(
+        return_value=mock_update_bucket_description_response,
+    )
 
     result = await update_bucket_description(
         bucket_id='in.c-test.bucket-id',
@@ -310,12 +312,9 @@ async def test_update_bucket_description_success(
     assert result.success is True
     assert result.description == 'Updated bucket description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
-    keboola_client.storage_client.post.assert_called_once_with(
-        endpoint='buckets/in.c-test.bucket-id/metadata',
-        data={
-            'provider': 'user',
-            'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated bucket description'}],
-        },
+    keboola_client.storage_client.bucket_metadata_update.assert_called_once_with(
+        bucket_id='in.c-test.bucket-id',
+        metadata={MetadataField.DESCRIPTION: 'Updated bucket description'},
     )
 
 
@@ -327,7 +326,9 @@ async def test_update_table_description_success(
 
     # Mock the Keboola client post method
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_table_description_response)
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
+        return_value=mock_update_table_description_response,
+    )
 
     result = await update_table_description(
         table_id='in.c-test.test-table',
@@ -339,12 +340,10 @@ async def test_update_table_description_success(
     assert result.success is True
     assert result.description == 'Updated table description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
-    keboola_client.storage_client.post.assert_called_once_with(
-        endpoint='tables/in.c-test.test-table/metadata',
-        data={
-            'provider': 'user',
-            'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated table description'}],
-        },
+    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
+        table_id='in.c-test.test-table',
+        metadata={MetadataField.DESCRIPTION: 'Updated table description'},
+        columns_metadata={},
     )
 
 
@@ -355,7 +354,9 @@ async def test_update_column_description_success(
     """Test successful update of column description."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_column_description_response)
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
+        return_value=mock_update_column_description_response,
+    )
 
     result = await update_column_description(
         table_id='in.c-test.test-table',
@@ -368,18 +369,11 @@ async def test_update_column_description_success(
     assert result.success is True
     assert result.description == 'Updated column description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
-    keboola_client.storage_client.post.assert_called_once_with(
-        endpoint='tables/in.c-test.test-table/metadata',
-        data={
-            'columnsMetadata': {
-                'text': [
-                    {
-                        'columnName': 'text',
-                        'key': 'KBC.description',
-                        'value': 'Updated column description',
-                    }
-                ]
-            },
-            'provider': 'user',
+    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
+        table_id='in.c-test.test-table',
+        columns_metadata={
+            'text': [
+                {'key': MetadataField.DESCRIPTION, 'value': 'Updated column description', 'columnName': 'text'}
+            ]
         },
     )

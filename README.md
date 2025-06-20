@@ -66,11 +66,14 @@ For instructions on how to create and manage Storage API tokens, refer to the [o
 
 ### KBC_WORKSPACE_SCHEMA
 
-This identifies your workspace in Keboola and is required for SQL queries:
+This identifies your workspace in Keboola and is used for SQL queries. However, this is **only required if you're using a custom storage token** instead of the Master Token:
 
-Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA.
+- If using [Master Token](https://help.keboola.com/management/project/tokens/#master-tokens): The workspace is created automatically behind the scenes
+- If using [custom storage token](https://help.keboola.com/management/project/tokens/#limited-tokens): Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA
 
-**Note**: Check Grant read-only access to all Project data option when creating the workspace
+**Note**: When creating a workspace manually, check Grant read-only access to all Project data option
+
+**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
 
 ### Keboola Region
 
@@ -83,16 +86,6 @@ Your Keboola API URL depends on your deployment region. You can determine your r
 | Google Cloud EU | `https://connection.europe-west3.gcp.keboola.com` |
 | Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
 | Azure EU | `https://connection.north-europe.azure.keboola.com` |
-
-### BigQuery-Specific Setup
-
-If your Keboola project uses BigQuery backend, you will need to set `GOOGLE_APPLICATION_CREDENTIALS` environment variable in addition to `KBC_STORAGE_TOKEN` and `KBC_WORKSPACE_SCHEMA`:
-
-1. Go to your Keboola BigQuery workspace and display its credentials (click Connect button)
-2. Download the credentials file to your local disk. It is a plain JSON file
-3. Set the full path of the downloaded JSON credentials file to `GOOGLE_APPLICATION_CREDENTIALS` environment variable
-4. This will give your MCP server instance permissions to access your BigQuery workspace in Google Cloud
-**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in the BigQuery workspace, you simply click connect and copy the Dataset Name.
 
 ## Running Keboola MCP Server
 
@@ -129,9 +122,6 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
 }
 ```
 
-> **Note**: For BigQuery users, add the following line into "env": {}:
->"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
-
 Config file locations:
 
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -160,9 +150,6 @@ Config file locations:
   }
 }
 ```
-
-> **Note**: For BigQuery users, add the following line into "env": {}:
->"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
 
 #### Cursor Configuration for Windows WSL
 
@@ -219,9 +206,6 @@ For developers working on the MCP server code itself:
 }
 ```
 
-> **Note**: For BigQuery users, add the following line into "env": {}:
->"GOOGLE_APPLICATION_CREDENTIALS": "/full/path/to/credentials.json"
-
 ### Option C: Manual CLI Mode (For Testing Only)
 
 You can run the server manually in a terminal for testing or debugging:
@@ -230,8 +214,6 @@ You can run the server manually in a terminal for testing or debugging:
 # Set environment variables
 export KBC_STORAGE_TOKEN=your_keboola_storage_token
 export KBC_WORKSPACE_SCHEMA=your_workspace_schema
-# For BigQuery users
-# export GOOGLE_APPLICATION_CREDENTIALS=/full/path/to/credentials.json
 
 # Run with uvx (no installation needed)
 uvx keboola_mcp_server --api-url https://connection.YOUR_REGION.keboola.com
@@ -244,24 +226,14 @@ python -m keboola_mcp_server.cli --api-url https://connection.YOUR_REGION.kebool
 
 ### Option D: Using Docker
 
-```bash
+```shell
 docker pull keboola/mcp-server:latest
 
-# For Snowflake users
 docker run -it \
   -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_STORAGE_TOKEN" \
   -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
   keboola/mcp-server:latest \
   --api-url https://connection.YOUR_REGION.keboola.com
-
-# For BigQuery users (add credentials volume mount)
-# docker run -it \
-#   -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_STORAGE_TOKEN" \
-#   -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
-#   -e GOOGLE_APPLICATION_CREDENTIALS="/creds/credentials.json" \
-#   -v /local/path/to/credentials.json:/creds/credentials.json \
-#   keboola/mcp-server:latest \
-#   --api-url https://connection.YOUR_REGION.keboola.com
 ```
 
 ### Do I Need to Start the Server Myself?
@@ -316,7 +288,7 @@ What buckets and tables are in my Keboola project?
 
 ## Supported Tools
 
-**Note:** Keboola MCP is pre-1.0, so some breaking changes might occur. Your AI agents will automatically adjust to new tools.
+**Note:** Your AI agents will automatically adjust to new tools.
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -401,7 +373,7 @@ The development team actively monitors issues and will respond as quickly as pos
 
 ## Resources
 
-- [User Documentation](https://docs.keboola.com/)
+- [User Documentation](https://help.keboola.com/)
 - [Developer Documentation](https://developers.keboola.com/)
 - [Keboola Platform](https://www.keboola.com)
 - [Issue Tracker](https://github.com/keboola/mcp-server/issues/new) ← **Primary contact method for MCP Server**
