@@ -1,7 +1,8 @@
 from typing import Any, List, Optional, Union
-from pydantic import BaseModel, Field, AliasChoices
 
-from keboola_mcp_server.tools.components.model import ORCHESTRATOR_COMPONENT_ID
+from pydantic import AliasChoices, BaseModel, Field
+
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
 
 
