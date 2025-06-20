@@ -1,7 +1,7 @@
 from typing import Any, List, Optional, Union
+from pydantic import BaseModel, Field, AliasChoices
 
-from pydantic import AliasChoices, BaseModel, Field
-
+from keboola_mcp_server.tools.components.model import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
 
 
@@ -64,33 +64,31 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
         serialization_alias='configurationMetadata',
     )
     created: Optional[str] = Field(None, description='Creation timestamp')
-    creator_token: Optional[dict[str, Any]] = Field(
-        None,
-        description='Token of the creator of the flow configuration',
-        validation_alias=AliasChoices('creatorToken', 'creator_token', 'creator-token'),
-        serialization_alias='creatorToken',
-    )
 
     @classmethod
     def from_raw_config(cls, raw_config: dict[str, Any]) -> 'FlowConfigurationResponse':
-        """
-        Create a FlowConfigurationResponse from a raw configuration dictionary.
-        This method is particularly useful when the input data does not perfectly align with the
-        model's field names, allowing for flexible mapping and default value handling.
-        """
+        """Create a FlowConfigurationResponse object from raw API response."""
+
+        config_data = raw_config.get('configuration', {})
+
+        # Parse phases and tasks directly from configuration
+        phases = [FlowPhase.model_validate(phase) for phase in config_data.get('phases', [])]
+        tasks = [FlowTask.model_validate(task) for task in config_data.get('tasks', [])]
+
+        flow_config = FlowConfiguration(phases=phases, tasks=tasks)
+
         return cls(
-            component_id=raw_config['componentId'],
+            component_id=ORCHESTRATOR_COMPONENT_ID,
             configuration_id=raw_config['id'],
             configuration_name=raw_config['name'],
-            configuration_description=raw_config.get('description'),
-            version=raw_config['version'],
+            configuration_description=raw_config.get('description', ''),
+            version=raw_config.get('version', 1),
             is_disabled=raw_config.get('isDisabled', False),
             is_deleted=raw_config.get('isDeleted', False),
+            configuration=flow_config,
             change_description=raw_config.get('changeDescription'),
-            configuration=raw_config['configuration'],
             configuration_metadata=raw_config.get('metadata', []),
             created=raw_config.get('created'),
-            creator_token=raw_config.get('creatorToken'),
         )
 
 
@@ -122,24 +120,18 @@ class ReducedFlow(BaseModel):
 
     @classmethod
     def from_raw_config(cls, raw_config: dict[str, Any]) -> 'ReducedFlow':
-        """
-        Creates a ReducedFlow instance from a raw configuration dictionary.
-        This method simplifies the process of creating a ReducedFlow object by mapping dictionary keys
-        to model fields and calculating phase and task counts from the nested configuration data.
-        """
-        # Safely access nested 'configuration' dictionary and then 'phases' and 'tasks' lists
+        """Create a ReducedFlow object from raw API response."""
+
         config_data = raw_config.get('configuration', {})
-        phases_count = len(config_data.get('phases', []))
-        tasks_count = len(config_data.get('tasks', []))
 
         return cls(
             id=raw_config['id'],
             name=raw_config['name'],
             description=raw_config.get('description', ''),
             created=raw_config.get('created'),
-            version=raw_config['version'],
+            version=raw_config.get('version', 1),
             is_disabled=raw_config.get('isDisabled', False),
             is_deleted=raw_config.get('isDeleted', False),
-            phases_count=phases_count,
-            tasks_count=tasks_count,
+            phases_count=len(config_data.get('phases', [])),
+            tasks_count=len(config_data.get('tasks', [])),
         )
