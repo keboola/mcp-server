@@ -42,13 +42,16 @@ jobs:
 
       - name: Publish test results
         uses: dorny/test-reporter@v1
-        if: success() || failure() # run this step even if a previous step failed
+        # run this step even if a previous step failed, but only for push events or non-fork pull requests
+        if: (success() || failure()) && (github.event_name == 'push' || github.event.pull_request.head.repo.fork == false)
         with:
           name: Test results (${{ matrix.python-version }})
           path: ./test-results.xml
           reporter: 'java-junit'
 
       - name: Upload coverage to Codecov
+        # run this step only for push events or non-fork pull requests
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.fork == false
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
@@ -73,7 +76,8 @@ jobs:
 
       - name: Upload wheel package
         id: wheel_artifact_upload
-        if: matrix.python-version == '3.10'
+        # run this step only for push events or non-fork pull requests
+        if: matrix.python-version == '3.10' && (github.event_name == 'push' || github.event.pull_request.head.repo.fork == false)
         uses: actions/upload-artifact@v4
         with:
           name: keboola_mcp_server-${{ steps.get_package_version.outputs.version }}-py3-none-any.whl
@@ -85,6 +89,8 @@ jobs:
   integration_tests:
     name: Integration Tests
     needs: build
+    # run this job only for non-fork pull requests
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     strategy:
       matrix:
