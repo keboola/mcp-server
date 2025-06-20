@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping, Optional, Union, cast
 import httpx
 from pydantic import BaseModel, Field
 
-from .errors import KeboolaHTTPException
+from keboola_mcp_server.errors import KeboolaHTTPException
 
 LOG = logging.getLogger(__name__)
 
