@@ -1,4 +1,5 @@
 import logging
+import re
 from functools import wraps
 from typing import Any, Callable, Optional, Type, TypeVar, cast
 
@@ -8,33 +9,6 @@ LOG = logging.getLogger(__name__)
 
 F = TypeVar('F', bound=Callable[..., Any])
 
-
-class KeboolaHTTPException(httpx.HTTPStatusError):
-    """Enhanced HTTP exception that includes Keboola API error details for HTTP 500 errors."""
-    
-    def __init__(self, original_exception: httpx.HTTPStatusError, exception_id: str | None = None, error_details: dict | None = None):
-        self.exception_id = exception_id
-        self.error_details = error_details or {}
-        self.original_exception = original_exception
-        
-        # Build enhanced error message
-        message = self._build_error_message()
-        super().__init__(message, request=original_exception.request, response=original_exception.response)
-    
-    def _build_error_message(self) -> str:
-        """Build a comprehensive error message including exceptionId for HTTP 500 errors."""
-        base_message = str(self.original_exception)
-        
-        # Only enhance HTTP 500 errors with exception ID
-        if self.original_exception.response.status_code == 500 and self.exception_id:
-            base_message += f" (Exception ID: {self.exception_id})"
-        
-        if self.error_details:
-            # Add relevant error details without exposing sensitive information
-            if 'message' in self.error_details:
-                base_message += f" - {self.error_details['message']}"
-        
-        return base_message
 
 
 class ToolException(Exception):
@@ -75,10 +49,16 @@ def tool_errors(
                             recovery_msg = msg
                             break
                 
-                # Special handling for KeboolaHTTPException (HTTP 500 errors only)
-                if isinstance(e, KeboolaHTTPException) and e.original_exception.response.status_code == 500:
-                    if e.exception_id:
-                        recovery_msg = f"{recovery_msg or 'Please try again later.'} For support reference Exception ID: {e.exception_id}"
+                # Special handling for HTTP 500 errors with exception ID
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 500:
+                                         # Check if the error message contains an exception ID
+                     error_message = str(e)
+                     if "Exception ID:" in error_message:
+                         # Extract exception ID from the message
+                         match = re.search(r'Exception ID: ([^)]+)', error_message)
+                         if match:
+                             exception_id = match.group(1)
+                             recovery_msg = f"{recovery_msg or 'Please try again later.'} For support reference Exception ID: {exception_id}"
 
                 # Always provide a default recovery message if none is specified
                 if not recovery_msg:
