@@ -65,7 +65,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
     # Create config from the CLI arguments
     config = Config(
-        storage_api_url=parsed_args.api_url,
+        storage_api_url=parsed_args.api_url or os.environ.get('KBC_STORAGE_API_URL'),
         storage_token=parsed_args.storage_token,
         workspace_schema=parsed_args.workspace_schema,
         accept_secrets_in_url=parsed_args.accept_secrets_in_url,

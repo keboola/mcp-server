@@ -71,6 +71,10 @@ This identifies your workspace in Keboola and is used for SQL queries. However, 
 
 **Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
 
+### KBC_STORAGE_API_URL
+
+You can set your Keboola API URL using the `KBC_STORAGE_API_URL` environment variable instead of the `--api-url` CLI parameter. If both are provided, the CLI parameter takes precedence.
+
 ### Keboola Region
 
 Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
@@ -100,6 +104,7 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
 2. Add the following configuration:
 3. Restart Claude desktop for changes to take effect
 
+**Option 1: Using CLI parameter**
 ```json
 {
   "mcpServers": {
@@ -110,6 +115,23 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
         "--api-url", "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+      }
+    }
+  }
+}
+```
+
+**Option 2: Using environment variable**
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "uvx",
+      "args": ["keboola_mcp_server"],
+      "env": {
+        "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
         "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
       }
@@ -129,6 +151,7 @@ Config file locations:
 2. Click "+ Add new global MCP Server"
 3. Configure with these settings:
 
+**Option 1: Using CLI parameter**
 ```json
 {
   "mcpServers": {
@@ -139,6 +162,23 @@ Config file locations:
         "--api-url", "https://connection.YOUR_REGION.keboola.com"
       ],
       "env": {
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+      }
+    }
+  }
+}
+```
+
+**Option 2: Using environment variable**
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "uvx",
+      "args": ["keboola_mcp_server"],
+      "env": {
+        "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
         "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
       }
@@ -211,11 +251,18 @@ You can run the server manually in a terminal for testing or debugging:
 export KBC_STORAGE_TOKEN=your_keboola_storage_token
 export KBC_WORKSPACE_SCHEMA=your_workspace_schema
 
-# Run with uvx (no installation needed)
+# Option 1: Using CLI parameter
 uvx keboola_mcp_server --api-url https://connection.YOUR_REGION.keboola.com
 
-# OR, if developing locally
+# Option 2: Using environment variable
+export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com
+uvx keboola_mcp_server
+
+# For local development
 python -m keboola_mcp_server.cli --api-url https://connection.YOUR_REGION.keboola.com
+# OR with environment variable
+export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com
+python -m keboola_mcp_server.cli
 ```
 
 > **Note**: This mode is primarily for debugging or testing. For normal use with Claude or Cursor, you do not need to manually run the server.
@@ -225,6 +272,14 @@ python -m keboola_mcp_server.cli --api-url https://connection.YOUR_REGION.kebool
 ```shell
 docker pull keboola/mcp-server:latest
 
+# Option 1: Using environment variable
+docker run -it \
+  -e KBC_STORAGE_API_URL="https://connection.YOUR_REGION.keboola.com" \
+  -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_STORAGE_TOKEN" \
+  -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
+  keboola/mcp-server:latest
+
+# Option 2: Using CLI parameter
 docker run -it \
   -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_STORAGE_TOKEN" \
   -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
