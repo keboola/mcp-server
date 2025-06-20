@@ -10,6 +10,8 @@ permissions:
 jobs:
   build:
     name: Build, test and package
+    # run this job only for push (avoiding pull requests from the same repo) or for forked pull requests
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork == true
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -89,8 +91,8 @@ jobs:
   integration_tests:
     name: Integration Tests
     needs: build
-    # run this job only for non-fork pull requests
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+    # run this job only for push events
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       matrix:
