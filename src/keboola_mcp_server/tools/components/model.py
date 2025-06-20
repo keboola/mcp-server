@@ -2,8 +2,6 @@ from typing import Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
-
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
 AllComponentTypes = Union[ComponentType, TransformationType]
@@ -333,5 +331,3 @@ class ComponentWithConfigurations(BaseModel):
     configurations: List[ComponentConfigurationMetadata] = Field(
         description='The list of configurations metadata associated with the component.',
     )
-
-
