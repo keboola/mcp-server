@@ -131,7 +131,7 @@ class RawKeboolaClient:
             
         if response.status_code == 500:
             # Enhanced handling for HTTP 500 errors to extract exception ID
-            base_message = f"Server error '{response.status_code} {response.reason_phrase}' for url '{response.url}'"
+            base_message = f"Server error for url '{response.url}'"
             
             try:
                 error_data = response.json()
@@ -139,14 +139,10 @@ class RawKeboolaClient:
                 
                 # Build enhanced message with exception ID for HTTP 500 errors
                 if exception_id:
-                    base_message += f" (Exception ID: {exception_id})"
-                
-                # Add error message if available
-                if error_data.get('message'):
-                    base_message += f" - {error_data['message']}"
+                    base_message += f" Please contact support and provide this exception ID: {exception_id}"
                     
             except (ValueError, KeyError):
-                # Fallback to basic error handling if JSON parsing fails
+                # Fallback if JSON parsing fails
                 pass
             
             # Raise standard HTTPStatusError with enhanced message

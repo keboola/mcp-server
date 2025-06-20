@@ -70,7 +70,7 @@ class TestRawKeboolaClientErrorHandling:
         # Mock response with valid JSON containing exception ID
         mock_http_response_500.json.return_value = {
             "exceptionId": "exc-123-456",
-            "message": "Database connection failed",
+            "message": "Application error",
             "errorCode": "DB_ERROR",
             "requestId": "req-789"
         }
@@ -81,9 +81,10 @@ class TestRawKeboolaClientErrorHandling:
         
         exception = exc_info.value
         error_message = str(exception)
-        assert "Exception ID: exc-123-456" in error_message
-        assert "Database connection failed" in error_message
-        assert "Server error '500 Internal Server Error'" in error_message
+        # Should contain the exception ID in user-friendly format
+        assert "Please contact support and provide this exception ID: exc-123-456" in error_message
+        # Should contain the specific URL from the response
+        assert "Server error for url 'https://api.example.com/test'" in error_message
 
     def test_raise_for_status_500_without_exception_id(self, raw_client, mock_http_response_500, mock_http_request):
         """Test that HTTP 500 errors without exception ID fall back gracefully."""
@@ -100,9 +101,10 @@ class TestRawKeboolaClientErrorHandling:
         
         exception = exc_info.value
         error_message = str(exception)
-        assert "Exception ID:" not in error_message
-        assert "Internal server error" in error_message
-        assert "Server error '500 Internal Server Error'" in error_message
+        # Should not contain exception ID when not available
+        assert "provide this exception ID:" not in error_message
+        # Should contain the specific URL from the response
+        assert "Server error for url 'https://api.example.com/test'" in error_message
 
     def test_raise_for_status_500_with_malformed_json(self, raw_client, mock_http_response_500, mock_http_request):
         """Test that HTTP 500 errors with malformed JSON fall back to standard error handling."""
@@ -116,8 +118,8 @@ class TestRawKeboolaClientErrorHandling:
         
         exception = exc_info.value
         error_message = str(exception)
-        assert "Exception ID:" not in error_message
-        assert "Server error '500 Internal Server Error'" in error_message
+        # Should fall back to generic message when JSON parsing fails and include the specific URL
+        assert error_message == "Server error for url 'https://api.example.com/test'"
 
     def test_raise_for_status_404_uses_standard_exception(self, raw_client, mock_http_response_404, mock_http_request):
         """Test that HTTP 404 errors use standard HTTPStatusError."""
@@ -185,8 +187,10 @@ class TestRawKeboolaClientErrorHandling:
             
             exception = exc_info.value
             error_message = str(exception)
-            assert "Exception ID: test-exc-123" in error_message
-            assert "Test error message" in error_message
+            # Should contain the exception ID in user-friendly format
+            assert "Please contact support and provide this exception ID: test-exc-123" in error_message
+            # Should contain the specific URL from the response
+            assert "Server error for url 'https://api.example.com/test'" in error_message
 
 
 # --- Test Cases for Enhanced Tool Error Decorator ---

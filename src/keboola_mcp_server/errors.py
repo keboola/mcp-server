@@ -49,21 +49,6 @@ def tool_errors(
                             recovery_msg = msg
                             break
                 
-                # Special handling for HTTP 500 errors with exception ID
-                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 500:
-                                         # Check if the error message contains an exception ID
-                     error_message = str(e)
-                     if "Exception ID:" in error_message:
-                         # Extract exception ID from the message
-                         match = re.search(r'Exception ID: ([^)]+)', error_message)
-                         if match:
-                             exception_id = match.group(1)
-                             recovery_msg = f"{recovery_msg or 'Please try again later.'} For support reference Exception ID: {exception_id}"
-
-                # Always provide a default recovery message if none is specified
-                if not recovery_msg:
-                    recovery_msg = "Please try again later."
-
                 raise ToolException(e, recovery_msg) from e
 
         return cast(F, wrapped)
