@@ -4,7 +4,8 @@ from unittest.mock import Mock, AsyncMock, patch
 import httpx
 import pytest
 
-from keboola_mcp_server.errors import ToolException, tool_errors
+from keboola_mcp_server.errors import ToolException, tool_errors, KeboolaHTTPException
+from keboola_mcp_server.client import RawKeboolaClient
 
 
 # --- New test fixtures for KeboolaHTTPException ---
@@ -75,7 +76,6 @@ class TestKeboolaHTTPException:
 
     def test_create_with_exception_id_for_500_error(self, mock_httpstatus_error_500):
         """Test that KeboolaHTTPException includes exception ID for HTTP 500 errors."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
 
         exception_id = "abc123-def456-ghi789"
         error_details = {"message": "Internal server error occurred"}
@@ -94,7 +94,6 @@ class TestKeboolaHTTPException:
 
     def test_create_without_exception_id_for_500_error(self, mock_httpstatus_error_500):
         """Test that KeboolaHTTPException handles missing exception ID gracefully for HTTP 500."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
 
         keboola_exception = KeboolaHTTPException(mock_httpstatus_error_500)
         
@@ -105,7 +104,6 @@ class TestKeboolaHTTPException:
 
     def test_create_with_exception_id_for_non_500_error(self, mock_httpstatus_error_404):
         """Test that KeboolaHTTPException does NOT include exception ID for non-500 HTTP errors."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
 
         exception_id = "abc123-def456-ghi789"
         error_details = {"message": "Resource not found"}
@@ -125,7 +123,6 @@ class TestKeboolaHTTPException:
 
     def test_error_details_filtering(self, mock_httpstatus_error_500):
         """Test that error details are properly filtered and included."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
 
         error_details = {
             "message": "Database connection failed",
@@ -147,7 +144,6 @@ class TestKeboolaHTTPException:
 
     def test_preserves_original_exception_properties(self, mock_httpstatus_error_500):
         """Test that KeboolaHTTPException preserves original exception properties."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
 
         keboola_exception = KeboolaHTTPException(mock_httpstatus_error_500, "exc-123")
         
@@ -158,7 +154,6 @@ class TestKeboolaHTTPException:
 
     def test_empty_error_details_handling(self, mock_httpstatus_error_500):
         """Test handling of empty or None error details."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
 
         # Test with None error details
         keboola_exception_none = KeboolaHTTPException(mock_httpstatus_error_500, "exc-123", None)
@@ -178,7 +173,6 @@ class TestRawKeboolaClientErrorHandling:
     @pytest.fixture
     def raw_client(self):
         """Create a RawKeboolaClient instance for testing."""
-        from keboola_mcp_server.client import RawKeboolaClient
         return RawKeboolaClient(
             base_api_url="https://api.example.com",
             api_token="test-token"
@@ -186,7 +180,6 @@ class TestRawKeboolaClientErrorHandling:
 
     def test_handle_http_error_500_with_exception_id(self, raw_client, mock_http_response_500, mock_http_request):
         """Test that HTTP 500 errors are enhanced with exception ID when available."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
         
         # Mock response with valid JSON containing exception ID
         mock_http_response_500.json.return_value = {
@@ -208,7 +201,6 @@ class TestRawKeboolaClientErrorHandling:
 
     def test_handle_http_error_500_without_exception_id(self, raw_client, mock_http_response_500, mock_http_request):
         """Test that HTTP 500 errors without exception ID fall back gracefully."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
         
         # Mock response with JSON but no exception ID
         mock_http_response_500.json.return_value = {
@@ -228,7 +220,6 @@ class TestRawKeboolaClientErrorHandling:
 
     def test_handle_http_error_500_with_malformed_json(self, raw_client, mock_http_response_500, mock_http_request):
         """Test that HTTP 500 errors with malformed JSON fall back to standard error handling."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
         
         # Mock response with invalid JSON
         mock_http_response_500.json.side_effect = ValueError("Invalid JSON")
@@ -282,7 +273,6 @@ class TestRawKeboolaClientErrorHandling:
     @pytest.mark.asyncio
     async def test_get_method_integration_with_enhanced_error_handling(self, raw_client):
         """Test that GET method integrates with enhanced error handling."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
         
         # Mock the HTTP client to return a 500 error
         with patch('httpx.AsyncClient') as mock_client_class:
@@ -313,7 +303,6 @@ class TestRawKeboolaClientErrorHandling:
     @pytest.mark.asyncio
     async def test_post_method_integration_with_enhanced_error_handling(self, raw_client):
         """Test that POST method integrates with enhanced error handling."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
         
         # Mock the HTTP client to return a 500 error
         with patch('httpx.AsyncClient') as mock_client_class:
@@ -352,7 +341,6 @@ class TestEnhancedToolErrorDecorator:
     def function_that_raises_keboola_http_500_with_exception_id(self, mock_httpstatus_error_500):
         """A function that raises KeboolaHTTPException with HTTP 500 and exception ID."""
         async def func():
-            from keboola_mcp_server.errors import KeboolaHTTPException
             exception_id = "test-exc-500-123"
             error_details = {"message": "Database connection timeout"}
             raise KeboolaHTTPException(mock_httpstatus_error_500, exception_id, error_details)
@@ -362,7 +350,6 @@ class TestEnhancedToolErrorDecorator:
     def function_that_raises_keboola_http_500_without_exception_id(self, mock_httpstatus_error_500):
         """A function that raises KeboolaHTTPException with HTTP 500 but no exception ID."""
         async def func():
-            from keboola_mcp_server.errors import KeboolaHTTPException
             error_details = {"message": "Internal server error"}
             raise KeboolaHTTPException(mock_httpstatus_error_500, None, error_details)
         return func
@@ -371,7 +358,6 @@ class TestEnhancedToolErrorDecorator:
     def function_that_raises_keboola_http_404(self, mock_httpstatus_error_404):
         """A function that raises KeboolaHTTPException with HTTP 404."""
         async def func():
-            from keboola_mcp_server.errors import KeboolaHTTPException
             exception_id = "test-exc-404-123"  # Should be ignored for non-500 errors
             error_details = {"message": "Resource not found"}
             raise KeboolaHTTPException(mock_httpstatus_error_404, exception_id, error_details)
@@ -451,7 +437,6 @@ class TestEnhancedToolErrorDecorator:
     @pytest.mark.asyncio
     async def test_tool_errors_decorator_with_recovery_instructions_for_keboola_http_exception(self, function_that_raises_keboola_http_500_with_exception_id):
         """Test that tool_errors decorator uses specific recovery instructions for KeboolaHTTPException."""
-        from keboola_mcp_server.errors import KeboolaHTTPException
         
         decorated_func = tool_errors(
             default_recovery="Default recovery.",
