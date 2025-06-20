@@ -124,7 +124,7 @@ class RawKeboolaClient:
         if headers:
             self.headers.update(headers)
 
-    def _handle_http_error(self, response: httpx.Response) -> None:
+    def _raise_for_status(self, response: httpx.Response) -> None:
         """Enhanced error handling that extracts API error details for HTTP 500 errors."""
         
         # Check if response has an error - if not, return early
@@ -181,7 +181,7 @@ class RawKeboolaClient:
                 headers=headers,
             )
             
-            self._handle_http_error(response)
+            self._raise_for_status(response)
             
             return cast(JsonStruct, response.json())
 
@@ -210,7 +210,7 @@ class RawKeboolaClient:
                 json=data or {},
             )
             
-            self._handle_http_error(response)
+            self._raise_for_status(response)
             
             return cast(JsonStruct, response.json())
 
@@ -239,7 +239,7 @@ class RawKeboolaClient:
                 json=data or {},
             )
             
-            self._handle_http_error(response)
+            self._raise_for_status(response)
             
             return cast(JsonStruct, response.json())
 
@@ -262,7 +262,7 @@ class RawKeboolaClient:
                 headers=headers,
             )
             
-            self._handle_http_error(response)
+            self._raise_for_status(response)
 
             if response.content:
                 return cast(JsonStruct, response.json())
