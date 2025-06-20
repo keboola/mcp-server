@@ -18,7 +18,7 @@ from keboola_mcp_server.server import (
 from keboola_mcp_server.tools.components import (
     RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
 )
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import WorkspaceManager
 
 
 class TestServer:
