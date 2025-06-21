@@ -26,8 +26,8 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(get_table_detail)
     mcp.add_tool(retrieve_bucket_tables, serializer=listing_output_serializer)
     mcp.add_tool(update_bucket_description)
-    mcp.add_tool(update_table_description)
-    mcp.add_tool(update_column_description)
+    mcp.add_tool(update_table_description, serializer=listing_output_serializer)
+    mcp.add_tool(update_column_description, serializer=listing_output_serializer)
 
     LOG.info('Storage tools added to the MCP server.')
 
@@ -152,14 +152,15 @@ class TableDetail(BaseModel):
 
 
 class RetrieveBucketTablesOutput(BaseModel):
-    tables: list[TableDetail] = Field(..., description='List of tables.')
-    links: list[Link] = Field(..., description='Links relevant to the table listing.')
+    tables: list[TableDetail] = Field(description='List of tables.')
+    links: list[Link] = Field(description='Links relevant to the table listing.')
 
 
 class UpdateDescriptionResponse(BaseModel):
-    description: str = Field(..., description='The updated description value.', alias='value')
-    timestamp: datetime = Field(..., description='The timestamp of the description update.')
+    description: str = Field(description='The updated description value.', alias='value')
+    timestamp: datetime = Field(description='The timestamp of the description update.')
     success: bool = Field(default=True, description='Indicates if the update succeeded.')
+    links: Optional[list[Link]] = Field(None, description='Links relevant to the description update.')
 
 
 @tool_errors()
@@ -232,9 +233,9 @@ async def retrieve_bucket_tables(
     raw_tables = await client.storage_client.bucket_table_list(bucket_id, include=['metadata'])
 
     return RetrieveBucketTablesOutput(
-            tables=[TableDetail.model_validate(raw_table) for raw_table in raw_tables],
-            links=[links_manager.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)],
-        )
+        tables=[TableDetail.model_validate(raw_table) for raw_table in raw_tables],
+        links=[links_manager.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)],
+    )
 
 
 @tool_errors()
@@ -249,6 +250,7 @@ async def update_bucket_description(
 ]:
     """Update the description for a given Keboola bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manger = await ProjectLinksManager.from_client(client)
     metadata_endpoint = f'buckets/{bucket_id}/metadata'
 
     data = {
@@ -257,8 +259,9 @@ async def update_bucket_description(
     }
     response = cast(list[JsonDict], await client.storage_client.post(endpoint=metadata_endpoint, data=data))
     description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
+    links = [links_manger.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)]
 
-    return UpdateDescriptionResponse.model_validate(description_entry)
+    return UpdateDescriptionResponse.model_validate(description_entry | {'links': links})
 
 
 @tool_errors()
