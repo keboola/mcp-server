@@ -291,7 +291,8 @@ async def test_retrieve_bucket_tables_in_project(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=sapi_response)
     result = await retrieve_bucket_tables('bucket-id', mcp_context_client)
-    assert result == expected
+    assert isinstance(result, RetrieveBucketTablesOutput)
+    assert result.tables == expected
     keboola_client.storage_client.bucket_table_list.assert_called_once_with('bucket-id', include=['metadata'])
 
 
