@@ -11,7 +11,7 @@ from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, with_session_state
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
 from keboola_mcp_server.tools.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -22,9 +22,9 @@ TOOL_GROUP_NAME = 'STORAGE'
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
     mcp.add_tool(get_bucket_detail)
-    mcp.add_tool(retrieve_buckets)
+    mcp.add_tool(retrieve_buckets, serializer=listing_output_serializer)
     mcp.add_tool(get_table_detail)
-    mcp.add_tool(retrieve_bucket_tables)
+    mcp.add_tool(retrieve_bucket_tables, serializer=listing_output_serializer)
     mcp.add_tool(update_bucket_description)
     mcp.add_tool(update_table_description)
     mcp.add_tool(update_column_description)
@@ -90,6 +90,11 @@ class BucketDetail(BaseModel):
         return values
 
 
+class RetrieveBucketsOutput(BaseModel):
+    buckets: list[BucketDetail] = Field(..., description='List of buckets.')
+    links: list[Link] = Field(..., description='Links relevant to the bucket listing.')
+
+
 class TableColumnInfo(BaseModel):
     name: str = Field(description='Plain name of the column.')
     quoted_name: str = Field(
@@ -146,6 +151,11 @@ class TableDetail(BaseModel):
         return values
 
 
+class RetrieveBucketTablesOutput(BaseModel):
+    tables: list[TableDetail] = Field(..., description='List of tables.')
+    links: list[Link] = Field(..., description='Links relevant to the table listing.')
+
+
 class UpdateDescriptionResponse(BaseModel):
     description: str = Field(..., description='The updated description value.', alias='value')
     timestamp: datetime = Field(..., description='The timestamp of the description update.')
@@ -170,16 +180,17 @@ async def get_bucket_detail(
 
 @tool_errors()
 @with_session_state()
-async def retrieve_buckets(ctx: Context) -> list[BucketDetail]:
+async def retrieve_buckets(ctx: Context) -> RetrieveBucketsOutput:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = await client.storage_client.bucket_list()
 
-    return [
-        BucketDetail.model_validate(bucket)
-        for bucket in raw_bucket_data
-    ]
+    return RetrieveBucketsOutput(
+        buckets=[BucketDetail.model_validate(bucket) for bucket in raw_bucket_data],
+        links=[links_manager.get_bucket_dashboard_link()],
+    )
 
 
 @tool_errors()
@@ -203,11 +214,7 @@ async def get_table_detail(
 
     return TableDetail.model_validate(
         raw_table
-        | {
-            'columns': column_info,
-            'fully_qualified_name': table_fqn.identifier if table_fqn else None,
-            'links': links
-        }
+        | {'columns': column_info, 'fully_qualified_name': table_fqn.identifier if table_fqn else None, 'links': links}
     )
 
 
@@ -215,14 +222,19 @@ async def get_table_detail(
 @with_session_state()
 async def retrieve_bucket_tables(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
-) -> list[TableDetail]:
+) -> RetrieveBucketTablesOutput:
     """Retrieves all tables in a specific bucket with their basic information."""
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     # TODO: requesting "metadata" to get the table description;
     #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
     raw_tables = await client.storage_client.bucket_table_list(bucket_id, include=['metadata'])
-    return [TableDetail.model_validate(raw_table) for raw_table in raw_tables]
+
+    return RetrieveBucketTablesOutput(
+            tables=[TableDetail.model_validate(raw_table) for raw_table in raw_tables],
+            links=[links_manager.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)],
+        )
 
 
 @tool_errors()

@@ -9,13 +9,15 @@ import logging
 import textwrap
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_http_request
+from fastmcp.tools import Tool
 from fastmcp.utilities.types import find_kwarg_by_type
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.types import AnyFunction, ToolAnnotations
+from pydantic import BaseModel
 from starlette.requests import Request
 
 from keboola_mcp_server.client import KeboolaClient
@@ -47,15 +49,22 @@ class KeboolaMcpServer(FastMCP):
         description: str | None = None,
         tags: set[str] | None = None,
         annotations: ToolAnnotations | dict[str, Any] | None = None,
+        serializer: Callable | None = None
     ) -> None:
         """Applies `textwrap.dedent()` function to the tool's docstring, if no explicit description is provided."""
-        super().add_tool(
+
+        if isinstance(annotations, dict):
+            annotations = ToolAnnotations(**annotations)
+
+        tool = Tool.from_function(
             fn=fn,
             name=name,
             description=description or textwrap.dedent(fn.__doc__ or '').strip(),
             tags=tags,
             annotations=annotations,
+            serializer=serializer
         )
+        self._tool_manager.add_tool(tool)
 
 
 def _create_session_state(config: Config) -> dict[str, Any]:
@@ -174,3 +183,7 @@ def with_session_state() -> AnyFunction:
         return _inject_session_state
 
     return _wrapper
+
+
+def listing_output_serializer(data: BaseModel) -> str:
+    return data.model_dump_json(exclude_none=True, indent=2)

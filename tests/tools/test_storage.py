@@ -9,6 +9,8 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
+    RetrieveBucketsOutput,
+    RetrieveBucketTablesOutput,
     TableColumnInfo,
     TableDetail,
     UpdateDescriptionResponse,
@@ -209,12 +211,12 @@ async def test_retrieve_buckets_in_project(
 
     result = await retrieve_buckets(mcp_context_client)
 
-    assert isinstance(result, list)
-    assert len(result) == len(mock_buckets)
-    assert all(isinstance(bucket, BucketDetail) for bucket in result)
+    assert isinstance(result, RetrieveBucketsOutput)
+    assert len(result.buckets) == len(mock_buckets)
+    assert all(isinstance(bucket, BucketDetail) for bucket in result.buckets)
 
     # Assert that the returned BucketDetail objects match the mock data
-    for expected_bucket, result_bucket in zip(mock_buckets, result):
+    for expected_bucket, result_bucket in zip(mock_buckets, result.buckets):
         assert result_bucket.id == expected_bucket['id']
         assert result_bucket.name == expected_bucket['name']
         assert result_bucket.display_name == expected_bucket['display_name']
