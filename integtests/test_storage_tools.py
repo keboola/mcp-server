@@ -71,7 +71,7 @@ async def test_get_table_detail(mcp_context: Context, keboola_project: ProjectDe
         # check links
         assert hasattr(result, 'links')
         assert isinstance(result.links, list)
-        assert len(result.links) == 1
+        assert len(result.links) == 2
         detail_link = result.links[0]
         assert detail_link.type == 'ui-detail'
         assert detail_link.url == (

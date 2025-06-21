@@ -66,19 +66,13 @@ class ProjectLinksManager:
         ]
 
     # --- Components ---
-    def get_component_config_link(
-        self, component_id: str, configuration_id: str, configuration_name: str
-    ) -> Link:
+    def get_component_config_link(self, component_id: str, configuration_id: str, configuration_name: str) -> Link:
         return Link.detail(
-            title=f'Configuration: {configuration_name}',
-            url=self._url(f'components/{component_id}/{configuration_id}')
+            title=f'Configuration: {configuration_name}', url=self._url(f'components/{component_id}/{configuration_id}')
         )
 
     def get_component_configs_dashboard_link(self, component_id: str) -> Link:
-        return Link.dashboard(
-            title='Component Configurations Dashboard',
-            url=self._url(f'components/{component_id}')
-        )
+        return Link.dashboard(title='Component Configurations Dashboard', url=self._url(f'components/{component_id}'))
 
     def get_component_configuration_links(
         self, component_id: str, configuration_id: str, configuration_name: str
@@ -116,4 +110,7 @@ class ProjectLinksManager:
         return Link.detail(title=f'Table: {table_name}', url=self._url(f'storage/{bucket_id}/table/{table_name}'))
 
     def get_table_links(self, bucket_id: str, table_name: str) -> list[Link]:
-        return [self.get_table_detail_link(bucket_id, table_name)]
+        return [
+            self.get_table_detail_link(bucket_id, table_name),
+            self.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id),
+        ]
