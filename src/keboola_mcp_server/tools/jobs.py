@@ -152,9 +152,14 @@ class JobDetail(JobListItem):
         return current_value
 
 
+class RetrieveJobsOutput(BaseModel):
+    jobs: list[JobListItem] = Field(..., description='List of jobs.')
+    links: list[Link] = Field(..., description='Links relevant to the jobs listing.')
+
 # End of Job Base Models ########################################
 
 # MCP tools ########################################
+
 
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
@@ -208,13 +213,7 @@ async def retrieve_jobs(
             description='The order to sort the jobs by, default = "desc".',
         ),
     ] = 'desc',
-) -> Annotated[
-    list[JobListItem],
-    Field(
-        list[JobListItem],
-        description='The retrieved list of jobs list items. If empty then no jobs were found.',
-    ),
-]:
+) -> RetrieveJobsOutput:
     """
     Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
     filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
@@ -235,6 +234,7 @@ async def retrieve_jobs(
     _status = [status] if status else None
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     raw_jobs = await client.jobs_queue_client.search_jobs_by(
         component_id=component_id,
@@ -246,7 +246,9 @@ async def retrieve_jobs(
         sort_order=sort_order,
     )
     LOG.info(f'Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.')
-    return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
+    jobs = [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
+    links = [links_manager.get_jobs_dashboard_link()]
+    return RetrieveJobsOutput(jobs=jobs, links=links)
 
 
 @tool_errors()
