@@ -186,4 +186,4 @@ def with_session_state() -> AnyFunction:
 
 
 def listing_output_serializer(data: BaseModel) -> str:
-    return data.model_dump_json(exclude_none=True, indent=2)
+    return data.model_dump_json(exclude_none=True, indent=2, by_alias=False)
