@@ -17,7 +17,6 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
     ComponentRootConfiguration,
     RetrieveComponentsConfigurationsOutput,
-    RetrieveTransformationsConfigurationsOutput,
 )
 from keboola_mcp_server.tools.components.tools import (
     create_component_root_configuration,
