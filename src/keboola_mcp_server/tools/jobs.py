@@ -2,13 +2,13 @@ import datetime
 import logging
 from typing import Annotated, Any, Literal, Optional, Union
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import with_session_state
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
 
 LOG = logging.getLogger(__name__)
 
@@ -16,18 +16,13 @@ LOG = logging.getLogger(__name__)
 # Add jobs tools to MCP SERVER ##################################
 
 
-def add_job_tools(mcp: FastMCP) -> None:
+def add_job_tools(mcp: KeboolaMcpServer) -> None:
     """Add job tools to the MCP server."""
-    jobs_tools = [
-        retrieve_jobs,
-        get_job_detail,
-        start_job,
-    ]
-    for tool in jobs_tools:
-        LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(tool)
+    mcp.add_tool(get_job_detail)
+    mcp.add_tool(retrieve_jobs, serializer=listing_output_serializer)
+    mcp.add_tool(start_job)
 
-    LOG.info('Job tools initialized.')
+    LOG.info('Job tools added to the MCP server.')
 
 
 # Job Base Models ########################################
