@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "0.33.6"
+version = "1.2.1"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,7 +18,6 @@ dependencies = [
     # the patch fixes OAuth validation problems with non http(s) redirect_uri values
     "mcp == 1.9.3",  # see patches/mcp-redirect-uri.patch
     "httpx ~= 0.28",
-    "google-cloud-bigquery ~= 3.31",
     "jsonschema~=4.23",
     "pyjwt~=2.10",
     "json-log-formatter ~= 1.0",
@@ -38,6 +37,7 @@ codestyle = [
     "pep8-naming ~= 0.14",
 ]
 tests = [
+    "python-dateutil ~= 2.9",
     "pytest ~= 8.3",
     "pytest-asyncio ~= 0.25",
     "pytest-cov ~= 6.0",

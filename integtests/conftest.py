@@ -18,7 +18,7 @@ from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.session import ServerSession
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import WorkspaceManager
 
 AsyncContextServerRemoteRunner = Callable[
     [FastMCP, Literal['sse', 'streamable-http']], _AsyncGeneratorContextManager[str]
