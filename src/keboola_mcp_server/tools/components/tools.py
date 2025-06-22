@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Annotated, Any, Sequence, cast
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from httpx import HTTPStatusError
 from pydantic import Field
 
@@ -10,7 +10,7 @@ from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponen
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import with_session_state
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentConfigurationOutput,
@@ -18,7 +18,8 @@ from keboola_mcp_server.tools.components.model import (
     ComponentRootConfiguration,
     ComponentRowConfiguration,
     ComponentType,
-    ComponentWithConfigurations,
+    RetrieveComponentsConfigurationsOutput,
+    RetrieveTransformationsConfigurationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
@@ -41,34 +42,23 @@ LOG = logging.getLogger(__name__)
 RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
 
 
-def add_component_tools(mcp: FastMCP) -> None:
+def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
 
-    mcp.add_tool(
-        retrieve_transformations_configurations,
-        name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
-    )
-    LOG.info(f'Added tool: {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME}.')
+    mcp.add_tool(retrieve_transformations_configurations, name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME)
+    mcp.add_tool(get_component_configuration)
+    mcp.add_tool(retrieve_components_configurations, serializer=listing_output_serializer)
+    mcp.add_tool(create_sql_transformation)
+    mcp.add_tool(update_sql_transformation_configuration)
+    mcp.add_tool(get_component)
+    mcp.add_tool(create_component_root_configuration)
+    mcp.add_tool(create_component_row_configuration)
+    mcp.add_tool(update_component_root_configuration)
+    mcp.add_tool(update_component_row_configuration)
+    mcp.add_tool(get_component_configuration_examples)
+    mcp.add_tool(find_component_id)
 
-    tools = [
-        get_component_configuration,
-        retrieve_components_configurations,
-        create_sql_transformation,
-        update_sql_transformation_configuration,
-        get_component,
-        create_component_root_configuration,
-        create_component_row_configuration,
-        update_component_root_configuration,
-        update_component_row_configuration,
-        get_component_configuration_examples,
-        find_component_id,
-    ]
-
-    for tool in tools:
-        mcp.add_tool(tool)
-        LOG.info(f'Added tool: {tool.__name__}.')
-
-    LOG.info('Component tools initialized.')
+    LOG.info('Component tools added to the MCP server.')
 
 
 # tools #########################################
@@ -86,10 +76,7 @@ async def retrieve_components_configurations(
         Sequence[str],
         Field(description='List of component IDs to retrieve configurations for. If none, return all components.'),
     ] = tuple(),
-) -> Annotated[
-    list[ComponentWithConfigurations],
-    Field(description='List of objects, each containing a component and its associated configurations.'),
-]:
+) -> RetrieveComponentsConfigurationsOutput:
     """
     Retrieves configurations of components present in the project,
     optionally filtered by component types or specific component IDs.
@@ -114,14 +101,24 @@ async def retrieve_components_configurations(
         - returns the configurations of the component with ID 'specified-id'
     """
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     if not component_ids:
-        client = KeboolaClient.from_state(ctx.session.state)
         component_types = _handle_component_types(component_types)  # if none, return all types
-        return await _retrieve_components_configurations_by_types(client, component_types)
+        components_with_configurations = await _retrieve_components_configurations_by_types(client, component_types)
     # If component IDs are provided, retrieve component configurations by IDs
     else:
-        client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_ids(client, component_ids)
+        components_with_configurations = await _retrieve_components_configurations_by_ids(client, component_ids)
+    links = [
+        links_manager.get_component_configs_dashboard_link(
+            component_id=comp.component.component_id, component_name=comp.component.component_name
+        )
+        for comp in components_with_configurations
+    ]
+
+    return RetrieveComponentsConfigurationsOutput(
+        components_with_configurations=components_with_configurations, links=links
+    )
 
 
 @tool_errors()
@@ -132,12 +129,7 @@ async def retrieve_transformations_configurations(
         Sequence[str],
         Field(description='List of transformation component IDs to retrieve configurations for.'),
     ] = tuple(),
-) -> Annotated[
-    list[ComponentWithConfigurations],
-    Field(
-        description='List of objects, each containing a transformation component and its associated configurations.',
-    ),
-]:
+) -> RetrieveTransformationsConfigurationsOutput:
     """
     Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
 
@@ -157,13 +149,24 @@ async def retrieve_transformations_configurations(
         - returns the transformation configurations with ID 'specified-id'
     """
     # If no transformation IDs are provided, retrieve transformation configurations by transformation type
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     if not transformation_ids:
-        client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_types(client, ['transformation'])
+        components_with_configurations = await _retrieve_components_configurations_by_types(client, ['transformation'])
     # If transformation IDs are provided, retrieve transformation configurations by IDs
     else:
-        client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_ids(client, transformation_ids)
+        components_with_configurations = await _retrieve_components_configurations_by_ids(client, transformation_ids)
+
+    links = [
+        links_manager.get_component_configs_dashboard_link(
+            component_id=comp.component.component_id, component_name=comp.component.component_name
+        )
+        for comp in components_with_configurations
+    ]
+
+    return RetrieveTransformationsConfigurationsOutput(
+        components_with_configurations=components_with_configurations, links=links
+    )
 
 
 @tool_errors()
@@ -194,7 +197,12 @@ async def get_component(
 @with_session_state()
 async def get_component_configuration(
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-    configuration_id: Annotated[str, Field(description='ID of the component/transformation configuration',)],
+    configuration_id: Annotated[
+        str,
+        Field(
+            description='ID of the component/transformation configuration',
+        ),
+    ],
     ctx: Context,
 ) -> Annotated[ComponentConfigurationOutput, Field(description='The component/transformation and its configuration.')]:
     """
@@ -251,18 +259,15 @@ async def get_component_configuration(
     links = links_manager.get_component_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_name=raw_configuration.get('name', '')
+        configuration_name=raw_configuration.get('name', ''),
     )
     return ComponentConfigurationOutput(
-        root_configuration=root_configuration,
-        row_configurations=row_configurations,
-        component=component,
-        links=links
+        root_configuration=root_configuration, row_configurations=row_configurations, component=component, links=links
     )
 
 
 async def _set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
-    """ Sets configuration metadata to indicate it was created by MCP. """
+    """Sets configuration metadata to indicate it was created by MCP."""
     try:
         await client.storage_client.configuration_metadata_update(
             component_id=component_id,
@@ -281,7 +286,7 @@ async def _set_cfg_update_metadata(
     configuration_id: str,
     configuration_version: int,
 ) -> None:
-    """ Sets configuration metadata to indicate it was updated by MCP. """
+    """Sets configuration metadata to indicate it was updated by MCP."""
     updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{configuration_version}'
     try:
         await client.storage_client.configuration_metadata_update(
@@ -290,9 +295,7 @@ async def _set_cfg_update_metadata(
             metadata={updated_by_md_key: 'true'},
         )
     except HTTPStatusError as e:
-        LOG.exception(
-            f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}'
-        )
+        LOG.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
 
 
 @tool_errors()
@@ -301,7 +304,9 @@ async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the SQL transformation.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
+        ),
     ],
     description: Annotated[
         str,
@@ -440,7 +445,9 @@ async def update_sql_transformation_configuration(
     ] = '',
     is_disabled: Annotated[
         bool,
-        Field(description='Whether to disable the transformation configuration. Default is False.',),
+        Field(
+            description='Whether to disable the transformation configuration. Default is False.',
+        ),
     ] = False,
 ) -> Annotated[ComponentConfigurationResponse, Field(description='Updated transformation configuration.')]:
     """
@@ -510,7 +517,9 @@ async def create_component_root_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -585,9 +594,7 @@ async def create_component_root_configuration(
     )
     configuration_id = new_configuration.configuration_id
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".'
-    )
+    LOG.info(f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     await _set_cfg_creation_metadata(client, component_id, configuration_id)
 
@@ -600,7 +607,9 @@ async def create_component_row_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -613,7 +622,9 @@ async def create_component_row_configuration(
     component_id: Annotated[str, Field(description='The ID of the component for which to create the configuration.')],
     configuration_id: Annotated[
         str,
-        Field(description='The ID of the configuration for which to create the configuration row.',),
+        Field(
+            description='The ID of the configuration for which to create the configuration row.',
+        ),
     ],
     parameters: Annotated[
         dict[str, Any],
@@ -706,7 +717,9 @@ async def update_component_root_configuration(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -822,7 +835,9 @@ async def update_component_row_configuration(
     ],
     change_description: Annotated[
         str,
-        Field(description='Description of the change made to the component configuration.',),
+        Field(
+            description='Description of the change made to the component configuration.',
+        ),
     ],
     component_id: Annotated[str, Field(description='The ID of the component to update.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],

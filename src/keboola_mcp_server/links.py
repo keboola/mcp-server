@@ -71,15 +71,19 @@ class ProjectLinksManager:
             title=f'Configuration: {configuration_name}', url=self._url(f'components/{component_id}/{configuration_id}')
         )
 
-    def get_component_configs_dashboard_link(self, component_id: str) -> Link:
-        return Link.dashboard(title='Component Configurations Dashboard', url=self._url(f'components/{component_id}'))
+    def get_component_configs_dashboard_link(self, component_id: str, component_name: str) -> Link:
+        return Link.dashboard(
+            title=f'{component_name} Configurations Dashboard', url=self._url(f'components/{component_id}')
+        )
 
     def get_component_configuration_links(
         self, component_id: str, configuration_id: str, configuration_name: str
     ) -> list[Link]:
         return [
-            self.get_component_config_link(component_id, configuration_id, configuration_name),
-            self.get_component_configs_dashboard_link(component_id),
+            self.get_component_config_link(
+                component_id=component_id, configuration_id=configuration_id, configuration_name=configuration_name
+            ),
+            self.get_component_configs_dashboard_link(component_id=component_id, component_name=configuration_name),
         ]
 
     # --- Jobs ---

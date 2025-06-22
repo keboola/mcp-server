@@ -337,6 +337,26 @@ class ComponentWithConfigurations(BaseModel):
     )
 
 
+class RetrieveComponentsConfigurationsOutput(BaseModel):
+    """Output of retrieve_component_configurations tool."""
+
+    components_with_configurations: List[ComponentWithConfigurations] = Field(
+        description='The groupings of components and their respective configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the listing of components with configurations.',
+    )
+
+
+class RetrieveTransformationsConfigurationsOutput(BaseModel):
+    """Output of retrieve_transformations_configurations tool."""
+
+    components_with_configurations: List[ComponentWithConfigurations] = Field(
+        description='The groupings of transformation components and their respective configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the listing of transformation components with configurations.',
+    )
+
+
 class FlowPhase(BaseModel):
     """Represents a phase in a flow configuration."""
 
