@@ -242,13 +242,16 @@ async def get_flow_detail(
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
-
+    links_manager = await ProjectLinksManager.from_client(client)
     raw_config = await client.storage_client.flow_detail(configuration_id)
 
     flow_response = FlowConfigurationResponse.from_raw_config(raw_config)
-
+    flow_configuration = flow_response.configuration
+    links = links_manager.get_flow_links(flow_response.configuration_id, flow_name=flow_response.configuration_name)
+    flow_configuration.links = links
+    
     LOG.info(f'Retrieved flow details for configuration: {configuration_id}')
-    return flow_response.configuration
+    return flow_configuration
 
 
 def _ensure_phase_ids(phases: list[dict[str, Any]]) -> list[FlowPhase]:

@@ -401,6 +401,7 @@ class FlowConfiguration(BaseModel):
 
     phases: List[FlowPhase] = Field(description='List of phases in the flow')
     tasks: List[FlowTask] = Field(description='List of tasks in the flow')
+    links: Optional[list[Link]] = Field(None, description='Links relevant to the flow configuration.')
 
 
 class FlowConfigurationResponse(ComponentConfigurationResponseBase):

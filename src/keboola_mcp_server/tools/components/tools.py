@@ -157,12 +157,7 @@ async def retrieve_transformations_configurations(
     else:
         components_with_configurations = await _retrieve_components_configurations_by_ids(client, transformation_ids)
 
-    links = [
-        links_manager.get_component_configs_dashboard_link(
-            component_id=comp.component.component_id, component_name=comp.component.component_name
-        )
-        for comp in components_with_configurations
-    ]
+    links = []
 
     return RetrieveTransformationsConfigurationsOutput(
         components_with_configurations=components_with_configurations, links=links
