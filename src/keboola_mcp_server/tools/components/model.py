@@ -357,6 +357,15 @@ class RetrieveTransformationsConfigurationsOutput(BaseModel):
     )
 
 
+class RetrieveFlowsOutput(BaseModel):
+    """Output of retrieve_flows tool."""
+
+    flows: List['ReducedFlow'] = Field(description='The retrieved flow configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the flows.',
+    )
+
+
 class FlowPhase(BaseModel):
     """Represents a phase in a flow configuration."""
 

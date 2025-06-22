@@ -20,6 +20,7 @@ from keboola_mcp_server.tools.components.model import (
     FlowPhase,
     FlowTask,
     ReducedFlow,
+    RetrieveFlowsOutput,
 )
 
 LOG = logging.getLogger(__name__)
@@ -207,10 +208,11 @@ async def retrieve_flows(
     flow_ids: Annotated[
         Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
     ] = tuple(),
-) -> Annotated[list[ReducedFlow], Field(description='The retrieved flow configurations.')]:
+) -> RetrieveFlowsOutput:
     """Retrieves flow configurations from the project."""
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     if flow_ids:
         flows = []
@@ -221,12 +223,14 @@ async def retrieve_flows(
                 flows.append(flow)
             except Exception as e:
                 LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
-        return flows
     else:
         raw_flows = await client.storage_client.flow_list()
         flows = [ReducedFlow.from_raw_config(raw_flow) for raw_flow in raw_flows]
         LOG.info(f'Found {len(flows)} flows in the project')
-        return flows
+
+    links = [links_manager.get_flows_dashboard_link()]
+
+    return RetrieveFlowsOutput(flows=flows, links=links)
 
 
 @tool_errors()
