@@ -12,7 +12,6 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
-from keboola_mcp_server.mcp import KeboolaMcpServer, with_session_state
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
