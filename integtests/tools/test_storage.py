@@ -4,6 +4,8 @@ import pytest
 from fastmcp import Context
 
 from integtests.conftest import BucketDef, TableDef
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
     TableDetail,
@@ -11,6 +13,8 @@ from keboola_mcp_server.tools.storage import (
     get_table_detail,
     retrieve_bucket_tables,
     retrieve_buckets,
+    update_bucket_description,
+    update_table_description,
 )
 
 
@@ -77,3 +81,43 @@ async def test_retrieve_bucket_tables(mcp_context: Context, tables: list[TableDe
         result_table_ids = {table.id for table in result}
         expected_table_ids = {table.table_id for table in expected_tables}
         assert result_table_ids == expected_table_ids
+
+
+@pytest.mark.asyncio
+async def test_update_bucket_description(mcp_context: Context, buckets: list[BucketDef]):
+    """Tests that `update_bucket_description` updates the description of a bucket."""
+    bucket = buckets[0]
+    md_id: str | None = None
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    try:
+        result = await update_bucket_description(bucket.bucket_id, 'New Description', mcp_context)
+        assert result.description == 'New Description'
+
+        metadata = await client.storage_client.bucket_metadata_get(bucket.bucket_id)
+        metadata_entry = next((entry for entry in metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
+        assert metadata_entry is not None, f'Metadata entry for bucket {bucket.bucket_id} description not found'
+        assert metadata_entry['value'] == 'New Description'
+        md_id = str(metadata_entry['id'])
+    finally:
+        if md_id is not None:
+            await client.storage_client.bucket_metadata_delete(bucket_id=bucket.bucket_id, metadata_id=md_id)
+
+
+@pytest.mark.asyncio
+async def test_update_table_description(mcp_context: Context, tables: list[TableDef]):
+    """Tests that `update_table_description` updates the description of a table."""
+    table = tables[0]
+    md_id: str | None = None
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    try:
+        result = await update_table_description(table.table_id, 'New Description', mcp_context)
+        assert result.description == 'New Description'
+
+        metadata = await client.storage_client.table_metadata_get(table.table_id)
+        metadata_entry = next((entry for entry in metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
+        assert metadata_entry is not None, f'Metadata entry for table {table.table_id} description not found'
+        assert metadata_entry['value'] == 'New Description'
+        md_id = str(metadata_entry['id'])
+    finally:
+        if md_id is not None:
+            await client.storage_client.table_metadata_delete(table_id=table.table_id, metadata_id=md_id)
