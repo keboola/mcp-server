@@ -150,7 +150,7 @@ async def retrieve_transformations_configurations(
     """
     # If no transformation IDs are provided, retrieve transformation configurations by transformation type
     client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
+
     if not transformation_ids:
         components_with_configurations = await _retrieve_components_configurations_by_types(client, ['transformation'])
     # If transformation IDs are provided, retrieve transformation configurations by IDs
