@@ -29,8 +29,8 @@ class ProjectLinksManager:
     FLOW_DOCUMENTATION_URL = 'https://help.keboola.com/flows/'
 
     def __init__(self, base_url: str, project_id: str):
-        self.base_url = base_url
-        self.project_id = project_id
+        self._base_url = base_url
+        self._project_id = project_id
 
     @classmethod
     async def from_client(cls, client: KeboolaClient) -> 'ProjectLinksManager':
@@ -39,7 +39,7 @@ class ProjectLinksManager:
         return cls(base_url, project_id)
 
     def _url(self, path: str) -> str:
-        return f'{self.base_url}/admin/projects/{self.project_id}/{path}'
+        return f'{self._base_url}/admin/projects/{self._project_id}/{path}'
 
     # --- Project ---
     def get_project_detail_link(self) -> Link:
