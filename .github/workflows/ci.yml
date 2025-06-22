@@ -98,8 +98,6 @@ jobs:
   integration_tests:
     name: Integration Tests
     needs: build
-    # run this job only for push events
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -121,6 +119,8 @@ jobs:
           uv sync --frozen --no-editable --extra dev
 
       - name: Integration tests
+        # run this step only for push events or pull requests from the same repo
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository 
         env:
           INTEGTEST_STORAGE_TOKEN: ${{ secrets.INTEGTEST_STORAGE_TOKEN }}
           INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
@@ -130,7 +130,7 @@ jobs:
 
       - name: Publish integration test results
         uses: dorny/test-reporter@v1
-        if: success() || failure() # run this step even if a previous step failed
+        if: (success() || failure()) && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: Integration test results (${{ matrix.python-version }})
           path: ./integtest-results.xml
