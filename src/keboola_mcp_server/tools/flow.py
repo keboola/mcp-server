@@ -249,7 +249,7 @@ async def get_flow_detail(
     flow_configuration = flow_response.configuration
     links = links_manager.get_flow_links(flow_response.configuration_id, flow_name=flow_response.configuration_name)
     flow_configuration.links = links
-    
+
     LOG.info(f'Retrieved flow details for configuration: {configuration_id}')
     return flow_configuration
 
