@@ -26,7 +26,7 @@ async def test_retrieve_buckets(mcp_context: Context, buckets: list[BucketDef]):
     result = await retrieve_buckets(mcp_context)
 
     assert isinstance(result, RetrieveBucketsOutput)
-    for item in result:
+    for item in result.buckets:
         assert isinstance(item, BucketDetail)
 
     assert len(result.buckets) == len(buckets)
@@ -72,15 +72,15 @@ async def test_retrieve_bucket_tables(mcp_context: Context, tables: list[TableDe
         result = await retrieve_bucket_tables(bucket.bucket_id, mcp_context)
 
         assert isinstance(result, RetrieveBucketTablesOutput)
-        for item in result:
+        for item in result.tables:
             assert isinstance(item, TableDetail)
 
         # Verify the count matches expected tables for this bucket
         expected_tables = tables_by_bucket.get(bucket.bucket_id, [])
-        assert len(result) == len(expected_tables)
+        assert len(result.tables) == len(expected_tables)
 
         # Verify table IDs match
-        result_table_ids = {table.id for table in result}
+        result_table_ids = {table.id for table in result.tables}
         expected_table_ids = {table.table_id for table in expected_tables}
         assert result_table_ids == expected_table_ids
 
