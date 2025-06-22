@@ -5,6 +5,7 @@ from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.flow import (
     FlowToolResponse,
+    RetrieveFlowsOutput,
     create_flow,
     get_flow_detail,
     retrieve_flows,
@@ -61,9 +62,9 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert created.success is True
         assert len(created.links) == 3
 
-        flows = await retrieve_flows(mcp_context)
-        assert any(f.name == flow_name for f in flows)
-        found = [f for f in flows if f.id == flow_id][0]
+        result = await retrieve_flows(mcp_context)
+        assert any(f.name == flow_name for f in result.flows)
+        found = [f for f in result.flows if f.id == flow_id][0]
         detail = await get_flow_detail(mcp_context, configuration_id=found.id)
         assert detail.phases[0].name == 'Extract'
         assert detail.phases[1].name == 'Transform'
@@ -136,7 +137,7 @@ async def test_retrieve_flows_empty(mcp_context: Context) -> None:
     :return: None
     """
     flows = await retrieve_flows(mcp_context)
-    assert isinstance(flows, list)
+    assert isinstance(flows, RetrieveFlowsOutput)
 
 
 @pytest.mark.asyncio
