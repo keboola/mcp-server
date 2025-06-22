@@ -8,6 +8,8 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
+    RetrieveBucketsOutput,
+    RetrieveBucketTablesOutput,
     TableDetail,
     get_bucket_detail,
     get_table_detail,
@@ -23,11 +25,11 @@ async def test_retrieve_buckets(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that `retrieve_buckets` returns a list of `BucketDetail` instances."""
     result = await retrieve_buckets(mcp_context)
 
-    assert isinstance(result, list)
+    assert isinstance(result, RetrieveBucketsOutput)
     for item in result:
         assert isinstance(item, BucketDetail)
 
-    assert len(result) == len(buckets)
+    assert len(result.buckets) == len(buckets)
 
 
 @pytest.mark.asyncio
@@ -69,7 +71,7 @@ async def test_retrieve_bucket_tables(mcp_context: Context, tables: list[TableDe
     for bucket in buckets:
         result = await retrieve_bucket_tables(bucket.bucket_id, mcp_context)
 
-        assert isinstance(result, list)
+        assert isinstance(result, RetrieveBucketTablesOutput)
         for item in result:
             assert isinstance(item, TableDetail)
 
