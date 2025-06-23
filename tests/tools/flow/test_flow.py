@@ -14,6 +14,7 @@ from keboola_mcp_server.tools.flow.model import (
     FlowPhase,
     FlowTask,
     ReducedFlow,
+    RetrieveFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
@@ -412,13 +413,13 @@ class TestFlowTools:
 
         result = await retrieve_flows(ctx=mcp_context_client)
 
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert all(isinstance(flow, ReducedFlow) for flow in result)
-        assert result[0].id == '21703284'
-        assert result[1].id == '21703285'
-        assert result[0].phases_count == 2
-        assert result[1].phases_count == 0
+        assert isinstance(result, RetrieveFlowsOutput)
+        assert len(result.flows) == 2
+        assert all(isinstance(flow, ReducedFlow) for flow in result.flows)
+        assert result.flows[0].id == '21703284'
+        assert result.flows[1].id == '21703285'
+        assert result.flows[0].phases_count == 2
+        assert result.flows[1].phases_count == 0
 
     @pytest.mark.asyncio
     async def test_retrieve_flows_specific_ids(
@@ -432,8 +433,8 @@ class TestFlowTools:
 
         result = await retrieve_flows(ctx=mcp_context_client, flow_ids=['21703284'])
 
-        assert len(result) == 1
-        assert result[0].id == '21703284'
+        assert len(result.flows) == 1
+        assert result.flows[0].id == '21703284'
         keboola_client.storage_client.flow_detail.assert_called_once_with('21703284')
 
     @pytest.mark.asyncio
@@ -455,8 +456,8 @@ class TestFlowTools:
 
         result = await retrieve_flows(ctx=mcp_context_client, flow_ids=['21703284', 'nonexistent'])
 
-        assert len(result) == 1
-        assert result[0].id == '21703284'
+        assert len(result.flows) == 1
+        assert result.flows[0].id == '21703284'
 
     @pytest.mark.asyncio
     async def test_get_flow_detail(
@@ -623,9 +624,9 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     )
     assert isinstance(created, FlowToolResponse)
 
-    flows = await retrieve_flows(ctx=mcp_context_client)
-    assert len(flows) == 1
-    assert flows[0].name == 'Integration Test Flow'
+    result = await retrieve_flows(ctx=mcp_context_client)
+    assert len(result.flows) == 1
+    assert result.flows[0].name == 'Integration Test Flow'
 
     updated = await update_flow(
         ctx=mcp_context_client,

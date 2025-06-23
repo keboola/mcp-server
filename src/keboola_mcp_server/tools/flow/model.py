@@ -8,6 +8,15 @@ from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
 
 
+class RetrieveFlowsOutput(BaseModel):
+    """Output of retrieve_flows tool."""
+
+    flows: List['ReducedFlow'] = Field(description='The retrieved flow configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the flows.',
+    )
+
+
 class FlowPhase(BaseModel):
     """Represents a phase in a flow configuration."""
 
@@ -66,6 +75,7 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
         serialization_alias='configurationMetadata',
     )
     created: Optional[str] = Field(None, description='Creation timestamp')
+    links: Optional[list[Link]] = Field(None, description='Links relevant to the flow configuration.')
 
     @model_validator(mode='before')
     @classmethod
@@ -124,4 +134,4 @@ class FlowToolResponse(BaseModel):
         validation_alias=AliasChoices('timestamp', 'created'),
     )
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
-    links: list[Link] = Field(..., description='The links relevant to the tool call.')
+    links: list[Link] = Field(description='The links relevant to the flow.')
