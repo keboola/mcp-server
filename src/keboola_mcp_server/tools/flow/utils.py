@@ -6,7 +6,7 @@ from importlib import resources
 from typing import Any
 
 from keboola_mcp_server.client import JsonDict
-from keboola_mcp_server.tools.flows.model import FlowPhase, FlowTask
+from keboola_mcp_server.tools.flow.model import FlowPhase, FlowTask
 
 LOG = logging.getLogger(__name__)
 

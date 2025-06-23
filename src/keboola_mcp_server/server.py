@@ -20,7 +20,7 @@ from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
-from keboola_mcp_server.tools.flows.tools import add_flow_tools
+from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
 from keboola_mcp_server.tools.project import add_project_tools
 from keboola_mcp_server.tools.sql import add_sql_tools

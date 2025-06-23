@@ -8,21 +8,21 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.tools.flows.model import (
+from keboola_mcp_server.tools.flow.model import (
     FlowConfiguration,
     FlowConfigurationResponse,
     FlowPhase,
     FlowTask,
     ReducedFlow,
 )
-from keboola_mcp_server.tools.flows.tools import (
+from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
     create_flow,
     get_flow_detail,
     retrieve_flows,
     update_flow,
 )
-from keboola_mcp_server.tools.flows.utils import (
+from keboola_mcp_server.tools.flow.utils import (
     _check_circular_dependencies,
     ensure_phase_ids,
     ensure_task_ids,

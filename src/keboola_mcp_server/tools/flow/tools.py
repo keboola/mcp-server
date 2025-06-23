@@ -11,13 +11,13 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
-from keboola_mcp_server.tools.flows.model import (
+from keboola_mcp_server.tools.flow.model import (
     FlowConfiguration,
     FlowConfigurationResponse,
     FlowToolResponse,
     ReducedFlow,
 )
-from keboola_mcp_server.tools.flows.utils import (
+from keboola_mcp_server.tools.flow.utils import (
     ensure_phase_ids,
     ensure_task_ids,
     get_schema_as_markdown,
