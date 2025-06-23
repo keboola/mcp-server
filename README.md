@@ -1,3 +1,7 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keboola/mcp-server)
+[![smithery badge](https://smithery.ai/badge/keboola-mcp-server)](https://smithery.ai/server/keboola-mcp-server)
+
+
 # Keboola MCP Server
 
 > Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agents when and where they need it.
@@ -276,8 +280,8 @@ What buckets and tables are in my Keboola project?
 
 | **MCP Client** | **Support Status** | **Connection Method** |
 |----------------|-------------------|----------------------|
-| Claude (Desktop & Web) | ✅ supported, tested | stdio |
-| Cursor | ✅ supported, tested | stdio |
+| Claude (Desktop & Web) | ✅ supported | stdio |
+| Cursor | ✅ supported | stdio |
 | Windsurf, Zed, Replit | ✅ Supported | stdio |
 | Codeium, Sourcegraph | ✅ Supported | HTTP+SSE |
 | Custom MCP Clients | ✅ Supported | HTTP+SSE or stdio |
