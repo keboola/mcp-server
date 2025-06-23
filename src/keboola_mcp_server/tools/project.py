@@ -46,7 +46,7 @@ class ProjectInfo(BaseModel):
         ...,
         description='The sql dialect used in the project.'
     )
-    links: list[Link] = Field(..., description='The links relevant to the tool call.')
+    links: list[Link] = Field(..., description='The links relevant to the project.')
 
 
 @tool_errors()

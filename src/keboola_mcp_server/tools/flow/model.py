@@ -8,6 +8,15 @@ from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
 
 
+class RetrieveFlowsOutput(BaseModel):
+    """Output of retrieve_flows tool."""
+
+    flows: List['ReducedFlow'] = Field(description='The retrieved flow configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the flows.',
+    )
+
+
 class FlowPhase(BaseModel):
     """Represents a phase in a flow configuration."""
 
@@ -43,6 +52,7 @@ class FlowConfiguration(BaseModel):
 
     phases: List[FlowPhase] = Field(description='List of phases in the flow')
     tasks: List[FlowTask] = Field(description='List of tasks in the flow')
+    links: Optional[list[Link]] = Field(None, description='Links relevant to the flow configuration.')
 
 
 class FlowConfigurationResponse(ComponentConfigurationResponseBase):
@@ -78,7 +88,7 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
         phases = [FlowPhase.model_validate(phase) for phase in config_data.get('phases', [])]
         tasks = [FlowTask.model_validate(task) for task in config_data.get('tasks', [])]
 
-        flow_config = FlowConfiguration(phases=phases, tasks=tasks)
+        flow_config = FlowConfiguration(phases=phases, tasks=tasks, links=None)
 
         return cls(
             component_id=ORCHESTRATOR_COMPONENT_ID,
@@ -149,4 +159,4 @@ class FlowToolResponse(BaseModel):
         validation_alias=AliasChoices('timestamp', 'created'),
     )
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
-    links: list[Link] = Field(..., description='The links relevant to the tool call.')
+    links: list[Link] = Field(description='The links relevant to the flow.')

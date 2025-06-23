@@ -2,6 +2,8 @@ from typing import Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
+from keboola_mcp_server.links import Link
+
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
 AllComponentTypes = Union[ComponentType, TransformationType]
@@ -287,6 +289,7 @@ class ComponentConfigurationOutput(BaseModel):
         description='The component this configuration belongs to',
         default=None,
     )
+    links: list[Link] = Field(..., description='The links relevant to the component configuration.')
 
 
 class ComponentConfigurationMetadata(BaseModel):
@@ -330,4 +333,24 @@ class ComponentWithConfigurations(BaseModel):
     component: ReducedComponent = Field(description='The Keboola component.')
     configurations: List[ComponentConfigurationMetadata] = Field(
         description='The list of configurations metadata associated with the component.',
+    )
+
+
+class RetrieveComponentsConfigurationsOutput(BaseModel):
+    """Output of retrieve_component_configurations tool."""
+
+    components_with_configurations: List[ComponentWithConfigurations] = Field(
+        description='The groupings of components and their respective configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the listing of components with configurations.',
+    )
+
+
+class RetrieveTransformationsConfigurationsOutput(BaseModel):
+    """Output of retrieve_transformations_configurations tool."""
+
+    components_with_configurations: List[ComponentWithConfigurations] = Field(
+        description='The groupings of transformation components and their respective configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the listing of transformation components with configurations.',
     )

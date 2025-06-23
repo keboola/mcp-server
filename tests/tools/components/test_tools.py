@@ -19,6 +19,8 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationResponse,
     ComponentConfigurationResponseBase,
     ReducedComponent,
+    RetrieveComponentsConfigurationsOutput,
+    RetrieveTransformationsConfigurationsOutput,
 )
 from keboola_mcp_server.tools.components.tools import get_component_configuration_examples
 from keboola_mcp_server.tools.components.utils import TransformationConfiguration, _clean_bucket_name
@@ -26,44 +28,55 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 
 @pytest.fixture
-def assert_retrieve_components() -> (
-    Callable[[list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None]
-):
+def assert_retrieve_components() -> Callable[
+    [
+        RetrieveComponentsConfigurationsOutput | RetrieveTransformationsConfigurationsOutput,
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ],
+    None,
+]:
     """Assert that the _retrieve_components_in_project tool returns the correct components and configurations."""
 
     def _assert_retrieve_components(
-        result: list[ComponentWithConfigurations],
+        result: RetrieveComponentsConfigurationsOutput | RetrieveTransformationsConfigurationsOutput,
         components: list[dict[str, Any]],
         configurations: list[dict[str, Any]],
     ):
+        components_with_configurations = result.components_with_configurations
 
-        assert len(result) == len(components)
+        assert len(components_with_configurations) == len(components)
         # assert basics
-        assert all(isinstance(component, ComponentWithConfigurations) for component in result)
-        assert all(isinstance(component.component, ReducedComponent) for component in result)
-        assert all(isinstance(component.configurations, list) for component in result)
+        assert all(isinstance(component, ComponentWithConfigurations) for component in components_with_configurations)
+        assert all(isinstance(component.component, ReducedComponent) for component in components_with_configurations)
+        assert all(isinstance(component.configurations, list) for component in components_with_configurations)
         assert all(
             all(isinstance(config, ComponentConfigurationMetadata) for config in component.configurations)
-            for component in result
+            for component in components_with_configurations
         )
         # assert component list details
-        assert all(returned.component.component_id == expected['id'] for returned, expected in zip(result, components))
         assert all(
-            returned.component.component_name == expected['name'] for returned, expected in zip(result, components)
+            returned.component.component_id == expected['id']
+            for returned, expected in zip(components_with_configurations, components)
         )
         assert all(
-            returned.component.component_type == expected['type'] for returned, expected in zip(result, components)
+            returned.component.component_name == expected['name']
+            for returned, expected in zip(components_with_configurations, components)
         )
-        assert all(not hasattr(returned.component, 'version') for returned in result)
+        assert all(
+            returned.component.component_type == expected['type']
+            for returned, expected in zip(components_with_configurations, components)
+        )
+        assert all(not hasattr(returned.component, 'version') for returned in components_with_configurations)
 
         # assert configurations list details
-        assert all(len(component.configurations) == len(configurations) for component in result)
+        assert all(len(component.configurations) == len(configurations) for component in components_with_configurations)
         assert all(
             all(
                 isinstance(config.root_configuration, ComponentConfigurationResponseBase)
                 for config in component.configurations
             )
-            for component in result
+            for component in components_with_configurations
         )
         # use zip to iterate over the result and mock_configurations since we artificially mock the .get method
         assert all(
@@ -71,14 +84,14 @@ def assert_retrieve_components() -> (
                 config.root_configuration.configuration_id == expected['id']
                 for config, expected in zip(component.configurations, configurations)
             )
-            for component in result
+            for component in components_with_configurations
         )
         assert all(
             all(
                 config.root_configuration.configuration_name == expected['name']
                 for config, expected in zip(component.configurations, configurations)
             )
-            for component in result
+            for component in components_with_configurations
         )
 
     return _assert_retrieve_components
@@ -91,7 +104,7 @@ async def test_retrieve_components_configurations_by_types(
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
     assert_retrieve_components: Callable[
-        [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
+        [RetrieveComponentsConfigurationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
     """Test retrieve_components_configurations when component types are provided."""
@@ -122,7 +135,7 @@ async def test_retrieve_transformations_configurations(
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
     assert_retrieve_components: Callable[
-        [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
+        [RetrieveTransformationsConfigurationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
     """Test retrieve_transformations_configurations."""
@@ -151,7 +164,7 @@ async def test_retrieve_components_configurations_from_ids(
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
     assert_retrieve_components: Callable[
-        [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
+        [RetrieveComponentsConfigurationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
     """Test retrieve_components_configurations when component IDs are provided."""
@@ -177,7 +190,7 @@ async def test_retrieve_transformations_configurations_from_ids(
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
     assert_retrieve_components: Callable[
-        [list[ComponentWithConfigurations], list[dict[str, Any]], list[dict[str, Any]]], None
+        [RetrieveTransformationsConfigurationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
     """Test retrieve_transformations_configurations when transformation IDs are provided."""
