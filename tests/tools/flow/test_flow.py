@@ -163,9 +163,9 @@ class TestFlowModels:
         assert task1.phase == 1
         assert task1.task['componentId'] == 'keboola.ex-aws-s3'
 
-    def test_reduced_flow_from_raw_config(self, mock_raw_flow_config: Dict[str, Any]):
+    def test_reduced_flow_model_validate(self, mock_raw_flow_config: Dict[str, Any]):
         """Test parsing raw API response into ReducedFlow."""
-        reduced_flow = ReducedFlow.from_raw_config(mock_raw_flow_config)
+        reduced_flow = ReducedFlow.model_validate(mock_raw_flow_config)
 
         assert reduced_flow.id == mock_raw_flow_config['id']
         assert reduced_flow.name == mock_raw_flow_config['name']
@@ -179,7 +179,7 @@ class TestFlowModels:
     def test_empty_flow_parsing(self, mock_empty_flow_config):
         """Test parsing empty flow configuration."""
         flow_response = FlowConfigurationResponse.model_validate(mock_empty_flow_config)
-        reduced_flow = ReducedFlow.from_raw_config(mock_empty_flow_config)
+        reduced_flow = ReducedFlow.model_validate(mock_empty_flow_config)
 
         assert len(flow_response.configuration.phases) == 0
         assert len(flow_response.configuration.tasks) == 0
