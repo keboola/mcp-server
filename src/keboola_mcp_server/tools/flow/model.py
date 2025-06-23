@@ -84,9 +84,9 @@ class ReducedFlow(BaseModel):
         validation_alias=AliasChoices('id', 'configuration_id', 'configurationId'),
     )
     name: str = Field(description='Name of the flow')
-    description: str = Field(description='Description of the flow')
+    description: str = Field(default='', description='Description of the flow')
     created: Optional[str] = Field(None, description='Creation timestamp')
-    version: int = Field(description='Version number of the flow')
+    version: int = Field(default=1, description='Version number of the flow')
     is_disabled: bool = Field(
         default=False,
         description='Whether the flow is disabled',
@@ -102,23 +102,17 @@ class ReducedFlow(BaseModel):
     phases_count: int = Field(description='Number of phases in the flow')
     tasks_count: int = Field(description='Number of tasks in the flow')
 
+    @model_validator(mode='before')
     @classmethod
-    def from_raw_config(cls, raw_config: dict[str, Any]) -> 'ReducedFlow':
-        """Create a ReducedFlow object from raw API response."""
-
-        config_data = raw_config.get('configuration', {})
-
-        return cls(
-            id=raw_config['id'],
-            name=raw_config['name'],
-            description=raw_config.get('description', ''),
-            created=raw_config.get('created'),
-            version=raw_config.get('version', 1),
-            is_disabled=raw_config.get('isDisabled', False),
-            is_deleted=raw_config.get('isDeleted', False),
-            phases_count=len(config_data.get('phases', [])),
-            tasks_count=len(config_data.get('tasks', [])),
-        )
+    def _initialize_phases_and_tasks_count(cls, data: Any) -> Any:
+        """Initialize phases_count and tasks_count if not provided."""
+        if isinstance(data, dict):
+            config_data = data.get('configuration', {})
+            if 'tasks_count' not in data:
+                data['tasks_count'] = len(config_data.get('tasks', []))
+            if 'phases_count' not in data:
+                data['phases_count'] = len(config_data.get('phases', []))
+        return data
 
 
 class FlowToolResponse(BaseModel):
