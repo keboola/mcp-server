@@ -1,8 +1,10 @@
+from datetime import datetime
 from typing import Any, List, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
 
 
@@ -136,3 +138,15 @@ class ReducedFlow(BaseModel):
             phases_count=len(config_data.get('phases', [])),
             tasks_count=len(config_data.get('tasks', [])),
         )
+
+
+class FlowToolResponse(BaseModel):
+    flow_id: str = Field(..., description='The id of the flow.', validation_alias=AliasChoices('id', 'flow_id'))
+    description: str = Field(..., description='The description of the Flow.')
+    timestamp: datetime = Field(
+        ...,
+        description='The timestamp of the operation.',
+        validation_alias=AliasChoices('timestamp', 'created'),
+    )
+    success: bool = Field(default=True, description='Indicates if the operation succeeded.')
+    links: list[Link] = Field(..., description='The links relevant to the tool call.')

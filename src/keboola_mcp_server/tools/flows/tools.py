@@ -1,20 +1,20 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
 import logging
-from datetime import datetime
 from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import Field
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
 from keboola_mcp_server.tools.flows.model import (
     FlowConfiguration,
     FlowConfigurationResponse,
+    FlowToolResponse,
     ReducedFlow,
 )
 from keboola_mcp_server.tools.flows.utils import (
@@ -37,18 +37,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
         mcp.add_tool(tool)
 
     LOG.info('Flow tools initialized.')
-
-
-class FlowToolResponse(BaseModel):
-    flow_id: str = Field(..., description='The id of the flow.', validation_alias=AliasChoices('id', 'flow_id'))
-    description: str = Field(..., description='The description of the Flow.')
-    timestamp: datetime = Field(
-        ...,
-        description='The timestamp of the operation.',
-        validation_alias=AliasChoices('timestamp', 'created'),
-    )
-    success: bool = Field(default=True, description='Indicates if the operation succeeded.')
-    links: list[Link] = Field(..., description='The links relevant to the tool call.')
 
 
 @tool_errors()
