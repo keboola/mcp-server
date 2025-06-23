@@ -36,7 +36,7 @@ class ProjectLinksManager:
     async def from_client(cls, client: KeboolaClient) -> 'ProjectLinksManager':
         base_url = client.storage_client.base_api_url
         project_id = await client.storage_client.project_id()
-        return cls(base_url, project_id)
+        return cls(base_url=base_url, project_id=project_id)
 
     def _url(self, path: str) -> str:
         return f'{self._base_url}/admin/projects/{self._project_id}/{path}'
