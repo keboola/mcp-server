@@ -90,12 +90,12 @@ class ProjectLinksManager:
                 self.get_component_config_link(
                     component_id=component_id, configuration_id=configuration_id, configuration_name=configuration_name
                 ),
-                self.get_component_configs_dashboard_link(component_id=component_id, component_name=configuration_name),
+                self.get_component_configs_dashboard_link(component_id=component_id, component_name=component_id),
             ]
 
     # --- Transformations ---
     def get_transformations_dashboard_link(self) -> Link:
-        return Link.detail(
+        return Link.dashboard(
             title='Transformations dashboard', url=self._url('transformations-v2')
         )
 
@@ -104,7 +104,7 @@ class ProjectLinksManager:
         return Link.detail(title=f'Job: {job_id}', url=self._url(f'queue/{job_id}'))
 
     def get_jobs_dashboard_link(self) -> Link:
-        return Link.dashboard(title='Jobs Dashboard', url=self._url('queue'))
+        return Link.dashboard(title='Jobs in the project', url=self._url('queue'))
 
     def get_job_links(self, job_id: str) -> list[Link]:
         return [self.get_job_detail_link(job_id), self.get_jobs_dashboard_link()]
