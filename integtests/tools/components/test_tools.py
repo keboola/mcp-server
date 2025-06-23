@@ -7,6 +7,7 @@ from mcp.server.fastmcp import Context
 from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     ComponentType,
     ComponentWithConfigurations,
@@ -47,16 +48,9 @@ async def test_get_component_configuration(mcp_context: Context, configs: list[C
         assert result.root_configuration.configuration_id == config.configuration_id
         assert result.root_configuration.component_id == config.component_id
         # Check links field
-        assert hasattr(result, 'links')
-        assert isinstance(result.links, list)
         assert result.links, 'Links list should not be empty.'
         for link in result.links:
-            assert hasattr(link, 'type')
-            assert hasattr(link, 'title')
-            assert hasattr(link, 'url')
-            assert isinstance(link.type, str)
-            assert isinstance(link.title, str)
-            assert isinstance(link.url, str)
+            assert isinstance(link, Link)
 
 
 @pytest.mark.asyncio
