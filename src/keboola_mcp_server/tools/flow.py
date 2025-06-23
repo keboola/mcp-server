@@ -7,6 +7,7 @@ from importlib import resources
 from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools import FunctionTool
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict, KeboolaClient
@@ -46,7 +47,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(tool)
+        mcp.add_tool(FunctionTool.from_function(tool))
 
     LOG.info('Flow tools initialized.')
 

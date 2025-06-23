@@ -3,6 +3,7 @@ from typing import Annotated, Any
 
 import pytest
 from fastmcp import Client, Context
+from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
 
@@ -130,7 +131,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     # create MCP server with the initial Config
     mcp = create_server(config)
     tools_count = len(await mcp.get_tools())
-    mcp.add_tool(assessed_function, name='assessed-function')
+    mcp.add_tool(FunctionTool.from_function(assessed_function, name='assessed-function'))
 
     # running the server as stdio transport through client
     async with Client(mcp) as client:
@@ -195,7 +196,7 @@ async def test_keboola_injection_and_lifespan(
 
         return param
 
-    server.add_tool(assessed_function, name='assessed_function')
+    server.add_tool(FunctionTool.from_function(assessed_function, name='assessed_function'))
 
     async with Client(server) as client:
         result = await client.call_tool('assessed_function', {'param': 'value'})

@@ -3,6 +3,7 @@ import logging
 from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context
+from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
 from pydantic import Field
 
@@ -48,18 +49,19 @@ RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformatio
 def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
 
-    mcp.add_tool(retrieve_transformations_configurations, name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME)
-    mcp.add_tool(get_component_configuration)
-    mcp.add_tool(retrieve_components_configurations, serializer=listing_output_serializer)
-    mcp.add_tool(create_sql_transformation)
-    mcp.add_tool(update_sql_transformation_configuration)
-    mcp.add_tool(get_component)
-    mcp.add_tool(create_component_root_configuration)
-    mcp.add_tool(create_component_row_configuration)
-    mcp.add_tool(update_component_root_configuration)
-    mcp.add_tool(update_component_row_configuration)
-    mcp.add_tool(get_component_configuration_examples)
-    mcp.add_tool(find_component_id)
+    mcp.add_tool(FunctionTool.from_function(
+        retrieve_transformations_configurations, name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME))
+    mcp.add_tool(FunctionTool.from_function(get_component_configuration))
+    mcp.add_tool(FunctionTool.from_function(retrieve_components_configurations, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
+    mcp.add_tool(FunctionTool.from_function(update_sql_transformation_configuration))
+    mcp.add_tool(FunctionTool.from_function(get_component))
+    mcp.add_tool(FunctionTool.from_function(create_component_root_configuration))
+    mcp.add_tool(FunctionTool.from_function(create_component_row_configuration))
+    mcp.add_tool(FunctionTool.from_function(update_component_root_configuration))
+    mcp.add_tool(FunctionTool.from_function(update_component_row_configuration))
+    mcp.add_tool(FunctionTool.from_function(get_component_configuration_examples))
+    mcp.add_tool(FunctionTool.from_function(find_component_id))
 
     LOG.info('Component tools added to the MCP server.')
 

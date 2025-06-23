@@ -2,6 +2,7 @@ import json
 
 import pytest
 from fastmcp import Client, Context, FastMCP
+from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
@@ -173,7 +174,7 @@ async def test_http_multiple_clients_with_different_headers(
         return f'{which_client}'
 
     server = create_server(config)
-    server.add_tool(assessed_function)
+    server.add_tool(FunctionTool.from_function(assessed_function))
 
     async with run_server_remote(server, 'streamable-http') as url:
         async with (
