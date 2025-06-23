@@ -12,7 +12,6 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
-    FlowConfiguration,
     FlowConfigurationResponse,
     FlowToolResponse,
     ReducedFlow,
@@ -216,14 +215,14 @@ async def retrieve_flows(
 async def get_flow_detail(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve.')],
-) -> Annotated[FlowConfiguration, Field(description='Detailed flow configuration.')]:
+) -> Annotated[FlowConfigurationResponse, Field(description='Detailed flow configuration.')]:
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
 
     raw_config = await client.storage_client.flow_detail(configuration_id)
 
-    flow_response = FlowConfigurationResponse.from_raw_config(raw_config)
+    flow_response = FlowConfigurationResponse.model_validate(raw_config)
 
     LOG.info(f'Retrieved flow details for configuration: {configuration_id}')
-    return flow_response.configuration
+    return flow_response
