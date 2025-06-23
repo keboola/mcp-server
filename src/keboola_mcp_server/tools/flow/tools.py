@@ -198,14 +198,14 @@ async def retrieve_flows(
         for flow_id in flow_ids:
             try:
                 raw_config = await client.storage_client.flow_detail(flow_id)
-                flow = ReducedFlow.from_raw_config(raw_config)
+                flow = ReducedFlow.model_validate(raw_config)
                 flows.append(flow)
             except Exception as e:
                 LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
         return flows
     else:
         raw_flows = await client.storage_client.flow_list()
-        flows = [ReducedFlow.from_raw_config(raw_flow) for raw_flow in raw_flows]
+        flows = [ReducedFlow.model_validate(raw_flow) for raw_flow in raw_flows]
         LOG.info(f'Found {len(flows)} flows in the project')
         return flows
 
