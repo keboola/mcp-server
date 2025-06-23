@@ -63,13 +63,22 @@ def tool_errors(
     default_recovery: Optional[str] = None,
     recovery_instructions: Optional[dict[Type[Exception], str]] = None,
 ) -> Callable[[F], F]:
+    """
+    Enhanced MCP tool function decorator with improved HTTP 500 error handling.
+    
+    :param default_recovery: A fallback recovery instruction to use when no specific instruction
+                             is found for the exception.
+    :param recovery_instructions: A dictionary mapping exception types to recovery instructions.
+    :return: The decorated function with error-handling logic applied.
+    """
 ```
 
 **Features**:
 - **Automatic exception catching**: Wraps all tool functions in try-catch blocks
 - **Recovery instruction mapping**: Maps specific exception types to recovery messages
-- **Comprehensive logging**: Logs all exceptions with context
+- **Comprehensive logging**: Logs all exceptions with context using `logging.exception()`
 - **Exception transformation**: Converts exceptions to `ToolException` with recovery instructions
+- **HTTP 500 error support**: Works with enhanced HTTP client error handling to preserve exception IDs from Keboola API responses
 
 **Usage Example**:
 ```python
@@ -131,18 +140,48 @@ async def get_component_configuration(
 
 ### 1. Raw HTTP Client Error Handling
 
-The `RawKeboolaClient` class handles HTTP-level errors:
+The `RawKeboolaClient` class handles HTTP-level errors with enhanced exception ID forwarding for HTTP 500 errors:
 
 ```python
+def _raise_for_status(self, response: httpx.Response) -> None:
+    """Enhanced error handling with exception ID forwarding for HTTP 500 errors."""
+    if not response.is_error:
+        return
+        
+    if response.status_code == 500:
+        # Enhanced handling for HTTP 500 errors to extract exception ID
+        base_message = f"Server error for url '{response.url}'"
+        
+        try:
+            error_data = response.json()
+            exception_id = error_data.get('exceptionId')
+            
+            # Build enhanced message with exception ID for HTTP 500 errors
+            if exception_id:
+                base_message += f" Please contact support and provide this exception ID: {exception_id}"
+                
+        except (ValueError, KeyError):
+            # Fallback if JSON parsing fails
+            pass
+        
+        # Raise standard HTTPStatusError with enhanced message
+        raise httpx.HTTPStatusError(base_message, request=response.request, response=response)
+    else:
+        # For all other HTTP errors, use standard HTTPStatusError
+        response.raise_for_status()
+
 async def get(self, endpoint: str, params: dict[str, Any] | None = None) -> JsonStruct:
     async with httpx.AsyncClient(timeout=self.timeout) as client:
         response = await client.get(f'{self.base_api_url}/{endpoint}', params=params, headers=headers)
-        response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx responses
+        self._raise_for_status(response)  # Enhanced error handling with exception ID forwarding
         return cast(JsonStruct, response.json())
 ```
 
 **Error handling features**:
-- **Automatic status code checking**: `response.raise_for_status()` raises `HTTPStatusError` for error status codes
+- **Enhanced HTTP 500 error handling**: Extracts exception IDs from Keboola API responses for HTTP 500 errors
+- **Exception ID forwarding**: Includes exception IDs in error messages to help users provide support references
+- **Graceful fallback**: Falls back to standard error handling if JSON parsing fails
+- **Standard error handling**: Uses `response.raise_for_status()` for all other HTTP error codes
 - **Timeout handling**: Configurable timeouts for different operations
 - **Connection error handling**: Network-level errors are propagated up
 
@@ -165,7 +204,39 @@ Different service clients handle errors appropriately:
 - Manages documentation query errors
 - Handles service unavailability
 
-### 3. Fallback Error Handling
+### 3. Enhanced HTTP 500 Error Handling with Exception IDs
+
+The application provides special handling for HTTP 500 errors from Keboola APIs to extract and forward exception IDs for support purposes:
+
+**Error Flow for HTTP 500 Responses**:
+1. **HTTP 500 Detection**: `_raise_for_status()` detects HTTP 500 status codes
+2. **JSON Parsing**: Attempts to parse the response body as JSON
+3. **Exception ID Extraction**: Looks for `exceptionId` field in the response
+4. **Enhanced Message Construction**: Builds user-friendly error message with exception ID
+5. **Standard Exception Raising**: Raises `httpx.HTTPStatusError` with enhanced message
+
+**Example HTTP 500 Error Response**:
+```json
+{
+  "exceptionId": "exc-123-456-789",
+  "message": "Database connection timeout",
+  "errorCode": "DB_CONNECTION_ERROR",
+  "requestId": "req-abc-def-ghi"
+}
+```
+
+**Resulting Error Message**:
+```
+Server error for url 'https://connection.keboola.com/v2/storage/buckets' Please contact support and provide this exception ID: exc-123-456-789
+```
+
+**Benefits**:
+- **Support Reference**: Users can provide specific exception IDs to Keboola support
+- **Faster Resolution**: Support team can quickly locate specific errors in logs
+- **AI Agent Friendly**: Error messages include actionable instructions for AI agents
+- **Graceful Degradation**: Falls back to standard error handling if JSON parsing fails
+
+### 4. Fallback Error Handling
 
 The application implements fallback mechanisms for certain operations:
 
@@ -471,14 +542,44 @@ async def test_tool_function_recovery_instructions(
 - **Recovery instruction testing**: Tests exception type mapping
 - **Logging testing**: Verifies proper error logging
 - **Exception transformation testing**: Ensures proper exception wrapping
+- **HTTP 500 error handling testing**: Tests exception ID extraction and forwarding
+- **Enhanced error message testing**: Verifies proper error message construction for HTTP 500 errors
 
-### 3. Integration Testing
+### 3. HTTP 500 Error Handling Tests
+
+The application includes comprehensive tests for the enhanced HTTP 500 error handling:
+
+```python
+def test_raise_for_status_500_with_exception_id(self, raw_client, mock_http_response_500, mock_http_request):
+    """Test that HTTP 500 errors are enhanced with exception ID when available."""
+    mock_http_response_500.json.return_value = {
+        "exceptionId": "exc-123-456",
+        "message": "Application error",
+        "errorCode": "DB_ERROR",
+        "requestId": "req-789"
+    }
+    
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raw_client._raise_for_status(mock_http_response_500)
+    
+    error_message = str(exc_info.value)
+    assert "Please contact support and provide this exception ID: exc-123-456" in error_message
+```
+
+**HTTP 500 test scenarios**:
+- **Exception ID extraction**: Tests successful exception ID parsing from JSON responses
+- **Fallback handling**: Tests behavior when JSON parsing fails or exception ID is missing
+- **Error message formatting**: Verifies proper error message construction
+- **Integration testing**: Tests end-to-end HTTP 500 error handling through HTTP client methods
+
+### 4. Integration Testing
 
 The application includes integration tests that verify error handling in real scenarios:
 
-- **HTTP error handling**: Tests network failure scenarios
+- **HTTP error handling**: Tests network failure scenarios including enhanced HTTP 500 handling
 - **Validation error handling**: Tests invalid input scenarios
 - **Authentication error handling**: Tests OAuth flow failures
+- **Exception ID forwarding**: Tests that exception IDs are properly forwarded through the entire error handling chain
 
 ## Best Practices Implemented
 
@@ -517,4 +618,10 @@ Error propagation follows these principles:
 
 The Keboola MCP Server implements a comprehensive and sophisticated error handling system that ensures robust operation, meaningful error messages, and effective recovery mechanisms. The multi-layered approach provides both human developers and AI agents with the information they need to understand and resolve errors effectively.
 
-The system's design principles of graceful degradation, comprehensive logging, and AI-friendly error messages make it well-suited for production use in complex data processing environments where reliability and maintainability are critical. 
+**Key Features of the Error Handling System**:
+- **Enhanced HTTP 500 Error Handling**: Automatically extracts and forwards exception IDs from Keboola API responses, enabling faster support resolution
+- **AI-Friendly Error Messages**: Structured error messages with actionable recovery instructions designed for AI agent consumption
+- **Comprehensive Test Coverage**: Extensive testing including specific scenarios for HTTP 500 error handling and exception ID forwarding
+- **Graceful Degradation**: Robust fallback mechanisms that maintain system stability even when individual operations fail
+
+The system's design principles of graceful degradation, comprehensive logging, AI-friendly error messages, and enhanced support for Keboola-specific error scenarios make it well-suited for production use in complex data processing environments where reliability, maintainability, and effective error resolution are critical. 
