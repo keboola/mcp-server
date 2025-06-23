@@ -20,7 +20,7 @@ from keboola_mcp_server.tools.storage import (
     update_column_description,
     update_table_description,
 )
-from keboola_mcp_server.tools.workspace import TableFqn, WorkspaceManager
+from keboola_mcp_server.workspace import TableFqn, WorkspaceManager
 
 
 def parse_iso_timestamp(ts: str) -> datetime:

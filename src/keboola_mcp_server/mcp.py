@@ -22,7 +22,7 @@ from starlette.requests import Request
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.oauth import ProxyAccessToken
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
