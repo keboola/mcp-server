@@ -503,11 +503,10 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         expires_in = int(data['expires_in'])  # seconds
         if expires_in <= 0:
             LOG.exception(f'[_read_oauth_tokens] Received already expired token: data={data}')
-            raise HTTPException(400, 'Received already expired token.')
+            raise HTTPException(400, 'The original OAuth access token has already expired.')
 
         current_time = int(time.time())
 
-        # Store access token - we'll map the MCP token to this later
         access_token = AccessToken(
             token=data['access_token'],
             client_id=self._oauth_client_id,
@@ -545,10 +544,11 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             )
 
             if response.status_code != 200:
-                LOG.error('[_create_sapi_token] Failed create Storage API token, '
+                LOG.error('[_create_sapi_token] Failed to create Storage API token, '
                           f'Storage API response: status={response.status_code}, text={response.text}')
-                raise HTTPException(500, 'Failed to create Storage API token: '
-                                         f'status={response.status_code}, text={response.text}')
+                raise HTTPException(
+                    response.status_code,
+                    f'Failed to create Storage API token: status={response.status_code}, text={response.text}')
 
             data = response.json()
             LOG.debug(f'[_create_sapi_token] Storage API response: {data}')
