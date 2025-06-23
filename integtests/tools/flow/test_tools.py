@@ -67,9 +67,9 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert any(f.name == flow_name for f in flows)
         found = [f for f in flows if f.id == flow_id][0]
         detail = await get_flow_detail(mcp_context, configuration_id=found.id)
-        assert detail.phases[0].name == 'Extract'
-        assert detail.phases[1].name == 'Transform'
-        assert detail.tasks[0].task['componentId'] == configs[0].component_id
+        assert detail.configuration.phases[0].name == 'Extract'
+        assert detail.configuration.phases[1].name == 'Transform'
+        assert detail.configuration.tasks[0].task['componentId'] == configs[0].component_id
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
