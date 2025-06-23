@@ -2,12 +2,13 @@ import datetime
 import logging
 from typing import Annotated, Any, Literal, Optional, Union
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import with_session_state
+from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
 
 LOG = logging.getLogger(__name__)
 
@@ -15,32 +16,27 @@ LOG = logging.getLogger(__name__)
 # Add jobs tools to MCP SERVER ##################################
 
 
-def add_job_tools(mcp: FastMCP) -> None:
+def add_job_tools(mcp: KeboolaMcpServer) -> None:
     """Add job tools to the MCP server."""
-    jobs_tools = [
-        retrieve_jobs,
-        get_job_detail,
-        start_job,
-    ]
-    for tool in jobs_tools:
-        LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(tool)
+    mcp.add_tool(get_job_detail)
+    mcp.add_tool(retrieve_jobs, serializer=listing_output_serializer)
+    mcp.add_tool(start_job)
 
-    LOG.info('Job tools initialized.')
+    LOG.info('Job tools added to the MCP server.')
 
 
 # Job Base Models ########################################
 
 JOB_STATUS = Literal[
-    'waiting',      # job is waiting for other jobs to finish
-    'processing',   # job is being executed
-    'success',      # job finished successfully
-    'error',        # job finished with error
-    'created',      # job is created but not started executing
-    'warning',      # job finished but one of its child jobs failed
+    'waiting',  # job is waiting for other jobs to finish
+    'processing',  # job is being executed
+    'success',  # job finished successfully
+    'error',  # job finished with error
+    'created',  # job is created but not started executing
+    'warning',  # job finished but one of its child jobs failed
     'terminating',  # user requested to abort the job
-    'cancelled',    # job was aborted before execution began
-    'terminated',   # job was aborted during execution
+    'cancelled',  # job was aborted before execution began
+    'terminated',  # job was aborted during execution
 ]
 
 
@@ -103,7 +99,7 @@ class JobDetail(JobListItem):
         serialization_alias='tableId',
         default=None,
     )
-    config_data: Optional[list[Any]] = Field(
+    config_data: Optional[dict[str, Any]] = Field(
         description='The data of the configuration.',
         validation_alias=AliasChoices('configData', 'config_data', 'config-data'),
         serialization_alias='configData',
@@ -133,24 +129,32 @@ class JobDetail(JobListItem):
         serialization_alias='result',
         default=None,
     )
+    links: list[Link] = Field(..., description='The links relevant to the job.')
 
-    @field_validator('result', mode='before')
+    @field_validator('result', 'config_data', mode='before')
     @classmethod
-    def validate_result_field(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
-        # Ensures that if the result field is passed as an empty list [] or None, it gets converted to an empty dict {}.
-        # Why? Because the result is expected to be an Object, but create job endpoint sends [], perhaps it means
-        # "empty". This avoids type errors.
+    def validate_dict_fields(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
+        # Ensures that if the result or config_data field is passed as an empty list [] or None,
+        # it gets converted to an empty dict {}.Why? Because the result is expected to be an Object, but create job
+        # endpoint sends [], perhaps it means "empty". This avoids type errors.
         if not isinstance(current_value, dict):
             if not current_value:
                 return dict()
             if isinstance(current_value, list):
-                raise ValueError(f'Field "result" cannot be a list, expecting dictionary, got: {current_value}.')
+                raise ValueError(
+                    'Field "result" or "config_data" cannot be a list, expecting dictionary, ' f'got: {current_value}.'
+                )
         return current_value
 
+
+class RetrieveJobsOutput(BaseModel):
+    jobs: list[JobListItem] = Field(..., description='List of jobs.')
+    links: list[Link] = Field(..., description='Links relevant to the jobs listing.')
 
 # End of Job Base Models ########################################
 
 # MCP tools ########################################
+
 
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
@@ -204,13 +208,7 @@ async def retrieve_jobs(
             description='The order to sort the jobs by, default = "desc".',
         ),
     ] = 'desc',
-) -> Annotated[
-    list[JobListItem],
-    Field(
-        list[JobListItem],
-        description='The retrieved list of jobs list items. If empty then no jobs were found.',
-    ),
-]:
+) -> RetrieveJobsOutput:
     """
     Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
     filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
@@ -231,6 +229,7 @@ async def retrieve_jobs(
     _status = [status] if status else None
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     raw_jobs = await client.jobs_queue_client.search_jobs_by(
         component_id=component_id,
@@ -242,7 +241,9 @@ async def retrieve_jobs(
         sort_order=sort_order,
     )
     LOG.info(f'Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.')
-    return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
+    jobs = [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
+    links = [links_manager.get_jobs_dashboard_link()]
+    return RetrieveJobsOutput(jobs=jobs, links=links)
 
 
 @tool_errors()
@@ -262,10 +263,12 @@ async def get_job_detail(
     - If job_id = "123", then the details of the job with id "123" will be retrieved.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     raw_job = await client.jobs_queue_client.get_job_detail(job_id)
+    links = links_manager.get_job_links(job_id)
     LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
-    return JobDetail.model_validate(raw_job)
+    return JobDetail.model_validate(raw_job | {'links': links})
 
 
 @tool_errors()

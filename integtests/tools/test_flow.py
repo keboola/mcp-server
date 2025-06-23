@@ -2,9 +2,11 @@ import pytest
 from fastmcp import Context
 
 from integtests.conftest import ConfigDef
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.flow import (
     FlowToolResponse,
+    RetrieveFlowsOutput,
     create_flow,
     get_flow_detail,
     retrieve_flows,
@@ -55,21 +57,34 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         tasks=tasks,
     )
     flow_id = created.flow_id
+    client = KeboolaClient.from_state(mcp_context.session.state)
     try:
         assert isinstance(created, FlowToolResponse)
         assert created.description == flow_description
         assert created.success is True
         assert len(created.links) == 3
 
-        flows = await retrieve_flows(mcp_context)
-        assert any(f.name == flow_name for f in flows)
-        found = [f for f in flows if f.id == flow_id][0]
+        result = await retrieve_flows(mcp_context)
+        assert any(f.name == flow_name for f in result.flows)
+        found = [f for f in result.flows if f.id == flow_id][0]
         detail = await get_flow_detail(mcp_context, configuration_id=found.id)
         assert detail.phases[0].name == 'Extract'
         assert detail.phases[1].name == 'Transform'
         assert detail.tasks[0].task['componentId'] == configs[0].component_id
+
+        # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=flow_id
+        )
+
+        # Convert metadata list to dictionary for easier checking
+        # metadata is a list of dicts with 'key' and 'value' keys
+        assert isinstance(metadata, list)
+        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+        assert MetadataField.CREATED_BY_MCP in metadata_dict
+        assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
     finally:
-        client = KeboolaClient.from_state(mcp_context.session.state)
         await client.storage_client.flow_delete(flow_id, skip_trash=True)
 
 
@@ -106,6 +121,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         tasks=tasks,
     )
     flow_id = created.flow_id
+    client = KeboolaClient.from_state(mcp_context.session.state)
     try:
         new_name = 'Updated Flow Name'
         new_description = 'Updated description.'
@@ -123,8 +139,21 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         assert updated.description == new_description
         assert updated.success is True
         assert len(updated.links) == 3
+
+        # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=flow_id
+        )
+
+        assert isinstance(metadata, list)
+        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+        sync_flow = await client.storage_client.flow_detail(flow_id)
+        updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow["version"]}'
+        assert updated_by_md_key in metadata_dict
+        assert metadata_dict[updated_by_md_key] == 'true'
+
     finally:
-        client = KeboolaClient.from_state(mcp_context.session.state)
         await client.storage_client.flow_delete(flow_id, skip_trash=True)
 
 
@@ -136,7 +165,7 @@ async def test_retrieve_flows_empty(mcp_context: Context) -> None:
     :return: None
     """
     flows = await retrieve_flows(mcp_context)
-    assert isinstance(flows, list)
+    assert isinstance(flows, RetrieveFlowsOutput)
 
 
 @pytest.mark.asyncio

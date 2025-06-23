@@ -27,8 +27,10 @@ RUN --mount=type=cache,target=/root/.cache/uv     uv pip install --no-deps --for
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
+ENV LOG_CONFIG=/app/logging-json.conf
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
+COPY logging-json.conf /app/logging-json.conf
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"

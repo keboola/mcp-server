@@ -1,13 +1,12 @@
 import logging
 import re
 import unicodedata
-from typing import Any, Optional, Sequence, Union, cast, get_args
+from typing import Optional, Sequence, Union, cast, get_args
 
 from httpx import HTTPStatusError
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.tools._validate import validate_parameters, validate_storage
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
@@ -19,6 +18,10 @@ from keboola_mcp_server.tools.components.model import (
 )
 
 LOG = logging.getLogger(__name__)
+
+
+SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
+BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 
 
 def _handle_component_types(
@@ -52,18 +55,13 @@ async def _retrieve_components_configurations_by_types(
     :param component_types: The component types/type to retrieve
     :return: A list of items, each containing a component and its associated configurations
     """
-    endpoint = f'branch/{client.storage_client.branch_id}/components'
     # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
-
     components_with_configurations = []
 
-    for _type in component_types:
-        params = {
-            'include': 'configuration',
-            'componentType': _type,
-        }
-        raw_components_with_configurations_by_type = cast(
-            list[dict[str, Any]], await client.storage_client.get(endpoint, params=params)
+    for comp_type in component_types:
+
+        raw_components_with_configurations_by_type = await client.storage_client.component_list(
+            component_type=comp_type, include=['configuration']
         )
         # extend the list with the raw components with configurations
         # TODO: ugly, refactor
@@ -72,9 +70,9 @@ async def _retrieve_components_configurations_by_types(
             # associated configurations
             raw_configuration_responses = [
                 ComponentConfigurationResponse.model_validate(
-                    {**raw_configuration, 'component_id': raw_component['id']}
+                    raw_configuration | {'component_id': raw_component['id']}
                 )
-                for raw_configuration in raw_component.get('configurations', [])
+                for raw_configuration in cast(list[JsonDict], raw_component.get('configurations', []))
             ]
             configurations_metadata = [
                 ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
@@ -115,12 +113,7 @@ async def _retrieve_components_configurations_by_ids(
         # retrieve configurations for component ids
         raw_configurations = await client.storage_client.configuration_list(component_id=component_id)
         # retrieve components
-        raw_component = cast(
-            JsonDict,
-            await client.storage_client.get(
-                endpoint=f'branch/{client.storage_client.branch_id}/components/{component_id}'
-            ),
-        )
+        raw_component = await client.storage_client.component_detail(component_id=component_id)
         # build component configurations list grouped by components
         raw_configuration_responses = [
             ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
@@ -175,8 +168,7 @@ async def _get_component(
                 f'Falling back to Storage API.'
             )
 
-            endpoint = f'branch/{client.storage_client.branch_id}/components/{component_id}'
-            raw_component = await client.storage_client.get(endpoint=endpoint)
+            raw_component = await client.storage_client.component_detail(component_id=component_id)
             LOG.info(f'Retrieved component {component_id} from Storage API.')
             return Component.model_validate(raw_component)
         else:
@@ -195,9 +187,9 @@ def _get_sql_transformation_id_from_sql_dialect(
     :raises ValueError: If the SQL dialect is not supported
     """
     if sql_dialect.lower() == 'snowflake':
-        return 'keboola.snowflake-transformation'
+        return SNOWFLAKE_TRANSFORMATION_ID
     elif sql_dialect.lower() == 'bigquery':
-        return 'keboola.google-bigquery-transformation'
+        return BIGQUERY_TRANSFORMATION_ID
     else:
         raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
 
@@ -212,13 +204,21 @@ class TransformationConfiguration(BaseModel):
         """The parameters for the transformation."""
 
         class Block(BaseModel):
-            """The block for the transformation."""
+            """The transformation block."""
 
             class Code(BaseModel):
-                """The code for the transformation block."""
+                """The code block for the transformation block."""
 
-                name: str = Field(description='The name of the current code script')
-                script: list[str] = Field(description='List of current code statements')
+                name: str = Field(description='The name of the current code block describing the purpose of the block')
+                sql_statements: Sequence[str] = Field(
+                    description=(
+                        'The executable SQL query statements written in the current SQL dialect. '
+                        'Each statement must be executable and a separate item in the list.'
+                    ),
+                    # We use sql_statements for readability but serialize to script due to api expected request
+                    serialization_alias='script',
+                    validation_alias=AliasChoices('sql_statements', 'script'),
+                )
 
             name: str = Field(description='The name of the current block')
             codes: list[Code] = Field(description='The code scripts')
@@ -310,99 +310,3 @@ def _get_transformation_configuration(
             for out_table in output_tables
         ]
     return TransformationConfiguration(parameters=parameters, storage=storage)
-
-
-STORAGE_VALIDATION_INITIAL_MESSAGE = 'The provided storage configuration input does not follow the storage schema.\n'
-ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
-    'The provided Root parameters configuration input does not follow the Root parameter json schema for component '
-    'id: {component_id}.\n'
-)
-ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE = (
-    'The provided Row parameters configuration input does not follow the Row parameter json schema for component '
-    'id: {component_id}.\n'
-)
-
-
-def validate_storage_configuration(
-    storage: Optional[JsonDict],
-    initial_message: Optional[str] = None,
-) -> JsonDict:
-    """
-    Validates the storage configuration and extracts the storage key contents.
-    :param storage: The storage configuration to validate received from the agent.
-    :param initial_message: The initial message to include in the error message.
-    :return: The contents of the 'storage' key from the validated configuration,
-              or an empty dict if no storage is provided.
-    """
-    if not storage or storage is None or storage.get('storage', {}) is None:
-        LOG.warning('No storage configuration provided, skipping validation.')
-        return {}
-    initial_message = (initial_message or '') + '\n'
-    initial_message += STORAGE_VALIDATION_INITIAL_MESSAGE
-    normalized_storage = validate_storage(storage, initial_message)
-    return cast(JsonDict, normalized_storage['storage'])
-
-
-async def validate_root_parameters_configuration(
-    client: KeboolaClient,
-    parameters: JsonDict,
-    component_id: str,
-    initial_message: Optional[str] = None,
-) -> JsonDict:
-    """
-    Utility function to validate the root parameters configuration.
-    :param client: The Keboola client
-    :param parameters: The parameters of the configuration to validate
-    :param component_id: The ID of the component for which the configuration is provided
-    :param initial_message: The initial message to include in the error message
-    :return: The contents of the 'parameters' key from the validated configuration
-    """
-    initial_message = (initial_message or '') + '\n'
-    initial_message += ROOT_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
-    component = await _get_component(client=client, component_id=component_id)
-    return _validate_parameters_configuration(parameters, component.configuration_schema, component_id, initial_message)
-
-
-async def validate_row_parameters_configuration(
-    client: KeboolaClient,
-    parameters: JsonDict,
-    component_id: str,
-    initial_message: Optional[str] = None,
-) -> JsonDict:
-    """
-    Utility function to validate the row parameters configuration.
-    :param client: The Keboola client
-    :param parameters: The parameters of the configuration to validate
-    :param component_id: The ID of the component for which the configuration is provided
-    :param initial_message: The initial message to include in the error message
-    :return: The contents of the 'parameters' key from the validated configuration
-    """
-    initial_message = (initial_message or '') + '\n'
-    initial_message += ROW_PARAMETERS_VALIDATION_INITIAL_MESSAGE.format(component_id=component_id)
-    component = await _get_component(client=client, component_id=component_id)
-    return _validate_parameters_configuration(
-        parameters, component.configuration_row_schema, component_id, initial_message
-    )
-
-
-def _validate_parameters_configuration(
-    parameters: JsonDict,
-    schema: Optional[JsonDict],
-    component_id: str,
-    initial_message: Optional[str] = None,
-) -> JsonDict:
-    """
-    Utility function to validate the parameters configuration.
-    :param parameters: The parameters configuration to validate
-    :param schema: The schema to validate against
-    :param component_id: The ID of the component
-    :param initial_message: The initial message to include in the error message
-    :return: The contents of the 'parameters' key from the validated configuration
-    """
-    if not schema:
-        LOG.warning(f'No schema provided for component {component_id}, skipping validation.')
-        return parameters
-
-    # we expect the parameters to be a dictionary of parameter configurations without the "parameters" key
-    normalized_parameters = validate_parameters(parameters, schema, initial_message)
-    return cast(JsonDict, normalized_parameters['parameters'])

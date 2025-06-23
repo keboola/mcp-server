@@ -9,18 +9,20 @@ from typing import Annotated, Any, Sequence, cast
 from fastmcp import Context, FastMCP
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.links import Link, LinksManager
+from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools._validate import validate_flow_configuration_against_schema
 from keboola_mcp_server.tools.components.model import (
     FlowConfiguration,
     FlowConfigurationResponse,
     FlowPhase,
     FlowTask,
     ReducedFlow,
+    RetrieveFlowsOutput,
 )
+from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
+from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
 LOG = logging.getLogger(__name__)
 
@@ -58,7 +60,7 @@ class FlowToolResponse(BaseModel):
         validation_alias=AliasChoices('timestamp', 'created'),
     )
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
-    links: list[Link] = Field(..., description='The URLs relevant to the tool call.')
+    links: list[Link] = Field(..., description='The links relevant to the flow.')
 
 
 @tool_errors()
@@ -119,6 +121,7 @@ async def create_flow(
     validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Creating new flow: {name}')
 
@@ -126,11 +129,15 @@ async def create_flow(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
+    await _set_cfg_creation_metadata(
+        client,
+        component_id=ORCHESTRATOR_COMPONENT_ID,
+        configuration_id=str(new_raw_configuration['id']),
+    )
+
     flow_id = str(new_raw_configuration['id'])
-    flow_name = new_raw_configuration['name']
-    project_id = await client.storage_client.project_id()
-    base_url = client.storage_client.base_api_url
-    flow_links = LinksManager(base_url).get_flow_links(project_id=project_id, flow_id=flow_id, flow_name=flow_name)
+    flow_name = str(new_raw_configuration['name'])
+    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
@@ -180,6 +187,7 @@ async def update_flow(
     validate_flow_configuration_against_schema(flow_configuration)
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Updating flow configuration: {configuration_id}')
 
@@ -191,11 +199,16 @@ async def update_flow(
         flow_configuration=flow_configuration,  # Direct configuration
     )
 
+    await _set_cfg_update_metadata(
+        client,
+        component_id=ORCHESTRATOR_COMPONENT_ID,
+        configuration_id=str(updated_raw_configuration['id']),
+        configuration_version=cast(int, updated_raw_configuration['version']),
+    )
+
     flow_id = str(updated_raw_configuration['id'])
-    flow_name = updated_raw_configuration['name']
-    project_id = await client.storage_client.project_id()
-    base_url = client.storage_client.base_api_url
-    flow_links = LinksManager(base_url).get_flow_links(project_id=project_id, flow_id=flow_id, flow_name=flow_name)
+    flow_name = str(updated_raw_configuration['name'])
+    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Updated flow configuration: {flow_id}')
@@ -209,10 +222,11 @@ async def retrieve_flows(
     flow_ids: Annotated[
         Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
     ] = tuple(),
-) -> Annotated[list[ReducedFlow], Field(description='The retrieved flow configurations.')]:
+) -> RetrieveFlowsOutput:
     """Retrieves flow configurations from the project."""
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     if flow_ids:
         flows = []
@@ -223,12 +237,14 @@ async def retrieve_flows(
                 flows.append(flow)
             except Exception as e:
                 LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
-        return flows
     else:
         raw_flows = await client.storage_client.flow_list()
         flows = [ReducedFlow.from_raw_config(raw_flow) for raw_flow in raw_flows]
         LOG.info(f'Found {len(flows)} flows in the project')
-        return flows
+
+    links = [links_manager.get_flows_dashboard_link()]
+
+    return RetrieveFlowsOutput(flows=flows, links=links)
 
 
 @tool_errors()
@@ -240,13 +256,16 @@ async def get_flow_detail(
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
-
+    links_manager = await ProjectLinksManager.from_client(client)
     raw_config = await client.storage_client.flow_detail(configuration_id)
 
     flow_response = FlowConfigurationResponse.from_raw_config(raw_config)
+    flow_configuration = flow_response.configuration
+    links = links_manager.get_flow_links(flow_response.configuration_id, flow_name=flow_response.configuration_name)
+    flow_configuration.links = links
 
     LOG.info(f'Retrieved flow details for configuration: {configuration_id}')
-    return flow_response.configuration
+    return flow_configuration
 
 
 def _ensure_phase_ids(phases: list[dict[str, Any]]) -> list[FlowPhase]:

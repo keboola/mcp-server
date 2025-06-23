@@ -7,7 +7,14 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.jobs import JobDetail, JobListItem, get_job_detail, retrieve_jobs, start_job
+from keboola_mcp_server.tools.jobs import (
+    JobDetail,
+    JobListItem,
+    RetrieveJobsOutput,
+    get_job_detail,
+    retrieve_jobs,
+    start_job,
+)
 
 
 @pytest.fixture
@@ -52,13 +59,14 @@ def mock_job() -> dict[str, Any]:
         'startTime': '2024-01-01T00:00:01Z',
         'endTime': '2024-01-01T00:00:02Z',
         'url': 'https://connection.keboola.com/jobs/123',
-        'configData': [{'source': 'file.csv'}],
+        'configData': {'source': 'file.csv'},
         'configRowIds': ['1', '2', '3'],
         'runId': '456',
         'parentRunId': '789',
         'durationSeconds': 100,
         'result': {'import': 'successful'},
         'metrics': {'rows': 1000},
+        'links': []
     }
 
 
@@ -81,29 +89,31 @@ async def test_retrieve_jobs(
 
     result = await retrieve_jobs(context)
 
-    assert len(result) == 2
-    assert all(isinstance(job, JobListItem) for job in result)
-    assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.component_id == expected['component'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.config_id == expected['config'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.is_finished == expected['isFinished'] for returned, expected in zip(result, mock_jobs))
+    assert isinstance(result, RetrieveJobsOutput)
+    assert len(result.jobs) == 2
+    assert all(isinstance(job, JobListItem) for job in result.jobs)
+    assert all(returned.id == expected['id'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.status == expected['status'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.component_id == expected['component'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.config_id == expected['config'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.is_finished == expected['isFinished'] for returned, expected in zip(result.jobs, mock_jobs))
     assert all(
         returned.created_time is not None
         and returned.created_time.replace(tzinfo=None) == datetime.strptime(expected['createdTime'], iso_format)
-        for returned, expected in zip(result, mock_jobs)
+        for returned, expected in zip(result.jobs, mock_jobs)
     )
     assert all(
         returned.start_time is not None
         and returned.start_time.replace(tzinfo=None) == datetime.strptime(expected['startTime'], iso_format)
-        for returned, expected in zip(result, mock_jobs)
+        for returned, expected in zip(result.jobs, mock_jobs)
     )
     assert all(
         returned.end_time is not None
         and returned.end_time.replace(tzinfo=None) == datetime.strptime(expected['endTime'], iso_format)
-        for returned, expected in zip(result, mock_jobs)
+        for returned, expected in zip(result.jobs, mock_jobs)
     )
-    assert all(hasattr(returned, 'not_a_desired_field') is False for returned in result)
+    assert all(hasattr(returned, 'not_a_desired_field') is False for returned in result.jobs)
+    assert len(result.links) == 1
 
     keboola_client.jobs_queue_client.search_jobs_by.assert_called_once_with(
         status=None,
@@ -264,19 +274,24 @@ async def test_start_job_fail(mocker: MockerFixture, mcp_context_client: Context
 
 
 @pytest.mark.parametrize(
-    ('input_value', 'expected_result'),
+    ('field_name', 'input_value', 'expected_result'),
     [
-        ([], {}),  # empty list is not a valid result type but we convert it to {}, no error
-        ({}, {}),  # expected empty dict, no error
-        ({'result': []}, {'result': []}),  # expected result type, no error
-        (None, {}),  # None is valid and converted to {}
+        ('result', [], {}),  # empty list is not a valid result type but we convert it to {}, no error
+        ('result', {}, {}),  # expected empty dict, no error
+        ('result', {'result': []}, {'result': []}),  # expected result type, no error
+        ('result', None, {}),  # None is valid and converted to {}
         (
+            'result',
             ['result1', 'result2'],
             ValueError,
         ),  # list is not a valid result type, we raise an error
+        ('configData', [], {}),  # empty list is not a valid config_data type but we convert it to {}, no error
+        ('configData', {}, {}),  # expected empty dict, no error
+        ('configData', ['configData1', 'configData2'], ValueError),  # list is not a valid config_data type,
     ],
 )
-def test_job_detail_model_validate_for_result_field(
+def test_job_detail_model_validate_dict_fields(
+    field_name: str,
     input_value: Union[list, dict, None],
     expected_result: Union[dict, Type[Exception]],
     mock_job: dict[str, Any],
@@ -286,10 +301,13 @@ def test_job_detail_model_validate_for_result_field(
     :param expected_result: The expected result.
     :param mock_job: The mock job details - expecting api response.
     """
-    mock_job['result'] = input_value
+    mock_job[field_name] = input_value
     if isinstance(expected_result, type) and issubclass(expected_result, Exception):
         with pytest.raises(expected_result):
             JobDetail.model_validate(mock_job)
     else:
         job_detail = JobDetail.model_validate(mock_job)
-        assert job_detail.result == expected_result
+        if field_name == 'result':
+            assert job_detail.result == expected_result
+        elif field_name == 'configData':
+            assert job_detail.config_data == expected_result
