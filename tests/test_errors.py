@@ -9,7 +9,7 @@ from keboola_mcp_server.errors import ToolException, tool_errors
 
 
 @pytest.fixture
-def mock_http_request():
+def mock_http_request() -> httpx.Request:
     """Create a mock HTTP request."""
     request = Mock(spec=httpx.Request)
     request.url = "https://api.example.com/test"
@@ -18,7 +18,7 @@ def mock_http_request():
 
 
 @pytest.fixture
-def mock_http_response_500():
+def mock_http_response_500() -> httpx.Response:
     """Create a mock HTTP response with 500 status."""
     response = Mock(spec=httpx.Response)
     response.status_code = 500
@@ -29,7 +29,7 @@ def mock_http_response_500():
 
 
 @pytest.fixture
-def mock_http_response_404():
+def mock_http_response_404() -> httpx.Response:
     """Create a mock HTTP response with 404 status."""
     response = Mock(spec=httpx.Response)
     response.status_code = 404
@@ -40,7 +40,7 @@ def mock_http_response_404():
 
 
 @pytest.fixture
-def mock_http_response_502():
+def mock_http_response_502() -> httpx.Response:
     """Create a mock HTTP response with 502 status."""
     response = Mock(spec=httpx.Response)
     response.status_code = 502
@@ -57,7 +57,7 @@ class TestRawKeboolaClientErrorHandling:
     """Test suite for enhanced HTTP client error handling."""
 
     @pytest.fixture
-    def raw_client(self):
+    def raw_client(self) -> RawKeboolaClient:
         """Create a RawKeboolaClient instance for testing."""
         return RawKeboolaClient(
             base_api_url="https://api.example.com",
