@@ -99,19 +99,15 @@ async def create_flow(
     processed_phases = ensure_phase_ids(phases)
     processed_tasks = ensure_task_ids(tasks)
     validate_flow_structure(processed_phases, processed_tasks)
-
     flow_configuration = {
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
-    flow_configuration = cast(JsonDict, flow_configuration)
-    validate_flow_configuration_against_schema(flow_configuration)
-
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration))
 
     LOG.info(f'Creating new flow: {name}')
-
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     new_raw_configuration = await client.storage_client.flow_create(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
@@ -165,19 +161,15 @@ async def update_flow(
     processed_phases = ensure_phase_ids(phases)
     processed_tasks = ensure_task_ids(tasks)
     validate_flow_structure(processed_phases, processed_tasks)
-
     flow_configuration = {
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
-    flow_configuration = cast(JsonDict, flow_configuration)
-    validate_flow_configuration_against_schema(flow_configuration)
-
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration))
 
     LOG.info(f'Updating flow configuration: {configuration_id}')
-
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     updated_raw_configuration = await client.storage_client.flow_update(
         config_id=configuration_id,
         name=name,
