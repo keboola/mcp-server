@@ -1,5 +1,4 @@
 import csv
-import logging
 
 import pytest
 from fastmcp import Context
@@ -9,6 +8,8 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
+    RetrieveBucketsOutput,
+    RetrieveBucketTablesOutput,
     TableDetail,
     get_bucket_detail,
     get_table_detail,
@@ -18,19 +19,17 @@ from keboola_mcp_server.tools.storage import (
     update_table_description,
 )
 
-LOG = logging.getLogger(__name__)
-
 
 @pytest.mark.asyncio
 async def test_retrieve_buckets(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that `retrieve_buckets` returns a list of `BucketDetail` instances."""
     result = await retrieve_buckets(mcp_context)
 
-    assert isinstance(result, list)
-    for item in result:
+    assert isinstance(result, RetrieveBucketsOutput)
+    for item in result.buckets:
         assert isinstance(item, BucketDetail)
 
-    assert len(result) == len(buckets)
+    assert len(result.buckets) == len(buckets)
 
 
 @pytest.mark.asyncio
@@ -72,16 +71,16 @@ async def test_retrieve_bucket_tables(mcp_context: Context, tables: list[TableDe
     for bucket in buckets:
         result = await retrieve_bucket_tables(bucket.bucket_id, mcp_context)
 
-        assert isinstance(result, list)
-        for item in result:
+        assert isinstance(result, RetrieveBucketTablesOutput)
+        for item in result.tables:
             assert isinstance(item, TableDetail)
 
         # Verify the count matches expected tables for this bucket
         expected_tables = tables_by_bucket.get(bucket.bucket_id, [])
-        assert len(result) == len(expected_tables)
+        assert len(result.tables) == len(expected_tables)
 
         # Verify table IDs match
-        result_table_ids = {table.id for table in result}
+        result_table_ids = {table.id for table in result.tables}
         expected_table_ids = {table.table_id for table in expected_tables}
         assert result_table_ids == expected_table_ids
 
@@ -91,10 +90,10 @@ async def test_update_bucket_description(mcp_context: Context, buckets: list[Buc
     """Tests that `update_bucket_description` updates the description of a bucket."""
     bucket = buckets[0]
     md_id: str | None = None
+    client = KeboolaClient.from_state(mcp_context.session.state)
     try:
         result = await update_bucket_description(bucket.bucket_id, 'New Description', mcp_context)
         assert result.description == 'New Description'
-        client = KeboolaClient.from_state(mcp_context.session.state)
 
         metadata = await client.storage_client.bucket_metadata_get(bucket.bucket_id)
         metadata_entry = next((entry for entry in metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
@@ -111,10 +110,10 @@ async def test_update_table_description(mcp_context: Context, tables: list[Table
     """Tests that `update_table_description` updates the description of a table."""
     table = tables[0]
     md_id: str | None = None
+    client = KeboolaClient.from_state(mcp_context.session.state)
     try:
         result = await update_table_description(table.table_id, 'New Description', mcp_context)
         assert result.description == 'New Description'
-        client = KeboolaClient.from_state(mcp_context.session.state)
 
         metadata = await client.storage_client.table_metadata_get(table.table_id)
         metadata_entry = next((entry for entry in metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
