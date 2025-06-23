@@ -112,12 +112,7 @@ async def retrieve_components_configurations(
     # If component IDs are provided, retrieve component configurations by IDs
     else:
         components_with_configurations = await _retrieve_components_configurations_by_ids(client, component_ids)
-    links = [
-        links_manager.get_component_configs_dashboard_link(
-            component_id=comp.component.component_id, component_name=comp.component.component_name
-        )
-        for comp in components_with_configurations
-    ]
+    links = [links_manager.get_used_components_link()]
 
     return RetrieveComponentsConfigurationsOutput(
         components_with_configurations=components_with_configurations, links=links
@@ -153,6 +148,7 @@ async def retrieve_transformations_configurations(
     """
     # If no transformation IDs are provided, retrieve transformation configurations by transformation type
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     if not transformation_ids:
         components_with_configurations = await _retrieve_components_configurations_by_types(client, ['transformation'])
@@ -160,7 +156,7 @@ async def retrieve_transformations_configurations(
     else:
         components_with_configurations = await _retrieve_components_configurations_by_ids(client, transformation_ids)
 
-    links = []
+    links = [links_manager.get_transformations_dashboard_link()]
 
     return RetrieveTransformationsConfigurationsOutput(
         components_with_configurations=components_with_configurations, links=links
