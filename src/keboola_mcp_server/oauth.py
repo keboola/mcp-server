@@ -90,6 +90,14 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        """
+        Gets the information about a registered OAuth client by its client ID.
+        This specific implementation is a no-op to avoid having to persist the registered clients.
+
+        :param client_id: A string representing the unique OAuth client identifier.
+        :return: An `_OAuthClientInformationFull` instance which contains just the client ID
+          and turns off all the client-based validations (e.g. redirect URI and scopes).
+        """
         client = _OAuthClientInformationFull(
             # Use a fake redirect URI. Normally, we would retrieve the client from a persistent registry
             # and return the registered redirect URI.
@@ -100,13 +108,29 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         return client
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        """
+        Registers an OAuth client. This specific implementation is a no-op to avoid having to persist the registered
+        clients. It simply logs the client registration details for debugging purposes.
+
+        :param client_info: The full information of the OAuth client to be registered.
+        """
         # This is a no-op. We don't register clients otherwise we would need a persistent registry.
         LOG.debug(f'Client registered: client_id={client_info.client_id}')
 
     async def authorize(
             self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
-        """Generates an authorization URL."""
+        """
+        Creates a URL that redirects to the OAuth server for authorization.
+
+        The authorization URL's state parameter is an encrypted JWT that contains all the authorization parameters.
+        The state expires after 5 minutes.
+
+        :param client: The OAuth client details.
+        :param params: The authorization parameters provided by the client, such as redirect URI, state, scopes, etc.
+
+        :return: The authorization URL that redirects to the OAuth server.
+        """
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.
         # Instead, we encode them to JWT and pass them back to the client.
@@ -140,10 +164,11 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
     async def handle_oauth_callback(self, code: str, state: str) -> str:
         """
-        Handle the callback from the OAuth server.
+        Handles the callback from the OAuth server.
 
-        :param code: The authorization code for the MCP OAuth client.
-        :param state: The state generated in the authorize() function.
+        :param code: The authorization code provided by the OAuth server.
+        :param state: The state originally generated in the authorize() function.
+
         :return: The URL that redirects back to the AI assistant OAuth client.
         """
         # Validate the state first to prevent calling OAuth server with invalid authorization code.
@@ -219,7 +244,16 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     async def load_authorization_code(
             self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
-        """Load an authorization code."""
+        """
+        Loads and validates the authorization code.
+        This function decrypts a JWT authorization code and returns an `_ExtendedAuthorizationCode` object
+        if the authorization code is valid. It returns `None` otherwise.
+
+        :param client: The OAuth client details.
+        :param authorization_code: The JWT authorization code to be loaded and validated.
+
+        :return: An `_ExtendedAuthorizationCode` instance if the authorization code is valid, otherwise `None`.
+        """
         try:
             auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
         except jwt.InvalidTokenError:
@@ -228,6 +262,14 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
         LOG.debug(f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
                   f'auth_code={auth_code}')
+
+        # Log the expired authorization code.
+        # The mcp library itself performs the check and returns a proper response, but no logs.
+        now = time.time()
+        if auth_code.expires_at and auth_code.expires_at < now:
+            LOG.info(f'[load_authorization_code] Expired authorization code: '
+                     f'auth_code.expires_at={auth_code.expires_at}, now={now}')
+
         return _ExtendedAuthorizationCode.model_validate(
             auth_code | {'redirect_uri': AnyUrl(auth_code['redirect_uri'])}
         )
@@ -235,7 +277,17 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     async def exchange_authorization_code(
             self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        """Exchange authorization code for tokens."""
+        """
+        Swaps the authorization code for a new access and refresh tokens from the OAuth server.
+        The function also creates a new Storage API token for accessing the AI Service and Jobs Queue APIs.
+
+        :param client: The OAuth client details.
+        :param authorization_code: The authorization code issued earlier by the `authorize()` function.
+
+        :return: A new OAuthToken containing the access and refresh tokens.
+
+        :raises HTTPException: If the OAuth server response indicates an error.
+        """
         LOG.debug(f'[exchange_authorization_code] authorization_code={authorization_code}, '
                   f'client_id={client.client_id}')
         # Check that we get the instance loaded by load_authorization_code() function.
@@ -282,7 +334,14 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         return oauth_token
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        """Load and validate an access token."""
+        """
+        Loads and validates an access token.
+        The method decrypts a JWT access token, validates its content, and returns a `ProxyAccessToken` object
+        if the token is valid and not expired. Returns `None` if the token is invalid or expired.
+
+        :param token: The JWT access token to be loaded and validated.
+        :return: A `ProxyAccessToken` instance if the token is valid and not expired, otherwise `None`.
+        """
         try:
             access_token_raw = jwt.decode(token, self._jwt_secret, algorithms=['HS256'])
         except jwt.InvalidTokenError:
@@ -292,19 +351,27 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         proxy_token = ProxyAccessToken.model_validate(access_token_raw)
         LOG.debug(f'[load_access_token] token={token}, proxy_token={proxy_token}')
 
-        # Check if expired
+        # Log the expired authorization code.
+        # The mcp library itself performs the check and returns a proper response, but no logs.
         now = time.time()
         if proxy_token.expires_at and proxy_token.expires_at < now:
-            LOG.info(f'[load_access_token] Expired token: proxy_token.expires_at={proxy_token.expires_at}, '
+            LOG.info(f'[load_access_token] Expired access token: proxy_token.expires_at={proxy_token.expires_at}, '
                      f'now={now}')
-            return None
 
         return proxy_token
 
     async def load_refresh_token(
             self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
-        """Load a refresh token - not supported."""
+        """
+        Loads and validates a refresh token.
+        The method decrypts a JWT refresh token, validates its content, and returns a `RefreshToken` object
+        if the token is valid and not expired. Returns `None` if the token is invalid or expired.
+
+        :param client: The OAuth client details.
+        :param refresh_token: A string representing the refresh token in JWT format.
+        :return: A `ProxyRefreshToken` instance if the token is valid and not expired, otherwise `None`.
+        """
         try:
             refresh_token_raw = jwt.decode(refresh_token, self._jwt_secret, algorithms=['HS256'])
         except jwt.InvalidTokenError:
@@ -314,12 +381,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         proxy_token = ProxyRefreshToken.model_validate(refresh_token_raw)
         LOG.debug(f'[load_refresh_token] token={refresh_token}, proxy_token={proxy_token}')
 
-        # Check if expired
+        # Log the expired authorization code.
+        # The mcp library itself performs the check and returns a proper response, but no logs.
         now = time.time()
         if proxy_token.expires_at and proxy_token.expires_at < now:
-            LOG.info(f'[load_refresh_token] Expired token: proxy_token.expires_at={proxy_token.expires_at}, '
+            LOG.info(f'[load_refresh_token] Expired refresh token: proxy_token.expires_at={proxy_token.expires_at}, '
                      f'now={now}')
-            return None
 
         return proxy_token
 
@@ -329,7 +396,19 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             refresh_token: RefreshToken,
             scopes: list[str],
     ) -> OAuthToken:
-        """Exchange refresh token"""
+        """
+        Swaps the refresh token for a new access and refresh tokens from the OAuth server. The function also creates
+        a new Storage API token for accessing the AI Service and Jobs Queue APIs.
+
+        :param client: The OAuth client details.
+        :param refresh_token: The refresh token to use for renewing the tokens.
+        :param scopes: List of scopes to associate with the new tokens. If not provided, the scopes
+          from the original access token will be used. This can be used to reduce the scopes.
+
+        :return: A new OAuthToken containing the access and refresh tokens.
+
+        :raises HTTPException: If the OAuth server response indicates an error.
+        """
         LOG.debug(f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, '
                   f'scopes={scopes}')
 
@@ -405,11 +484,22 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     async def revoke_token(
             self, token: str, token_type_hint: str | None = None
     ) -> None:
-        """Revoke a token."""
+        """
+        Revokes a token.
+
+        This is a no-op function as the tokens are not stored and so there is no way to revoke tokens that has already
+        been issued.
+
+        :param token: The token to be revoked.
+        :param token_type_hint: An optional hint about the type of the token.
+        """
         LOG.debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
         # This is no-op as we don't store the tokens.
 
     def _read_oauth_tokens(self, data: dict[str, Any], scopes: list[str]) -> tuple[AccessToken, RefreshToken]:
+        """
+        Reads the access and refresh tokens from the OAuth server response.
+        """
         expires_in = int(data['expires_in'])  # seconds
         if expires_in <= 0:
             LOG.exception(f'[_read_oauth_tokens] Received already expired token: data={data}')
@@ -437,7 +527,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
     async def _create_sapi_token(self, oauth_access_token: str, expires_in: int) -> str:
         """
-        Creates new Storage API token for accessing AI and Jobs Queue services that do not support bearer tokens yet.
+        Creates a new Storage API token for accessing AI and Jobs Queue services that do not support bearer tokens yet.
         """
         async with self._create_http_client() as http_client:
             response = await http_client.post(
