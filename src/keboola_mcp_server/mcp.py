@@ -9,7 +9,8 @@ import logging
 import textwrap
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, cast
+from typing import Any, Callable
+from unittest.mock import MagicMock
 
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_http_request
@@ -153,20 +154,36 @@ def with_session_state() -> AnyFunction:
             if not isinstance(ctx, Context):
                 raise TypeError(f'The "ctx" argument must be of type Context, got {type(ctx)}.')
 
-            if not getattr(ctx.session, 'state', None):
-                # This is here to allow mocking the context.session.state in tests.
+            # This is here to allow mocking the context.session.state in tests.
+            if not isinstance(ctx.session, MagicMock):
                 config = ServerState.from_context(ctx).config
                 accept_secrets_in_url = config.accept_secrets_in_url
 
+                # IMPORTANT: Be careful what functions you use for accessing the HTTP request when handling SSE traffic.
+                # The SSE is asynchronous and it maintains two connections for each client.
+                # A tool call is requested using 'POST /messages' endpoint, but the tool itself is called outside
+                # the scope of this HTTP call and its result is returned as a message on the long-living connection
+                # opened by the initial `POST /sse` call.
+                #
+                # The functions such as fastmcp.server.dependencies.get_http_request() return the HTTP request received
+                # on the initial 'POST /sse' endpoint call.
+                #
+                # The Context.request_context.request is the HTTP request received by the 'POST /messages' endpoint
+                # when the tool call was requested by a client.
+
                 if http_rq := _get_http_request():
+                    LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
                     config = config.replace_by(http_rq.headers)
                     if accept_secrets_in_url:
+                        LOG.debug(f'Injecting URL query params: http_rq={http_rq}, query_params={http_rq.query_params}')
                         config = config.replace_by(http_rq.query_params)
 
-                    if 'user' in http_rq.scope and isinstance(http_rq.user, AuthenticatedUser):
-                        user = cast(AuthenticatedUser, http_rq.user)
-                        LOG.debug(f'Injecting bearer and SAPI tokens from ProxyAccessToken: {user.access_token}')
-                        assert isinstance(user.access_token, ProxyAccessToken)
+                if http_rq := ctx.request_context.request:
+                    if user := http_rq.scope.get('user'):
+                        LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
+                        assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
+                        assert isinstance(user.access_token, ProxyAccessToken), \
+                            f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
                         config = dataclasses.replace(
                             config,
                             storage_token=user.access_token.sapi_token,
