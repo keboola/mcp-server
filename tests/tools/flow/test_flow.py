@@ -129,17 +129,17 @@ def sample_tasks() -> List[Dict[str, Any]]:
 class TestFlowModels:
     """Test Flow Pydantic models."""
 
-    def test_flow_configuration_response_from_raw_config(self, mock_raw_flow_config):
-        """Test parsing raw API response into FlowConfigurationResponse."""
-        flow_response = FlowConfigurationResponse.from_raw_config(mock_raw_flow_config)
+    def test_flow_configuration_response_model_validate(self, mock_raw_flow_config: Dict[str, Any]):
+        """Test parsing raw API response into FlowConfigurationResponse without component_id of Orchestrator."""
+        flow_response = FlowConfigurationResponse.model_validate(mock_raw_flow_config)
 
         assert flow_response.component_id == ORCHESTRATOR_COMPONENT_ID
-        assert flow_response.configuration_id == '21703284'
-        assert flow_response.configuration_name == 'Test Flow'
-        assert flow_response.configuration_description == 'Test flow description'
-        assert flow_response.version == 1
-        assert flow_response.is_disabled is False
-        assert flow_response.is_deleted is False
+        assert flow_response.configuration_id == mock_raw_flow_config['id']
+        assert flow_response.configuration_name == mock_raw_flow_config['name']
+        assert flow_response.configuration_description == mock_raw_flow_config['description']
+        assert flow_response.version == mock_raw_flow_config['version']
+        assert flow_response.is_disabled is mock_raw_flow_config['isDisabled']
+        assert flow_response.is_deleted is mock_raw_flow_config['isDeleted']
 
         config = flow_response.configuration
         assert isinstance(config, FlowConfiguration)
@@ -163,22 +163,22 @@ class TestFlowModels:
         assert task1.phase == 1
         assert task1.task['componentId'] == 'keboola.ex-aws-s3'
 
-    def test_reduced_flow_from_raw_config(self, mock_raw_flow_config):
+    def test_reduced_flow_from_raw_config(self, mock_raw_flow_config: Dict[str, Any]):
         """Test parsing raw API response into ReducedFlow."""
         reduced_flow = ReducedFlow.from_raw_config(mock_raw_flow_config)
 
-        assert reduced_flow.id == '21703284'
-        assert reduced_flow.name == 'Test Flow'
-        assert reduced_flow.description == 'Test flow description'
-        assert reduced_flow.version == 1
+        assert reduced_flow.id == mock_raw_flow_config['id']
+        assert reduced_flow.name == mock_raw_flow_config['name']
+        assert reduced_flow.description == mock_raw_flow_config['description']
+        assert reduced_flow.version == mock_raw_flow_config['version']
         assert reduced_flow.phases_count == 2
         assert reduced_flow.tasks_count == 2
-        assert reduced_flow.is_disabled is False
-        assert reduced_flow.is_deleted is False
+        assert reduced_flow.is_disabled is mock_raw_flow_config['isDisabled']
+        assert reduced_flow.is_deleted is mock_raw_flow_config['isDeleted']
 
     def test_empty_flow_parsing(self, mock_empty_flow_config):
         """Test parsing empty flow configuration."""
-        flow_response = FlowConfigurationResponse.from_raw_config(mock_empty_flow_config)
+        flow_response = FlowConfigurationResponse.model_validate(mock_empty_flow_config)
         reduced_flow = ReducedFlow.from_raw_config(mock_empty_flow_config)
 
         assert len(flow_response.configuration.phases) == 0
@@ -468,13 +468,18 @@ class TestFlowTools:
             return_value=mock_raw_flow_config
         )
 
-        result = await get_flow_detail(ctx=mcp_context_client, configuration_id='21703284')
+        result = await get_flow_detail(ctx=mcp_context_client, configuration_id=mock_raw_flow_config['id'])
 
-        assert isinstance(result, FlowConfiguration)
-        assert len(result.phases) == 2
-        assert len(result.tasks) == 2
-        assert result.phases[0].name == 'Data Extraction'
-        assert result.tasks[0].name == 'Extract AWS S3'
+        assert isinstance(result, FlowConfigurationResponse)
+        assert result.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert result.configuration_id == mock_raw_flow_config['id']
+        assert result.configuration_name == mock_raw_flow_config['name']
+        assert result.configuration_description == mock_raw_flow_config['description']
+        assert isinstance(result.configuration, FlowConfiguration)
+        assert len(result.configuration.phases) == 2
+        assert len(result.configuration.tasks) == 2
+        assert result.configuration.phases[0].name == 'Data Extraction'
+        assert result.configuration.tasks[0].name == 'Extract AWS S3'
 
     @pytest.mark.asyncio
     async def test_update_flow(
@@ -634,6 +639,6 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     assert isinstance(updated, FlowToolResponse)
 
     detail = await get_flow_detail(ctx=mcp_context_client, configuration_id='123456')
-    assert isinstance(detail, FlowConfiguration)
-    assert len(detail.phases) == 1
-    assert len(detail.tasks) == 1
+    assert isinstance(detail, FlowConfigurationResponse)
+    assert len(detail.configuration.phases) == 1
+    assert len(detail.configuration.tasks) == 1
