@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, List, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.links import Link
@@ -49,7 +49,6 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
     """
     Detailed information about a Keboola Flow Configuration, extending the base configuration response.
     """
-
     version: int = Field(description='The version of the flow configuration')
     configuration: FlowConfiguration = Field(description='The flow configuration containing phases and tasks')
     change_description: Optional[str] = Field(
@@ -68,31 +67,13 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
     )
     created: Optional[str] = Field(None, description='Creation timestamp')
 
+    @model_validator(mode='before')
     @classmethod
-    def from_raw_config(cls, raw_config: dict[str, Any]) -> 'FlowConfigurationResponse':
-        """Create a FlowConfigurationResponse object from raw API response."""
-
-        config_data = raw_config.get('configuration', {})
-
-        # Parse phases and tasks directly from configuration
-        phases = [FlowPhase.model_validate(phase) for phase in config_data.get('phases', [])]
-        tasks = [FlowTask.model_validate(task) for task in config_data.get('tasks', [])]
-
-        flow_config = FlowConfiguration(phases=phases, tasks=tasks)
-
-        return cls(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=raw_config['id'],
-            configuration_name=raw_config['name'],
-            configuration_description=raw_config.get('description', ''),
-            version=raw_config.get('version', 1),
-            is_disabled=raw_config.get('isDisabled', False),
-            is_deleted=raw_config.get('isDeleted', False),
-            configuration=flow_config,
-            change_description=raw_config.get('changeDescription'),
-            configuration_metadata=raw_config.get('metadata', []),
-            created=raw_config.get('created'),
-        )
+    def _initialize_component_id_to_orchestrator(cls, data: Any) -> Any:
+        """Initialize component_id to Orchestrator if not provided."""
+        if isinstance(data, dict) and 'component_id' not in data:
+            data['component_id'] = ORCHESTRATOR_COMPONENT_ID
+        return data
 
 
 class ReducedFlow(BaseModel):
