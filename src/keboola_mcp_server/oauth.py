@@ -263,11 +263,14 @@ class SimpleOAuthProvider(OAuthProvider):
         :return: An `_ExtendedAuthorizationCode` instance if the authorization code is valid, otherwise `None`.
         """
         try:
-            auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
+            auth_code_raw = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
         except jwt.InvalidTokenError:
             LOG.debug(f'[load_authorization_code] Invalid authorization_code: {authorization_code}', exc_info=True)
             return None
 
+        auth_code = _ExtendedAuthorizationCode.model_validate(
+            auth_code_raw | {'redirect_uri': AnyUrl(auth_code_raw['redirect_uri'])}
+        )
         LOG.debug(f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
                   f'auth_code={auth_code}')
 
@@ -278,9 +281,7 @@ class SimpleOAuthProvider(OAuthProvider):
             LOG.info(f'[load_authorization_code] Expired authorization code: '
                      f'auth_code.expires_at={auth_code.expires_at}, now={now}')
 
-        return _ExtendedAuthorizationCode.model_validate(
-            auth_code | {'redirect_uri': AnyUrl(auth_code['redirect_uri'])}
-        )
+        return auth_code
 
     async def exchange_authorization_code(
             self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
