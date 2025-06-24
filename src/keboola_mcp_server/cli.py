@@ -2,7 +2,7 @@
 
 import argparse
 import asyncio
-import logging
+import logging.config
 import os
 import pathlib
 import sys
