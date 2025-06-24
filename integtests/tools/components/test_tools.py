@@ -16,7 +16,6 @@ from keboola_mcp_server.tools.components import (
 )
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
-    ComponentRootConfiguration,
     ComponentToolResponse,
     RetrieveComponentsConfigurationsOutput,
 )
@@ -139,7 +138,7 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
         assert config_detail['name'] == test_name
         assert config_detail['description'] == test_description
         assert 'configuration' in config_detail
-        
+
         # Verify the parameters and storage were set correctly
         configuration_data = cast(dict, config_detail['configuration'])
         assert configuration_data['parameters'] == test_parameters
@@ -222,7 +221,7 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
         assert config_detail['name'] == updated_name
         assert config_detail['description'] == updated_description
         assert 'configuration' in config_detail
-        
+
         # Cast to dict to help type checker
         configuration_data = cast(dict, config_detail['configuration'])
         assert configuration_data['parameters'] == updated_parameters
