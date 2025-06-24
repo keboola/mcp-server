@@ -348,7 +348,7 @@ class RetrieveComponentsConfigurationsOutput(BaseModel):
 
 
 class RetrieveTransformationsConfigurationsOutput(BaseModel):
-    """Output of retrieve_transformations_configurations tool."""
+    """Output of list_transformations tool."""
 
     components_with_configurations: List[ComponentWithConfigurations] = Field(
         description='The groupings of transformation components and their respective configurations.')

@@ -21,10 +21,10 @@ TOOL_GROUP_NAME = 'STORAGE'
 
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
-    mcp.add_tool(get_bucket_detail)
-    mcp.add_tool(retrieve_buckets, serializer=listing_output_serializer)
-    mcp.add_tool(get_table_detail)
-    mcp.add_tool(retrieve_bucket_tables, serializer=listing_output_serializer)
+    mcp.add_tool(get_bucket)
+    mcp.add_tool(list_buckets, serializer=listing_output_serializer)
+    mcp.add_tool(get_table)
+    mcp.add_tool(list_tables, serializer=listing_output_serializer)
     mcp.add_tool(update_bucket_description)
     mcp.add_tool(update_table_description, serializer=listing_output_serializer)
     mcp.add_tool(update_column_description, serializer=listing_output_serializer)
@@ -165,7 +165,7 @@ class UpdateDescriptionResponse(BaseModel):
 
 @tool_errors()
 @with_session_state()
-async def get_bucket_detail(
+async def get_bucket(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> BucketDetail:
     """Gets detailed information about a specific bucket."""
@@ -181,7 +181,7 @@ async def get_bucket_detail(
 
 @tool_errors()
 @with_session_state()
-async def retrieve_buckets(ctx: Context) -> RetrieveBucketsOutput:
+async def list_buckets(ctx: Context) -> RetrieveBucketsOutput:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -196,7 +196,7 @@ async def retrieve_buckets(ctx: Context) -> RetrieveBucketsOutput:
 
 @tool_errors()
 @with_session_state()
-async def get_table_detail(
+async def get_table(
     table_id: Annotated[str, Field(description='Unique ID of the table.')], ctx: Context
 ) -> TableDetail:
     """Gets detailed information about a specific table including its DB identifier and column information."""
@@ -221,7 +221,7 @@ async def get_table_detail(
 
 @tool_errors()
 @with_session_state()
-async def retrieve_bucket_tables(
+async def list_tables(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> RetrieveBucketTablesOutput:
     """Retrieves all tables in a specific bucket with their basic information."""

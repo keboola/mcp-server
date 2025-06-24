@@ -18,9 +18,9 @@ LOG = logging.getLogger(__name__)
 
 def add_job_tools(mcp: KeboolaMcpServer) -> None:
     """Add job tools to the MCP server."""
-    mcp.add_tool(get_job_detail)
-    mcp.add_tool(retrieve_jobs, serializer=listing_output_serializer)
-    mcp.add_tool(start_job)
+    mcp.add_tool(get_job)
+    mcp.add_tool(list_jobs, serializer=listing_output_serializer)
+    mcp.add_tool(run_job)
 
     LOG.info('Job tools added to the MCP server.')
 
@@ -166,7 +166,7 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 # Optional[JOB_STATUS] = None despite having type check errors in the code.
 @tool_errors()
 @with_session_state()
-async def retrieve_jobs(
+async def list_jobs(
     ctx: Context,
     status: Annotated[
         JOB_STATUS,
@@ -248,7 +248,7 @@ async def retrieve_jobs(
 
 @tool_errors()
 @with_session_state()
-async def get_job_detail(
+async def get_job(
     job_id: Annotated[
         str,
         Field(description='The unique identifier of the job whose details should be retrieved.'),
@@ -273,7 +273,7 @@ async def get_job_detail(
 
 @tool_errors()
 @with_session_state()
-async def start_job(
+async def run_job(
     ctx: Context,
     component_id: Annotated[
         str,

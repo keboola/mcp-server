@@ -6,7 +6,7 @@ from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.sql import get_sql_dialect, query_table
+from keboola_mcp_server.tools.sql import get_sql_dialect, query_data
 from keboola_mcp_server.workspace import (
     QueryResult,
     SqlSelectData,
@@ -45,12 +45,12 @@ from keboola_mcp_server.workspace import (
         ),
     ],
 )
-async def test_query_table(query: str, result: QueryResult, expected: str, empty_context: Context, mocker):
+async def test_query_data(query: str, result: QueryResult, expected: str, empty_context: Context, mocker):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.execute_query.return_value = result
     empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    result = await query_table(query, empty_context)
+    result = await query_data(query, empty_context)
     assert result == expected
 
 

@@ -14,10 +14,10 @@ from keboola_mcp_server.tools.storage import (
     TableColumnInfo,
     TableDetail,
     UpdateDescriptionResponse,
-    get_bucket_detail,
-    get_table_detail,
-    retrieve_bucket_tables,
-    retrieve_buckets,
+    get_bucket,
+    get_table,
+    list_buckets,
+    list_tables,
     update_bucket_description,
     update_column_description,
     update_table_description,
@@ -167,7 +167,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('bucket_id', ['bucket1', 'bucket2'])
-async def test_get_bucket_detail(
+async def test_get_bucket(
     mocker: MockerFixture,
     mcp_context_client: Context,
     mock_buckets: Sequence[Mapping[str, Any]],
@@ -180,7 +180,7 @@ async def test_get_bucket_detail(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(return_value=expected_bucket)
 
-    result = await get_bucket_detail(bucket_id, mcp_context_client)
+    result = await get_bucket(bucket_id, mcp_context_client)
 
     assert isinstance(result, BucketDetail)
     assert result.id == expected_bucket['id']
@@ -201,7 +201,7 @@ async def test_get_bucket_detail(
 
 
 @pytest.mark.asyncio
-async def test_retrieve_buckets_in_project(
+async def test_list_buckets(
     mocker: MockerFixture, mcp_context_client: Context, mock_buckets: Sequence[Mapping[str, Any]]
 ) -> None:
     """Test the retrieve_buckets_in_project tool."""
@@ -209,7 +209,7 @@ async def test_retrieve_buckets_in_project(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=mock_buckets)
 
-    result = await retrieve_buckets(mcp_context_client)
+    result = await list_buckets(mcp_context_client)
 
     assert isinstance(result, RetrieveBucketsOutput)
     assert len(result.buckets) == len(mock_buckets)
@@ -235,7 +235,7 @@ async def test_retrieve_buckets_in_project(
 
 
 @pytest.mark.asyncio
-async def test_get_table_detail(
+async def test_get_table(
     mocker: MockerFixture, mcp_context_client: Context, mock_table_data: Mapping[str, Any]
 ) -> None:
     """Test get_table_detail tool."""
@@ -246,7 +246,7 @@ async def test_get_table_detail(
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_fqn = mocker.AsyncMock(return_value=mock_table_data['additional_data']['table_fqn'])
     workspace_manager.get_quoted_name.side_effect = lambda name: f'#{name}#'
-    result = await get_table_detail(mock_table_data['raw_table_data']['id'], mcp_context_client)
+    result = await get_table(mock_table_data['raw_table_data']['id'], mcp_context_client)
 
     assert isinstance(result, TableDetail)
     assert result.id == mock_table_data['raw_table_data']['id']
@@ -281,7 +281,7 @@ async def test_get_table_detail(
         ),
     ],
 )
-async def test_retrieve_bucket_tables_in_project(
+async def test_list_tables(
     mocker: MockerFixture,
     sapi_response: dict[str, Any],
     expected: list[TableDetail],
@@ -290,7 +290,7 @@ async def test_retrieve_bucket_tables_in_project(
     """Test retrieve_bucket_tables_in_project tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=sapi_response)
-    result = await retrieve_bucket_tables('bucket-id', mcp_context_client)
+    result = await list_tables('bucket-id', mcp_context_client)
     assert isinstance(result, RetrieveBucketTablesOutput)
     assert result.tables == expected
     keboola_client.storage_client.bucket_table_list.assert_called_once_with('bucket-id', include=['metadata'])
