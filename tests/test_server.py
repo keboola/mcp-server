@@ -24,7 +24,7 @@ class TestServer:
             'create_flow',
             'create_sql_transformation',
             'docs_query',
-            'find_component',
+            'find_component_id',
             'get_bucket',
             'get_component',
             'get_config',

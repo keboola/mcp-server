@@ -18,8 +18,8 @@ from keboola_mcp_server.tools.components.model import (
     FlowConfigurationResponse,
     FlowPhase,
     FlowTask,
+    ListFlowsOutput,
     ReducedFlow,
-    RetrieveFlowsOutput,
 )
 from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
@@ -222,7 +222,7 @@ async def list_flows(
     flow_ids: Annotated[
         Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
     ] = tuple(),
-) -> RetrieveFlowsOutput:
+) -> ListFlowsOutput:
     """Retrieves flow configurations from the project."""
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -244,7 +244,7 @@ async def list_flows(
 
     links = [links_manager.get_flows_dashboard_link()]
 
-    return RetrieveFlowsOutput(flows=flows, links=links)
+    return ListFlowsOutput(flows=flows, links=links)
 
 
 @tool_errors()

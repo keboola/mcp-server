@@ -13,8 +13,8 @@ from keboola_mcp_server.tools.components.model import (
     FlowConfigurationResponse,
     FlowPhase,
     FlowTask,
+    ListFlowsOutput,
     ReducedFlow,
-    RetrieveFlowsOutput,
 )
 from keboola_mcp_server.tools.flow import (
     FlowToolResponse,
@@ -411,7 +411,7 @@ class TestFlowTools:
 
         result = await list_flows(ctx=mcp_context_client)
 
-        assert isinstance(result, RetrieveFlowsOutput)
+        assert isinstance(result, ListFlowsOutput)
         assert len(result.flows) == 2
         assert all(isinstance(flow, ReducedFlow) for flow in result.flows)
         assert result.flows[0].id == '21703284'

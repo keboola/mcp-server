@@ -337,8 +337,8 @@ class ComponentWithConfigurations(BaseModel):
     )
 
 
-class RetrieveComponentsConfigurationsOutput(BaseModel):
-    """Output of retrieve_component_configurations tool."""
+class ListConfigsOutput(BaseModel):
+    """Output of list_configs tool."""
 
     components_with_configurations: List[ComponentWithConfigurations] = Field(
         description='The groupings of components and their respective configurations.')
@@ -347,7 +347,7 @@ class RetrieveComponentsConfigurationsOutput(BaseModel):
     )
 
 
-class RetrieveTransformationsConfigurationsOutput(BaseModel):
+class ListTransformationsOutput(BaseModel):
     """Output of list_transformations tool."""
 
     components_with_configurations: List[ComponentWithConfigurations] = Field(
@@ -357,8 +357,8 @@ class RetrieveTransformationsConfigurationsOutput(BaseModel):
     )
 
 
-class RetrieveFlowsOutput(BaseModel):
-    """Output of retrieve_flows tool."""
+class ListFlowsOutput(BaseModel):
+    """Output of list_flows tool."""
 
     flows: List['ReducedFlow'] = Field(description='The retrieved flow configurations.')
     links: List[Link] = Field(

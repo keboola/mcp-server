@@ -18,9 +18,9 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
     ComponentConfigurationResponseBase,
+    ListConfigsOutput,
+    ListTransformationsOutput,
     ReducedComponent,
-    RetrieveComponentsConfigurationsOutput,
-    RetrieveTransformationsConfigurationsOutput,
 )
 from keboola_mcp_server.tools.components.tools import get_config_examples
 from keboola_mcp_server.tools.components.utils import TransformationConfiguration, _clean_bucket_name
@@ -30,7 +30,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 @pytest.fixture
 def assert_retrieve_components() -> Callable[
     [
-        RetrieveComponentsConfigurationsOutput | RetrieveTransformationsConfigurationsOutput,
+        ListConfigsOutput | ListTransformationsOutput,
         list[dict[str, Any]],
         list[dict[str, Any]],
     ],
@@ -39,7 +39,7 @@ def assert_retrieve_components() -> Callable[
     """Assert that the _retrieve_components_in_project tool returns the correct components and configurations."""
 
     def _assert_retrieve_components(
-        result: RetrieveComponentsConfigurationsOutput | RetrieveTransformationsConfigurationsOutput,
+        result: ListConfigsOutput | ListTransformationsOutput,
         components: list[dict[str, Any]],
         configurations: list[dict[str, Any]],
     ):
@@ -104,7 +104,7 @@ async def test_list_configs_by_types(
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
     assert_retrieve_components: Callable[
-        [RetrieveComponentsConfigurationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
+        [ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
     """Test list_configs when component types are provided."""
@@ -135,7 +135,7 @@ async def test_list_transformations(
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
     assert_retrieve_components: Callable[
-        [RetrieveTransformationsConfigurationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
+        [ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
     """Test list_transformations."""
@@ -164,7 +164,7 @@ async def test_list_configs_from_ids(
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
     assert_retrieve_components: Callable[
-        [RetrieveComponentsConfigurationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
+        [ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
     """Test list_configs when component IDs are provided."""
@@ -190,7 +190,7 @@ async def test_list_transformations_from_ids(
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
     assert_retrieve_components: Callable[
-        [RetrieveTransformationsConfigurationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
+        [ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
     ],
 ):
     """Test list_transformations when transformation IDs are provided."""

@@ -173,7 +173,7 @@ async def test_get_bucket(
     mock_buckets: Sequence[Mapping[str, Any]],
     bucket_id: str,
 ):
-    """Test get_bucket_detail tool."""
+    """Test get_bucket tool."""
 
     expected_bucket = next(b for b in mock_buckets if b['id'] == bucket_id)
 
@@ -204,7 +204,7 @@ async def test_get_bucket(
 async def test_list_buckets(
     mocker: MockerFixture, mcp_context_client: Context, mock_buckets: Sequence[Mapping[str, Any]]
 ) -> None:
-    """Test the retrieve_buckets_in_project tool."""
+    """Test the list_buckets tool."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=mock_buckets)
@@ -238,7 +238,7 @@ async def test_list_buckets(
 async def test_get_table(
     mocker: MockerFixture, mcp_context_client: Context, mock_table_data: Mapping[str, Any]
 ) -> None:
-    """Test get_table_detail tool."""
+    """Test get_table tool."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.table_detail = mocker.AsyncMock(return_value=mock_table_data['raw_table_data'])
@@ -287,7 +287,7 @@ async def test_list_tables(
     expected: list[TableDetail],
     mcp_context_client: Context,
 ) -> None:
-    """Test retrieve_bucket_tables_in_project tool."""
+    """Test list_tables tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=sapi_response)
     result = await list_tables('bucket-id', mcp_context_client)

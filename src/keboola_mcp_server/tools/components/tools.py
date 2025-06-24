@@ -18,8 +18,8 @@ from keboola_mcp_server.tools.components.model import (
     ComponentRootConfiguration,
     ComponentRowConfiguration,
     ComponentType,
-    RetrieveComponentsConfigurationsOutput,
-    RetrieveTransformationsConfigurationsOutput,
+    ListConfigsOutput,
+    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
@@ -53,7 +53,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(update_config)
     mcp.add_tool(update_config_row)
     mcp.add_tool(get_config_examples)
-    mcp.add_tool(find_component)
+    mcp.add_tool(find_component_id)
     mcp.add_tool(create_sql_transformation)
     mcp.add_tool(update_sql_transformation)
     mcp.add_tool(list_transformations)
@@ -76,7 +76,7 @@ async def list_configs(
         Sequence[str],
         Field(description='List of component IDs to retrieve configurations for. If none, return all components.'),
     ] = tuple(),
-) -> RetrieveComponentsConfigurationsOutput:
+) -> ListConfigsOutput:
     """
     Retrieves configurations of components present in the project,
     optionally filtered by component types or specific component IDs.
@@ -111,7 +111,7 @@ async def list_configs(
         components_with_configurations = await _list_configs_by_ids(client, component_ids)
     links = [links_manager.get_used_components_link()]
 
-    return RetrieveComponentsConfigurationsOutput(
+    return ListConfigsOutput(
         components_with_configurations=components_with_configurations, links=links
     )
 
@@ -124,7 +124,7 @@ async def list_transformations(
         Sequence[str],
         Field(description='List of transformation component IDs to retrieve configurations for.'),
     ] = tuple(),
-) -> RetrieveTransformationsConfigurationsOutput:
+) -> ListTransformationsOutput:
     """
     Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
 
@@ -155,7 +155,7 @@ async def list_transformations(
 
     links = [links_manager.get_transformations_dashboard_link()]
 
-    return RetrieveTransformationsConfigurationsOutput(
+    return ListTransformationsOutput(
         components_with_configurations=components_with_configurations, links=links
     )
 
@@ -544,7 +544,7 @@ async def create_config(
     ],
 ) -> Annotated[ComponentRootConfiguration, Field(description='Created component root configuration.')]:
     """
-    Creates a component configuration using the specified name, component ID, configuration JSON, and description.
+    Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
     - The configuration JSON object must follow the root_configuration_schema of the specified component.
@@ -658,7 +658,7 @@ async def add_config_row(
     - Use when you want to create a new row configuration for a specific component configuration.
 
     EXAMPLES:
-    - user_input: `Create a new configuration for component X with these settings`
+    - user_input: `Create a new configuration row for component X with these settings`
         - set the component_id, configuration_id and configuration parameters accordingly
         - returns the created component configuration if successful.
     """
@@ -760,7 +760,7 @@ async def update_config(
     ],
 ) -> Annotated[ComponentRootConfiguration, Field(description='Updated component root configuration.')]:
     """
-    Updates a specific component configuration using given by component ID, and configuration ID.
+    Updates a specific root component configuration using given by component ID, and configuration ID.
 
     CONSIDERATIONS:
     - The configuration JSON object must follow the root_configuration_schema of the specified component.
@@ -993,7 +993,7 @@ async def get_config_examples(
 
 @tool_errors()
 @with_session_state()
-async def find_component(
+async def find_component_id(
     ctx: Context,
     query: Annotated[str, Field(description='Natural language query to find the requested component.')],
 ) -> list[SuggestedComponent]:

@@ -6,7 +6,7 @@ from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.flow import (
     FlowToolResponse,
-    RetrieveFlowsOutput,
+    ListFlowsOutput,
     create_flow,
     get_flow,
     list_flows,
@@ -17,7 +17,7 @@ from keboola_mcp_server.tools.flow import (
 @pytest.mark.asyncio
 async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
-    Create a flow and retrieve it using retrieve_flows.
+    Create a flow and retrieve it using list_flows.
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
     :return: None
@@ -165,7 +165,7 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
     :return: None
     """
     flows = await list_flows(mcp_context)
-    assert isinstance(flows, RetrieveFlowsOutput)
+    assert isinstance(flows, ListFlowsOutput)
 
 
 @pytest.mark.asyncio

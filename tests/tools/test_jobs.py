@@ -10,7 +10,7 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.jobs import (
     JobDetail,
     JobListItem,
-    RetrieveJobsOutput,
+    ListJobsOutput,
     get_job,
     list_jobs,
     run_job,
@@ -89,7 +89,7 @@ async def test_list_jobs(
 
     result = await list_jobs(context)
 
-    assert isinstance(result, RetrieveJobsOutput)
+    assert isinstance(result, ListJobsOutput)
     assert len(result.jobs) == 2
     assert all(isinstance(job, JobListItem) for job in result.jobs)
     assert all(returned.id == expected['id'] for returned, expected in zip(result.jobs, mock_jobs))
