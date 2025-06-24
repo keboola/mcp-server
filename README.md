@@ -151,6 +151,8 @@ Config file locations:
 }
 ```
 
+**Note**: Use short, descriptive names for MCP servers. Since the full tool name includes the server name and must stay under ~60 characters, longer names may be filtered out in Cursor and will not be displayed to the Agent.
+
 #### Cursor Configuration for Windows WSL
 
 When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this configuration:
@@ -158,25 +160,20 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 ```json
 {
   "mcpServers": {
-    "keboola": {
+    "keboola":{
       "command": "wsl.exe",
       "args": [
-        "bash",
-        "-c",
-        "'source /wsl_path/to/keboola-mcp-server/.env",
-        "&&",
-        "/wsl_path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
+          "bash",
+          "-c '",
+          "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
+          "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
+          "/snap/bin/uvx -m keboola_mcp_server.cli",
+          "--api-url https://connection.YOUR_REGION.keboola.com",
+          "'"
       ]
-    }
+    },
   }
 }
-```
-
-Where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
-
-```bash
-export KBC_STORAGE_TOKEN="your_keboola_storage_token"
-export KBC_WORKSPACE_SCHEMA="your_workspace_schema"
 ```
 
 ### Option B: Local Development Mode
