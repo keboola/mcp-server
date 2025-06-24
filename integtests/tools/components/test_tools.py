@@ -17,7 +17,7 @@ from keboola_mcp_server.tools.components import (
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
     ComponentRootConfiguration,
-    RetrieveComponentsConfigurationsOutput,
+    ListConfigsOutput,
 )
 from keboola_mcp_server.tools.components.tools import create_config, update_config
 
@@ -61,7 +61,7 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
     result = await list_configs(ctx=mcp_context, component_ids=component_ids)
 
     # Verify result structure and content
-    assert isinstance(result, RetrieveComponentsConfigurationsOutput)
+    assert isinstance(result, ListConfigsOutput)
     assert len(result.components_with_configurations) == len(component_ids)
 
     for item in result.components_with_configurations:
@@ -85,7 +85,7 @@ async def test_list_configs_by_types(mcp_context: Context, configs: list[ConfigD
 
     result = await list_configs(ctx=mcp_context, component_types=component_types)
 
-    assert isinstance(result, RetrieveComponentsConfigurationsOutput)
+    assert isinstance(result, ListConfigsOutput)
     # Currently, we only have extractor components in the project
     assert len(result.components_with_configurations) == len(component_ids)
 
