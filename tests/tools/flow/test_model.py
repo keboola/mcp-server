@@ -1,6 +1,3 @@
-# --- Test Model Parsing ---
-
-
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.flow.model import (
     FlowConfiguration,
@@ -9,6 +6,8 @@ from keboola_mcp_server.tools.flow.model import (
     FlowTask,
     ReducedFlow,
 )
+
+# --- Test Model Parsing ---
 
 
 class TestFlowModels:

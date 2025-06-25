@@ -98,7 +98,7 @@ jobs:
   integration_tests:
     name: Integration Tests
     needs: build
-    # run this job only for push events
+    # run this job only for push events (not pull requests)
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
@@ -121,6 +121,8 @@ jobs:
           uv sync --frozen --no-editable --extra dev
 
       - name: Integration tests
+        # run actual tests only for pushes to the same repository (not forks)
+        if: github.repository == github.event.repository.full_name
         env:
           INTEGTEST_STORAGE_TOKEN: ${{ secrets.INTEGTEST_STORAGE_TOKEN }}
           INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
@@ -128,9 +130,17 @@ jobs:
         run: |
           uv run tox -e integtests
 
+      - name: Skip integration tests for forks
+        # show a message when tests are skipped for forks
+        if: github.repository != github.event.repository.full_name
+        run: |
+          echo "Integration tests skipped for fork repository"
+          echo "Dependencies installed successfully - setup is working correctly"
+
       - name: Publish integration test results
         uses: dorny/test-reporter@v1
-        if: success() || failure() # run this step even if a previous step failed
+        # publish results only when actual tests were run (same repository)
+        if: (always()) && github.repository == github.event.repository.full_name
         with:
           name: Integration test results (${{ matrix.python-version }})
           path: ./integtest-results.xml

@@ -10,14 +10,14 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.flow.model import (
     FlowConfiguration,
+    ListFlowsOutput,
     ReducedFlow,
-    RetrieveFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
     create_flow,
-    get_flow_detail,
-    retrieve_flows,
+    get_flow,
+    list_flows,
     update_flow,
 )
 
@@ -70,22 +70,22 @@ class TestFlowTools:
         assert len(flow_config['tasks']) == 3
 
     @pytest.mark.asyncio
-    async def test_retrieve_flows_all(
+    async def test_list_flows_all(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
         mock_raw_flow_config: Dict[str, Any],
         mock_empty_flow_config: Dict[str, Any],
     ):
-        """Test retrieving all flows."""
+        """Test listing all flows."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.flow_list = mocker.AsyncMock(
             return_value=[mock_raw_flow_config, mock_empty_flow_config]
         )
 
-        result = await retrieve_flows(ctx=mcp_context_client)
+        result = await list_flows(ctx=mcp_context_client)
 
-        assert isinstance(result, RetrieveFlowsOutput)
+        assert isinstance(result, ListFlowsOutput)
         assert len(result.flows) == 2
         assert all(isinstance(flow, ReducedFlow) for flow in result.flows)
         assert result.flows[0].id == '21703284'
@@ -94,24 +94,24 @@ class TestFlowTools:
         assert result.flows[1].phases_count == 0
 
     @pytest.mark.asyncio
-    async def test_retrieve_flows_specific_ids(
+    async def test_list_flows_specific_ids(
         self, mocker: MockerFixture, mcp_context_client: Context, mock_raw_flow_config: Dict[str, Any]
     ):
-        """Test retrieving specific flows by ID."""
+        """Test listing specific flows by ID."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
-        result = await retrieve_flows(ctx=mcp_context_client, flow_ids=['21703284'])
+        result = await list_flows(ctx=mcp_context_client, flow_ids=['21703284'])
 
         assert len(result.flows) == 1
         assert result.flows[0].id == '21703284'
         keboola_client.storage_client.flow_detail.assert_called_once_with('21703284')
 
     @pytest.mark.asyncio
-    async def test_retrieve_flows_with_missing_id(
+    async def test_list_flows_with_missing_id(
         self, mocker: MockerFixture, mcp_context_client: Context, mock_raw_flow_config: Dict[str, Any]
     ):
-        """Test retrieving flows when some IDs don't exist."""
+        """Test listing flows when some IDs don't exist."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
         def mock_get_flow(flow_id):
@@ -122,20 +122,20 @@ class TestFlowTools:
 
         keboola_client.storage_client.flow_detail = mocker.AsyncMock(side_effect=mock_get_flow)
 
-        result = await retrieve_flows(ctx=mcp_context_client, flow_ids=['21703284', 'nonexistent'])
+        result = await list_flows(ctx=mcp_context_client, flow_ids=['21703284', 'nonexistent'])
 
         assert len(result.flows) == 1
         assert result.flows[0].id == '21703284'
 
     @pytest.mark.asyncio
-    async def test_get_flow_detail(
+    async def test_get_flow(
         self, mocker: MockerFixture, mcp_context_client: Context, mock_raw_flow_config: Dict[str, Any]
     ):
         """Test getting detailed flow configuration."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
-        result = await get_flow_detail(ctx=mcp_context_client, configuration_id='21703284')
+        result = await get_flow(ctx=mcp_context_client, configuration_id='21703284')
 
         assert isinstance(result, FlowConfiguration)
         assert len(result.phases) == 2
@@ -215,7 +215,7 @@ class TestFlowEdgeCases:
 
 @pytest.mark.asyncio
 async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client: Context):
-    """Test a complete flow workflow: create, retrieve, update, get detail."""
+    """Test a complete flow workflow: create, list, update, get."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
     created_flow = {
@@ -259,7 +259,7 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     )
     assert isinstance(created, FlowToolResponse)
 
-    result = await retrieve_flows(ctx=mcp_context_client)
+    result = await list_flows(ctx=mcp_context_client)
     assert len(result.flows) == 1
     assert result.flows[0].name == 'Integration Test Flow'
 
@@ -274,7 +274,7 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     )
     assert isinstance(updated, FlowToolResponse)
 
-    detail = await get_flow_detail(ctx=mcp_context_client, configuration_id='123456')
+    detail = await get_flow(ctx=mcp_context_client, configuration_id='123456')
     assert isinstance(detail, FlowConfiguration)
     assert len(detail.phases) == 1
     assert len(detail.tasks) == 1
