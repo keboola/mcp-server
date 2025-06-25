@@ -59,22 +59,23 @@ async def test_tool_errors(
     exception_message,
     request,
 ):
-    """Test tool_errors decorator with various recovery instruction configurations."""
-    function = request.getfixturevalue(function_fixture)
+    """
+    Test that the appropriate recovery message is applied based on the exception type.
+    Verifies that the tool_errors decorator handles various combinations of recovery parameters.
+    """
+    tool_func = request.getfixturevalue(function_fixture)
+    decorated_func = tool_errors(default_recovery=default_recovery, recovery_instructions=recovery_instructions)(
+        tool_func
+    )
 
-    decorated_func = tool_errors(
-        default_recovery=default_recovery,
-        recovery_instructions=recovery_instructions,
-    )(function)
-
-    with pytest.raises(expected_exception=(ToolException, ValueError)) as exc_info:
-        await decorated_func()
-
-    error_message = str(exc_info.value)
-    assert exception_message in error_message
-
-    if expected_recovery_message:
-        assert expected_recovery_message in error_message
+    if expected_recovery_message is None:
+        with pytest.raises(ValueError, match=exception_message) as excinfo:
+            await decorated_func()
+    else:
+        with pytest.raises(ToolException) as excinfo:
+            await decorated_func()
+        assert expected_recovery_message in str(excinfo.value)
+    assert exception_message in str(excinfo.value)
 
 
 @pytest.mark.asyncio
