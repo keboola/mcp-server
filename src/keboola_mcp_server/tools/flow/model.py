@@ -8,8 +8,8 @@ from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
 
 
-class RetrieveFlowsOutput(BaseModel):
-    """Output of retrieve_flows tool."""
+class ListFlowsOutput(BaseModel):
+    """Output of list_flows tool."""
 
     flows: List['ReducedFlow'] = Field(description='The retrieved flow configurations.')
     links: List[Link] = Field(
