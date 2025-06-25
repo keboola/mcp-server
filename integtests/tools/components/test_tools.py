@@ -21,7 +21,9 @@ from keboola_mcp_server.tools.components.model import (
 )
 from keboola_mcp_server.tools.components.tools import (
     create_component_root_configuration,
+    create_component_row_configuration,
     update_component_root_configuration,
+    update_component_row_configuration,
 )
 
 LOG = logging.getLogger(__name__)
@@ -183,7 +185,6 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
         parameters={'initial_param': 'initial_value'},
         storage={'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}},
     )
-    assert created_config.configuration_id is not None
 
     try:
         updated_name = 'Updated Test Configuration'
@@ -249,5 +250,214 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
         await client.storage_client.configuration_delete(
             component_id=component_id,
             configuration_id=created_config.configuration_id,
+            skip_trash=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_component_row_configuration(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `create_component_row_configuration` creates a row configuration with correct metadata."""
+
+    # Use the first component from configs for testing
+    test_config = configs[0]
+    component_id = test_config.component_id
+
+    # First create a root configuration to add row to
+    client = KeboolaClient.from_state(mcp_context.session.state)
+
+    root_config = await create_component_root_configuration(
+        ctx=mcp_context,
+        name='Root Configuration for Row Test',
+        description='Root configuration created for row configuration test',
+        component_id=component_id,
+        parameters={},
+        storage={},
+    )
+
+    try:
+        row_name = 'Test Row Configuration'
+        row_description = 'Test row configuration created by automated test'
+        row_parameters = {'row_param': 'row_value'}
+        row_storage = {}
+
+        # Create the row configuration
+        created_row_config = await create_component_row_configuration(
+            ctx=mcp_context,
+            name=row_name,
+            description=row_description,
+            component_id=component_id,
+            configuration_id=root_config.configuration_id,
+            parameters=row_parameters,
+            storage=row_storage,
+        )
+
+        assert isinstance(created_row_config, ComponentToolResponse)
+        assert created_row_config.component_id == component_id
+        assert created_row_config.configuration_id == root_config.configuration_id
+        assert created_row_config.description == row_description
+        assert created_row_config.success is True
+        assert created_row_config.timestamp is not None
+        assert len(created_row_config.links) > 0
+
+        # Verify the row configuration exists by fetching the root configuration and checking its rows
+        config_detail = await client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=root_config.configuration_id
+        )
+
+        assert 'rows' in config_detail
+        rows = cast(list, config_detail['rows'])
+        assert len(rows) == 1
+
+        # Find the row we just created
+        created_row = None
+        for row in rows:
+            if isinstance(row, dict) and row.get('name') == row_name:
+                created_row = row
+                break
+
+        assert created_row is not None
+        assert created_row['description'] == row_description
+        assert 'configuration' in created_row
+
+        # Verify the parameters and storage were set correctly
+        row_configuration_data = cast(dict, created_row['configuration'])
+        assert row_configuration_data['parameters'] == row_parameters
+        assert row_configuration_data['storage'] == row_storage
+
+        # Verify metadata was set for the parent configuration
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=component_id, configuration_id=root_config.configuration_id
+        )
+
+        assert isinstance(metadata, list)
+        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+        # The updated metadata should be present since we added a row to the configuration
+        updated_by_md_keys = [
+            key
+            for key in metadata_dict.keys()
+            if isinstance(key, str) and key.startswith(MetadataField.UPDATED_BY_MCP_PREFIX)
+        ]
+        assert len(updated_by_md_keys) > 0
+
+    finally:
+        # Delete the configuration (this will also delete the rows)
+        await client.storage_client.configuration_delete(
+            component_id=component_id,
+            configuration_id=root_config.configuration_id,
+            skip_trash=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_component_row_configuration(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `update_component_row_configuration` updates a row configuration with correct metadata."""
+
+    # Use the first component from configs for testing
+    test_config = configs[0]
+    component_id = test_config.component_id
+
+    client = KeboolaClient.from_state(mcp_context.session.state)
+
+    # First create a root configuration
+    root_config = await create_component_root_configuration(
+        ctx=mcp_context,
+        name='Root Configuration for Row Update Test',
+        description='Root configuration created for row update test',
+        component_id=component_id,
+        parameters={},
+        storage={},
+    )
+    assert root_config.configuration_id is not None
+
+    try:
+        # Create a row configuration
+        initial_row_config = await create_component_row_configuration(
+            ctx=mcp_context,
+            name='Initial Row Configuration',
+            description='Initial row configuration for update test',
+            component_id=component_id,
+            configuration_id=root_config.configuration_id,
+            parameters={'initial_row_param': 'initial_row_value'},
+            storage={},
+        )
+
+        # Get the row ID from the configuration detail
+        config_detail = await client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=initial_row_config.configuration_id
+        )
+
+        rows = cast(list, config_detail['rows'])
+        assert len(rows) > 0
+        row_id = rows[0]['id']
+
+        updated_row_name = 'Updated Row Configuration'
+        updated_row_description = 'Updated row configuration by automated test'
+        updated_row_parameters = {'updated_row_param': 'updated_row_value'}
+        updated_row_storage = {}
+        change_description = 'Automated row test update'
+
+        # Update the row configuration
+        updated_row_config = await update_component_row_configuration(
+            ctx=mcp_context,
+            name=updated_row_name,
+            description=updated_row_description,
+            change_description=change_description,
+            component_id=component_id,
+            configuration_id=root_config.configuration_id,
+            configuration_row_id=row_id,
+            parameters=updated_row_parameters,
+            storage=updated_row_storage,
+        )
+
+        # Test the ComponentToolResponse attributes
+        assert isinstance(updated_row_config, ComponentToolResponse)
+        assert updated_row_config.component_id == component_id
+        assert updated_row_config.configuration_id == root_config.configuration_id
+        assert updated_row_config.description == updated_row_description
+        assert updated_row_config.success is True
+        assert updated_row_config.timestamp is not None
+        assert len(updated_row_config.links) > 0
+
+        # Verify the row configuration was updated
+        updated_config_detail = await client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=updated_row_config.configuration_id
+        )
+        updated_rows = cast(list, updated_config_detail['rows'])
+        assert len(updated_rows) > 0
+
+        # Find the updated row
+        updated_row = None
+        for row in updated_rows:
+            if isinstance(row, dict) and row.get('id') == row_id:
+                updated_row = row
+                break
+
+        assert updated_row is not None
+        assert updated_row['name'] == updated_row_name
+        assert updated_row['description'] == updated_row_description
+
+        # Verify the parameters and storage were updated correctly
+        updated_row_configuration_data = cast(dict, updated_row['configuration'])
+        assert updated_row_configuration_data['parameters'] == updated_row_parameters
+        assert updated_row_configuration_data['storage'] == updated_row_storage
+
+        current_row_config_version = updated_row['version']
+
+        # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=component_id, configuration_id=root_config.configuration_id
+        )
+
+        assert isinstance(metadata, list)
+        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+        updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{current_row_config_version}'
+
+        assert updated_by_md_key in metadata_dict
+        assert metadata_dict[updated_by_md_key] == 'true'
+
+    finally:
+        await client.storage_client.configuration_delete(
+            component_id=component_id,
+            configuration_id=root_config.configuration_id,
             skip_trash=True,
         )
