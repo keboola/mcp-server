@@ -1,3 +1,5 @@
+from typing import Any
+
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.flow.model import (
     FlowConfiguration,
@@ -13,8 +15,11 @@ from keboola_mcp_server.tools.flow.model import (
 class TestFlowModels:
     """Test Flow Pydantic models."""
 
-    def test_flow_configuration_response_model_validate(self, mock_raw_flow_config):
-        """Test parsing raw API response into FlowConfigurationResponse."""
+    def test_flow_configuration_response_model_validate(self, mock_raw_flow_config: dict[str, Any]):
+        """Test model validation of FlowConfigurationResponse from raw API response."""
+
+        assert 'component_id' not in mock_raw_flow_config, 'component_id must not be present in the raw flow config'
+
         flow_response = FlowConfigurationResponse.model_validate(mock_raw_flow_config)
 
         assert flow_response.component_id == ORCHESTRATOR_COMPONENT_ID
@@ -47,8 +52,12 @@ class TestFlowModels:
         assert task1.phase == 1
         assert task1.task['componentId'] == 'keboola.ex-aws-s3'
 
-    def test_reduced_flow_model_validate(self, mock_raw_flow_config):
-        """Test parsing raw API response into ReducedFlow."""
+    def test_reduced_flow_model_validate(self, mock_raw_flow_config: dict[str, Any]):
+        """Test model validation of ReducedFlow from raw API response."""
+
+        assert 'tasks_count' not in mock_raw_flow_config, 'tasks_count must not be present in the raw flow config'
+        assert 'phases_count' not in mock_raw_flow_config, 'phases_count must not be present in the raw flow config'
+
         reduced_flow = ReducedFlow.model_validate(mock_raw_flow_config)
 
         assert reduced_flow.id == '21703284'
@@ -60,8 +69,13 @@ class TestFlowModels:
         assert reduced_flow.is_disabled is False
         assert reduced_flow.is_deleted is False
 
-    def test_empty_flow_model_validate(self, mock_empty_flow_config):
-        """Test parsing empty flow configuration."""
+    def test_empty_flow_model_validate(self, mock_empty_flow_config: dict[str, Any]):
+        """Test model validation of empty flow configuration."""
+
+        assert 'component_id' not in mock_empty_flow_config, 'component_id must not be present in the empty flow config'
+        assert 'tasks_count' not in mock_empty_flow_config, 'tasks_count must not be present in the empty flow config'
+        assert 'phases_count' not in mock_empty_flow_config, 'phases_count must not be present in the empty flow config'
+
         flow_response = FlowConfigurationResponse.model_validate(mock_empty_flow_config)
         reduced_flow = ReducedFlow.model_validate(mock_empty_flow_config)
 
