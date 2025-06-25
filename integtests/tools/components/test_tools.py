@@ -8,18 +8,28 @@ from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components import (
-    ComponentType,
-    ComponentWithConfigurations,
-    get_config,
-    list_configs,
-)
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
     ComponentToolResponse,
+    ComponentType,
+    ComponentWithConfigurations,
     ListConfigsOutput,
 )
-from keboola_mcp_server.tools.components.tools import add_config_row, create_config, update_config, update_config_row
+from keboola_mcp_server.tools.components.tools import (
+    add_config_row,
+    create_config,
+    create_sql_transformation,
+    get_config,
+    list_configs,
+    update_config,
+    update_config_row,
+    update_sql_transformation,
+)
+from keboola_mcp_server.tools.components.utils import (
+    TransformationConfiguration,
+    _get_sql_transformation_id_from_sql_dialect,
+)
+from keboola_mcp_server.tools.sql import get_sql_dialect
 
 LOG = logging.getLogger(__name__)
 
@@ -454,5 +464,280 @@ async def test_update_component_row_configuration(mcp_context: Context, configs:
         await client.storage_client.configuration_delete(
             component_id=component_id,
             configuration_id=root_config.configuration_id,
+            skip_trash=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_sql_transformation(mcp_context: Context):
+    """Tests that `create_sql_transformation` creates a SQL transformation with correct configuration."""
+
+    test_name = 'Test SQL Transformation'
+    test_description = 'Test SQL transformation created by automated test'
+
+    # Define test SQL code blocks
+    test_sql_code_blocks = [
+        TransformationConfiguration.Parameters.Block.Code(
+            name='Main transformation', sql_statements=['SELECT 1 as test_column', 'SELECT 2 as another_column']
+        )
+    ]
+
+    test_created_table_names = ['test_output_table']
+
+    client = KeboolaClient.from_state(mcp_context.session.state)
+
+    # Create the SQL transformation
+    created_transformation = await create_sql_transformation(
+        ctx=mcp_context,
+        name=test_name,
+        description=test_description,
+        sql_code_blocks=test_sql_code_blocks,
+        created_table_names=test_created_table_names,
+    )
+
+    try:
+        # Verify the response structure
+        assert isinstance(created_transformation, ComponentToolResponse)
+        assert created_transformation.success is True
+        assert created_transformation.timestamp is not None
+        assert len(created_transformation.links) > 0
+        assert created_transformation.description == test_description
+
+        # Get the expected component ID based on SQL dialect
+        sql_dialect = await get_sql_dialect(mcp_context)
+        expected_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+
+        assert created_transformation.component_id == expected_component_id
+        assert created_transformation.configuration_id is not None
+
+        # Verify the configuration exists in the backend by fetching it
+        config_detail = await client.storage_client.configuration_detail(
+            component_id=created_transformation.component_id, configuration_id=created_transformation.configuration_id
+        )
+        LOG.error(config_detail)
+
+        assert config_detail['name'] == test_name
+        assert config_detail['description'] == test_description
+        assert 'configuration' in config_detail
+
+        # Verify the configuration structure
+        configuration_data = cast(dict, config_detail['configuration'])
+        assert 'parameters' in configuration_data
+        assert 'storage' in configuration_data
+        LOG.error(configuration_data)
+
+        # Verify the parameters structure
+        parameters = configuration_data['parameters']
+        assert 'blocks' in parameters
+        assert len(parameters['blocks']) == 1
+        LOG.error(parameters)
+
+        block = parameters['blocks'][0]
+        assert 'codes' in block
+        assert len(block['codes']) == 1
+        LOG.error(block)
+
+        code = block['codes'][0]
+        assert code['name'] == 'Main transformation'
+        assert 'script' in code  # API uses 'script' instead of 'sql_statements'
+        assert len(code['script']) == 2
+        assert code['script'][0] == 'SELECT 1 as test_column'
+        assert code['script'][1] == 'SELECT 2 as another_column'
+        LOG.error(code)
+
+        # Verify the storage structure contains output tables
+        storage = configuration_data['storage']
+        assert 'output' in storage
+        assert 'tables' in storage['output']
+        assert len(storage['output']['tables']) == len(test_created_table_names)
+        LOG.error(storage)
+
+        output_table = storage['output']['tables'][0]
+        assert output_table['destination'] == test_created_table_names[0]
+        LOG.error(output_table)
+
+        # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=created_transformation.component_id, configuration_id=created_transformation.configuration_id
+        )
+        LOG.error(metadata)
+
+        # Convert metadata list to dictionary for easier checking
+        assert isinstance(metadata, list)
+        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+        assert MetadataField.CREATED_BY_MCP in metadata_dict
+        assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
+        LOG.error(metadata_dict)
+
+    finally:
+        # Clean up: Delete the configuration
+        await client.storage_client.configuration_delete(
+            component_id=created_transformation.component_id,
+            configuration_id=created_transformation.configuration_id,
+            skip_trash=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_sql_transformation(mcp_context: Context):
+    """Tests that `update_sql_transformation` updates an existing SQL transformation correctly."""
+    # First, create an initial transformation
+    initial_name = 'Initial SQL Transformation'
+    initial_description = 'Initial SQL transformation for update test'
+
+    initial_sql_code_blocks = [
+        TransformationConfiguration.Parameters.Block.Code(
+            name='Initial transformation', sql_statements=['SELECT 1 as initial_column']
+        )
+    ]
+
+    initial_created_table_names = ['initial_output_table']
+
+    client = KeboolaClient.from_state(mcp_context.session.state)
+
+    # Create the initial transformation
+    created_transformation = await create_sql_transformation(
+        ctx=mcp_context,
+        name=initial_name,
+        description=initial_description,
+        sql_code_blocks=initial_sql_code_blocks,
+        created_table_names=initial_created_table_names,
+    )
+
+    try:
+        # Now update the transformation
+        updated_description = 'Updated SQL transformation description'
+        change_description = 'Automated test update: modified SQL statements and output tables'
+
+        # Define updated parameters and storage
+        updated_parameters = TransformationConfiguration.Parameters(
+            blocks=[
+                TransformationConfiguration.Parameters.Block(
+                    name='Updated block',
+                    codes=[
+                        TransformationConfiguration.Parameters.Block.Code(
+                            name='Updated transformation',
+                            sql_statements=[
+                                'SELECT 1 as updated_column',
+                                'SELECT 2 as additional_column',
+                                'SELECT 3 as third_column',
+                            ],
+                        )
+                    ],
+                )
+            ]
+        )
+
+        updated_storage = {
+            'input': {'tables': [{'source': 'in.c-bucket.input_table', 'destination': 'input.csv'}]},
+            'output': {
+                'tables': [
+                    {'source': 'updated_output_table', 'destination': 'out.c-bucket.updated_output_table'},
+                    {'source': 'second_output_table', 'destination': 'out.c-bucket.second_output_table'},
+                ]
+            },
+        }
+
+        # Update the transformation
+        updated_transformation = await update_sql_transformation(
+            ctx=mcp_context,
+            configuration_id=created_transformation.configuration_id,
+            change_description=change_description,
+            parameters=updated_parameters,
+            storage=updated_storage,
+            updated_description=updated_description,
+            is_disabled=False,
+        )
+
+        # Verify the response structure
+        assert isinstance(updated_transformation, ComponentToolResponse)
+        assert updated_transformation.success is True
+        assert updated_transformation.timestamp is not None
+        assert len(updated_transformation.links) > 0
+        assert updated_transformation.component_id == created_transformation.component_id
+        assert updated_transformation.configuration_id == created_transformation.configuration_id
+        assert updated_transformation.description == updated_description
+
+        # Verify the updated configuration in the backend
+        config_detail = await client.storage_client.configuration_detail(
+            component_id=updated_transformation.component_id, configuration_id=updated_transformation.configuration_id
+        )
+
+        assert config_detail['description'] == updated_description
+        assert 'configuration' in config_detail
+
+        # Verify the updated configuration structure
+        configuration_data = cast(dict, config_detail['configuration'])
+        assert 'parameters' in configuration_data
+        assert 'storage' in configuration_data
+
+        # Verify the updated parameters
+        parameters = configuration_data['parameters']
+        assert 'blocks' in parameters
+        assert len(parameters['blocks']) == 1
+
+        block = parameters['blocks'][0]
+        assert block['name'] == 'Updated block'
+        assert 'codes' in block
+        assert len(block['codes']) == 1
+
+        code = block['codes'][0]
+        assert code['name'] == 'Updated transformation'
+        assert 'script' in code
+        assert len(code['script']) == 3
+        assert code['script'][0] == 'SELECT 1 as updated_column'
+        assert code['script'][1] == 'SELECT 2 as additional_column'
+        assert code['script'][2] == 'SELECT 3 as third_column'
+
+        # Verify the updated storage configuration
+        storage = configuration_data['storage']
+        assert 'input' in storage
+        assert 'output' in storage
+
+        # Check input tables
+        assert 'tables' in storage['input']
+        assert len(storage['input']['tables']) == 1
+        input_table = storage['input']['tables'][0]
+        assert input_table['source'] == 'in.c-bucket.input_table'
+        assert input_table['destination'] == 'input.csv'
+
+        # Check output tables
+        assert 'tables' in storage['output']
+        assert len(storage['output']['tables']) == 2
+
+        output_table_1 = storage['output']['tables'][0]
+        assert output_table_1['source'] == 'updated_output_table'
+        assert output_table_1['destination'] == 'out.c-bucket.updated_output_table'
+
+        output_table_2 = storage['output']['tables'][1]
+        assert output_table_2['source'] == 'second_output_table'
+        assert output_table_2['destination'] == 'out.c-bucket.second_output_table'
+
+        # Verify the version was incremented
+        assert cast(int, config_detail['version']) > 1
+
+        # Verify the update metadata
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=updated_transformation.component_id, configuration_id=updated_transformation.configuration_id
+        )
+
+        # Convert metadata list to dictionary for easier checking
+        assert isinstance(metadata, list)
+        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+
+        # Check that original creation metadata is still there
+        assert MetadataField.CREATED_BY_MCP in metadata_dict
+        assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
+
+        # Check that update metadata was added
+        update_metadata_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{config_detail["version"]}'
+        assert update_metadata_key in metadata_dict
+        assert metadata_dict[update_metadata_key] == 'true'
+
+    finally:
+        # Clean up: Delete the configuration
+        await client.storage_client.configuration_delete(
+            component_id=created_transformation.component_id,
+            configuration_id=created_transformation.configuration_id,
             skip_trash=True,
         )
