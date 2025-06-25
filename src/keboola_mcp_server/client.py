@@ -419,22 +419,22 @@ class AsyncStorageClient(KeboolaServiceClient):
         }
         return cast(list[JsonDict], await self.post(endpoint=f'branch/{self.branch_id}/metadata', data=payload))
 
-    async def bucket_detail(self, bucket_id: str) -> JsonStruct:
+    async def bucket_detail(self, bucket_id: str) -> JsonDict:
         """
         Retrieves information about a given bucket.
 
         :param bucket_id: The id of the bucket
         :return: Bucket details as dictionary
         """
-        return await self.get(endpoint=f'buckets/{bucket_id}')
+        return cast(JsonDict, await self.get(endpoint=f'buckets/{bucket_id}'))
 
-    async def bucket_list(self) -> JsonList:
+    async def bucket_list(self) -> list[JsonDict]:
         """
         Lists all buckets.
 
         :return: List of buckets as dictionary
         """
-        return cast(JsonList, await self.get(endpoint='buckets'))
+        return cast(list[JsonDict], await self.get(endpoint='buckets'))
 
     async def bucket_metadata_delete(self, bucket_id: str, metadata_id: str) -> None:
         """
