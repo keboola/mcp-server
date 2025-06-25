@@ -5,7 +5,7 @@ from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import ToolException
-from keboola_mcp_server.tools.flow import (
+from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
     ListFlowsOutput,
     create_flow,

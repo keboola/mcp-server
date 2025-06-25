@@ -15,9 +15,9 @@ from fastmcp import Context
 from integtests.conftest import BucketDef, TableDef, ConfigDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import KeboolaHTTPException, ToolException
-from keboola_mcp_server.tools.storage import get_bucket_detail, get_table_detail, update_bucket_description
-from keboola_mcp_server.tools.jobs import get_job_detail, start_job
-from keboola_mcp_server.tools.sql import query_table
+from keboola_mcp_server.tools.jobs import get_job, run_job
+from keboola_mcp_server.tools.sql import query_data
+from keboola_mcp_server.tools.storage import get_bucket, get_table, update_bucket_description
 
 
 class TestHTTPErrorScenarios:
@@ -28,7 +28,7 @@ class TestHTTPErrorScenarios:
         """Test that Storage API 404 errors maintain standard behavior (no exception ID enhancement)."""
         # Try to access a non-existent bucket
         with pytest.raises(ToolException) as exc_info:
-            await get_bucket_detail("non.existent.bucket", mcp_context)
+            await get_bucket("non.existent.bucket", mcp_context)
         
         tool_exception = exc_info.value
         # Should not include exception ID for non-500 errors
@@ -41,7 +41,7 @@ class TestHTTPErrorScenarios:
         """Test that Storage API 403 errors maintain standard behavior (no exception ID enhancement)."""
         # Try to access a table that doesn't exist or we don't have permission for
         with pytest.raises(ToolException) as exc_info:
-            await get_table_detail("forbidden.table.access", mcp_context)
+            await get_table("forbidden.table.access", mcp_context)
         
         tool_exception = exc_info.value
         # Should not include exception ID for non-500 errors
@@ -54,7 +54,7 @@ class TestHTTPErrorScenarios:
         """Test that Jobs API 404 errors maintain standard behavior (no exception ID enhancement)."""
         # Try to access a non-existent job
         with pytest.raises(ToolException) as exc_info:
-            await get_job_detail("999999999", mcp_context)
+            await get_job("999999999", mcp_context)
         
         tool_exception = exc_info.value
         # Should not include exception ID for non-500 errors
@@ -67,7 +67,7 @@ class TestHTTPErrorScenarios:
         """Test that Jobs API 400 errors maintain standard behavior (no exception ID enhancement)."""
         # Try to start a job with invalid component ID
         with pytest.raises(ToolException) as exc_info:
-            await start_job(mcp_context, "invalid.component.id", "invalid-config")
+            await run_job(mcp_context, "invalid.component.id", "invalid-config")
         
         tool_exception = exc_info.value
         # Should not include exception ID for non-500 errors
@@ -80,7 +80,7 @@ class TestHTTPErrorScenarios:
         """Test that SQL API errors for invalid queries maintain standard behavior."""
         # Try to execute invalid SQL
         with pytest.raises(ToolException) as exc_info:
-            await query_table("INVALID SQL SYNTAX HERE", mcp_context)
+            await query_data("INVALID SQL SYNTAX HERE", mcp_context)
         
         tool_exception = exc_info.value
         # Should not include exception ID for non-500 errors (likely 400 for invalid SQL)
@@ -144,7 +144,7 @@ class TestHTTPErrorHandlingIntegration:
         
         with pytest.raises(ToolException) as exc_info:
             # Use a tool that will definitely cause a 404 error
-            await get_bucket_detail("definitely.non.existent.bucket", mcp_context)
+            await get_bucket("definitely.non.existent.bucket", mcp_context)
         
         tool_exception = exc_info.value
         
@@ -166,19 +166,19 @@ class TestHTTPErrorHandlingIntegration:
         
         # Test 1: 404 error
         with pytest.raises(ToolException) as exc_info:
-            await get_bucket_detail("non.existent.bucket.1", mcp_context)
+            await get_bucket("non.existent.bucket.1", mcp_context)
         
         assert "For support reference Exception ID:" not in exc_info.value.recovery_message
         
         # Test 2: Another 404 error with different resource
         with pytest.raises(ToolException) as exc_info:
-            await get_table_detail("non.existent.table.2", mcp_context)
+            await get_table("non.existent.table.2", mcp_context)
         
         assert "For support reference Exception ID:" not in exc_info.value.recovery_message
         
         # Test 3: Jobs API 404 error
         with pytest.raises(ToolException) as exc_info:
-            await get_job_detail("999999999", mcp_context)
+            await get_job("999999999", mcp_context)
         
         assert "For support reference Exception ID:" not in exc_info.value.recovery_message
         
@@ -230,7 +230,7 @@ class TestHTTP500ErrorDetection:
         async def trigger_404_error(resource_id: str):
             """Helper to trigger a 404 error."""
             try:
-                await get_bucket_detail(f"non.existent.{resource_id}", mcp_context)
+                await get_bucket(f"non.existent.{resource_id}", mcp_context)
                 return None
             except ToolException as e:
                 return e
