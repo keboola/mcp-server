@@ -124,31 +124,31 @@ class RawKeboolaClient:
 
     @staticmethod
     def _raise_for_status(response: httpx.Response) -> None:
-        """Enhanced error handling with exception ID forwarding for HTTP 500 errors."""
-        if not response.is_error:
-            return
-
-        if response.status_code == 500:
-            # Enhanced handling for HTTP 500 errors to extract exception ID
-            base_message = f"Server error for url '{response.url}'"
+        """
+        Checks the HTTP response status code and raises an exception with a detailed message. The message will
+        include "error" and "exceptionId" fields if they are present in the response.
+        """
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            message = [str(e)]
 
             try:
                 error_data = response.json()
-                exception_id = error_data.get('exceptionId')
-
-                # Build enhanced message with exception ID for HTTP 500 errors
-                if exception_id:
-                    base_message += f' Please contact support and provide this exception ID: {exception_id}'
+                if error := error_data.get('error'):
+                    message.append(f'API error: {error}')
+                if exception_id := error_data.get('exceptionId'):
+                    message.append(f'Exception ID: {exception_id}')
+                    message.append('When contacting Keboola support please provide the exception ID.')
 
             except (ValueError, KeyError):
-                # Fallback if JSON parsing fails
-                pass
+                try:
+                    if response.text:
+                        message.append(f'API error: {response.text}')
+                except Exception:
+                    pass  # should never get here
 
-            # Raise standard HTTPStatusError with enhanced message
-            raise httpx.HTTPStatusError(base_message, request=response.request, response=response)
-        else:
-            # For all other HTTP errors, use standard HTTPStatusError
-            response.raise_for_status()
+            raise httpx.HTTPStatusError('\n'.join(message), request=response.request, response=response) from e
 
     async def get(
         self,

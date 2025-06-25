@@ -4,7 +4,6 @@ from fastmcp import Context
 from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.errors import ToolException
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.tools.flow.model import FlowConfigurationResponse
 from keboola_mcp_server.tools.flow.tools import (
@@ -216,7 +215,7 @@ async def test_create_flow_invalid_structure(mcp_context: Context, configs: list
             },
         },
     ]
-    with pytest.raises(ToolException, match='depends on non-existent phase'):
+    with pytest.raises(ValueError, match='depends on non-existent phase'):
         await create_flow(
             ctx=mcp_context,
             name='Invalid Flow',
