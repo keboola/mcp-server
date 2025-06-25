@@ -1,3 +1,7 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keboola/mcp-server)
+[![smithery badge](https://smithery.ai/badge/keboola-mcp-server)](https://smithery.ai/server/keboola-mcp-server)
+
+
 # Keboola MCP Server
 
 > Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agents when and where they need it.
@@ -147,6 +151,8 @@ Config file locations:
 }
 ```
 
+**Note**: Use short, descriptive names for MCP servers. Since the full tool name includes the server name and must stay under ~60 characters, longer names may be filtered out in Cursor and will not be displayed to the Agent.
+
 #### Cursor Configuration for Windows WSL
 
 When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this configuration:
@@ -154,25 +160,20 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 ```json
 {
   "mcpServers": {
-    "keboola": {
+    "keboola":{
       "command": "wsl.exe",
       "args": [
-        "bash",
-        "-c",
-        "'source /wsl_path/to/keboola-mcp-server/.env",
-        "&&",
-        "/wsl_path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
+          "bash",
+          "-c '",
+          "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
+          "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
+          "/snap/bin/uvx -m keboola_mcp_server.cli",
+          "--api-url https://connection.YOUR_REGION.keboola.com",
+          "'"
       ]
-    }
+    },
   }
 }
-```
-
-Where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
-
-```bash
-export KBC_STORAGE_TOKEN="your_keboola_storage_token"
-export KBC_WORKSPACE_SCHEMA="your_workspace_schema"
 ```
 
 ### Option B: Local Development Mode
@@ -276,8 +277,8 @@ What buckets and tables are in my Keboola project?
 
 | **MCP Client** | **Support Status** | **Connection Method** |
 |----------------|-------------------|----------------------|
-| Claude (Desktop & Web) | ✅ supported, tested | stdio |
-| Cursor | ✅ supported, tested | stdio |
+| Claude (Desktop & Web) | ✅ supported | stdio |
+| Cursor | ✅ supported | stdio |
 | Windsurf, Zed, Replit | ✅ Supported | stdio |
 | Codeium, Sourcegraph | ✅ Supported | HTTP+SSE |
 | Custom MCP Clients | ✅ Supported | HTTP+SSE or stdio |

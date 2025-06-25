@@ -19,6 +19,7 @@ from keboola_mcp_server.tools.components.model import (
     FlowPhase,
     FlowTask,
     ReducedFlow,
+    RetrieveFlowsOutput,
 )
 from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
@@ -59,7 +60,7 @@ class FlowToolResponse(BaseModel):
         validation_alias=AliasChoices('timestamp', 'created'),
     )
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
-    links: list[Link] = Field(..., description='The links relevant to the tool call.')
+    links: list[Link] = Field(..., description='The links relevant to the flow.')
 
 
 @tool_errors()
@@ -221,10 +222,11 @@ async def retrieve_flows(
     flow_ids: Annotated[
         Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
     ] = tuple(),
-) -> Annotated[list[ReducedFlow], Field(description='The retrieved flow configurations.')]:
+) -> RetrieveFlowsOutput:
     """Retrieves flow configurations from the project."""
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     if flow_ids:
         flows = []
@@ -235,12 +237,14 @@ async def retrieve_flows(
                 flows.append(flow)
             except Exception as e:
                 LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
-        return flows
     else:
         raw_flows = await client.storage_client.flow_list()
         flows = [ReducedFlow.from_raw_config(raw_flow) for raw_flow in raw_flows]
         LOG.info(f'Found {len(flows)} flows in the project')
-        return flows
+
+    links = [links_manager.get_flows_dashboard_link()]
+
+    return RetrieveFlowsOutput(flows=flows, links=links)
 
 
 @tool_errors()
@@ -252,13 +256,16 @@ async def get_flow_detail(
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
-
+    links_manager = await ProjectLinksManager.from_client(client)
     raw_config = await client.storage_client.flow_detail(configuration_id)
 
     flow_response = FlowConfigurationResponse.from_raw_config(raw_config)
+    flow_configuration = flow_response.configuration
+    links = links_manager.get_flow_links(flow_response.configuration_id, flow_name=flow_response.configuration_name)
+    flow_configuration.links = links
 
     LOG.info(f'Retrieved flow details for configuration: {configuration_id}')
-    return flow_response.configuration
+    return flow_configuration
 
 
 def _ensure_phase_ids(phases: list[dict[str, Any]]) -> list[FlowPhase]:
