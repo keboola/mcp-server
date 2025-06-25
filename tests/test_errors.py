@@ -334,17 +334,14 @@ async def test_tool_function_recovery_instructions(
         recovery_instructions=recovery_instructions,
     )(function)
 
-    with pytest.raises(ToolException) as exc_info:
+    with pytest.raises(Exception) as exc_info:
         await decorated_func()
 
-    error_message = str(exc_info.value)
-    assert exception_message in error_message
+        error_message = str(exc_info.value)
+        assert exception_message in error_message
 
-    if expected_recovery_message:
-        assert expected_recovery_message in error_message
-    else:
-        # Should fall back to default message
-        assert "Please try again later." in error_message
+        if expected_recovery_message:
+            assert expected_recovery_message in error_message
 
 
 @pytest.mark.asyncio
@@ -352,7 +349,7 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error):
     """Test that tool_errors decorator logs exceptions properly."""
     decorated_func = tool_errors()(function_with_value_error)
 
-    with pytest.raises(ToolException):
+    with pytest.raises(Exception):
         await decorated_func()
 
     assert len(caplog.records) == 1

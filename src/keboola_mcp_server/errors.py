@@ -1,9 +1,6 @@
 import logging
-import re
 from functools import wraps
 from typing import Any, Callable, Optional, Type, TypeVar, cast
-
-import httpx
 
 LOG = logging.getLogger(__name__)
 
@@ -41,14 +38,16 @@ def tool_errors(
             except Exception as e:
                 logging.exception(f'Failed to run tool {func.__name__}: {e}')
 
-                # Enhanced recovery message for HTTP 500 errors
                 recovery_msg = default_recovery
                 if recovery_instructions:
                     for exc_type, msg in recovery_instructions.items():
                         if isinstance(e, exc_type):
                             recovery_msg = msg
                             break
-                
+
+                if not recovery_msg:
+                    raise e
+
                 raise ToolException(e, recovery_msg) from e
 
         return cast(F, wrapped)
