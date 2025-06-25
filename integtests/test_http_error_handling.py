@@ -8,13 +8,13 @@ These tests use real API calls to verify that:
 
 Note: These tests require actual API credentials and may create/delete test resources.
 """
-
+import httpx
 import pytest
 from fastmcp import Context
 
-from integtests.conftest import BucketDef, TableDef, ConfigDef
+from integtests.conftest import BucketDef
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.errors import KeboolaHTTPException, ToolException
+from keboola_mcp_server.errors import ToolException
 from keboola_mcp_server.tools.jobs import get_job, run_job
 from keboola_mcp_server.tools.sql import query_data
 from keboola_mcp_server.tools.storage import get_bucket, get_table, update_bucket_description
@@ -120,8 +120,7 @@ class TestHTTPErrorHandlingIntegration:
         except Exception as e:
             # Should be a standard HTTP error for 404 (not enhanced)
             assert not hasattr(e, 'exception_id')
-            # Should be HTTPStatusError or similar, not KeboolaHTTPException
-            assert not isinstance(e, KeboolaHTTPException)
+            assert not isinstance(e, httpx.HTTPStatusError)
 
     @pytest.mark.asyncio
     async def test_jobs_client_error_handling_integration(self, keboola_client: KeboolaClient):
@@ -133,8 +132,7 @@ class TestHTTPErrorHandlingIntegration:
         except Exception as e:
             # Should be a standard HTTP error for 404 (not enhanced)
             assert not hasattr(e, 'exception_id')
-            # Should be HTTPStatusError or similar, not KeboolaHTTPException
-            assert not isinstance(e, KeboolaHTTPException)
+            assert not isinstance(e, httpx.HTTPStatusError)
 
     @pytest.mark.asyncio
     async def test_error_propagation_through_tool_layers(self, mcp_context: Context):
@@ -207,20 +205,11 @@ class TestHTTP500ErrorDetection:
             # If no error occurs, the test passes (no HTTP 500 to test)
             assert True
             
-        except KeboolaHTTPException as e:
-            # If a KeboolaHTTPException occurs, verify it's properly enhanced
-            if e.original_exception.response.status_code == 500:
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 500:
                 # This is an HTTP 500 error - verify it has exception ID enhancement
-                assert e.exception_id is not None or "Exception ID:" in str(e)
+                assert "Exception ID:" in str(e)
                 print(f"Successfully detected and enhanced HTTP 500 error: {e}")
-            else:
-                # This is not an HTTP 500 error - should not be enhanced
-                assert False, f"KeboolaHTTPException raised for non-500 error: {e.original_exception.response.status_code}"
-                
-        except Exception as e:
-            # If any other exception occurs, verify it's not a mishandled HTTP 500
-            assert not isinstance(e, KeboolaHTTPException), f"Unexpected KeboolaHTTPException: {e}"
-            # Other exceptions are fine - just not HTTP 500s that should be enhanced
 
     @pytest.mark.asyncio
     async def test_concurrent_error_handling(self, mcp_context: Context):
