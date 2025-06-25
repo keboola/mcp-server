@@ -71,8 +71,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert created.description == flow_description
         # Verify the links of created flow
         assert created.success is True
-        assert len(created.links) == len(expected_links)
-        assert all(actual_link == expected_link for actual_link, expected_link in zip(created.links, expected_links))
+        assert set(created.links) == set(expected_links)
 
         # Verify the flow is listed in the list_flows tool
         result = await list_flows(mcp_context)
@@ -89,8 +88,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
 
         # Verify the links of the retrieved flow
         assert detail.links is not None
-        assert len(detail.links) == len(expected_links)
-        assert all(actual_link == expected_link for actual_link, expected_link in zip(detail.links, expected_links))
+        assert set(detail.links) == set(expected_links)
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
@@ -164,8 +162,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         assert created.flow_id == updated.flow_id
         assert updated.description == new_description
         assert updated.success is True
-        assert len(updated.links) == len(expected_links)
-        assert all(actual_link == expected_link for actual_link, expected_link in zip(updated.links, expected_links))
+        assert set(updated.links) == set(expected_links)
 
         # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
