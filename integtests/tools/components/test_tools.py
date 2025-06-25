@@ -19,7 +19,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentToolResponse,
     ListConfigsOutput,
 )
-from keboola_mcp_server.tools.components.tools import create_config, update_config, add_config_row, update_config_row
+from keboola_mcp_server.tools.components.tools import add_config_row, create_config, update_config, update_config_row
 
 LOG = logging.getLogger(__name__)
 

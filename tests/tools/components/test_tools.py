@@ -7,19 +7,23 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.components import (
     ComponentWithConfigurations,
+    add_config_row,
+    create_config,
     create_sql_transformation,
     get_config,
     list_configs,
     list_transformations,
+    update_config,
+    update_config_row,
     update_sql_transformation,
 )
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationMetadata,
     ComponentConfigurationOutput,
     ComponentConfigurationResponseBase,
+    ComponentToolResponse,
     ListConfigsOutput,
     ListTransformationsOutput,
-    ComponentToolResponse,
     ReducedComponent,
 )
 from keboola_mcp_server.tools.components.tools import get_config_examples
@@ -103,9 +107,7 @@ async def test_list_configs_by_types(
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
-    assert_retrieve_components: Callable[
-        [ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
-    ],
+    assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
     """Test list_configs when component types are provided."""
     context = mcp_context_components_configs
@@ -121,11 +123,13 @@ async def test_list_configs_by_types(
     assert_retrieve_components(result, mock_components, mock_configurations)
 
     # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.component_list.assert_has_calls([
-        mocker.call(component_type='application', include=['configuration']),
-        mocker.call(component_type='extractor', include=['configuration']),
-        mocker.call(component_type='writer', include=['configuration']),
-    ])
+    keboola_client.storage_client.component_list.assert_has_calls(
+        [
+            mocker.call(component_type='application', include=['configuration']),
+            mocker.call(component_type='extractor', include=['configuration']),
+            mocker.call(component_type='writer', include=['configuration']),
+        ]
+    )
 
 
 @pytest.mark.asyncio
@@ -134,9 +138,7 @@ async def test_list_transformations(
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
-    assert_retrieve_components: Callable[
-        [ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
-    ],
+    assert_retrieve_components: Callable[[ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
     """Test list_transformations."""
     context = mcp_context_components_configs
@@ -163,9 +165,7 @@ async def test_list_configs_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    assert_retrieve_components: Callable[
-        [ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
-    ],
+    assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
     """Test list_configs when component IDs are provided."""
     context = mcp_context_components_configs
@@ -189,9 +189,7 @@ async def test_list_transformations_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    assert_retrieve_components: Callable[
-        [ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
-    ],
+    assert_retrieve_components: Callable[[ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
     """Test list_transformations when transformation IDs are provided."""
     context = mcp_context_components_configs
@@ -245,8 +243,7 @@ async def test_get_config(
 
     # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_detail.assert_called_once_with(
-        component_id=mock_component['id'],
-        configuration_id=mock_configuration['id']
+        component_id=mock_component['id'], configuration_id=mock_configuration['id']
     )
 
 
@@ -481,11 +478,8 @@ async def test_create_component_root_configuration(
     parameters = {'test_param': 'test_value'}
     storage = {'input': {'tables': []}}
 
-    # Import the function
-    from keboola_mcp_server.tools.components.tools import create_component_root_configuration
-
     # Test the create_component_root_configuration tool
-    result = await create_component_root_configuration(
+    result = await create_config(
         ctx=context,
         name=name,
         description=description,
@@ -536,11 +530,8 @@ async def test_create_component_row_configuration(
     parameters = {'row_param': 'row_value'}
     storage = {}
 
-    # Import the function
-    from keboola_mcp_server.tools.components.tools import create_component_row_configuration
-
     # Test the create_component_row_configuration tool
-    result = await create_component_row_configuration(
+    result = await add_config_row(
         ctx=context,
         name=name,
         description=description,
@@ -595,11 +586,8 @@ async def test_update_component_root_configuration(
     parameters = {'updated_param': 'updated_value'}
     storage = {'output': {'tables': []}}
 
-    # Import the function
-    from keboola_mcp_server.tools.components.tools import update_component_root_configuration
-
     # Test the update_component_root_configuration tool
-    result = await update_component_root_configuration(
+    result = await update_config(
         ctx=context,
         name=name,
         description=description,
@@ -655,12 +643,8 @@ async def test_update_component_row_configuration(
     change_description = 'Test row update'
     parameters = {'updated_row_param': 'updated_row_value'}
     storage = {}
-
-    # Import the function
-    from keboola_mcp_server.tools.components.tools import update_component_row_configuration
-
     # Test the update_component_row_configuration tool
-    result = await update_component_row_configuration(
+    result = await update_config_row(
         ctx=context,
         name=name,
         description=description,

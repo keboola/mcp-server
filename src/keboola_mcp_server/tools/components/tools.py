@@ -392,7 +392,7 @@ async def create_sql_transformation(
 
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
 
-    links = links_manager.get_component_configuration_links(
+    links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_name=str(name),
@@ -506,7 +506,7 @@ async def update_sql_transformation(
         configuration_version=updated_raw_configuration.get('version'),
     )
 
-    links = links_manager.get_component_configuration_links(
+    links = links_manager.get_configuration_links(
         component_id=sql_transformation_id,
         configuration_id=str(configuration_id),
         configuration_name=str(updated_raw_configuration.get('name', '')),
@@ -614,7 +614,7 @@ async def create_config(
 
     await _set_cfg_creation_metadata(client, component_id, configuration_id)
 
-    links = links_manager.get_component_configuration_links(
+    links = links_manager.get_configuration_links(
         component_id=component_id, configuration_id=configuration_id, configuration_name=name
     )
 
@@ -731,7 +731,7 @@ async def add_config_row(
         configuration_version=new_raw_configuration['version'],
     )
 
-    links = links_manager.get_component_configuration_links(
+    links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_name=name,
@@ -846,7 +846,7 @@ async def update_config(
         configuration_version=new_raw_configuration['version'],
     )
 
-    links = links_manager.get_component_configuration_links(
+    links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_name=name,
@@ -964,7 +964,7 @@ async def update_config_row(
         configuration_version=new_raw_configuration['version'],
     )
 
-    links = links_manager.get_component_configuration_links(
+    links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_name=name,
