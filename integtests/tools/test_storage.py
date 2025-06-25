@@ -8,24 +8,24 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
-    RetrieveBucketsOutput,
-    RetrieveBucketTablesOutput,
+    ListBucketsOutput,
+    ListTablesOutput,
     TableDetail,
-    get_bucket_detail,
-    get_table_detail,
-    retrieve_bucket_tables,
-    retrieve_buckets,
+    get_bucket,
+    get_table,
+    list_buckets,
+    list_tables,
     update_bucket_description,
     update_table_description,
 )
 
 
 @pytest.mark.asyncio
-async def test_retrieve_buckets(mcp_context: Context, buckets: list[BucketDef]):
-    """Tests that `retrieve_buckets` returns a list of `BucketDetail` instances."""
-    result = await retrieve_buckets(mcp_context)
+async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
+    """Tests that `list_buckets` returns a list of `BucketDetail` instances."""
+    result = await list_buckets(mcp_context)
 
-    assert isinstance(result, RetrieveBucketsOutput)
+    assert isinstance(result, ListBucketsOutput)
     for item in result.buckets:
         assert isinstance(item, BucketDetail)
 
@@ -33,24 +33,24 @@ async def test_retrieve_buckets(mcp_context: Context, buckets: list[BucketDef]):
 
 
 @pytest.mark.asyncio
-async def test_get_bucket_detail(mcp_context: Context, buckets: list[BucketDef]):
-    """Tests that for each test bucket, `get_bucket_detail` returns a `BucketDetail` instance."""
+async def test_get_bucket(mcp_context: Context, buckets: list[BucketDef]):
+    """Tests that for each test bucket, `get_bucket` returns a `BucketDetail` instance."""
     for bucket in buckets:
-        result = await get_bucket_detail(bucket.bucket_id, mcp_context)
+        result = await get_bucket(bucket.bucket_id, mcp_context)
         assert isinstance(result, BucketDetail)
         assert result.id == bucket.bucket_id
 
 
 @pytest.mark.asyncio
-async def test_get_table_detail(mcp_context: Context, tables: list[TableDef]):
-    """Tests that for each test table, `get_table_detail` returns a `TableDetail` instance with correct fields."""
+async def test_get_table(mcp_context: Context, tables: list[TableDef]):
+    """Tests that for each test table, `get_table` returns a `TableDetail` instance with correct fields."""
 
     for table in tables:
         with table.file_path.open('r', encoding='utf-8') as f:
             reader = csv.reader(f)
             columns = frozenset(next(reader))
 
-        result = await get_table_detail(table.table_id, mcp_context)
+        result = await get_table(table.table_id, mcp_context)
         assert isinstance(result, TableDetail)
         assert result.id == table.table_id
         assert result.name == table.table_name
@@ -59,8 +59,8 @@ async def test_get_table_detail(mcp_context: Context, tables: list[TableDef]):
 
 
 @pytest.mark.asyncio
-async def test_retrieve_bucket_tables(mcp_context: Context, tables: list[TableDef], buckets: list[BucketDef]):
-    """Tests that `retrieve_bucket_tables` returns the correct tables for each bucket."""
+async def test_list_tables(mcp_context: Context, tables: list[TableDef], buckets: list[BucketDef]):
+    """Tests that `list_tables` returns the correct tables for each bucket."""
     # Group tables by bucket to verify counts
     tables_by_bucket = {}
     for table in tables:
@@ -69,9 +69,9 @@ async def test_retrieve_bucket_tables(mcp_context: Context, tables: list[TableDe
         tables_by_bucket[table.bucket_id].append(table)
 
     for bucket in buckets:
-        result = await retrieve_bucket_tables(bucket.bucket_id, mcp_context)
+        result = await list_tables(bucket.bucket_id, mcp_context)
 
-        assert isinstance(result, RetrieveBucketTablesOutput)
+        assert isinstance(result, ListTablesOutput)
         for item in result.tables:
             assert isinstance(item, TableDetail)
 

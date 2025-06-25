@@ -19,9 +19,9 @@ LOG = logging.getLogger(__name__)
 
 def add_job_tools(mcp: KeboolaMcpServer) -> None:
     """Add job tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(get_job_detail))
-    mcp.add_tool(FunctionTool.from_function(retrieve_jobs, serializer=listing_output_serializer))
-    mcp.add_tool(FunctionTool.from_function(start_job))
+    mcp.add_tool(FunctionTool.from_function(get_job))
+    mcp.add_tool(FunctionTool.from_function(list_jobs, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(run_job))
 
     LOG.info('Job tools added to the MCP server.')
 
@@ -148,7 +148,7 @@ class JobDetail(JobListItem):
         return current_value
 
 
-class RetrieveJobsOutput(BaseModel):
+class ListJobsOutput(BaseModel):
     jobs: list[JobListItem] = Field(..., description='List of jobs.')
     links: list[Link] = Field(..., description='Links relevant to the jobs listing.')
 
@@ -167,7 +167,7 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 # Optional[JOB_STATUS] = None despite having type check errors in the code.
 @tool_errors()
 @with_session_state()
-async def retrieve_jobs(
+async def list_jobs(
     ctx: Context,
     status: Annotated[
         JOB_STATUS,
@@ -209,7 +209,7 @@ async def retrieve_jobs(
             description='The order to sort the jobs by, default = "desc".',
         ),
     ] = 'desc',
-) -> RetrieveJobsOutput:
+) -> ListJobsOutput:
     """
     Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
     filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
@@ -244,12 +244,12 @@ async def retrieve_jobs(
     LOG.info(f'Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.')
     jobs = [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
     links = [links_manager.get_jobs_dashboard_link()]
-    return RetrieveJobsOutput(jobs=jobs, links=links)
+    return ListJobsOutput(jobs=jobs, links=links)
 
 
 @tool_errors()
 @with_session_state()
-async def get_job_detail(
+async def get_job(
     job_id: Annotated[
         str,
         Field(description='The unique identifier of the job whose details should be retrieved.'),
@@ -274,7 +274,7 @@ async def get_job_detail(
 
 @tool_errors()
 @with_session_state()
-async def start_job(
+async def run_job(
     ctx: Context,
     component_id: Annotated[
         str,

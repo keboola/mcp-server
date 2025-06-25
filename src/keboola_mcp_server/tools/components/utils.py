@@ -41,15 +41,15 @@ def _handle_component_types(
     return types
 
 
-async def _retrieve_components_configurations_by_types(
+async def _list_configs_by_types(
     client: KeboolaClient, component_types: Sequence[AllComponentTypes]
 ) -> list[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by types.
 
     Used in tools:
-    - retrieve_components_configurations
-    - retrieve_transformation_configurations
+    - list_configs
+    - list_transformations
 
     :param client: The Keboola client
     :param component_types: The component types/type to retrieve
@@ -94,15 +94,15 @@ async def _retrieve_components_configurations_by_types(
     return components_with_configurations
 
 
-async def _retrieve_components_configurations_by_ids(
+async def _list_configs_by_ids(
     client: KeboolaClient, component_ids: Sequence[str]
 ) -> list[ComponentWithConfigurations]:
     """
     Utility function to retrieve components with configurations by component IDs.
 
     Used in tools:
-    - retrieve_components_configurations
-    - retrieve_transformation_configurations
+    - list_configs
+    - list_transformations
 
     :param client: The Keboola client
     :param component_ids: The component IDs to retrieve
@@ -151,7 +151,7 @@ async def _get_component(
     Storage API endpoint.
 
     Used in tools:
-    - get_component_configuration_details
+    - get_config
 
     :param client: The Keboola client
     :param component_id: The ID of the component to retrieve

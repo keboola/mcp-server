@@ -19,8 +19,8 @@ from keboola_mcp_server.tools.components.model import (
     FlowConfigurationResponse,
     FlowPhase,
     FlowTask,
+    ListFlowsOutput,
     ReducedFlow,
-    RetrieveFlowsOutput,
 )
 from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
@@ -43,7 +43,7 @@ def get_schema_as_markdown() -> str:
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    flow_tools = [create_flow, retrieve_flows, update_flow, get_flow_detail, get_flow_schema]
+    flow_tools = [create_flow, list_flows, update_flow, get_flow, get_flow_schema]
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -218,12 +218,12 @@ async def update_flow(
 
 @tool_errors()
 @with_session_state()
-async def retrieve_flows(
+async def list_flows(
     ctx: Context,
     flow_ids: Annotated[
         Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
     ] = tuple(),
-) -> RetrieveFlowsOutput:
+) -> ListFlowsOutput:
     """Retrieves flow configurations from the project."""
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -245,12 +245,12 @@ async def retrieve_flows(
 
     links = [links_manager.get_flows_dashboard_link()]
 
-    return RetrieveFlowsOutput(flows=flows, links=links)
+    return ListFlowsOutput(flows=flows, links=links)
 
 
 @tool_errors()
 @with_session_state()
-async def get_flow_detail(
+async def get_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve.')],
 ) -> Annotated[FlowConfiguration, Field(description='Detailed flow configuration.')]:
