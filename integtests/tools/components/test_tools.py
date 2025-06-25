@@ -11,32 +11,27 @@ from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     ComponentType,
     ComponentWithConfigurations,
-    get_component_configuration,
-    retrieve_components_configurations,
+    get_config,
+    list_configs,
 )
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
     ComponentToolResponse,
-    RetrieveComponentsConfigurationsOutput,
+    ListConfigsOutput,
 )
-from keboola_mcp_server.tools.components.tools import (
-    create_component_root_configuration,
-    create_component_row_configuration,
-    update_component_root_configuration,
-    update_component_row_configuration,
-)
+from keboola_mcp_server.tools.components.tools import create_config, update_config, add_config_row, update_config_row
 
 LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_get_component_configuration(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_component_configuration` returns a `ComponentConfigurationOutput` instance."""
+async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_config` returns a `ComponentConfigurationOutput` instance."""
 
     for config in configs:
         assert config.configuration_id is not None
 
-        result = await get_component_configuration(
+        result = await get_config(
             component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context
         )
 
@@ -56,17 +51,17 @@ async def test_get_component_configuration(mcp_context: Context, configs: list[C
 
 
 @pytest.mark.asyncio
-async def test_retrieve_components_by_ids(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `retrieve_components_configurations` returns components filtered by component IDs."""
+async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `list_configs` returns components filtered by component IDs."""
 
     # Get unique component IDs from test configs
     component_ids = list({config.component_id for config in configs})
     assert len(component_ids) > 0
 
-    result = await retrieve_components_configurations(ctx=mcp_context, component_ids=component_ids)
+    result = await list_configs(ctx=mcp_context, component_ids=component_ids)
 
     # Verify result structure and content
-    assert isinstance(result, RetrieveComponentsConfigurationsOutput)
+    assert isinstance(result, ListConfigsOutput)
     assert len(result.components_with_configurations) == len(component_ids)
 
     for item in result.components_with_configurations:
@@ -79,8 +74,8 @@ async def test_retrieve_components_by_ids(mcp_context: Context, configs: list[Co
 
 
 @pytest.mark.asyncio
-async def test_retrieve_components_by_types(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `retrieve_components_configurations` returns components filtered by component types."""
+async def test_list_configs_by_types(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `list_configs` returns components filtered by component types."""
 
     # Get unique component IDs from test configs
     component_ids = list({config.component_id for config in configs})
@@ -88,9 +83,9 @@ async def test_retrieve_components_by_types(mcp_context: Context, configs: list[
 
     component_types: list[ComponentType] = ['extractor']
 
-    result = await retrieve_components_configurations(ctx=mcp_context, component_types=component_types)
+    result = await list_configs(ctx=mcp_context, component_types=component_types)
 
-    assert isinstance(result, RetrieveComponentsConfigurationsOutput)
+    assert isinstance(result, ListConfigsOutput)
     # Currently, we only have extractor components in the project
     assert len(result.components_with_configurations) == len(component_ids)
 
@@ -100,8 +95,8 @@ async def test_retrieve_components_by_types(mcp_context: Context, configs: list[
 
 
 @pytest.mark.asyncio
-async def test_create_component_root_configuration(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `create_component_root_configuration` creates a configuration with correct metadata."""
+async def test_create_config(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `create_config` creates a configuration with correct metadata."""
 
     # Use the first component from configs for testing
     test_config = configs[0]
@@ -115,7 +110,7 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
     client = KeboolaClient.from_state(mcp_context.session.state)
 
     # Create the configuration
-    created_config = await create_component_root_configuration(
+    created_config = await create_config(
         ctx=mcp_context,
         name=test_name,
         description=test_description,
@@ -167,8 +162,8 @@ async def test_create_component_root_configuration(mcp_context: Context, configs
 
 
 @pytest.mark.asyncio
-async def test_update_component_root_configuration(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `update_component_root_configuration` updates a configuration with correct metadata."""
+async def test_update_config(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `update_config` updates a configuration with correct metadata."""
 
     # Use the first component from configs for testing
     test_config = configs[0]
@@ -177,7 +172,7 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
     client = KeboolaClient.from_state(mcp_context.session.state)
 
     # Create the initial configuration
-    created_config = await create_component_root_configuration(
+    created_config = await create_config(
         ctx=mcp_context,
         name='Initial Test Configuration',
         description='Initial test configuration created by automated test',
@@ -194,7 +189,7 @@ async def test_update_component_root_configuration(mcp_context: Context, configs
         change_description = 'Automated test update'
 
         # Update the configuration
-        updated_config = await update_component_root_configuration(
+        updated_config = await update_config(
             ctx=mcp_context,
             name=updated_name,
             description=updated_description,
@@ -265,7 +260,7 @@ async def test_create_component_row_configuration(mcp_context: Context, configs:
     # First create a root configuration to add row to
     client = KeboolaClient.from_state(mcp_context.session.state)
 
-    root_config = await create_component_root_configuration(
+    root_config = await create_config(
         ctx=mcp_context,
         name='Root Configuration for Row Test',
         description='Root configuration created for row configuration test',
@@ -281,7 +276,7 @@ async def test_create_component_row_configuration(mcp_context: Context, configs:
         row_storage = {}
 
         # Create the row configuration
-        created_row_config = await create_component_row_configuration(
+        created_row_config = await add_config_row(
             ctx=mcp_context,
             name=row_name,
             description=row_description,
@@ -359,7 +354,7 @@ async def test_update_component_row_configuration(mcp_context: Context, configs:
     client = KeboolaClient.from_state(mcp_context.session.state)
 
     # First create a root configuration
-    root_config = await create_component_root_configuration(
+    root_config = await create_config(
         ctx=mcp_context,
         name='Root Configuration for Row Update Test',
         description='Root configuration created for row update test',
@@ -371,7 +366,7 @@ async def test_update_component_row_configuration(mcp_context: Context, configs:
 
     try:
         # Create a row configuration
-        initial_row_config = await create_component_row_configuration(
+        initial_row_config = await add_config_row(
             ctx=mcp_context,
             name='Initial Row Configuration',
             description='Initial row configuration for update test',
@@ -397,7 +392,7 @@ async def test_update_component_row_configuration(mcp_context: Context, configs:
         change_description = 'Automated row test update'
 
         # Update the row configuration
-        updated_row_config = await update_component_row_configuration(
+        updated_row_config = await update_config_row(
             ctx=mcp_context,
             name=updated_row_name,
             description=updated_row_description,
