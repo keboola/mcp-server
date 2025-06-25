@@ -10,7 +10,6 @@ class ToolException(Exception):
     """Custom tool exception class that wraps tool execution errors."""
 
     def __init__(self, original_exception: Exception, recovery_instruction: str):
-        self.recovery_message = recovery_instruction
         super().__init__(f'{str(original_exception)} | Recovery: {recovery_instruction}')
 
 
@@ -19,7 +18,7 @@ def tool_errors(
     recovery_instructions: Optional[dict[Type[Exception], str]] = None,
 ) -> Callable[[F], F]:
     """
-    Enhanced MCP tool function decorator with improved HTTP 500 error handling.
+    The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
 
     :param default_recovery: A fallback recovery instruction to use when no specific instruction
                              is found for the exception.

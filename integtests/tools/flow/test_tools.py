@@ -195,7 +195,7 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
 @pytest.mark.asyncio
 async def test_create_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
-    Create a flow with invalid structure (should raise ToolException wrapping ValueError).
+    Create a flow with invalid structure (should raise ValueError).
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
     :return: None
