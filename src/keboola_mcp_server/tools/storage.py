@@ -90,7 +90,7 @@ class BucketDetail(BaseModel):
         return values
 
 
-class RetrieveBucketsOutput(BaseModel):
+class ListBucketsOutput(BaseModel):
     buckets: list[BucketDetail] = Field(..., description='List of buckets.')
     links: list[Link] = Field(..., description='Links relevant to the bucket listing.')
 
@@ -151,12 +151,12 @@ class TableDetail(BaseModel):
         return values
 
 
-class RetrieveBucketTablesOutput(BaseModel):
+class ListTablesOutput(BaseModel):
     tables: list[TableDetail] = Field(description='List of tables.')
     links: list[Link] = Field(description='Links relevant to the table listing.')
 
 
-class UpdateDescriptionResponse(BaseModel):
+class UpdateDescriptionOutput(BaseModel):
     description: str = Field(description='The updated description value.', alias='value')
     timestamp: datetime = Field(description='The timestamp of the description update.')
     success: bool = Field(default=True, description='Indicates if the update succeeded.')
@@ -181,14 +181,14 @@ async def get_bucket(
 
 @tool_errors()
 @with_session_state()
-async def list_buckets(ctx: Context) -> RetrieveBucketsOutput:
+async def list_buckets(ctx: Context) -> ListBucketsOutput:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     assert isinstance(client, KeboolaClient)
     raw_bucket_data = await client.storage_client.bucket_list()
 
-    return RetrieveBucketsOutput(
+    return ListBucketsOutput(
         buckets=[BucketDetail.model_validate(bucket) for bucket in raw_bucket_data],
         links=[links_manager.get_bucket_dashboard_link()],
     )
@@ -223,7 +223,7 @@ async def get_table(
 @with_session_state()
 async def list_tables(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
-) -> RetrieveBucketTablesOutput:
+) -> ListTablesOutput:
     """Retrieves all tables in a specific bucket with their basic information."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -232,7 +232,7 @@ async def list_tables(
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
     raw_tables = await client.storage_client.bucket_table_list(bucket_id, include=['metadata'])
 
-    return RetrieveBucketTablesOutput(
+    return ListTablesOutput(
         tables=[TableDetail.model_validate(raw_table) for raw_table in raw_tables],
         links=[links_manager.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)],
     )
@@ -245,10 +245,10 @@ async def update_bucket_description(
     description: Annotated[str, Field(description='The new description for the bucket.')],
     ctx: Context,
 ) -> Annotated[
-    UpdateDescriptionResponse,
+    UpdateDescriptionOutput,
     Field(description='The response object of the Bucket description update.'),
 ]:
-    """Update the description for a given Keboola bucket."""
+    """Updates the description for a given Keboola bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manger = await ProjectLinksManager.from_client(client)
 
@@ -260,7 +260,7 @@ async def update_bucket_description(
     description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
     links = [links_manger.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)]
 
-    return UpdateDescriptionResponse.model_validate(description_entry | {'links': links})
+    return UpdateDescriptionOutput.model_validate(description_entry | {'links': links})
 
 
 @tool_errors()
@@ -270,10 +270,10 @@ async def update_table_description(
     description: Annotated[str, Field(description='The new description for the table.')],
     ctx: Context,
 ) -> Annotated[
-    UpdateDescriptionResponse,
+    UpdateDescriptionOutput,
     Field(description='The response object of the Table description update.'),
 ]:
-    """Update the description for a given Keboola table."""
+    """Updates the description for a given Keboola table."""
     client = KeboolaClient.from_state(ctx.session.state)
     response = await client.storage_client.table_metadata_update(
         table_id=table_id,
@@ -283,7 +283,7 @@ async def update_table_description(
     raw_metadata = cast(list[JsonDict], response.get('metadata', []))
     description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
 
-    return UpdateDescriptionResponse.model_validate(description_entry)
+    return UpdateDescriptionOutput.model_validate(description_entry)
 
 
 @tool_errors()
@@ -294,10 +294,10 @@ async def update_column_description(
     description: Annotated[str, Field(description='The new description for the column.')],
     ctx: Context,
 ) -> Annotated[
-    UpdateDescriptionResponse,
+    UpdateDescriptionOutput,
     Field(description='The response object of the column description update.'),
 ]:
-    """Update the description for a given column in a Keboola table."""
+    """Updates the description for a given column in a Keboola table."""
     client = KeboolaClient.from_state(ctx.session.state)
 
     response = await client.storage_client.table_metadata_update(
@@ -313,4 +313,4 @@ async def update_column_description(
         entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION
     )
 
-    return UpdateDescriptionResponse.model_validate(description_entry)
+    return UpdateDescriptionOutput.model_validate(description_entry)

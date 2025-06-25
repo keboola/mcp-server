@@ -9,11 +9,11 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
-    RetrieveBucketsOutput,
-    RetrieveBucketTablesOutput,
+    ListBucketsOutput,
+    ListTablesOutput,
     TableColumnInfo,
     TableDetail,
-    UpdateDescriptionResponse,
+    UpdateDescriptionOutput,
     get_bucket,
     get_table,
     list_buckets,
@@ -211,7 +211,7 @@ async def test_list_buckets(
 
     result = await list_buckets(mcp_context_client)
 
-    assert isinstance(result, RetrieveBucketsOutput)
+    assert isinstance(result, ListBucketsOutput)
     assert len(result.buckets) == len(mock_buckets)
     assert all(isinstance(bucket, BucketDetail) for bucket in result.buckets)
 
@@ -291,7 +291,7 @@ async def test_list_tables(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=sapi_response)
     result = await list_tables('bucket-id', mcp_context_client)
-    assert isinstance(result, RetrieveBucketTablesOutput)
+    assert isinstance(result, ListTablesOutput)
     assert result.tables == expected
     keboola_client.storage_client.bucket_table_list.assert_called_once_with('bucket-id', include=['metadata'])
 
@@ -313,7 +313,7 @@ async def test_update_bucket_description_success(
         ctx=mcp_context_client,
     )
 
-    assert isinstance(result, UpdateDescriptionResponse)
+    assert isinstance(result, UpdateDescriptionOutput)
     assert result.success is True
     assert result.description == 'Updated bucket description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
@@ -341,7 +341,7 @@ async def test_update_table_description_success(
         ctx=mcp_context_client,
     )
 
-    assert isinstance(result, UpdateDescriptionResponse)
+    assert isinstance(result, UpdateDescriptionOutput)
     assert result.success is True
     assert result.description == 'Updated table description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
@@ -370,7 +370,7 @@ async def test_update_column_description_success(
         ctx=mcp_context_client,
     )
 
-    assert isinstance(result, UpdateDescriptionResponse)
+    assert isinstance(result, UpdateDescriptionOutput)
     assert result.success is True
     assert result.description == 'Updated column description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
