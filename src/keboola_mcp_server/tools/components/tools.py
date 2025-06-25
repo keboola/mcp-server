@@ -520,7 +520,7 @@ async def update_sql_transformation(
     return ComponentToolResponse(
         component_id=sql_transformation_id,
         configuration_id=str(configuration_id),
-        description=str(updated_description or updated_raw_configuration.get('description', '')),
+        description=updated_description or updated_raw_configuration.get('description', ''),
         timestamp=datetime.utcnow(),
         success=True,
         links=links,
