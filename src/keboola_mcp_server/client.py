@@ -8,8 +8,6 @@ from typing import Any, Literal, Mapping, Optional, Union, cast
 import httpx
 from pydantic import BaseModel, Field
 
-
-
 LOG = logging.getLogger(__name__)
 
 JsonPrimitive = Union[int, float, str, bool, None]
@@ -124,27 +122,28 @@ class RawKeboolaClient:
         if headers:
             self.headers.update(headers)
 
-    def _raise_for_status(self, response: httpx.Response) -> None:
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
         """Enhanced error handling with exception ID forwarding for HTTP 500 errors."""
         if not response.is_error:
             return
-            
+
         if response.status_code == 500:
             # Enhanced handling for HTTP 500 errors to extract exception ID
             base_message = f"Server error for url '{response.url}'"
-            
+
             try:
                 error_data = response.json()
                 exception_id = error_data.get('exceptionId')
-                
+
                 # Build enhanced message with exception ID for HTTP 500 errors
                 if exception_id:
-                    base_message += f" Please contact support and provide this exception ID: {exception_id}"
-                    
+                    base_message += f' Please contact support and provide this exception ID: {exception_id}'
+
             except (ValueError, KeyError):
                 # Fallback if JSON parsing fails
                 pass
-            
+
             # Raise standard HTTPStatusError with enhanced message
             raise httpx.HTTPStatusError(base_message, request=response.request, response=response)
         else:
@@ -172,9 +171,7 @@ class RawKeboolaClient:
                 params=params,
                 headers=headers,
             )
-            
             self._raise_for_status(response)
-            
             return cast(JsonStruct, response.json())
 
     async def post(
@@ -201,9 +198,7 @@ class RawKeboolaClient:
                 headers=headers,
                 json=data or {},
             )
-            
             self._raise_for_status(response)
-            
             return cast(JsonStruct, response.json())
 
     async def put(
@@ -230,9 +225,7 @@ class RawKeboolaClient:
                 headers=headers,
                 json=data or {},
             )
-            
             self._raise_for_status(response)
-            
             return cast(JsonStruct, response.json())
 
     async def delete(
@@ -253,7 +246,6 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
             )
-            
             self._raise_for_status(response)
 
             if response.content:

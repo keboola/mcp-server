@@ -2,7 +2,7 @@ import pytest
 from fastmcp import Context
 
 from integtests.conftest import ConfigDef
-from keboola_mcp_server.client import KeboolaClient, ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import ToolException
 from keboola_mcp_server.links import ProjectLinksManager

@@ -3,9 +3,7 @@ from functools import wraps
 from typing import Any, Callable, Optional, Type, TypeVar, cast
 
 LOG = logging.getLogger(__name__)
-
 F = TypeVar('F', bound=Callable[..., Any])
-
 
 
 class ToolException(Exception):
@@ -22,7 +20,7 @@ def tool_errors(
 ) -> Callable[[F], F]:
     """
     Enhanced MCP tool function decorator with improved HTTP 500 error handling.
-    
+
     :param default_recovery: A fallback recovery instruction to use when no specific instruction
                              is found for the exception.
     :param recovery_instructions: A dictionary mapping exception types to recovery instructions.
