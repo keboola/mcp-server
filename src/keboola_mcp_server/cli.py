@@ -93,7 +93,8 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 transport=parsed_args.transport,
                 host=parsed_args.host,
                 port=parsed_args.port,
-                # adding ForwardSlashMiddleware in KeboolaMcpServer's constructor doesn't seem to have any effect
+                # Adding ForwardSlashMiddleware in KeboolaMcpServer's constructor doesn't seem to have any effect.
+                # See https://github.com/jlowin/fastmcp/pull/896 for the related changes in the fastmcp==2.9.0 library.
                 middleware=[Middleware(ForwardSlashMiddleware)]
             )
     except Exception as e:
