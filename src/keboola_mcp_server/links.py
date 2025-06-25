@@ -24,6 +24,11 @@ class Link(BaseModel):
     def docs(cls, title: str, url: str) -> 'Link':
         return cls(type='docs', title=title, url=url)
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Link):
+            return False
+        return self.type == other.type and self.title == other.title and self.url == other.url
+
 
 class ProjectLinksManager:
     FLOW_DOCUMENTATION_URL = 'https://help.keboola.com/flows/'
