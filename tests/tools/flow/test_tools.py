@@ -7,9 +7,9 @@ from dateutil import parser
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.tools.flow.model import (
-    FlowConfiguration,
+    FlowConfigurationResponse,
     ListFlowsOutput,
     ReducedFlow,
 )
@@ -137,11 +137,14 @@ class TestFlowTools:
 
         result = await get_flow(ctx=mcp_context_client, configuration_id='21703284')
 
-        assert isinstance(result, FlowConfiguration)
-        assert len(result.phases) == 2
-        assert len(result.tasks) == 2
-        assert result.phases[0].name == 'Data Extraction'
-        assert result.tasks[0].name == 'Extract AWS S3'
+        assert isinstance(result, FlowConfigurationResponse)
+        assert result.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert result.configuration_id == '21703284'
+        assert result.configuration_name == 'Test Flow'
+        assert len(result.configuration.phases) == 2
+        assert len(result.configuration.tasks) == 2
+        assert result.configuration.phases[0].name == 'Data Extraction'
+        assert result.configuration.tasks[0].name == 'Extract AWS S3'
 
     @pytest.mark.asyncio
     async def test_update_flow(
@@ -275,6 +278,6 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     assert isinstance(updated, FlowToolResponse)
 
     detail = await get_flow(ctx=mcp_context_client, configuration_id='123456')
-    assert isinstance(detail, FlowConfiguration)
-    assert len(detail.phases) == 1
-    assert len(detail.tasks) == 1
+    assert isinstance(detail, FlowConfigurationResponse)
+    assert len(detail.configuration.phases) == 1
+    assert len(detail.configuration.tasks) == 1

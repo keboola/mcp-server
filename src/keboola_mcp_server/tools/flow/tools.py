@@ -12,7 +12,6 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
-    FlowConfiguration,
     FlowConfigurationResponse,
     FlowToolResponse,
     ListFlowsOutput,
@@ -201,13 +200,13 @@ async def list_flows(
         for flow_id in flow_ids:
             try:
                 raw_config = await client.storage_client.flow_detail(flow_id)
-                flow = ReducedFlow.from_raw_config(raw_config)
+                flow = ReducedFlow.model_validate(raw_config)
                 flows.append(flow)
             except Exception as e:
                 LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
     else:
         raw_flows = await client.storage_client.flow_list()
-        flows = [ReducedFlow.from_raw_config(raw_flow) for raw_flow in raw_flows]
+        flows = [ReducedFlow.model_validate(raw_flow) for raw_flow in raw_flows]
         LOG.info(f'Found {len(flows)} flows in the project')
 
     links = [links_manager.get_flows_dashboard_link()]
@@ -220,18 +219,15 @@ async def list_flows(
 async def get_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve.')],
-) -> Annotated[FlowConfiguration, Field(description='Detailed flow configuration.')]:
+) -> Annotated[FlowConfigurationResponse, Field(description='Detailed flow configuration.')]:
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     raw_config = await client.storage_client.flow_detail(configuration_id)
 
-    flow_response = FlowConfigurationResponse.from_raw_config(raw_config)
-    flow_configuration = flow_response.configuration
+    flow_response = FlowConfigurationResponse.model_validate(raw_config)
     links = links_manager.get_flow_links(flow_response.configuration_id, flow_name=flow_response.configuration_name)
-    flow_configuration.links = links
-
+    flow_response.links = links
     LOG.info(f'Retrieved flow details for configuration: {configuration_id}')
-
-    return flow_configuration
+    return flow_response
