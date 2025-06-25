@@ -11,12 +11,13 @@ AllComponentTypes = Union[ComponentType, TransformationType]
 
 
 class ComponentToolResponse(BaseModel):
-    component_id: str = Field(..., description='The ID of the component.')
-    configuration_id: str = Field(..., description='The ID of the configuration.')
-    description: str = Field(..., description='The description of the configuration.')
-    timestamp: datetime = Field(..., description='The timestamp of the operation.')
+    component_id: str = Field(description='The ID of the component.')
+    configuration_id: str = Field(description='The ID of the configuration.')
+    description: str = Field(description='The description of the configuration.')
+    timestamp: datetime = Field(description='The timestamp of the operation.')
+    # success is always true unless the tool fails - to inform agent and prevent need to fetch objects
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
-    links: list[Link] = Field(..., description='The links relevant to the configuration.')
+    links: list[Link] = Field(description='The links relevant to the configuration.')
 
 
 class ReducedComponent(BaseModel):
