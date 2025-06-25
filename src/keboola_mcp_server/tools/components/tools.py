@@ -395,13 +395,13 @@ async def create_sql_transformation(
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_name=str(name),
+        configuration_name=name,
     )
 
     return ComponentToolResponse(
         component_id=component_id,
         configuration_id=configuration_id,
-        description=str(description),
+        description=description,
         timestamp=datetime.utcnow(),
         success=True,
         links=links,
