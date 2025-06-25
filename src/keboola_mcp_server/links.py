@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.client import KeboolaClient
 
@@ -8,6 +8,7 @@ URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
 
 
 class Link(BaseModel):
+    model_config = ConfigDict(frozen=True)  # we make the model immutable to avoid unexpected changes
     type: URLType = Field(..., description='The type of the URL.')
     title: str = Field(..., description='The name of the URL.')
     url: str = Field(..., description='The URL.')
