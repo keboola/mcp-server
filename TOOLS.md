@@ -4,49 +4,51 @@ This document provides details about the tools available in the Keboola MCP serv
 ## Index
 
 ### Storage Tools
-- [get_bucket_detail](#get_bucket_detail): Gets detailed information about a specific bucket.
-- [get_table_detail](#get_table_detail): Gets detailed information about a specific table including its DB identifier and column information.
-- [retrieve_bucket_tables](#retrieve_bucket_tables): Retrieves all tables in a specific bucket with their basic information.
-- [retrieve_buckets](#retrieve_buckets): Retrieves information about all buckets in the project.
+- [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
+- [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
+- [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
+- [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
 - [update_bucket_description](#update_bucket_description): Update the description for a given Keboola bucket.
 - [update_column_description](#update_column_description): Update the description for a given column in a Keboola table.
 - [update_table_description](#update_table_description): Update the description for a given Keboola table.
 
 ### SQL Tools
 - [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
-- [query_table](#query_table): Executes an SQL SELECT query to get the data from the underlying database.
+- [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
 
 ### Component Tools
-- [create_component_root_configuration](#create_component_root_configuration): Creates a component configuration using the specified name, component ID, configuration JSON, and description.
-- [create_component_row_configuration](#create_component_row_configuration): Creates a component configuration row in the specified configuration_id, using the specified name,
+- [add_config_row](#add_config_row): Creates a component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
-- [create_flow](#create_flow): Creates a new flow configuration in Keboola.
+- [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and optionally a list of created table names if and only if they are generated within the SQL
 statements.
 - [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
 - [get_component](#get_component): Gets information about a specific component given its ID.
-- [get_component_configuration](#get_component_configuration): Gets information about a specific component/transformation configuration.
-- [get_component_configuration_examples](#get_component_configuration_examples): Retrieves sample configuration examples for a specific component.
-- [get_flow_detail](#get_flow_detail): Gets detailed information about a specific flow configuration.
-- [get_flow_schema](#get_flow_schema): Returns the JSON schema that defines the structure of Flow configurations.
-- [retrieve_components_configurations](#retrieve_components_configurations): Retrieves configurations of components present in the project,
+- [get_config](#get_config): Gets information about a specific component/transformation configuration.
+- [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
+- [list_configs](#list_configs): Retrieves configurations of components present in the project,
 optionally filtered by component types or specific component IDs.
-- [retrieve_flows](#retrieve_flows): Retrieves flow configurations from the project.
-- [retrieve_transformations](#retrieve_transformations): Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
-- [update_component_root_configuration](#update_component_root_configuration): Updates a specific component configuration using given by component ID, and configuration ID.
-- [update_component_row_configuration](#update_component_row_configuration): Updates a specific component configuration row in the specified configuration_id, using the specified name,
+- [list_transformations](#list_transformations): Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
+- [update_config](#update_config): Updates a specific root component configuration using given by component ID, and configuration ID.
+- [update_config_row](#update_config_row): Updates a specific component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
-- [update_flow](#update_flow): Updates an existing flow configuration in Keboola.
-- [update_sql_transformation_configuration](#update_sql_transformation_configuration): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
+- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
 configuration.
 
+### Flow Tools
+- [create_flow](#create_flow): Creates a new flow configuration in Keboola.
+- [get_flow](#get_flow): Gets detailed information about a specific flow configuration.
+- [get_flow_schema](#get_flow_schema): Returns the JSON schema that defines the structure of Flow configurations.
+- [list_flows](#list_flows): Retrieves flow configurations from the project.
+- [update_flow](#update_flow): Updates an existing flow configuration in Keboola.
+
 ### Jobs Tools
-- [get_job_detail](#get_job_detail): Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
+- [get_job](#get_job): Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
 results, and any relevant metadata.
-- [retrieve_jobs](#retrieve_jobs): Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
+- [list_jobs](#list_jobs): Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
 filtering.
-- [start_job](#start_job): Starts a new job for a given component or transformation.
+- [run_job](#run_job): Starts a new job for a given component or transformation.
 
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
@@ -57,8 +59,8 @@ filtering.
 ---
 
 # Storage Tools
-<a name="get_bucket_detail"></a>
-## get_bucket_detail
+<a name="get_bucket"></a>
+## get_bucket
 **Description**:
 
 Gets detailed information about a specific bucket.
@@ -82,8 +84,8 @@ Gets detailed information about a specific bucket.
 ```
 
 ---
-<a name="get_table_detail"></a>
-## get_table_detail
+<a name="get_table"></a>
+## get_table
 **Description**:
 
 Gets detailed information about a specific table including its DB identifier and column information.
@@ -107,8 +109,24 @@ Gets detailed information about a specific table including its DB identifier and
 ```
 
 ---
-<a name="retrieve_bucket_tables"></a>
-## retrieve_bucket_tables
+<a name="list_buckets"></a>
+## list_buckets
+**Description**:
+
+Retrieves information about all buckets in the project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="list_tables"></a>
+## list_tables
 **Description**:
 
 Retrieves all tables in a specific bucket with their basic information.
@@ -127,22 +145,6 @@ Retrieves all tables in a specific bucket with their basic information.
   "required": [
     "bucket_id"
   ],
-  "type": "object"
-}
-```
-
----
-<a name="retrieve_buckets"></a>
-## retrieve_buckets
-**Description**:
-
-Retrieves information about all buckets in the project.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
   "type": "object"
 }
 ```
@@ -265,8 +267,8 @@ Gets the name of the SQL dialect used by Keboola project's underlying database.
 ```
 
 ---
-<a name="query_table"></a>
-## query_table
+<a name="query_data"></a>
+## query_data
 **Description**:
 
 Executes an SQL SELECT query to get the data from the underlying database.
@@ -300,72 +302,8 @@ Executes an SQL SELECT query to get the data from the underlying database.
 ---
 
 # Component Tools
-<a name="create_component_root_configuration"></a>
-## create_component_root_configuration
-**Description**:
-
-Creates a component configuration using the specified name, component ID, configuration JSON, and description.
-
-CONSIDERATIONS:
-- The configuration JSON object must follow the root_configuration_schema of the specified component.
-- Make sure the configuration parameters always adhere to the root_configuration_schema,
-  which is available via the component_detail tool.
-- The configuration JSON object should adhere to the component's configuration examples if found.
-
-USAGE:
-- Use when you want to create a new root configuration for a specific component.
-
-EXAMPLES:
-- user_input: `Create a new configuration for component X with these settings`
-    - set the component_id and configuration parameters accordingly
-    - returns the created component configuration if successful.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "name": {
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "title": "Description",
-      "type": "string"
-    },
-    "component_id": {
-      "description": "The ID of the component for which to create the configuration.",
-      "title": "Component Id",
-      "type": "string"
-    },
-    "parameters": {
-      "additionalProperties": true,
-      "description": "The component configuration parameters, adhering to the root_configuration_schema",
-      "title": "Parameters",
-      "type": "object"
-    },
-    "storage": {
-      "additionalProperties": true,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage",
-      "type": "object"
-    }
-  },
-  "required": [
-    "name",
-    "description",
-    "component_id",
-    "parameters"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="create_component_row_configuration"></a>
-## create_component_row_configuration
+<a name="add_config_row"></a>
+## add_config_row
 **Description**:
 
 Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -381,7 +319,7 @@ USAGE:
 - Use when you want to create a new row configuration for a specific component configuration.
 
 EXAMPLES:
-- user_input: `Create a new configuration for component X with these settings`
+- user_input: `Create a new configuration row for component X with these settings`
     - set the component_id, configuration_id and configuration parameters accordingly
     - returns the created component configuration if successful.
 
@@ -435,35 +373,25 @@ EXAMPLES:
 ```
 
 ---
-<a name="create_flow"></a>
-## create_flow
+<a name="create_config"></a>
+## create_config
 **Description**:
 
-Creates a new flow configuration in Keboola.
-A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
-how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
-Each flow is composed of:
-- Tasks: individual component configurations (e.g., extractors, writers, transformations).
-- Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
+Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 
 CONSIDERATIONS:
-- The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
-- Each task and phase must include at least: `id` and `name`.
-- Each task must reference an existing component configuration in the project.
-- Items in the `dependsOn` phase field reference ids of other phases.
-- Links contained in the response should ALWAYS be presented to the user
+- The configuration JSON object must follow the root_configuration_schema of the specified component.
+- Make sure the configuration parameters always adhere to the root_configuration_schema,
+  which is available via the component_detail tool.
+- The configuration JSON object should adhere to the component's configuration examples if found.
 
 USAGE:
-Use this tool to automate multi-step data workflows. This is ideal for:
-- Creating ETL/ELT orchestration.
-- Coordinating dependencies between components.
-- Structuring parallel and sequential task execution.
+- Use when you want to create a new root configuration for a specific component.
 
 EXAMPLES:
-- user_input: Orchestrate all my JIRA extractors.
-    - fill `tasks` parameter with the tasks for the JIRA extractors
-    - determine dependencies between the JIRA extractors
-    - fill `phases` parameter by grouping tasks into phases
+- user_input: `Create a new configuration for component X with these settings`
+    - set the component_id and configuration parameters accordingly
+    - returns the created component configuration if successful.
 
 
 **Input JSON Schema**:
@@ -471,39 +399,38 @@ EXAMPLES:
 {
   "properties": {
     "name": {
-      "description": "A short, descriptive name for the flow.",
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
       "title": "Name",
       "type": "string"
     },
     "description": {
-      "description": "Detailed description of the flow purpose.",
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
       "title": "Description",
       "type": "string"
     },
-    "phases": {
-      "description": "List of phase definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "title": "Phases",
-      "type": "array"
+    "component_id": {
+      "description": "The ID of the component for which to create the configuration.",
+      "title": "Component Id",
+      "type": "string"
     },
-    "tasks": {
-      "description": "List of task definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "title": "Tasks",
-      "type": "array"
+    "parameters": {
+      "additionalProperties": true,
+      "description": "The component configuration parameters, adhering to the root_configuration_schema",
+      "title": "Parameters",
+      "type": "object"
+    },
+    "storage": {
+      "additionalProperties": true,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
+      "title": "Storage",
+      "type": "object"
     }
   },
   "required": [
     "name",
     "description",
-    "phases",
-    "tasks"
+    "component_id",
+    "parameters"
   ],
   "type": "object"
 }
@@ -678,8 +605,8 @@ EXAMPLES:
 ```
 
 ---
-<a name="get_component_configuration"></a>
-## get_component_configuration
+<a name="get_config"></a>
+## get_config
 **Description**:
 
 Gets information about a specific component/transformation configuration.
@@ -718,8 +645,8 @@ EXAMPLES:
 ```
 
 ---
-<a name="get_component_configuration_examples"></a>
-## get_component_configuration_examples
+<a name="get_config_examples"></a>
+## get_config_examples
 **Description**:
 
 Retrieves sample configuration examples for a specific component.
@@ -751,49 +678,8 @@ EXAMPLES:
 ```
 
 ---
-<a name="get_flow_detail"></a>
-## get_flow_detail
-**Description**:
-
-Gets detailed information about a specific flow configuration.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "configuration_id": {
-      "description": "ID of the flow configuration to retrieve.",
-      "title": "Configuration Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "configuration_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="get_flow_schema"></a>
-## get_flow_schema
-**Description**:
-
-Returns the JSON schema that defines the structure of Flow configurations.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
-<a name="retrieve_components_configurations"></a>
-## retrieve_components_configurations
+<a name="list_configs"></a>
+## list_configs
 **Description**:
 
 Retrieves configurations of components present in the project,
@@ -852,33 +738,8 @@ EXAMPLES:
 ```
 
 ---
-<a name="retrieve_flows"></a>
-## retrieve_flows
-**Description**:
-
-Retrieves flow configurations from the project.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "flow_ids": {
-      "description": "The configuration IDs of the flows to retrieve.",
-      "items": {
-        "type": "string"
-      },
-      "title": "Flow Ids",
-      "type": "array"
-    }
-  },
-  "type": "object"
-}
-```
-
----
-<a name="retrieve_transformations"></a>
-## retrieve_transformations
+<a name="list_transformations"></a>
+## list_transformations
 **Description**:
 
 Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
@@ -918,11 +779,11 @@ EXAMPLES:
 ```
 
 ---
-<a name="update_component_root_configuration"></a>
-## update_component_root_configuration
+<a name="update_config"></a>
+## update_config
 **Description**:
 
-Updates a specific component configuration using given by component ID, and configuration ID.
+Updates a specific root component configuration using given by component ID, and configuration ID.
 
 CONSIDERATIONS:
 - The configuration JSON object must follow the root_configuration_schema of the specified component.
@@ -995,8 +856,8 @@ EXAMPLES:
 ```
 
 ---
-<a name="update_component_row_configuration"></a>
-## update_component_row_configuration
+<a name="update_config_row"></a>
+## update_config_row
 **Description**:
 
 Updates a specific component configuration row in the specified configuration_id, using the specified name,
@@ -1077,87 +938,8 @@ EXAMPLES:
 ```
 
 ---
-<a name="update_flow"></a>
-## update_flow
-**Description**:
-
-Updates an existing flow configuration in Keboola.
-A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
-how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
-Each flow is composed of:
-- Tasks: individual component configurations (e.g., extractors, writers, transformations).
-- Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
-
-CONSIDERATIONS:
-- The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
-- Each task and phase must include at least: `id` and `name`.
-- Each task must reference an existing component configuration in the project.
-- Items in the `dependsOn` phase field reference ids of other phases.
-- The flow specified by `configuration_id` must already exist in the project.
-- Links contained in the response should ALWAYS be presented to the user
-
-USAGE:
-Use this tool to update an existing flow.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "configuration_id": {
-      "description": "ID of the flow configuration to update.",
-      "title": "Configuration Id",
-      "type": "string"
-    },
-    "name": {
-      "description": "Updated flow name.",
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "description": "Updated flow description.",
-      "title": "Description",
-      "type": "string"
-    },
-    "phases": {
-      "description": "Updated list of phase definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "title": "Phases",
-      "type": "array"
-    },
-    "tasks": {
-      "description": "Updated list of task definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "title": "Tasks",
-      "type": "array"
-    },
-    "change_description": {
-      "description": "Description of changes made.",
-      "title": "Change Description",
-      "type": "string"
-    }
-  },
-  "required": [
-    "configuration_id",
-    "name",
-    "description",
-    "phases",
-    "tasks",
-    "change_description"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="update_sql_transformation_configuration"></a>
-## update_sql_transformation_configuration
+<a name="update_sql_transformation"></a>
+## update_sql_transformation
 **Description**:
 
 Updates an existing SQL transformation configuration, optionally updating the description and disabling the
@@ -1165,7 +947,7 @@ configuration.
 
 CONSIDERATIONS:
 - The parameters configuration must include blocks with codes of SQL statements. Using one block with many codes of
-  SQL statemetns is prefered and commonly used unless specified otherwise by the user.
+  SQL statements is preferred and commonly used unless specified otherwise by the user.
 - Each code contains SQL statements that are semantically related and have a descriptive name.
 - Each SQL statement must be executable and follow the current SQL dialect, which can be retrieved using
   appropriate tool.
@@ -1298,9 +1080,231 @@ EXAMPLES:
 
 ---
 
+# Flow Tools
+<a name="create_flow"></a>
+## create_flow
+**Description**:
+
+Creates a new flow configuration in Keboola.
+A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
+how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
+Each flow is composed of:
+- Tasks: individual component configurations (e.g., extractors, writers, transformations).
+- Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
+
+CONSIDERATIONS:
+- The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
+- Each task and phase must include at least: `id` and `name`.
+- Each task must reference an existing component configuration in the project.
+- Items in the `dependsOn` phase field reference ids of other phases.
+- Links contained in the response should ALWAYS be presented to the user
+
+USAGE:
+Use this tool to automate multi-step data workflows. This is ideal for:
+- Creating ETL/ELT orchestration.
+- Coordinating dependencies between components.
+- Structuring parallel and sequential task execution.
+
+EXAMPLES:
+- user_input: Orchestrate all my JIRA extractors.
+    - fill `tasks` parameter with the tasks for the JIRA extractors
+    - determine dependencies between the JIRA extractors
+    - fill `phases` parameter by grouping tasks into phases
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "A short, descriptive name for the flow.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "Detailed description of the flow purpose.",
+      "title": "Description",
+      "type": "string"
+    },
+    "phases": {
+      "description": "List of phase definitions.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "tasks": {
+      "description": "List of task definitions.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Tasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "phases",
+    "tasks"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_flow"></a>
+## get_flow
+**Description**:
+
+Gets detailed information about a specific flow configuration.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_id": {
+      "description": "ID of the flow configuration to retrieve.",
+      "title": "Configuration Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_flow_schema"></a>
+## get_flow_schema
+**Description**:
+
+Returns the JSON schema that defines the structure of Flow configurations.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="list_flows"></a>
+## list_flows
+**Description**:
+
+Retrieves flow configurations from the project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "flow_ids": {
+      "description": "The configuration IDs of the flows to retrieve.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Flow Ids",
+      "type": "array"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="update_flow"></a>
+## update_flow
+**Description**:
+
+Updates an existing flow configuration in Keboola.
+A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
+how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
+Each flow is composed of:
+- Tasks: individual component configurations (e.g., extractors, writers, transformations).
+- Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
+
+CONSIDERATIONS:
+- The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
+- Each task and phase must include at least: `id` and `name`.
+- Each task must reference an existing component configuration in the project.
+- Items in the `dependsOn` phase field reference ids of other phases.
+- The flow specified by `configuration_id` must already exist in the project.
+- Links contained in the response should ALWAYS be presented to the user
+
+USAGE:
+Use this tool to update an existing flow.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_id": {
+      "description": "ID of the flow configuration to update.",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "name": {
+      "description": "Updated flow name.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "Updated flow description.",
+      "title": "Description",
+      "type": "string"
+    },
+    "phases": {
+      "description": "Updated list of phase definitions.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "tasks": {
+      "description": "Updated list of task definitions.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Tasks",
+      "type": "array"
+    },
+    "change_description": {
+      "description": "Description of changes made.",
+      "title": "Change Description",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id",
+    "name",
+    "description",
+    "phases",
+    "tasks",
+    "change_description"
+  ],
+  "type": "object"
+}
+```
+
+---
+
 # Jobs Tools
-<a name="get_job_detail"></a>
-## get_job_detail
+<a name="get_job"></a>
+## get_job
 **Description**:
 
 Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
@@ -1328,8 +1332,8 @@ EXAMPLES:
 ```
 
 ---
-<a name="retrieve_jobs"></a>
-## retrieve_jobs
+<a name="list_jobs"></a>
+## list_jobs
 **Description**:
 
 Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
@@ -1426,8 +1430,8 @@ EXAMPLES:
 ```
 
 ---
-<a name="start_job"></a>
-## start_job
+<a name="run_job"></a>
+## run_job
 **Description**:
 
 Starts a new job for a given component or transformation.

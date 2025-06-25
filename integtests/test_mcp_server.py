@@ -247,7 +247,7 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     assert config.configuration_id is not None
 
     tool_result = await client.call_tool(
-        'get_component_configuration',
+        'get_config',
         {'configuration_id': config.configuration_id, 'component_id': config.component_id},
     )
 
