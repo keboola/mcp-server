@@ -20,6 +20,7 @@ from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.types import AnyFunction
 from pydantic import BaseModel
 from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
@@ -39,6 +40,22 @@ class ServerState:
         if not isinstance(server_state, ServerState):
             raise ValueError('ServerState is not available in the context.')
         return server_state
+
+
+class ForwardSlashMiddleware:
+    def __init__(self, app: ASGIApp):
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        LOG.debug(f'ForwardSlashMiddleware: scope={scope}')
+
+        if scope['type'] == 'http':
+            path = scope['path']
+            if path in ['/sse', '/messages', '/mcp']:
+                scope = dict(scope)
+                scope['path'] = f'{path}/'
+
+        await self._app(scope, receive, send)
 
 
 class KeboolaMcpServer(FastMCP):
