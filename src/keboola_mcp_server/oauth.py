@@ -8,14 +8,15 @@ from urllib.parse import urljoin
 
 import httpx
 import jwt
+from fastmcp.server.auth.auth import OAuthProvider
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
-    OAuthAuthorizationServerProvider,
     RefreshToken,
     construct_redirect_uri,
 )
+from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl, AnyUrl
 
@@ -60,12 +61,13 @@ class ProxyRefreshToken(RefreshToken):
     delegate: RefreshToken
 
 
-class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
+class SimpleOAuthProvider(OAuthProvider):
 
     def __init__(
             self, *,
             storage_api_url: str,
-            mcp_callback_url: str,
+            mcp_server_url: str,
+            callback_endpoint: str,
             client_id: str, client_secret: str, server_url: str, scope: str,
             jwt_secret: str | None = None,
     ) -> None:
@@ -73,15 +75,21 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         Creates OAuth provider implementation.
 
         :param storage_api_url: The URL of the Storage API service.
-        :param mcp_callback_url: The URL where the OAuth server redirects to after the user authorizes.
+        :param mcp_server_url: The URL of the MCP server itself.
+        :param callback_endpoint: The endpoint where the OAuth server redirects to after the user authorizes.
         :param client_id: The client ID registered with the OAuth server.
         :param client_secret: The client secret registered with the OAuth server
         :param server_url: The URL of the OAuth server that the MCP server should authenticate to.
         :param scope: The scope of access to request from the OAuth server.
         :param jwt_secret: The secret key for encoding and decoding JWT tokens.
         """
+        super().__init__(
+            issuer_url=mcp_server_url,
+            client_registration_options=ClientRegistrationOptions(enabled=True),
+        )
+
         self._sapi_tokens_url = urljoin(storage_api_url, '/v2/storage/tokens')
-        self._mcp_callback_url = mcp_callback_url
+        self._mcp_callback_url = urljoin(mcp_server_url, callback_endpoint)
         self._oauth_client_id = client_id
         self._oauth_client_secret = client_secret
         self._oauth_server_auth_url = urljoin(server_url, '/oauth/authorize')
@@ -114,7 +122,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
 
         :param client_info: The full information of the OAuth client to be registered.
         """
-        # This is a no-op. We don't register clients otherwise we would need a persistent registry.
+        # This is a no-op. We don't register clients, otherwise we would need a persistent registry.
         LOG.debug(f'Client registered: client_id={client_info.client_id}')
 
     async def authorize(
@@ -186,7 +194,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}', exc_info=True)
             raise HTTPException(400, 'Invalid state parameter')
 
-        # Exchange the authorization code for the access token with OAuth server.
+        # Exchange the authorization code for the access token with the OAuth server.
         async with self._create_http_client() as http_client:
             response = await http_client.post(
                 self._oauth_server_token_url,
@@ -196,7 +204,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
                     'code': code,
                     'grant_type': 'authorization_code',
                     # FYI: Some tutorials use the redirect_uri here, but it does not seem to be required.
-                    # The Keboola OAuth server requires it, but GitHub OAuth server does not.
+                    # The Keboola OAuth server requires it, but the GitHub OAuth server does not.
                     'redirect_uri': self._mcp_callback_url,
                 },
                 headers={'Accept': 'application/json'},
@@ -255,11 +263,14 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         :return: An `_ExtendedAuthorizationCode` instance if the authorization code is valid, otherwise `None`.
         """
         try:
-            auth_code = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
+            auth_code_raw = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
         except jwt.InvalidTokenError:
             LOG.debug(f'[load_authorization_code] Invalid authorization_code: {authorization_code}', exc_info=True)
             return None
 
+        auth_code = _ExtendedAuthorizationCode.model_validate(
+            auth_code_raw | {'redirect_uri': AnyUrl(auth_code_raw['redirect_uri'])}
+        )
         LOG.debug(f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
                   f'auth_code={auth_code}')
 
@@ -270,9 +281,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             LOG.info(f'[load_authorization_code] Expired authorization code: '
                      f'auth_code.expires_at={auth_code.expires_at}, now={now}')
 
-        return _ExtendedAuthorizationCode.model_validate(
-            auth_code | {'redirect_uri': AnyUrl(auth_code['redirect_uri'])}
-        )
+        return auth_code
 
     async def exchange_authorization_code(
             self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
@@ -323,7 +332,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
             refresh_token=refresh_token_jwt,
-            token_type='bearer',
+            token_type='Bearer',
             expires_in=expires_in,
             scope=' '.join(access_token.scopes),
         )
@@ -471,7 +480,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
             refresh_token=refresh_token_jwt,
-            token_type='bearer',
+            token_type='Bearer',
             expires_in=max(0, int(access_token.expires_at - time.time())),
             scope=' '.join(access_token.scopes),
         )
@@ -487,7 +496,7 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         """
         Revokes a token.
 
-        This is a no-op function as the tokens are not stored and so there is no way to revoke tokens that has already
+        This is a no-op function as the tokens are not stored and so there is no way to revoke tokens that have already
         been issued.
 
         :param token: The token to be revoked.

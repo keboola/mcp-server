@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context
+from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
 from pydantic import Field
 
@@ -47,18 +48,18 @@ LOG = logging.getLogger(__name__)
 def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
 
-    mcp.add_tool(get_component)
-    mcp.add_tool(get_config)
-    mcp.add_tool(list_configs, serializer=listing_output_serializer)
-    mcp.add_tool(create_config)
-    mcp.add_tool(add_config_row)
-    mcp.add_tool(update_config)
-    mcp.add_tool(update_config_row)
-    mcp.add_tool(get_config_examples)
-    mcp.add_tool(find_component_id)
-    mcp.add_tool(create_sql_transformation)
-    mcp.add_tool(update_sql_transformation)
-    mcp.add_tool(list_transformations)
+    mcp.add_tool(FunctionTool.from_function(get_component))
+    mcp.add_tool(FunctionTool.from_function(get_config))
+    mcp.add_tool(FunctionTool.from_function(list_configs, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(create_config))
+    mcp.add_tool(FunctionTool.from_function(add_config_row))
+    mcp.add_tool(FunctionTool.from_function(update_config))
+    mcp.add_tool(FunctionTool.from_function(update_config_row))
+    mcp.add_tool(FunctionTool.from_function(get_config_examples))
+    mcp.add_tool(FunctionTool.from_function(find_component_id))
+    mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
+    mcp.add_tool(FunctionTool.from_function(update_sql_transformation))
+    mcp.add_tool(FunctionTool.from_function(list_transformations))
 
     LOG.info('Component tools added to the MCP server.')
 
