@@ -4,7 +4,7 @@ from typing import cast
 import pytest
 from mcp.server.fastmcp import Context
 
-from integtests.conftest import ConfigDef
+from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
@@ -30,6 +30,7 @@ from keboola_mcp_server.tools.components.utils import (
     _get_sql_transformation_id_from_sql_dialect,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -514,7 +515,6 @@ async def test_create_sql_transformation(mcp_context: Context):
         config_detail = await client.storage_client.configuration_detail(
             component_id=created_transformation.component_id, configuration_id=created_transformation.configuration_id
         )
-        LOG.error(config_detail)
 
         assert config_detail['name'] == test_name
         assert config_detail['description'] == test_description
@@ -524,18 +524,15 @@ async def test_create_sql_transformation(mcp_context: Context):
         configuration_data = cast(dict, config_detail['configuration'])
         assert 'parameters' in configuration_data
         assert 'storage' in configuration_data
-        LOG.error(configuration_data)
 
         # Verify the parameters structure
         parameters = configuration_data['parameters']
         assert 'blocks' in parameters
         assert len(parameters['blocks']) == 1
-        LOG.error(parameters)
 
         block = parameters['blocks'][0]
         assert 'codes' in block
         assert len(block['codes']) == 1
-        LOG.error(block)
 
         code = block['codes'][0]
         assert code['name'] == 'Main transformation'
@@ -543,31 +540,26 @@ async def test_create_sql_transformation(mcp_context: Context):
         assert len(code['script']) == 2
         assert code['script'][0] == 'SELECT 1 as test_column'
         assert code['script'][1] == 'SELECT 2 as another_column'
-        LOG.error(code)
 
         # Verify the storage structure contains output tables
         storage = configuration_data['storage']
         assert 'output' in storage
         assert 'tables' in storage['output']
         assert len(storage['output']['tables']) == len(test_created_table_names)
-        LOG.error(storage)
 
         output_table = storage['output']['tables'][0]
-        assert output_table['destination'] == test_created_table_names[0]
-        LOG.error(output_table)
+        assert output_table['source'] == test_created_table_names[0]
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
             component_id=created_transformation.component_id, configuration_id=created_transformation.configuration_id
         )
-        LOG.error(metadata)
 
         # Convert metadata list to dictionary for easier checking
         assert isinstance(metadata, list)
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
         assert MetadataField.CREATED_BY_MCP in metadata_dict
         assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
-        LOG.error(metadata_dict)
 
     finally:
         # Clean up: Delete the configuration
@@ -579,7 +571,9 @@ async def test_create_sql_transformation(mcp_context: Context):
 
 
 @pytest.mark.asyncio
-async def test_update_sql_transformation(mcp_context: Context):
+async def test_update_sql_transformation(
+    mcp_context: Context, keboola_project: ProjectDef, workspace_manager: WorkspaceManager
+):
     """Tests that `update_sql_transformation` updates an existing SQL transformation correctly."""
     # First, create an initial transformation
     initial_name = 'Initial SQL Transformation'
@@ -651,9 +645,27 @@ async def test_update_sql_transformation(mcp_context: Context):
 
         # Verify the response structure
         assert isinstance(updated_transformation, ComponentToolResponse)
+
         assert updated_transformation.success is True
         assert updated_transformation.timestamp is not None
         assert len(updated_transformation.links) > 0
+
+        project_id = keboola_project.project_id
+        sql_dialect = await get_sql_dialect(mcp_context)
+        sql_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+        detail_link = updated_transformation.links[0]
+        assert detail_link.type == 'ui-detail'
+        assert (
+            detail_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}/'
+            + f'{updated_transformation.configuration_id}'
+        )
+        dashboard_link = updated_transformation.links[1]
+        assert dashboard_link.type == 'ui-dashboard'
+        assert (
+            dashboard_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}'
+        )
         assert updated_transformation.component_id == created_transformation.component_id
         assert updated_transformation.configuration_id == created_transformation.configuration_id
         assert updated_transformation.description == updated_description
