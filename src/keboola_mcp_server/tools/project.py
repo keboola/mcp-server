@@ -2,6 +2,7 @@ import logging
 from typing import Annotated, cast
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
@@ -20,7 +21,7 @@ def add_project_tools(mcp: FastMCP) -> None:
 
     for tool in project_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(tool)
+        mcp.add_tool(FunctionTool.from_function(tool))
 
     LOG.info('Project tools initialized.')
 

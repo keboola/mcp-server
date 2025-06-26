@@ -4,6 +4,7 @@ from io import StringIO
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools import FunctionTool
 from pydantic import Field
 
 from keboola_mcp_server.errors import tool_errors
@@ -15,8 +16,8 @@ LOG = logging.getLogger(__name__)
 
 def add_sql_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    mcp.add_tool(query_data)
-    mcp.add_tool(get_sql_dialect)
+    mcp.add_tool(FunctionTool.from_function(query_data))
+    mcp.add_tool(FunctionTool.from_function(get_sql_dialect))
     LOG.info('SQL tools added to the MCP server.')
 
 

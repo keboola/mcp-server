@@ -9,7 +9,7 @@ import logging
 import textwrap
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 from fastmcp import Context, FastMCP
@@ -17,9 +17,10 @@ from fastmcp.server.dependencies import get_http_request
 from fastmcp.tools import Tool
 from fastmcp.utilities.types import find_kwarg_by_type
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
-from mcp.types import AnyFunction, ToolAnnotations
+from mcp.types import AnyFunction
 from pydantic import BaseModel
 from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
@@ -41,31 +42,31 @@ class ServerState:
         return server_state
 
 
+class ForwardSlashMiddleware:
+    def __init__(self, app: ASGIApp):
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        LOG.debug(f'ForwardSlashMiddleware: scope={scope}')
+
+        if scope['type'] == 'http':
+            path = scope['path']
+            if path in ['/sse', '/messages', '/mcp']:
+                scope = dict(scope)
+                scope['path'] = f'{path}/'
+
+        await self._app(scope, receive, send)
+
+
 class KeboolaMcpServer(FastMCP):
-
-    def add_tool(
-        self,
-        fn: AnyFunction,
-        name: str | None = None,
-        description: str | None = None,
-        tags: set[str] | None = None,
-        annotations: ToolAnnotations | dict[str, Any] | None = None,
-        serializer: Callable | None = None
-    ) -> None:
+    def add_tool(self, tool: Tool) -> None:
         """Applies `textwrap.dedent()` function to the tool's docstring, if no explicit description is provided."""
+        if tool.description:
+            description = textwrap.dedent(tool.description).strip()
+            if description != tool.description:
+                tool = tool.model_copy(update={'description': description})
 
-        if isinstance(annotations, dict):
-            annotations = ToolAnnotations(**annotations)
-
-        tool = Tool.from_function(
-            fn=fn,
-            name=name,
-            description=description or textwrap.dedent(fn.__doc__ or '').strip(),
-            tags=tags,
-            annotations=annotations,
-            serializer=serializer
-        )
-        self._tool_manager.add_tool(tool)
+        super().add_tool(tool)
 
 
 def _create_session_state(config: Config) -> dict[str, Any]:

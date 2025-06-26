@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Annotated, Any, Optional, cast
 
 from fastmcp import Context
+from fastmcp.tools import FunctionTool
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
@@ -21,13 +22,13 @@ TOOL_GROUP_NAME = 'STORAGE'
 
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
-    mcp.add_tool(get_bucket)
-    mcp.add_tool(list_buckets, serializer=listing_output_serializer)
-    mcp.add_tool(get_table)
-    mcp.add_tool(list_tables, serializer=listing_output_serializer)
-    mcp.add_tool(update_bucket_description)
-    mcp.add_tool(update_table_description, serializer=listing_output_serializer)
-    mcp.add_tool(update_column_description, serializer=listing_output_serializer)
+    mcp.add_tool(FunctionTool.from_function(get_bucket))
+    mcp.add_tool(FunctionTool.from_function(list_buckets, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(get_table))
+    mcp.add_tool(FunctionTool.from_function(list_tables, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(update_bucket_description))
+    mcp.add_tool(FunctionTool.from_function(update_table_description, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(update_column_description, serializer=listing_output_serializer))
 
     LOG.info('Storage tools added to the MCP server.')
 
@@ -42,7 +43,7 @@ def extract_description(values: dict[str, Any]) -> Optional[str]:
             (
                 value
                 for item in metadata
-                if (item.get('key') == MetadataField.DESCRIPTION and (value := item.get('value')))
+                if item.get('key') == MetadataField.DESCRIPTION and (value := item.get('value'))
             ),
             None,
         )
