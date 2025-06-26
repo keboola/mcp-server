@@ -21,7 +21,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationMetadata,
     ComponentConfigurationOutput,
     ComponentConfigurationResponseBase,
-    ComponentToolResponse,
+    ConfigToolOutput,
     ListConfigsOutput,
     ListTransformationsOutput,
     ReducedComponent,
@@ -300,7 +300,7 @@ async def test_create_sql_transformation(
         created_table_names=[created_table_name],
     )
 
-    assert isinstance(new_transformation_configuration, ComponentToolResponse)
+    assert isinstance(new_transformation_configuration, ConfigToolOutput)
     assert new_transformation_configuration.component_id == expected_component_id
     assert new_transformation_configuration.configuration_id == mock_configuration['id']
     assert new_transformation_configuration.description == mock_configuration['description']
@@ -396,7 +396,7 @@ async def test_update_sql_transformation(
         is_disabled=False,
     )
 
-    assert isinstance(updated_configuration, ComponentToolResponse)
+    assert isinstance(updated_configuration, ConfigToolOutput)
     assert updated_configuration.component_id == expected_component_id
     assert updated_configuration.configuration_id == mock_configuration['id']
     assert updated_configuration.description == mock_configuration['description']
@@ -488,7 +488,7 @@ async def test_create_component_root_configuration(
         storage=storage,
     )
 
-    assert isinstance(result, ComponentToolResponse)
+    assert isinstance(result, ConfigToolOutput)
     assert result.component_id == component_id
     assert result.configuration_id == configuration['id']
     assert result.description == description
@@ -541,7 +541,7 @@ async def test_create_component_row_configuration(
         storage=storage,
     )
 
-    assert isinstance(result, ComponentToolResponse)
+    assert isinstance(result, ConfigToolOutput)
     assert result.component_id == component_id
     assert result.configuration_id == configuration_id
     assert result.description == description
@@ -598,7 +598,7 @@ async def test_update_component_root_configuration(
         storage=storage,
     )
 
-    assert isinstance(result, ComponentToolResponse)
+    assert isinstance(result, ConfigToolOutput)
     assert result.component_id == component_id
     assert result.configuration_id == configuration_id
     assert result.description == description
@@ -656,7 +656,7 @@ async def test_update_component_row_configuration(
         storage=storage,
     )
 
-    assert isinstance(result, ComponentToolResponse)
+    assert isinstance(result, ConfigToolOutput)
     assert result.component_id == component_id
     assert result.configuration_id == configuration_id
     assert result.description == description

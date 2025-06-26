@@ -10,7 +10,7 @@ TransformationType = Literal['transformation']
 AllComponentTypes = Union[ComponentType, TransformationType]
 
 
-class ComponentToolResponse(BaseModel):
+class ConfigToolOutput(BaseModel):
     component_id: str = Field(description='The ID of the component.')
     configuration_id: str = Field(description='The ID of the configuration.')
     description: str = Field(description='The description of the configuration.')

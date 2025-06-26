@@ -10,9 +10,9 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationOutput,
-    ComponentToolResponse,
     ComponentType,
     ComponentWithConfigurations,
+    ConfigToolOutput,
     ListConfigsOutput,
 )
 from keboola_mcp_server.tools.components.tools import (
@@ -132,7 +132,7 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
     )
     try:
         # Verify the response structure
-        assert isinstance(created_config, ComponentToolResponse)
+        assert isinstance(created_config, ConfigToolOutput)
         assert created_config.component_id == component_id
         assert created_config.configuration_id is not None
         assert created_config.description == test_description
@@ -238,7 +238,7 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef], keb
         )
 
         # Verify the response structure
-        assert isinstance(updated_config, ComponentToolResponse)
+        assert isinstance(updated_config, ConfigToolOutput)
         assert updated_config.component_id == component_id
         assert updated_config.configuration_id == created_config.configuration_id
         assert updated_config.description == updated_description
@@ -342,7 +342,7 @@ async def test_add_config_row(
             storage=row_storage,
         )
 
-        assert isinstance(created_row_config, ComponentToolResponse)
+        assert isinstance(created_row_config, ConfigToolOutput)
         assert created_row_config.success is True
         assert created_row_config.timestamp is not None
         assert created_row_config.description == row_description
@@ -491,7 +491,7 @@ async def test_update_config_row(
         )
 
         # Test the ComponentToolResponse attributes
-        assert isinstance(updated_row_config, ComponentToolResponse)
+        assert isinstance(updated_row_config, ConfigToolOutput)
         assert updated_row_config.component_id == component_id
         assert updated_row_config.configuration_id == root_config.configuration_id
         assert updated_row_config.description == updated_row_description
@@ -590,7 +590,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
 
     try:
         # Verify the response structure
-        assert isinstance(created_transformation, ComponentToolResponse)
+        assert isinstance(created_transformation, ConfigToolOutput)
         assert created_transformation.success is True
         assert created_transformation.timestamp is not None
         assert created_transformation.description == test_description
@@ -746,7 +746,7 @@ async def test_update_sql_transformation(
         )
 
         # Verify the response structure
-        assert isinstance(updated_transformation, ComponentToolResponse)
+        assert isinstance(updated_transformation, ConfigToolOutput)
 
         assert updated_transformation.success is True
         assert updated_transformation.timestamp is not None

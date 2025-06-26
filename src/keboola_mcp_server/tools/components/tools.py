@@ -19,8 +19,8 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationResponse,
     ComponentRootConfiguration,
     ComponentRowConfiguration,
-    ComponentToolResponse,
     ComponentType,
+    ConfigToolOutput,
     ListConfigsOutput,
     ListTransformationsOutput,
 )
@@ -329,7 +329,7 @@ async def create_sql_transformation(
         ),
     ] = tuple(),
 ) -> Annotated[
-    ComponentToolResponse, Field(description='Response object for created SQL Transformation Configuration.')
+    ConfigToolOutput, Field(description='Response object for created SQL Transformation Configuration.')
 ]:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -399,7 +399,7 @@ async def create_sql_transformation(
         configuration_name=name,
     )
 
-    return ComponentToolResponse(
+    return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
@@ -450,7 +450,7 @@ async def update_sql_transformation(
         ),
     ] = False,
 ) -> Annotated[
-    ComponentToolResponse, Field(description='Response object for updated SQL Transformation Configuration.')
+    ConfigToolOutput, Field(description='Response object for updated SQL Transformation Configuration.')
 ]:
     """
     Updates an existing SQL transformation configuration, optionally updating the description and disabling the
@@ -518,7 +518,7 @@ async def update_sql_transformation(
         f'component: {sql_transformation_id}.'
     )
 
-    return ComponentToolResponse(
+    return ConfigToolOutput(
         component_id=sql_transformation_id,
         configuration_id=str(configuration_id),
         description=updated_description or updated_raw_configuration.get('description', ''),
@@ -561,7 +561,7 @@ async def create_config(
             ),
         ),
     ],
-) -> Annotated[ComponentToolResponse, Field(description='Response object for created component root configuration.')]:
+) -> Annotated[ConfigToolOutput, Field(description='Response object for created component root configuration.')]:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 
@@ -619,7 +619,7 @@ async def create_config(
         component_id=component_id, configuration_id=configuration_id, configuration_name=name
     )
 
-    return ComponentToolResponse(
+    return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
@@ -668,7 +668,7 @@ async def add_config_row(
             ),
         ),
     ],
-) -> Annotated[ComponentToolResponse, Field(description='Response object for created component row configuration.')]:
+) -> Annotated[ConfigToolOutput, Field(description='Response object for created component row configuration.')]:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
     component ID, configuration JSON, and description.
@@ -738,7 +738,7 @@ async def add_config_row(
         configuration_name=name,
     )
 
-    return ComponentToolResponse(
+    return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
@@ -787,7 +787,7 @@ async def update_config(
             ),
         ),
     ],
-) -> Annotated[ComponentToolResponse, Field(description='Response object for updated component root configuration.')]:
+) -> Annotated[ConfigToolOutput, Field(description='Response object for updated component root configuration.')]:
     """
     Updates a specific root component configuration using given by component ID, and configuration ID.
 
@@ -853,7 +853,7 @@ async def update_config(
         configuration_name=name,
     )
 
-    return ComponentToolResponse(
+    return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
@@ -902,7 +902,7 @@ async def update_config_row(
             ),
         ),
     ],
-) -> Annotated[ComponentToolResponse, Field(description='Response object for updated component row configuration.')]:
+) -> Annotated[ConfigToolOutput, Field(description='Response object for updated component row configuration.')]:
     """
     Updates a specific component configuration row in the specified configuration_id, using the specified name,
     component ID, configuration JSON, and description.
@@ -971,7 +971,7 @@ async def update_config_row(
         configuration_name=name,
     )
 
-    return ComponentToolResponse(
+    return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
