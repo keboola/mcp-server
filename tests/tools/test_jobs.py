@@ -7,6 +7,7 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.jobs import (
     JobDetail,
     JobListItem,
@@ -60,13 +61,11 @@ def mock_job() -> dict[str, Any]:
         'endTime': '2024-01-01T00:00:02Z',
         'url': 'https://connection.keboola.com/jobs/123',
         'configData': {'source': 'file.csv'},
-        'configRowIds': ['1', '2', '3'],
+        'configRow': '1',
         'runId': '456',
-        'parentRunId': '789',
         'durationSeconds': 100,
         'result': {'import': 'successful'},
         'metrics': {'rows': 1000},
-        'links': []
     }
 
 
@@ -151,13 +150,10 @@ async def test_get_job(
     assert result.end_time.replace(tzinfo=None) == datetime.strptime(mock_job['endTime'], iso_format)
     assert result.url == mock_job['url']
     assert result.config_data == mock_job['configData']
-    assert result.config_row_ids == mock_job['configRowIds']
+    assert result.config_row == mock_job['configRow']
     assert result.run_id == mock_job['runId']
-    assert result.parent_run_id == mock_job['parentRunId']
     assert result.duration_seconds == mock_job['durationSeconds']
     assert result.result == mock_job['result']
-    # table_id is not present in the mock_job, should be None
-    assert result.table_id is None
 
     keboola_client.jobs_queue_client.get_job_detail.assert_called_once_with('123')
 
@@ -247,6 +243,10 @@ async def test_run_job(
     assert job_detail.component_id == component_id
     assert job_detail.config_id == configuration_id
     assert job_detail.result == {}
+    assert set(job_detail.links) == {
+        Link(type='ui-detail', title='Job: 123', url='test://api.keboola.com/admin/projects/123/queue/123'),
+        Link(type='ui-dashboard', title='Jobs in the project', url='test://api.keboola.com/admin/projects/123/queue'),
+    }
 
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
@@ -302,6 +302,7 @@ def test_job_detail_model_validate_dict_fields(
     :param mock_job: The mock job details - expecting api response.
     """
     mock_job[field_name] = input_value
+    mock_job['links'] = []
     if isinstance(expected_result, type) and issubclass(expected_result, Exception):
         with pytest.raises(expected_result):
             JobDetail.model_validate(mock_job)

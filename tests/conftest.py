@@ -19,7 +19,9 @@ def keboola_client(mocker) -> KeboolaClient:
 
     # Mock API clients
     client.storage_client = mocker.MagicMock(AsyncStorageClient)
+    client.storage_client.base_api_url = 'test://api.keboola.com'
     client.storage_client.branch_id = 'default'
+    client.storage_client.project_id.return_value = '123'
     client.jobs_queue_client = mocker.MagicMock(JobsQueueClient)
     client.ai_service_client = mocker.MagicMock(AIServiceClient)
 
