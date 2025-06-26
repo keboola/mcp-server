@@ -32,4 +32,4 @@ COPY logging-json.conf /app/logging-json.conf
 ENV PATH="/app/.venv/bin:$PATH"
 
 # when running the container, add KBC_STORAGE_API_URL environment variable and a bind mount to the host's db file
-ENTRYPOINT ["python", "-m", "keboola_mcp_server.cli", "--log-level", "DEBUG"]
+ENTRYPOINT ["python", "-m", "keboola_mcp_server", "--log-level", "DEBUG"]
