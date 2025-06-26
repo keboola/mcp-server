@@ -470,7 +470,7 @@ async def test_update_component_row_configuration(mcp_context: Context, configs:
 
 
 @pytest.mark.asyncio
-async def test_create_sql_transformation(mcp_context: Context):
+async def test_create_sql_transformation(mcp_context: Context, keboola_project: ProjectDef):
     """Tests that `create_sql_transformation` creates a SQL transformation with correct configuration."""
 
     test_name = 'Test SQL Transformation'
@@ -495,21 +495,33 @@ async def test_create_sql_transformation(mcp_context: Context):
         sql_code_blocks=test_sql_code_blocks,
         created_table_names=test_created_table_names,
     )
+    sql_dialect = await get_sql_dialect(mcp_context)
+    expected_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
 
     try:
         # Verify the response structure
         assert isinstance(created_transformation, ComponentToolResponse)
         assert created_transformation.success is True
         assert created_transformation.timestamp is not None
-        assert len(created_transformation.links) > 0
         assert created_transformation.description == test_description
-
-        # Get the expected component ID based on SQL dialect
-        sql_dialect = await get_sql_dialect(mcp_context)
-        expected_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
-
         assert created_transformation.component_id == expected_component_id
         assert created_transformation.configuration_id is not None
+
+        # Verify link structure
+        project_id = keboola_project.project_id
+        detail_link = created_transformation.links[0]
+        assert detail_link.type == 'ui-detail'
+        assert (
+            detail_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{expected_component_id}/'
+            + f'{created_transformation.configuration_id}'
+        )
+        dashboard_link = created_transformation.links[1]
+        assert dashboard_link.type == 'ui-dashboard'
+        assert (
+            dashboard_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{expected_component_id}'
+        )
 
         # Verify the configuration exists in the backend by fetching it
         config_detail = await client.storage_client.configuration_detail(
@@ -532,14 +544,14 @@ async def test_create_sql_transformation(mcp_context: Context):
 
         block = parameters['blocks'][0]
         assert 'codes' in block
-        assert len(block['codes']) == 1
+        assert len(block['codes']) == len(test_sql_code_blocks)
 
         code = block['codes'][0]
-        assert code['name'] == 'Main transformation'
+        assert code['name'] == test_sql_code_blocks[0].name
         assert 'script' in code  # API uses 'script' instead of 'sql_statements'
-        assert len(code['script']) == 2
-        assert code['script'][0] == 'SELECT 1 as test_column'
-        assert code['script'][1] == 'SELECT 2 as another_column'
+        assert len(code['script']) == len(test_sql_code_blocks[0].sql_statements)
+        assert code['script'][0] == test_sql_code_blocks[0].sql_statements[0]
+        assert code['script'][1] == test_sql_code_blocks[0].sql_statements[1]
 
         # Verify the storage structure contains output tables
         storage = configuration_data['storage']
@@ -648,8 +660,9 @@ async def test_update_sql_transformation(
 
         assert updated_transformation.success is True
         assert updated_transformation.timestamp is not None
-        assert len(updated_transformation.links) > 0
-
+        assert updated_transformation.component_id == created_transformation.component_id
+        assert updated_transformation.configuration_id == created_transformation.configuration_id
+        assert updated_transformation.description == updated_description
         project_id = keboola_project.project_id
         sql_dialect = await get_sql_dialect(mcp_context)
         sql_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
@@ -666,9 +679,6 @@ async def test_update_sql_transformation(
             dashboard_link.url
             == f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}'
         )
-        assert updated_transformation.component_id == created_transformation.component_id
-        assert updated_transformation.configuration_id == created_transformation.configuration_id
-        assert updated_transformation.description == updated_description
 
         # Verify the updated configuration in the backend
         config_detail = await client.storage_client.configuration_detail(
@@ -686,20 +696,20 @@ async def test_update_sql_transformation(
         # Verify the updated parameters
         parameters = configuration_data['parameters']
         assert 'blocks' in parameters
-        assert len(parameters['blocks']) == 1
+        assert len(parameters['blocks']) == len(initial_sql_code_blocks)
 
         block = parameters['blocks'][0]
-        assert block['name'] == 'Updated block'
+        assert block['name'] == updated_parameters.blocks[0].name
         assert 'codes' in block
-        assert len(block['codes']) == 1
+        assert len(block['codes']) == len(updated_parameters.blocks[0].codes)
 
         code = block['codes'][0]
-        assert code['name'] == 'Updated transformation'
+        assert code['name'] == updated_parameters.blocks[0].codes[0].name
         assert 'script' in code
-        assert len(code['script']) == 3
-        assert code['script'][0] == 'SELECT 1 as updated_column'
-        assert code['script'][1] == 'SELECT 2 as additional_column'
-        assert code['script'][2] == 'SELECT 3 as third_column'
+        assert len(code['script']) == len(updated_parameters.blocks[0].codes[0].sql_statements)
+        assert code['script'][0] == updated_parameters.blocks[0].codes[0].sql_statements[0]
+        assert code['script'][1] == updated_parameters.blocks[0].codes[0].sql_statements[1]
+        assert code['script'][2] == updated_parameters.blocks[0].codes[0].sql_statements[2]
 
         # Verify the updated storage configuration
         storage = configuration_data['storage']
@@ -708,25 +718,25 @@ async def test_update_sql_transformation(
 
         # Check input tables
         assert 'tables' in storage['input']
-        assert len(storage['input']['tables']) == 1
+        assert len(storage['input']['tables']) == len(updated_storage['input']['tables'])
         input_table = storage['input']['tables'][0]
-        assert input_table['source'] == 'in.c-bucket.input_table'
-        assert input_table['destination'] == 'input.csv'
+        assert input_table['source'] == updated_storage['input']['tables'][0]['source']
+        assert input_table['destination'] == updated_storage['input']['tables'][0]['destination']
 
         # Check output tables
         assert 'tables' in storage['output']
-        assert len(storage['output']['tables']) == 2
+        assert len(storage['output']['tables']) == len(updated_storage['output']['tables'])
 
         output_table_1 = storage['output']['tables'][0]
-        assert output_table_1['source'] == 'updated_output_table'
-        assert output_table_1['destination'] == 'out.c-bucket.updated_output_table'
+        assert output_table_1['source'] == updated_storage['output']['tables'][0]['source']
+        assert output_table_1['destination'] == updated_storage['output']['tables'][0]['destination']
 
         output_table_2 = storage['output']['tables'][1]
-        assert output_table_2['source'] == 'second_output_table'
-        assert output_table_2['destination'] == 'out.c-bucket.second_output_table'
+        assert output_table_2['source'] == updated_storage['output']['tables'][1]['source']
+        assert output_table_2['destination'] == updated_storage['output']['tables'][1]['destination']
 
         # Verify the version was incremented
-        assert cast(int, config_detail['version']) > 1
+        assert cast(int, config_detail['version']) == 2
 
         # Verify the update metadata
         metadata = await client.storage_client.configuration_metadata_get(
