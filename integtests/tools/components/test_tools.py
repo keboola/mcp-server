@@ -302,10 +302,10 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef], keb
 
 
 @pytest.mark.asyncio
-async def test_create_component_row_configuration(
+async def test_add_config_row(
     mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef
 ):
-    """Tests that `create_component_row_configuration` creates a row configuration with correct metadata."""
+    """Tests that `add_config_row` creates a row configuration with correct metadata."""
 
     # Use the first component from configs for testing
     test_config = configs[0]
@@ -415,10 +415,10 @@ async def test_create_component_row_configuration(
 
 
 @pytest.mark.asyncio
-async def test_update_component_row_configuration(
+async def test_update_config_row(
     mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef
 ):
-    """Tests that `update_component_row_configuration` updates a row configuration with correct metadata."""
+    """Tests that `update_update_config_row` updates a row configuration with correct metadata."""
 
     # Use the first component from configs for testing
     test_config = configs[0]
