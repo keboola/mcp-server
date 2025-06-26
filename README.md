@@ -109,11 +109,9 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
   "mcpServers": {
     "keboola": {
       "command": "uvx",
-      "args": [
-        "keboola_mcp_server",
-        "--api-url", "https://connection.YOUR_REGION.keboola.com"
-      ],
+      "args": ["keboola_mcp_server"],
       "env": {
+        "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
         "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
       }
@@ -138,11 +136,9 @@ Config file locations:
   "mcpServers": {
     "keboola": {
       "command": "uvx",
-      "args": [
-        "keboola_mcp_server",
-        "--api-url", "https://connection.YOUR_REGION.keboola.com"
-      ],
+      "args": ["keboola_mcp_server"],
       "env": {
+        "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
         "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
       }
@@ -152,6 +148,7 @@ Config file locations:
 ```
 
 **Note**: Use short, descriptive names for MCP servers. Since the full tool name includes the server name and must stay under ~60 characters, longer names may be filtered out in Cursor and will not be displayed to the Agent.
+
 
 #### Cursor Configuration for Windows WSL
 
@@ -165,13 +162,13 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
       "args": [
           "bash",
           "-c '",
+          "export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com &&",
           "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
           "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
-          "/snap/bin/uvx -m keboola_mcp_server.cli",
-          "--api-url https://connection.YOUR_REGION.keboola.com",
+          "/snap/bin/uvx keboola_mcp_server",
           "'"
       ]
-    },
+    }
   }
 }
 ```
@@ -189,14 +186,13 @@ For developers working on the MCP server code itself:
     "keboola": {
       "command": "/absolute/path/to/.venv/bin/python",
       "args": [
-        "-m", "keboola_mcp_server.cli",
-        "--transport", "stdio",
-        "--api-url", "https://connection.YOUR_REGION.keboola.com"
+        "-m",
+        "keboola_mcp_server"
       ],
       "env": {
+        "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
-        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
-
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
       }
     }
   }
@@ -209,29 +205,39 @@ You can run the server manually in a terminal for testing or debugging:
 
 ```bash
 # Set environment variables
+export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com
 export KBC_STORAGE_TOKEN=your_keboola_storage_token
 export KBC_WORKSPACE_SCHEMA=your_workspace_schema
 
-# Run with uvx (no installation needed)
-uvx keboola_mcp_server --api-url https://connection.YOUR_REGION.keboola.com
-
-# OR, if developing locally
-python -m keboola_mcp_server.cli --api-url https://connection.YOUR_REGION.keboola.com
+uvx keboola_mcp_server --transport sse
 ```
 
-> **Note**: This mode is primarily for debugging or testing. For normal use with Claude or Cursor, you do not need to manually run the server.
+> **Note**: This mode is primarily for debugging or testing. For normal use with Claude or Cursor,
+> you do not need to manually run the server.
+
+> **Note**: The server will use the SSE transport and listen on `localhost:8000` for the incoming SSE connections.
+> You can use `--port` and `--host` parameters to make it listen elsewhere. 
 
 ### Option D: Using Docker
 
 ```shell
 docker pull keboola/mcp-server:latest
 
-docker run -it \
+docker run \
+  --name keboola_mcp_server \
+  --rm \
+  -it \
+  -p 127.0.0.1:8000:8000 \
+  -e KBC_STORAGE_API_URL="https://connection.YOUR_REGION.keboola.com" \
   -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_STORAGE_TOKEN" \
   -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
   keboola/mcp-server:latest \
-  --api-url https://connection.YOUR_REGION.keboola.com
+  --transport sse \
+  --host 0.0.0.0
 ```
+
+> **Note**: The server will use the SSE transport and listen on `localhost:8000` for the incoming SSE connections.
+> You can change `-p` to map the container's port somewhere else.
 
 ### Do I Need to Start the Server Myself?
 
