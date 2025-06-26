@@ -20,10 +20,6 @@ ADD src /app/src
 RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
 RUN --mount=type=cache,target=/root/.cache/uv     uv pip install ddtrace~=3.0
 
-# Install the patches of third party libraries
-COPY patches /app/patches/
-RUN --mount=type=cache,target=/root/.cache/uv     uv pip install --no-deps --force-reinstall patches/mcp-1.9.3-py3-none-any.whl
-
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
