@@ -122,6 +122,34 @@ class RawKeboolaClient:
         if headers:
             self.headers.update(headers)
 
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        """
+        Checks the HTTP response status code and raises an exception with a detailed message. The message will
+        include "error" and "exceptionId" fields if they are present in the response.
+        """
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            message_parts = [str(e)]
+
+            try:
+                error_data = response.json()
+                if error_msg := error_data.get('error'):
+                    message_parts.append(f'API error: {error_msg}')
+                if exception_id := error_data.get('exceptionId'):
+                    message_parts.append(f'Exception ID: {exception_id}')
+                    message_parts.append('When contacting Keboola support please provide the exception ID.')
+
+            except ValueError:
+                try:
+                    if response.text:
+                        message_parts.append(f'API error: {response.text}')
+                except Exception:
+                    pass  # should never get here
+
+            raise httpx.HTTPStatusError('\n'.join(message_parts), request=response.request, response=response) from e
+
     async def get(
         self,
         endpoint: str,
@@ -143,7 +171,7 @@ class RawKeboolaClient:
                 params=params,
                 headers=headers,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return cast(JsonStruct, response.json())
 
     async def post(
@@ -170,7 +198,7 @@ class RawKeboolaClient:
                 headers=headers,
                 json=data or {},
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return cast(JsonStruct, response.json())
 
     async def put(
@@ -197,7 +225,7 @@ class RawKeboolaClient:
                 headers=headers,
                 json=data or {},
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return cast(JsonStruct, response.json())
 
     async def delete(
@@ -218,7 +246,7 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
 
             if response.content:
                 return cast(JsonStruct, response.json())

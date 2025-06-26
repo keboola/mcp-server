@@ -5,21 +5,14 @@ import pytest
 from keboola_mcp_server.errors import ToolException, tool_errors
 
 
-# --- Fixtures ---
 @pytest.fixture
 def function_with_value_error():
-    """A function that raises ValueError."""
-
+    """A function that raises ValueError for testing general error handling."""
     async def func():
         raise ValueError('Simulated ValueError')
-
     return func
 
 
-# --- Test Cases ---
-
-
-# --- Test tool_errors ---
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('function_fixture', 'default_recovery', 'recovery_instructions', 'expected_recovery_message', 'exception_message'),
@@ -58,7 +51,7 @@ def function_with_value_error():
         ),
     ],
 )
-async def test_tool_function_recovery_instructions(
+async def test_tool_errors(
     function_fixture,
     default_recovery,
     recovery_instructions,
@@ -85,19 +78,15 @@ async def test_tool_function_recovery_instructions(
     assert exception_message in str(excinfo.value)
 
 
-# --- Test Logging ---
 @pytest.mark.asyncio
 async def test_logging_on_tool_exception(caplog, function_with_value_error):
-    """Test if logging works correctly with the tool function."""
-    decorated_func = tool_errors(default_recovery='General recovery message.')(function_with_value_error)
+    """Test that tool_errors decorator logs exceptions properly."""
+    decorated_func = tool_errors()(function_with_value_error)
 
-    with caplog.at_level(logging.ERROR):
-        try:
-            await decorated_func()
-        except ToolException:
-            pass
+    with pytest.raises(ValueError, match='Simulated ValueError'):
+        await decorated_func()
 
-    # Capture and assert the correct logging output
-    assert 'failed to run tool' in caplog.text.lower()
-    assert 'simulated valueerror' in caplog.text.lower()
-    assert 'raise valueerror' in caplog.text.lower()
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.ERROR
+    assert 'Failed to run tool func' in caplog.records[0].message
+    assert 'Simulated ValueError' in caplog.records[0].message
