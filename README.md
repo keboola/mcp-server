@@ -75,10 +75,6 @@ This identifies your workspace in Keboola and is used for SQL queries. However, 
 
 **Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
 
-### KBC_STORAGE_API_URL
-
-You can set your Keboola API URL using the `KBC_STORAGE_API_URL` environment variable instead of the `--api-url` CLI parameter. If both are provided, the CLI parameter takes precedence.
-
 ### Keboola Region
 
 Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
