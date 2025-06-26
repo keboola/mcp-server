@@ -335,9 +335,9 @@ async def create_sql_transformation(
     - By default, SQL transformation must create at least one table to produce a result; omit only if the user
       explicitly indicates that no table creation is needed.
     - Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
-      semantically related SQL statements.
-    - Each SQL query statement must be executable and follow the current SQL dialect, which can be retrieved using
-      appropriate tool.
+      fully executable semantically related SQL statements.
+    - Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
+      retrieved using appropriate tool.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
