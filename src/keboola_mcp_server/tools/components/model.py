@@ -2,7 +2,7 @@ from typing import Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.links import Link
 
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
@@ -289,6 +289,7 @@ class ComponentConfigurationOutput(BaseModel):
         description='The component this configuration belongs to',
         default=None,
     )
+    links: list[Link] = Field(..., description='The links relevant to the component configuration.')
 
 
 class ComponentConfigurationMetadata(BaseModel):
@@ -335,133 +336,21 @@ class ComponentWithConfigurations(BaseModel):
     )
 
 
-class FlowPhase(BaseModel):
-    """Represents a phase in a flow configuration."""
+class ListConfigsOutput(BaseModel):
+    """Output of list_configs tool."""
 
-    id: Union[int, str] = Field(description='Unique identifier of the phase')
-    name: str = Field(description='Name of the phase', min_length=1)
-    description: str = Field(default_factory=str, description='Description of the phase')
-    depends_on: List[Union[int, str]] = Field(
-        default_factory=list,
-        description='List of phase IDs this phase depends on',
-        validation_alias=AliasChoices('dependsOn', 'depends_on', 'depends-on'),
-        serialization_alias='dependsOn',
+    components_with_configurations: List[ComponentWithConfigurations] = Field(
+        description='The groupings of components and their respective configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the listing of components with configurations.',
     )
 
 
-class FlowTask(BaseModel):
-    """Represents a task in a flow configuration."""
+class ListTransformationsOutput(BaseModel):
+    """Output of list_transformations tool."""
 
-    id: Union[int, str] = Field(description='Unique identifier of the task')
-    name: str = Field(description='Name of the task')
-    phase: Union[int, str] = Field(description='ID of the phase this task belongs to')
-    enabled: bool = Field(default=True, description='Whether the task is enabled')
-    continue_on_failure: bool = Field(
-        default=False,
-        description='Whether to continue if task fails',
-        validation_alias=AliasChoices('continueOnFailure', 'continue_on_failure', 'continue-on-failure'),
-        serialization_alias='continueOnFailure',
+    components_with_configurations: List[ComponentWithConfigurations] = Field(
+        description='The groupings of transformation components and their respective configurations.')
+    links: List[Link] = Field(
+        description='The list of links relevant to the listing of transformation components with configurations.',
     )
-    task: dict[str, Any] = Field(description='Task configuration containing componentId, configId, etc.')
-
-
-class FlowConfiguration(BaseModel):
-    """Represents a complete flow configuration."""
-
-    phases: List[FlowPhase] = Field(description='List of phases in the flow')
-    tasks: List[FlowTask] = Field(description='List of tasks in the flow')
-
-
-class FlowConfigurationResponse(ComponentConfigurationResponseBase):
-    """
-    Detailed information about a Keboola Flow Configuration, extending the base configuration response.
-    """
-
-    version: int = Field(description='The version of the flow configuration')
-    configuration: FlowConfiguration = Field(description='The flow configuration containing phases and tasks')
-    change_description: Optional[str] = Field(
-        description='The description of the changes made to the flow configuration',
-        default=None,
-        validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
-        serialization_alias='changeDescription',
-    )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        description='The metadata of the flow configuration',
-        default_factory=list,
-        validation_alias=AliasChoices(
-            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-        ),
-        serialization_alias='configurationMetadata',
-    )
-    created: Optional[str] = Field(None, description='Creation timestamp')
-
-    @classmethod
-    def from_raw_config(cls, raw_config: dict[str, Any]) -> 'FlowConfigurationResponse':
-        """Create a FlowConfigurationResponse object from raw API response."""
-
-        config_data = raw_config.get('configuration', {})
-
-        # Parse phases and tasks directly from configuration
-        phases = [FlowPhase.model_validate(phase) for phase in config_data.get('phases', [])]
-        tasks = [FlowTask.model_validate(task) for task in config_data.get('tasks', [])]
-
-        flow_config = FlowConfiguration(phases=phases, tasks=tasks)
-
-        return cls(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=raw_config['id'],
-            configuration_name=raw_config['name'],
-            configuration_description=raw_config.get('description', ''),
-            version=raw_config.get('version', 1),
-            is_disabled=raw_config.get('isDisabled', False),
-            is_deleted=raw_config.get('isDeleted', False),
-            configuration=flow_config,
-            change_description=raw_config.get('changeDescription'),
-            configuration_metadata=raw_config.get('metadata', []),
-            created=raw_config.get('created'),
-        )
-
-
-class ReducedFlow(BaseModel):
-    """Lightweight flow summary for listing operations - consistent with ReducedComponent naming."""
-
-    id: str = Field(
-        description='Configuration ID of the flow',
-        validation_alias=AliasChoices('id', 'configuration_id', 'configurationId'),
-    )
-    name: str = Field(description='Name of the flow')
-    description: str = Field(description='Description of the flow')
-    created: Optional[str] = Field(None, description='Creation timestamp')
-    version: int = Field(description='Version number of the flow')
-    is_disabled: bool = Field(
-        default=False,
-        description='Whether the flow is disabled',
-        validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
-        serialization_alias='isDisabled',
-    )
-    is_deleted: bool = Field(
-        default=False,
-        description='Whether the flow is deleted',
-        validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
-        serialization_alias='isDeleted',
-    )
-    phases_count: int = Field(description='Number of phases in the flow')
-    tasks_count: int = Field(description='Number of tasks in the flow')
-
-    @classmethod
-    def from_raw_config(cls, raw_config: dict[str, Any]) -> 'ReducedFlow':
-        """Create a ReducedFlow object from raw API response."""
-
-        config_data = raw_config.get('configuration', {})
-
-        return cls(
-            id=raw_config['id'],
-            name=raw_config['name'],
-            description=raw_config.get('description', ''),
-            created=raw_config.get('created'),
-            version=raw_config.get('version', 1),
-            is_disabled=raw_config.get('isDisabled', False),
-            is_deleted=raw_config.get('isDeleted', False),
-            phases_count=len(config_data.get('phases', [])),
-            tasks_count=len(config_data.get('tasks', [])),
-        )

@@ -4,22 +4,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.2.0"
+version = "1.5.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    "fastmcp ~= 2.5, <2.6",
-    # see patches/mcp-redirect-uri.patch
-    # the patch is only applied when building the docker image
-    # it has to be applied manually to locally installed MCP server
-    # the patch fixes OAuth validation problems with non http(s) redirect_uri values
-    "mcp == 1.9.3",  # see patches/mcp-redirect-uri.patch
+    "fastmcp == 2.9.0",
+    "mcp == 1.9.4",
     "httpx ~= 0.28",
-    "jsonschema~=4.23",
-    "pyjwt~=2.10",
+    "jsonschema ~= 4.23",
+    "pyjwt ~= 2.10",
     "json-log-formatter ~= 1.0",
 ]
 [project.optional-dependencies]

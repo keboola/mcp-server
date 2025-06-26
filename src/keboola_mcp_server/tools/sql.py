@@ -4,19 +4,20 @@ from io import StringIO
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools import FunctionTool
 from pydantic import Field
 
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools.workspace import SqlSelectData, WorkspaceManager
+from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
 
 def add_sql_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    mcp.add_tool(query_table)
-    mcp.add_tool(get_sql_dialect)
+    mcp.add_tool(FunctionTool.from_function(query_data))
+    mcp.add_tool(FunctionTool.from_function(get_sql_dialect))
     LOG.info('SQL tools added to the MCP server.')
 
 
@@ -31,7 +32,7 @@ async def get_sql_dialect(
 
 @tool_errors()
 @with_session_state()
-async def query_table(
+async def query_data(
     sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
     ctx: Context,
 ) -> Annotated[str, Field(description='The retrieved data in a CSV format.')]:

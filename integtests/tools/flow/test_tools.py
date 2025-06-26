@@ -4,11 +4,14 @@ from fastmcp import Context
 from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.tools.flow import (
+from keboola_mcp_server.links import ProjectLinksManager
+from keboola_mcp_server.tools.flow.model import FlowConfigurationResponse
+from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
+    ListFlowsOutput,
     create_flow,
-    get_flow_detail,
-    retrieve_flows,
+    get_flow,
+    list_flows,
     update_flow,
 )
 
@@ -16,7 +19,7 @@ from keboola_mcp_server.tools.flow import (
 @pytest.mark.asyncio
 async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
-    Create a flow and retrieve it using retrieve_flows.
+    Create a flow and retrieve it using list_flows.
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
     :return: None
@@ -49,7 +52,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
     flow_description = 'Flow created by integration test.'
 
     created = await create_flow(
-        mcp_context,
+        ctx=mcp_context,
         name=flow_name,
         description=flow_description,
         phases=phases,
@@ -57,19 +60,35 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
     )
     flow_id = created.flow_id
     client = KeboolaClient.from_state(mcp_context.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+    expected_links = [
+        links_manager.get_flow_detail_link(flow_id, flow_name),
+        links_manager.get_flows_dashboard_link(),
+        links_manager.get_flows_docs_link(),
+    ]
     try:
         assert isinstance(created, FlowToolResponse)
         assert created.description == flow_description
+        # Verify the links of created flow
         assert created.success is True
-        assert len(created.links) == 3
+        assert set(created.links) == set(expected_links)
 
-        flows = await retrieve_flows(mcp_context)
-        assert any(f.name == flow_name for f in flows)
-        found = [f for f in flows if f.id == flow_id][0]
-        detail = await get_flow_detail(mcp_context, configuration_id=found.id)
-        assert detail.phases[0].name == 'Extract'
-        assert detail.phases[1].name == 'Transform'
-        assert detail.tasks[0].task['componentId'] == configs[0].component_id
+        # Verify the flow is listed in the list_flows tool
+        result = await list_flows(mcp_context)
+        assert any(f.name == flow_name for f in result.flows)
+        found = [f for f in result.flows if f.id == flow_id][0]
+        detail = await get_flow(mcp_context, configuration_id=found.id)
+
+        assert isinstance(detail, FlowConfigurationResponse)
+        assert detail.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert detail.configuration_id == found.id
+        assert detail.configuration.phases[0].name == 'Extract'
+        assert detail.configuration.phases[1].name == 'Transform'
+        assert detail.configuration.tasks[0].task['componentId'] == configs[0].component_id
+
+        # Verify the links of the retrieved flow
+        assert detail.links is not None
+        assert set(detail.links) == set(expected_links)
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
@@ -113,7 +132,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
     flow_name = 'Flow to Update'
     flow_description = 'Initial description.'
     created = await create_flow(
-        mcp_context,
+        ctx=mcp_context,
         name=flow_name,
         description=flow_description,
         phases=phases,
@@ -121,11 +140,17 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
     )
     flow_id = created.flow_id
     client = KeboolaClient.from_state(mcp_context.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     try:
         new_name = 'Updated Flow Name'
         new_description = 'Updated description.'
+        expected_links = [
+            links_manager.get_flow_detail_link(flow_id, new_name),
+            links_manager.get_flows_dashboard_link(),
+            links_manager.get_flows_docs_link(),
+        ]
         updated = await update_flow(
-            mcp_context,
+            ctx=mcp_context,
             configuration_id=created.flow_id,
             name=new_name,
             description=new_description,
@@ -137,7 +162,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         assert created.flow_id == updated.flow_id
         assert updated.description == new_description
         assert updated.success is True
-        assert len(updated.links) == 3
+        assert set(updated.links) == set(expected_links)
 
         # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
@@ -157,18 +182,18 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
 
 
 @pytest.mark.asyncio
-async def test_retrieve_flows_empty(mcp_context: Context) -> None:
+async def test_list_flows_empty(mcp_context: Context) -> None:
     """
     Retrieve flows when none exist (should not error, may return empty list).
     :param mcp_context: The test context fixture.
     :return: None
     """
-    flows = await retrieve_flows(mcp_context)
-    assert isinstance(flows, list)
+    flows = await list_flows(mcp_context)
+    assert isinstance(flows, ListFlowsOutput)
 
 
 @pytest.mark.asyncio
-async def test_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
+async def test_create_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
     Create a flow with invalid structure (should raise ValueError).
     :param mcp_context: The test context fixture.
@@ -192,7 +217,7 @@ async def test_flow_invalid_structure(mcp_context: Context, configs: list[Config
     ]
     with pytest.raises(ValueError, match='depends on non-existent phase'):
         await create_flow(
-            mcp_context,
+            ctx=mcp_context,
             name='Invalid Flow',
             description='Should fail',
             phases=phases,

@@ -1,3 +1,7 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keboola/mcp-server)
+[![smithery badge](https://smithery.ai/badge/keboola-mcp-server)](https://smithery.ai/server/keboola-mcp-server)
+
+
 # Keboola MCP Server
 
 > Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agents when and where they need it.
@@ -187,6 +191,9 @@ Config file locations:
 }
 ```
 
+**Note**: Use short, descriptive names for MCP servers. Since the full tool name includes the server name and must stay under ~60 characters, longer names may be filtered out in Cursor and will not be displayed to the Agent.
+
+
 #### Cursor Configuration for Windows WSL
 
 When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this configuration:
@@ -194,25 +201,20 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
 ```json
 {
   "mcpServers": {
-    "keboola": {
+    "keboola":{
       "command": "wsl.exe",
       "args": [
-        "bash",
-        "-c",
-        "'source /wsl_path/to/keboola-mcp-server/.env",
-        "&&",
-        "/wsl_path/to/keboola-mcp-server/.venv/bin/python -m keboola_mcp_server.cli --transport stdio'"
+          "bash",
+          "-c '",
+          "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
+          "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
+          "/snap/bin/uvx -m keboola_mcp_server.cli",
+          "--api-url https://connection.YOUR_REGION.keboola.com",
+          "'"
       ]
-    }
+    },
   }
 }
-```
-
-Where `/wsl_path/to/keboola-mcp-server/.env` file contains environment variables:
-
-```bash
-export KBC_STORAGE_TOKEN="your_keboola_storage_token"
-export KBC_WORKSPACE_SCHEMA="your_workspace_schema"
 ```
 
 ### Option B: Local Development Mode
@@ -331,8 +333,8 @@ What buckets and tables are in my Keboola project?
 
 | **MCP Client** | **Support Status** | **Connection Method** |
 |----------------|-------------------|----------------------|
-| Claude (Desktop & Web) | ✅ supported, tested | stdio |
-| Cursor | ✅ supported, tested | stdio |
+| Claude (Desktop & Web) | ✅ supported | stdio |
+| Cursor | ✅ supported | stdio |
 | Windsurf, Zed, Replit | ✅ Supported | stdio |
 | Codeium, Sourcegraph | ✅ Supported | HTTP+SSE |
 | Custom MCP Clients | ✅ Supported | HTTP+SSE or stdio |
@@ -343,30 +345,36 @@ What buckets and tables are in my Keboola project?
 
 | Category | Tool | Description |
 |----------|------|-------------|
-| **Storage** | `retrieve_buckets` | Lists all storage buckets in your Keboola project |
-| | `get_bucket_detail` | Retrieves detailed information about a specific bucket |
-| | `retrieve_bucket_tables` | Returns all tables within a specific bucket |
-| | `get_table_detail` | Provides detailed information for a specific table |
+| **Project** | `get_project_info` | Gets structured information about your Keboola project |
+| **Storage** | `list_buckets` | Lists all storage buckets in your Keboola project |
+| | `get_bucket` | Retrieves detailed information about a specific bucket |
+| | `list_tables` | Returns all tables within a specific bucket |
+| | `get_table` | Provides detailed information for a specific table |
 | | `update_bucket_description` | Updates the description of a bucket |
-| | `update_column_description` | Updates the description for a given column in a table. |
+| | `update_column_description` | Updates the description for a given column in a table |
 | | `update_table_description` | Updates the description of a table |
 | **SQL** | `query_table` | Executes custom SQL queries against your data |
 | | `get_sql_dialect` | Identifies whether your workspace uses Snowflake or BigQuery SQL dialect |
-| **Component** | `create_component_root_configuration` | Creates a component configuration with custom parameters |
-| | `create_component_row_configuration` | Creates a component configuration row with custom parameters |
+| **Component** | `create_config` | Creates a component configuration with custom parameters |
+| | `add_config_row` | Creates a component configuration row with custom parameters |
 | | `create_sql_transformation` | Creates an SQL transformation with custom queries |
 | | `find_component_id` | Returns list of component IDs that match the given query |
 | | `get_component` | Gets information about a specific component given its ID |
-| | `get_component_configuration` | Gets information about a specific component/transformation configuration |
-| | `get_component_configuration_examples` | Retrieves sample configuration examples for a specific component |
-| | `retrieve_component_configurations` | Retrieves configurations of components present in the project |
-| | `retrieve_transformations` | Retrieves transformation configurations in the project |
-| | `update_component_root_configuration` | Updates a specific component configuration |
-| | `update_component_row_configuration` | Updates a specific component configuration row |
-| | `update_sql_transformation_configuration` | Updates an existing SQL transformation configuration |
+| | `get_config` | Gets information about a specific component/transformation configuration |
+| | `get_config_examples` | Retrieves sample configuration examples for a specific component |
+| | `list_configs` | Retrieves configurations of components present in the project |
+| | `list_transformations` | Retrieves transformation configurations in the project |
+| | `update_config` | Updates a specific component configuration |
+| | `update_config_row` | Updates a specific component configuration row |
+| | `update_sql_transformation` | Updates an existing SQL transformation configuration |
 | **Job** | `retrieve_jobs` | Lists and filters jobs by status, component, or configuration |
 | | `get_job_detail` | Returns comprehensive details about a specific job |
 | | `start_job` | Triggers a component or transformation job to run |
+| **Flow** | `create_flow` | Creates a new flow configuration in Keboola |
+|  | `get_flow` | Gets detailed information about a specific flow configuration. |
+|  | `get_flow_schema` | Returns the JSON schema that defines the structure of Flow configurations |
+|  | `list_flows` | Retrieves flow configurations from the project |
+|  | `update_flow` | Updates an existing flow configuration in Keboola |
 | **Documentation** | `docs_query` | Searches Keboola documentation based on natural language queries |
 
 ## Troubleshooting
@@ -431,7 +439,6 @@ The development team actively monitors issues and will respond as quickly as pos
 
 ## Connect
 
-- [Discord](https://discord.com/invite/keboola)
 - [LinkedIn](https://www.linkedin.com/company/keboola)
 - [Twitter](https://x.com/keboola)
 - [Changelog](https://changelog.keboola.com/)

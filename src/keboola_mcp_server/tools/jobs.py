@@ -2,12 +2,14 @@ import datetime
 import logging
 from typing import Annotated, Any, Literal, Optional, Union
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
+from fastmcp.tools import FunctionTool
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import with_session_state
+from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
 
 LOG = logging.getLogger(__name__)
 
@@ -15,18 +17,13 @@ LOG = logging.getLogger(__name__)
 # Add jobs tools to MCP SERVER ##################################
 
 
-def add_job_tools(mcp: FastMCP) -> None:
+def add_job_tools(mcp: KeboolaMcpServer) -> None:
     """Add job tools to the MCP server."""
-    jobs_tools = [
-        retrieve_jobs,
-        get_job_detail,
-        start_job,
-    ]
-    for tool in jobs_tools:
-        LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(tool)
+    mcp.add_tool(FunctionTool.from_function(get_job))
+    mcp.add_tool(FunctionTool.from_function(list_jobs, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(run_job))
 
-    LOG.info('Job tools initialized.')
+    LOG.info('Job tools added to the MCP server.')
 
 
 # Job Base Models ########################################
@@ -133,6 +130,7 @@ class JobDetail(JobListItem):
         serialization_alias='result',
         default=None,
     )
+    links: list[Link] = Field(..., description='The links relevant to the job.')
 
     @field_validator('result', 'config_data', mode='before')
     @classmethod
@@ -150,9 +148,14 @@ class JobDetail(JobListItem):
         return current_value
 
 
+class ListJobsOutput(BaseModel):
+    jobs: list[JobListItem] = Field(..., description='List of jobs.')
+    links: list[Link] = Field(..., description='Links relevant to the jobs listing.')
+
 # End of Job Base Models ########################################
 
 # MCP tools ########################################
+
 
 SORT_BY_VALUES = Literal['startTime', 'endTime', 'createdTime', 'durationSeconds', 'id']
 SORT_ORDER_VALUES = Literal['asc', 'desc']
@@ -164,7 +167,7 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 # Optional[JOB_STATUS] = None despite having type check errors in the code.
 @tool_errors()
 @with_session_state()
-async def retrieve_jobs(
+async def list_jobs(
     ctx: Context,
     status: Annotated[
         JOB_STATUS,
@@ -206,13 +209,7 @@ async def retrieve_jobs(
             description='The order to sort the jobs by, default = "desc".',
         ),
     ] = 'desc',
-) -> Annotated[
-    list[JobListItem],
-    Field(
-        list[JobListItem],
-        description='The retrieved list of jobs list items. If empty then no jobs were found.',
-    ),
-]:
+) -> ListJobsOutput:
     """
     Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
     filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
@@ -233,6 +230,7 @@ async def retrieve_jobs(
     _status = [status] if status else None
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     raw_jobs = await client.jobs_queue_client.search_jobs_by(
         component_id=component_id,
@@ -244,12 +242,14 @@ async def retrieve_jobs(
         sort_order=sort_order,
     )
     LOG.info(f'Found {len(raw_jobs)} jobs for limit {limit}, offset {offset}, status {status}.')
-    return [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
+    jobs = [JobListItem.model_validate(raw_job) for raw_job in raw_jobs]
+    links = [links_manager.get_jobs_dashboard_link()]
+    return ListJobsOutput(jobs=jobs, links=links)
 
 
 @tool_errors()
 @with_session_state()
-async def get_job_detail(
+async def get_job(
     job_id: Annotated[
         str,
         Field(description='The unique identifier of the job whose details should be retrieved.'),
@@ -264,15 +264,17 @@ async def get_job_detail(
     - If job_id = "123", then the details of the job with id "123" will be retrieved.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     raw_job = await client.jobs_queue_client.get_job_detail(job_id)
+    links = links_manager.get_job_links(job_id)
     LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
-    return JobDetail.model_validate(raw_job)
+    return JobDetail.model_validate(raw_job | {'links': links})
 
 
 @tool_errors()
 @with_session_state()
-async def start_job(
+async def run_job(
     ctx: Context,
     component_id: Annotated[
         str,

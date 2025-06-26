@@ -8,8 +8,7 @@ from importlib.metadata import distribution
 from typing import Callable
 
 from fastmcp import FastMCP
-from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
-from pydantic import AliasChoices, AnyHttpUrl, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
@@ -20,7 +19,7 @@ from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
-from keboola_mcp_server.tools.flow import add_flow_tools
+from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
 from keboola_mcp_server.tools.project import add_project_tools
 from keboola_mcp_server.tools.sql import add_sql_tools
@@ -122,33 +121,20 @@ def create_server(config: Config) -> FastMCP:
             server_url=config.oauth_server_url,
             scope=config.oauth_scope,
             # This URL must be reachable from the internet.
+            mcp_server_url=config.mcp_server_url,
             # The path corresponds to oauth_callback_handler() set up below.
-            mcp_callback_url=config.mcp_server_url.rstrip('/') + '/oauth/callback',
+            callback_endpoint='/oauth/callback',
             jwt_secret=config.jwt_secret,
         )
-        auth_settings = AuthSettings(
-            issuer_url=AnyHttpUrl(config.mcp_server_url),
-            client_registration_options=ClientRegistrationOptions(
-                enabled=True,
-                client_secret_expiry_seconds=5 * 60,  # 5 minutes
-                valid_scopes=None,
-                default_scopes=None,
-            ),
-            revocation_options=None,  # no clients revocation; clients expire
-            required_scopes=None,
-        )
-        LOG.debug(f'auth_settings={auth_settings}')
     else:
         oauth_provider = None
-        auth_settings = None
 
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
     mcp = KeboolaMcpServer(
         name='Keboola Explorer',
         lifespan=create_keboola_lifespan(config),
-        auth_server_provider=oauth_provider,
-        auth=auth_settings,
+        auth=oauth_provider,
     )
 
     @mcp.custom_route('/health-check', methods=['GET'])

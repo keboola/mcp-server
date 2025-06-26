@@ -2,6 +2,7 @@ import json
 
 import pytest
 from fastmcp import Client, Context, FastMCP
+from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
@@ -10,7 +11,7 @@ from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import ComponentConfigurationOutput
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import WorkspaceManager
 
 
 @pytest.mark.asyncio
@@ -173,7 +174,7 @@ async def test_http_multiple_clients_with_different_headers(
         return f'{which_client}'
 
     server = create_server(config)
-    server.add_tool(assessed_function)
+    server.add_tool(FunctionTool.from_function(assessed_function))
 
     async with run_server_remote(server, 'streamable-http') as url:
         async with (
@@ -247,7 +248,7 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     assert config.configuration_id is not None
 
     tool_result = await client.call_tool(
-        'get_component_configuration',
+        'get_config',
         {'configuration_id': config.configuration_id, 'component_id': config.component_id},
     )
 
