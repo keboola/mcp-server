@@ -106,13 +106,14 @@ async def test_list_configs_by_types(mcp_context: Context, configs: list[ConfigD
 
 
 @pytest.mark.asyncio
-async def test_create_config(mcp_context: Context, configs: list[ConfigDef]):
+async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
     """Tests that `create_config` creates a configuration with correct metadata."""
 
     # Use the first component from configs for testing
     test_config = configs[0]
     component_id = test_config.component_id
 
+    # Define test configuration data
     test_name = 'Test Configuration'
     test_description = 'Test configuration created by automated test'
     test_parameters = {}
@@ -130,13 +131,29 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef]):
         storage=test_storage,
     )
     try:
+        # Verify the response structure
         assert isinstance(created_config, ComponentToolResponse)
         assert created_config.component_id == component_id
         assert created_config.configuration_id is not None
         assert created_config.description == test_description
         assert created_config.success is True
         assert created_config.timestamp is not None
-        assert len(created_config.links) > 0
+
+        # Verify link structure
+        project_id = keboola_project.project_id
+        detail_link = created_config.links[0]
+        assert detail_link.type == 'ui-detail'
+        assert (
+            detail_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+            + f'{created_config.configuration_id}'
+        )
+        dashboard_link = created_config.links[1]
+        assert dashboard_link.type == 'ui-dashboard'
+        assert (
+            dashboard_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}'
+        )
 
         # Verify the configuration exists in the backend by fetching it
         config_detail = await client.storage_client.configuration_detail(
@@ -163,8 +180,9 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef]):
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
         assert MetadataField.CREATED_BY_MCP in metadata_dict
         assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
+
     finally:
-        # Delete the configuration
+        # Clean up: Delete the configuration
         await client.storage_client.configuration_delete(
             component_id=component_id,
             configuration_id=created_config.configuration_id,
@@ -173,31 +191,39 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef]):
 
 
 @pytest.mark.asyncio
-async def test_update_config(mcp_context: Context, configs: list[ConfigDef]):
+async def test_update_config(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
     """Tests that `update_config` updates a configuration with correct metadata."""
 
     # Use the first component from configs for testing
     test_config = configs[0]
     component_id = test_config.component_id
 
+    # Define initial configuration test data
+    initial_name = 'Initial Test Configuration'
+    initial_description = 'Initial test configuration created by automated test'
+    initial_parameters = {'initial_param': 'initial_value'}
+    initial_storage = {'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}}
+
+    # Define updated configuration test data
+    updated_name = 'Updated Test Configuration'
+    updated_description = 'Updated test configuration by automated test'
+    updated_parameters = {'updated_param': 'updated_value'}
+    updated_storage = {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}
+    change_description = 'Automated test update'
+
     client = KeboolaClient.from_state(mcp_context.session.state)
 
     # Create the initial configuration
     created_config = await create_config(
         ctx=mcp_context,
-        name='Initial Test Configuration',
-        description='Initial test configuration created by automated test',
+        name=initial_name,
+        description=initial_description,
         component_id=component_id,
-        parameters={'initial_param': 'initial_value'},
-        storage={'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}},
+        parameters=initial_parameters,
+        storage=initial_storage,
     )
 
     try:
-        updated_name = 'Updated Test Configuration'
-        updated_description = 'Updated test configuration by automated test'
-        updated_parameters = {'updated_param': 'updated_value'}
-        updated_storage = {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}
-        change_description = 'Automated test update'
 
         # Update the configuration
         updated_config = await update_config(
@@ -211,14 +237,29 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef]):
             storage=updated_storage,
         )
 
-        # Test the ComponentToolResponse attributes
+        # Verify the response structure
         assert isinstance(updated_config, ComponentToolResponse)
         assert updated_config.component_id == component_id
         assert updated_config.configuration_id == created_config.configuration_id
         assert updated_config.description == updated_description
         assert updated_config.success is True
         assert updated_config.timestamp is not None
-        assert len(updated_config.links) > 0
+
+        # Verify link structure
+        project_id = keboola_project.project_id
+        detail_link = updated_config.links[0]
+        assert detail_link.type == 'ui-detail'
+        assert (
+            detail_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+            + f'{updated_config.configuration_id}'
+        )
+        dashboard_link = updated_config.links[1]
+        assert dashboard_link.type == 'ui-dashboard'
+        assert (
+            dashboard_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}'
+        )
 
         # Verify the configuration exists in the backend by fetching it
         config_detail = await client.storage_client.configuration_detail(
@@ -252,7 +293,7 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef]):
         assert metadata_dict[updated_by_md_key] == 'true'
 
     finally:
-        # Delete the configuration
+        # Clean up: Delete the configuration
         await client.storage_client.configuration_delete(
             component_id=component_id,
             configuration_id=created_config.configuration_id,
@@ -261,7 +302,9 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef]):
 
 
 @pytest.mark.asyncio
-async def test_create_component_row_configuration(mcp_context: Context, configs: list[ConfigDef]):
+async def test_create_component_row_configuration(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef
+):
     """Tests that `create_component_row_configuration` creates a row configuration with correct metadata."""
 
     # Use the first component from configs for testing
@@ -280,11 +323,13 @@ async def test_create_component_row_configuration(mcp_context: Context, configs:
         storage={},
     )
 
+    # Define test data
+    row_name = 'Test Row Configuration'
+    row_description = 'Test row configuration created by automated test'
+    row_parameters = {'row_param': 'row_value'}
+    row_storage = {}
+
     try:
-        row_name = 'Test Row Configuration'
-        row_description = 'Test row configuration created by automated test'
-        row_parameters = {'row_param': 'row_value'}
-        row_storage = {}
 
         # Create the row configuration
         created_row_config = await add_config_row(
@@ -298,12 +343,27 @@ async def test_create_component_row_configuration(mcp_context: Context, configs:
         )
 
         assert isinstance(created_row_config, ComponentToolResponse)
-        assert created_row_config.component_id == component_id
-        assert created_row_config.configuration_id == root_config.configuration_id
-        assert created_row_config.description == row_description
         assert created_row_config.success is True
         assert created_row_config.timestamp is not None
-        assert len(created_row_config.links) > 0
+        assert created_row_config.description == row_description
+        assert created_row_config.component_id == component_id
+        assert created_row_config.configuration_id == root_config.configuration_id
+
+        # Verify link structure
+        project_id = keboola_project.project_id
+        detail_link = created_row_config.links[0]
+        assert detail_link.type == 'ui-detail'
+        assert (
+            detail_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+            + f'{created_row_config.configuration_id}'
+        )
+        dashboard_link = created_row_config.links[1]
+        assert dashboard_link.type == 'ui-dashboard'
+        assert (
+            dashboard_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}'
+        )
 
         # Verify the row configuration exists by fetching the root configuration and checking its rows
         config_detail = await client.storage_client.configuration_detail(
@@ -355,23 +415,44 @@ async def test_create_component_row_configuration(mcp_context: Context, configs:
 
 
 @pytest.mark.asyncio
-async def test_update_component_row_configuration(mcp_context: Context, configs: list[ConfigDef]):
+async def test_update_component_row_configuration(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef
+):
     """Tests that `update_component_row_configuration` updates a row configuration with correct metadata."""
 
     # Use the first component from configs for testing
     test_config = configs[0]
     component_id = test_config.component_id
 
+    # Define root configuration test data
+    root_config_name = 'Root Configuration for Row Update Test'
+    root_config_description = 'Root configuration created for row update test'
+    root_config_parameters = {}
+    root_config_storage = {}
+
+    # Define initial row configuration test data
+    initial_row_name = 'Initial Row Configuration'
+    initial_row_description = 'Initial row configuration for update test'
+    initial_row_parameters = {'initial_row_param': 'initial_row_value'}
+    initial_row_storage = {}
+
+    # Define updated row configuration test data
+    updated_row_name = 'Updated Row Configuration'
+    updated_row_description = 'Updated row configuration by automated test'
+    updated_row_parameters = {'updated_row_param': 'updated_row_value'}
+    updated_row_storage = {}
+    change_description = 'Automated row test update'
+
     client = KeboolaClient.from_state(mcp_context.session.state)
 
     # First create a root configuration
     root_config = await create_config(
         ctx=mcp_context,
-        name='Root Configuration for Row Update Test',
-        description='Root configuration created for row update test',
+        name=root_config_name,
+        description=root_config_description,
         component_id=component_id,
-        parameters={},
-        storage={},
+        parameters=root_config_parameters,
+        storage=root_config_storage,
     )
     assert root_config.configuration_id is not None
 
@@ -379,12 +460,12 @@ async def test_update_component_row_configuration(mcp_context: Context, configs:
         # Create a row configuration
         initial_row_config = await add_config_row(
             ctx=mcp_context,
-            name='Initial Row Configuration',
-            description='Initial row configuration for update test',
+            name=initial_row_name,
+            description=initial_row_description,
             component_id=component_id,
             configuration_id=root_config.configuration_id,
-            parameters={'initial_row_param': 'initial_row_value'},
-            storage={},
+            parameters=initial_row_parameters,
+            storage=initial_row_storage,
         )
 
         # Get the row ID from the configuration detail
@@ -393,14 +474,8 @@ async def test_update_component_row_configuration(mcp_context: Context, configs:
         )
 
         rows = cast(list, config_detail['rows'])
-        assert len(rows) > 0
+        assert len(rows) == 1
         row_id = rows[0]['id']
-
-        updated_row_name = 'Updated Row Configuration'
-        updated_row_description = 'Updated row configuration by automated test'
-        updated_row_parameters = {'updated_row_param': 'updated_row_value'}
-        updated_row_storage = {}
-        change_description = 'Automated row test update'
 
         # Update the row configuration
         updated_row_config = await update_config_row(
@@ -422,7 +497,22 @@ async def test_update_component_row_configuration(mcp_context: Context, configs:
         assert updated_row_config.description == updated_row_description
         assert updated_row_config.success is True
         assert updated_row_config.timestamp is not None
-        assert len(updated_row_config.links) > 0
+
+        # Verify link structure
+        project_id = keboola_project.project_id
+        detail_link = updated_row_config.links[0]
+        assert detail_link.type == 'ui-detail'
+        assert (
+            detail_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+            + f'{updated_row_config.configuration_id}'
+        )
+        dashboard_link = updated_row_config.links[1]
+        assert dashboard_link.type == 'ui-dashboard'
+        assert (
+            dashboard_link.url
+            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}'
+        )
 
         # Verify the row configuration was updated
         updated_config_detail = await client.storage_client.configuration_detail(
