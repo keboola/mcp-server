@@ -332,7 +332,7 @@ async def create_sql_transformation(
     description, and a list of created table names.
 
     CONSIDERATIONS:
-    - By default, SQL transformation must create at least one table to produce a result; omit only if the user 
+    - By default, SQL transformation must create at least one table to produce a result; omit only if the user
       explicitly indicates that no table creation is needed.
     - Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
       semantically related SQL statements.
