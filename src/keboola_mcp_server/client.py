@@ -141,7 +141,7 @@ class RawKeboolaClient:
                     message.append(f'Exception ID: {exception_id}')
                     message.append('When contacting Keboola support please provide the exception ID.')
 
-            except (ValueError, KeyError):
+            except ValueError:
                 try:
                     if response.text:
                         message.append(f'API error: {response.text}')
