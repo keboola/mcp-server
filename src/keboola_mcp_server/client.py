@@ -131,24 +131,24 @@ class RawKeboolaClient:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            message = [str(e)]
+            message_parts = [str(e)]
 
             try:
                 error_data = response.json()
-                if error := error_data.get('error'):
-                    message.append(f'API error: {error}')
+                if error_msg := error_data.get('error'):
+                    message_parts.append(f'API error: {error_msg}')
                 if exception_id := error_data.get('exceptionId'):
-                    message.append(f'Exception ID: {exception_id}')
-                    message.append('When contacting Keboola support please provide the exception ID.')
+                    message_parts.append(f'Exception ID: {exception_id}')
+                    message_parts.append('When contacting Keboola support please provide the exception ID.')
 
             except ValueError:
                 try:
                     if response.text:
-                        message.append(f'API error: {response.text}')
+                        message_parts.append(f'API error: {response.text}')
                 except Exception:
                     pass  # should never get here
 
-            raise httpx.HTTPStatusError('\n'.join(message), request=response.request, response=response) from e
+            raise httpx.HTTPStatusError('\n'.join(message_parts), request=response.request, response=response) from e
 
     async def get(
         self,
