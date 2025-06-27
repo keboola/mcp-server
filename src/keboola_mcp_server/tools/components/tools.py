@@ -313,9 +313,8 @@ async def create_sql_transformation(
         Sequence[TransformationConfiguration.Parameters.Block.Code],
         Field(
             description=(
-                'The executable SQL query code blocks, each containing a descriptive name and a sequence of '
-                'semantically related sql statements written in the current SQL dialect. Each sql statement is'
-                'executable and a separate item in the list of sql statements.'
+                'The SQL query code blocks, each containing a descriptive name and a sequence of '
+                'semantically related independently executable sql_statements written in the current SQL dialect.'
             ),
         ),
     ],
@@ -323,22 +322,23 @@ async def create_sql_transformation(
         Sequence[str],
         Field(
             description=(
-                'An empty list or a list of created table names if and only if they are generated within SQL '
-                'statements (e.g., using `CREATE TABLE ...`).'
+                'A list of created table names if they are generated within the SQL query statements '
+                '(e.g., using `CREATE TABLE ...`).'
             ),
         ),
     ] = tuple(),
 ) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
-    description, and optionally a list of created table names if and only if they are generated within the SQL
-    statements.
+    description, and a list of created table names.
 
     CONSIDERATIONS:
+    - By default, SQL transformation must create at least one table to produce a result; omit only if the user
+      explicitly indicates that no table creation is needed.
     - Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
       semantically related SQL statements.
-    - Each SQL query statement must be executable and follow the current SQL dialect, which can be retrieved using
-      appropriate tool.
+    - Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
+      retrieved using appropriate tool.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
@@ -350,11 +350,11 @@ async def create_sql_transformation(
     - Use when you want to create a new SQL transformation.
 
     EXAMPLES:
-    - user_input: `Can you save me the SQL query you generated as a new transformation?`
-        - set the sql_statements to the query, and set other parameters accordingly.
+    - user_input: `Can you create a new transformation out of this sql query?`
+        - set the sql_code_blocks to the query, and set other parameters accordingly.
         - returns the created SQL transformation configuration if successful.
     - user_input: `Generate me an SQL transformation which [USER INTENT]`
-        - set the sql_statements to the query based on the [USER INTENT], and set other parameters accordingly.
+        - set the sql_code_blocks to the query based on the [USER INTENT], and set other parameters accordingly.
         - returns the created SQL transformation configuration if successful.
     """
 
