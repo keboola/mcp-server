@@ -30,7 +30,6 @@ from keboola_mcp_server.tools.components.utils import (
     _get_sql_transformation_id_from_sql_dialect,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
-from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -121,6 +120,8 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
 
     client = KeboolaClient.from_state(mcp_context.session.state)
 
+    project_id = keboola_project.project_id
+
     # Create the configuration
     created_config = await create_config(
         ctx=mcp_context,
@@ -138,22 +139,21 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
         assert created_config.description == test_description
         assert created_config.success is True
         assert created_config.timestamp is not None
-
-        # Verify link structure
-        project_id = keboola_project.project_id
-        detail_link = created_config.links[0]
-        assert detail_link.type == 'ui-detail'
-        assert (
-            detail_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
-            + f'{created_config.configuration_id}'
-        )
-        dashboard_link = created_config.links[1]
-        assert dashboard_link.type == 'ui-dashboard'
-        assert (
-            dashboard_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}'
-        )
+        assert frozenset(created_config.links) == frozenset([
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {test_name}',
+                url=(
+                    f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+                    + f'{created_config.configuration_id}'
+                ),
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                ),
+         ])
 
         # Verify the configuration exists in the backend by fetching it
         config_detail = await client.storage_client.configuration_detail(
@@ -213,6 +213,8 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef], keb
 
     client = KeboolaClient.from_state(mcp_context.session.state)
 
+    project_id = keboola_project.project_id
+
     # Create the initial configuration
     created_config = await create_config(
         ctx=mcp_context,
@@ -244,22 +246,21 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef], keb
         assert updated_config.description == updated_description
         assert updated_config.success is True
         assert updated_config.timestamp is not None
-
-        # Verify link structure
-        project_id = keboola_project.project_id
-        detail_link = updated_config.links[0]
-        assert detail_link.type == 'ui-detail'
-        assert (
-            detail_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
-            + f'{updated_config.configuration_id}'
-        )
-        dashboard_link = updated_config.links[1]
-        assert dashboard_link.type == 'ui-dashboard'
-        assert (
-            dashboard_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}'
-        )
+        assert frozenset(updated_config.links) == frozenset([
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {updated_name}',
+                url=(
+                    f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+                    + f'{updated_config.configuration_id}'
+                ),
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                ),
+         ])
 
         # Verify the configuration exists in the backend by fetching it
         config_detail = await client.storage_client.configuration_detail(
@@ -311,23 +312,31 @@ async def test_add_config_row(
     test_config = configs[0]
     component_id = test_config.component_id
 
-    # First create a root configuration to add row to
-    client = KeboolaClient.from_state(mcp_context.session.state)
+    # Define root configuration test data
+    root_config_name = 'Root Configuration for Row Test'
+    root_config_description = 'Root configuration created for row configuration test'
+    root_config_parameters = {}
+    root_config_storage = {}
 
-    root_config = await create_config(
-        ctx=mcp_context,
-        name='Root Configuration for Row Test',
-        description='Root configuration created for row configuration test',
-        component_id=component_id,
-        parameters={},
-        storage={},
-    )
-
-    # Define test data
+    # Define row configuration test data
     row_name = 'Test Row Configuration'
     row_description = 'Test row configuration created by automated test'
     row_parameters = {'row_param': 'row_value'}
     row_storage = {}
+
+    client = KeboolaClient.from_state(mcp_context.session.state)
+
+    project_id = keboola_project.project_id
+
+    # First create a root configuration to add row to
+    root_config = await create_config(
+        ctx=mcp_context,
+        name=root_config_name,
+        description=root_config_description,
+        component_id=component_id,
+        parameters=root_config_parameters,
+        storage=root_config_storage,
+    )
 
     try:
 
@@ -348,22 +357,21 @@ async def test_add_config_row(
         assert created_row_config.description == row_description
         assert created_row_config.component_id == component_id
         assert created_row_config.configuration_id == root_config.configuration_id
-
-        # Verify link structure
-        project_id = keboola_project.project_id
-        detail_link = created_row_config.links[0]
-        assert detail_link.type == 'ui-detail'
-        assert (
-            detail_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
-            + f'{created_row_config.configuration_id}'
-        )
-        dashboard_link = created_row_config.links[1]
-        assert dashboard_link.type == 'ui-dashboard'
-        assert (
-            dashboard_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}'
-        )
+        assert frozenset(created_row_config.links) == frozenset([
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {row_name}',
+                url=(
+                    f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+                    + f'{root_config.configuration_id}'
+                ),
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                ),
+         ])
 
         # Verify the row configuration exists by fetching the root configuration and checking its rows
         config_detail = await client.storage_client.configuration_detail(
@@ -418,7 +426,7 @@ async def test_add_config_row(
 async def test_update_config_row(
     mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef
 ):
-    """Tests that `update_update_config_row` updates a row configuration with correct metadata."""
+    """Tests that `update_config_row` updates a row configuration with correct metadata."""
 
     # Use the first component from configs for testing
     test_config = configs[0]
@@ -455,6 +463,8 @@ async def test_update_config_row(
         storage=root_config_storage,
     )
     assert root_config.configuration_id is not None
+
+    project_id = keboola_project.project_id
 
     try:
         # Create a row configuration
@@ -497,22 +507,21 @@ async def test_update_config_row(
         assert updated_row_config.description == updated_row_description
         assert updated_row_config.success is True
         assert updated_row_config.timestamp is not None
-
-        # Verify link structure
-        project_id = keboola_project.project_id
-        detail_link = updated_row_config.links[0]
-        assert detail_link.type == 'ui-detail'
-        assert (
-            detail_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
-            + f'{updated_row_config.configuration_id}'
-        )
-        dashboard_link = updated_row_config.links[1]
-        assert dashboard_link.type == 'ui-dashboard'
-        assert (
-            dashboard_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}'
-        )
+        assert frozenset(updated_row_config.links) == frozenset([
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {updated_row_name}',
+                url=(
+                    f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+                    + f'{root_config.configuration_id}'
+                ),
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                ),
+         ])
 
         # Verify the row configuration was updated
         updated_config_detail = await client.storage_client.configuration_detail(
@@ -587,6 +596,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
     )
     sql_dialect = await get_sql_dialect(mcp_context)
     expected_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    project_id = keboola_project.project_id
 
     try:
         # Verify the response structure
@@ -596,22 +606,21 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         assert created_transformation.description == test_description
         assert created_transformation.component_id == expected_component_id
         assert created_transformation.configuration_id is not None
-
-        # Verify link structure
-        project_id = keboola_project.project_id
-        detail_link = created_transformation.links[0]
-        assert detail_link.type == 'ui-detail'
-        assert (
-            detail_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{expected_component_id}/'
-            + f'{created_transformation.configuration_id}'
-        )
-        dashboard_link = created_transformation.links[1]
-        assert dashboard_link.type == 'ui-dashboard'
-        assert (
-            dashboard_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{expected_component_id}'
-        )
+        assert frozenset(created_transformation.links) == frozenset([
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {test_name}',
+                url=(
+                    f'https://connection.keboola.com/admin/projects/{project_id}/components/{expected_component_id}/'
+                    + f'{created_transformation.configuration_id}'
+                ),
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{expected_component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{expected_component_id}',
+                ),
+         ])
 
         # Verify the configuration exists in the backend by fetching it
         config_detail = await client.storage_client.configuration_detail(
@@ -673,9 +682,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
 
 
 @pytest.mark.asyncio
-async def test_update_sql_transformation(
-    mcp_context: Context, keboola_project: ProjectDef, workspace_manager: WorkspaceManager
-):
+async def test_update_sql_transformation(mcp_context: Context, keboola_project: ProjectDef):
     """Tests that `update_sql_transformation` updates an existing SQL transformation correctly."""
     # First, create an initial transformation
     initial_name = 'Initial SQL Transformation'
@@ -699,6 +706,10 @@ async def test_update_sql_transformation(
         sql_code_blocks=initial_sql_code_blocks,
         created_table_names=initial_created_table_names,
     )
+
+    project_id = keboola_project.project_id
+    sql_dialect = await get_sql_dialect(mcp_context)
+    sql_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
 
     try:
         # Now update the transformation
@@ -753,22 +764,21 @@ async def test_update_sql_transformation(
         assert updated_transformation.component_id == created_transformation.component_id
         assert updated_transformation.configuration_id == created_transformation.configuration_id
         assert updated_transformation.description == updated_description
-        project_id = keboola_project.project_id
-        sql_dialect = await get_sql_dialect(mcp_context)
-        sql_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
-        detail_link = updated_transformation.links[0]
-        assert detail_link.type == 'ui-detail'
-        assert (
-            detail_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}/'
-            + f'{updated_transformation.configuration_id}'
-        )
-        dashboard_link = updated_transformation.links[1]
-        assert dashboard_link.type == 'ui-dashboard'
-        assert (
-            dashboard_link.url
-            == f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}'
-        )
+        assert frozenset(updated_transformation.links) == frozenset([
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {initial_name}',
+                url=(
+                    f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}/'
+                    + f'{updated_transformation.configuration_id}'
+                ),
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{sql_component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}',
+                ),
+        ])
 
         # Verify the updated configuration in the backend
         config_detail = await client.storage_client.configuration_detail(
