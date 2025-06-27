@@ -8,7 +8,8 @@ URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
 
 
 class Link(BaseModel):
-    model_config = ConfigDict(frozen=True)  # we make the model immutable to avoid unexpected changes
+    model_config = ConfigDict(frozen=True)
+
     type: URLType = Field(..., description='The type of the URL.')
     title: str = Field(..., description='The name of the URL.')
     url: str = Field(..., description='The URL.')
@@ -85,14 +86,14 @@ class ProjectLinksManager:
         )
 
     def get_configuration_links(
-            self, component_id: str, configuration_id: str, configuration_name: str
-            ) -> list[Link]:
+        self, component_id: str, configuration_id: str, configuration_name: str
+    ) -> list[Link]:
         return [
-                self.get_component_config_link(
-                    component_id=component_id, configuration_id=configuration_id, configuration_name=configuration_name
-                ),
-                self.get_config_dashboard_link(component_id=component_id, component_name=component_id),
-            ]
+            self.get_component_config_link(
+                component_id=component_id, configuration_id=configuration_id, configuration_name=configuration_name
+            ),
+            self.get_config_dashboard_link(component_id=component_id, component_name=component_id),
+        ]
 
     # --- Transformations ---
     def get_transformations_dashboard_link(self) -> Link:

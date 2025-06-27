@@ -5,6 +5,7 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     ComponentWithConfigurations,
     add_config_row,
@@ -240,6 +241,21 @@ async def test_get_config(
     assert result.component is not None
     assert result.component.component_id == mock_component['id']
     assert result.component.component_name == mock_component['name']
+    assert set(result.links) == {
+        Link(
+            type='ui-detail',
+            title=f'Configuration: {mock_configuration["name"]}',
+            url=(
+                f'test://api.keboola.com/admin/projects/69420/components/'
+                f'{mock_component["id"]}/{mock_configuration["id"]}'
+            ),
+        ),
+        Link(
+            type='ui-dashboard',
+            title=f'{mock_component["id"]} Configurations Dashboard',
+            url=f'test://api.keboola.com/admin/projects/69420/components/{mock_component["id"]}',
+        ),
+    }
 
     # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_detail.assert_called_once_with(
