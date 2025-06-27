@@ -8,17 +8,21 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     ComponentWithConfigurations,
+    add_config_row,
+    create_config,
     create_sql_transformation,
     get_config,
     list_configs,
     list_transformations,
+    update_config,
+    update_config_row,
     update_sql_transformation,
 )
 from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationMetadata,
     ComponentConfigurationOutput,
-    ComponentConfigurationResponse,
     ComponentConfigurationResponseBase,
+    ConfigToolOutput,
     ListConfigsOutput,
     ListTransformationsOutput,
     ReducedComponent,
@@ -104,9 +108,7 @@ async def test_list_configs_by_types(
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
-    assert_retrieve_components: Callable[
-        [ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
-    ],
+    assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
     """Test list_configs when component types are provided."""
     context = mcp_context_components_configs
@@ -122,11 +124,13 @@ async def test_list_configs_by_types(
     assert_retrieve_components(result, mock_components, mock_configurations)
 
     # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.component_list.assert_has_calls([
-        mocker.call(component_type='application', include=['configuration']),
-        mocker.call(component_type='extractor', include=['configuration']),
-        mocker.call(component_type='writer', include=['configuration']),
-    ])
+    keboola_client.storage_client.component_list.assert_has_calls(
+        [
+            mocker.call(component_type='application', include=['configuration']),
+            mocker.call(component_type='extractor', include=['configuration']),
+            mocker.call(component_type='writer', include=['configuration']),
+        ]
+    )
 
 
 @pytest.mark.asyncio
@@ -135,9 +139,7 @@ async def test_list_transformations(
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configurations: list[dict[str, Any]],
-    assert_retrieve_components: Callable[
-        [ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
-    ],
+    assert_retrieve_components: Callable[[ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
     """Test list_transformations."""
     context = mcp_context_components_configs
@@ -164,9 +166,7 @@ async def test_list_configs_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    assert_retrieve_components: Callable[
-        [ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
-    ],
+    assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
     """Test list_configs when component IDs are provided."""
     context = mcp_context_components_configs
@@ -190,9 +190,7 @@ async def test_list_transformations_from_ids(
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    assert_retrieve_components: Callable[
-        [ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None
-    ],
+    assert_retrieve_components: Callable[[ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
     """Test list_transformations when transformation IDs are provided."""
     context = mcp_context_components_configs
@@ -261,8 +259,7 @@ async def test_get_config(
 
     # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_detail.assert_called_once_with(
-        component_id=mock_component['id'],
-        configuration_id=mock_configuration['id']
+        component_id=mock_component['id'], configuration_id=mock_configuration['id']
     )
 
 
@@ -319,14 +316,10 @@ async def test_create_sql_transformation(
         created_table_names=[created_table_name],
     )
 
-    expected_config = ComponentConfigurationResponse.model_validate(
-        {**configuration, 'component_id': expected_component_id, 'component': {**component}}
-    )
-
-    assert isinstance(new_transformation_configuration, ComponentConfigurationResponse)
-    assert new_transformation_configuration.model_dump() == expected_config.model_dump()
-
-    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=expected_component_id)
+    assert isinstance(new_transformation_configuration, ConfigToolOutput)
+    assert new_transformation_configuration.component_id == expected_component_id
+    assert new_transformation_configuration.configuration_id == mock_configuration['id']
+    assert new_transformation_configuration.description == mock_configuration['description']
 
     keboola_client.storage_client.configuration_create.assert_called_once_with(
         component_id=expected_component_id,
@@ -419,11 +412,10 @@ async def test_update_sql_transformation(
         is_disabled=False,
     )
 
-    assert isinstance(updated_configuration, ComponentConfigurationResponse)
-    assert updated_configuration.configuration == new_config
+    assert isinstance(updated_configuration, ConfigToolOutput)
     assert updated_configuration.component_id == expected_component_id
     assert updated_configuration.configuration_id == mock_configuration['id']
-    assert updated_configuration.change_description == new_change_description
+    assert updated_configuration.description == mock_configuration['description']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_with(component_id=expected_component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
@@ -473,4 +465,227 @@ async def test_get_config_examples(
 ```
 
 """
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_config(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """Test create_component_root_configuration tool."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = mock_component['id']
+    configuration = mock_configuration
+    configuration['id'] = 'test-config-id'
+
+    # Set up the mock for ai_service_client and storage_client
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    name = 'Test Configuration'
+    description = 'Test configuration description'
+    parameters = {'test_param': 'test_value'}
+    storage = {'input': {'tables': []}}
+
+    # Test the create_component_root_configuration tool
+    result = await create_config(
+        ctx=context,
+        name=name,
+        description=description,
+        component_id=component_id,
+        parameters=parameters,
+        storage=storage,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    assert result.component_id == component_id
+    assert result.configuration_id == configuration['id']
+    assert result.description == description
+    assert result.success is True
+    assert result.timestamp is not None
+
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
+    keboola_client.storage_client.configuration_create.assert_called_once_with(
+        component_id=component_id,
+        name=name,
+        description=description,
+        configuration={'storage': storage, 'parameters': parameters},
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_config_row(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """Test create_component_row_configuration tool."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = mock_component['id']
+    configuration_id = 'test-config-id'
+    row_configuration = {'id': 'test-row-id', 'name': 'Test Row', 'version': 1}
+
+    # Set up the mock for ai_service_client and storage_client
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(return_value=row_configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    name = 'Test Row Configuration'
+    description = 'Test row configuration description'
+    parameters = {'row_param': 'row_value'}
+    storage = {}
+
+    # Test the create_component_row_configuration tool
+    result = await add_config_row(
+        ctx=context,
+        name=name,
+        description=description,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        parameters=parameters,
+        storage=storage,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    assert result.component_id == component_id
+    assert result.configuration_id == configuration_id
+    assert result.description == description
+    assert result.success is True
+    assert result.timestamp is not None
+
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
+    keboola_client.storage_client.configuration_row_create.assert_called_once_with(
+        component_id=component_id,
+        config_id=configuration_id,
+        name=name,
+        description=description,
+        configuration={'storage': storage, 'parameters': parameters},
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_config(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """Test update_component_root_configuration tool."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = mock_component['id']
+    configuration_id = 'test-config-id'
+    updated_configuration = mock_configuration.copy()
+    updated_configuration['version'] = 2
+
+    # Set up the mock for ai_service_client and storage_client
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    name = 'Updated Configuration'
+    description = 'Updated configuration description'
+    change_description = 'Test update'
+    parameters = {'updated_param': 'updated_value'}
+    storage = {'output': {'tables': []}}
+
+    # Test the update_component_root_configuration tool
+    result = await update_config(
+        ctx=context,
+        name=name,
+        description=description,
+        change_description=change_description,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        parameters=parameters,
+        storage=storage,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    assert result.component_id == component_id
+    assert result.configuration_id == configuration_id
+    assert result.description == description
+    assert result.success is True
+    assert result.timestamp is not None
+
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
+    keboola_client.storage_client.configuration_update.assert_called_once_with(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration={'storage': storage, 'parameters': parameters},
+        change_description=change_description,
+        updated_name=name,
+        updated_description=description,
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_config_row(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """Test update_component_row_configuration tool."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = mock_component['id']
+    configuration_id = 'test-config-id'
+    configuration_row_id = 'test-row-id'
+    updated_row_configuration = {'id': configuration_row_id, 'name': 'Updated Row', 'version': 2}
+
+    # Set up the mock for ai_service_client and storage_client
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value=updated_row_configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    name = 'Updated Row Configuration'
+    description = 'Updated row configuration description'
+    change_description = 'Test row update'
+    parameters = {'updated_row_param': 'updated_row_value'}
+    storage = {}
+    # Test the update_component_row_configuration tool
+    result = await update_config_row(
+        ctx=context,
+        name=name,
+        description=description,
+        change_description=change_description,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_row_id=configuration_row_id,
+        parameters=parameters,
+        storage=storage,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    assert result.component_id == component_id
+    assert result.configuration_id == configuration_id
+    assert result.description == description
+    assert result.success is True
+    assert result.timestamp is not None
+
+    keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
+    keboola_client.storage_client.configuration_row_update.assert_called_once_with(
+        component_id=component_id,
+        config_id=configuration_id,
+        configuration_row_id=configuration_row_id,
+        configuration={'storage': storage, 'parameters': parameters},
+        change_description=change_description,
+        updated_name=name,
+        updated_description=description,
     )
