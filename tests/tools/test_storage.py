@@ -7,6 +7,7 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
     ListBucketsOutput,
@@ -186,6 +187,18 @@ async def test_get_bucket(
     assert result.id == expected_bucket['id']
     assert result.name == expected_bucket['name']
     assert result.display_name == expected_bucket['display_name']
+    assert set(result.links) == {
+        Link(
+            type='ui-detail',
+            title=f'Bucket: {expected_bucket["name"]}',
+            url=f'test://api.keboola.com/admin/projects/69420/storage/{bucket_id}',
+        ),
+        Link(
+            type='ui-dashboard',
+            title='Buckets in the project',
+            url='test://api.keboola.com/admin/projects/69420/storage',
+        ),
+    }
 
     # Check optional fields only if they are present in the expected bucket
     if 'description' in expected_bucket:
@@ -257,6 +270,25 @@ async def test_get_table(
     assert result.data_size_bytes == mock_table_data['raw_table_data']['data_size_bytes']
     assert result.fully_qualified_name == str(mock_table_data['additional_data']['table_fqn'])
     assert result.columns == mock_table_data['additional_data']['columns']
+    assert set(result.links) == {
+        Link(
+            type='ui-detail',
+            title=f'Table: {mock_table_data["raw_table_data"]["name"]}',
+            url=(
+                f'test://api.keboola.com/admin/projects/69420/storage/'
+                f'{mock_table_data["raw_table_data"]["bucket"]["id"]}/table/'
+                f'{mock_table_data["raw_table_data"]["name"]}'
+            ),
+        ),
+        Link(
+            type='ui-detail',
+            title=f'Bucket: {mock_table_data["raw_table_data"]["bucket"]["id"]}',
+            url=(
+                f'test://api.keboola.com/admin/projects/69420/storage/'
+                f'{mock_table_data["raw_table_data"]["bucket"]["id"]}'
+            ),
+        ),
+    }
 
 
 @pytest.mark.asyncio

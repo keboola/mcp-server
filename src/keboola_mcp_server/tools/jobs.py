@@ -94,34 +94,23 @@ class JobDetail(JobListItem):
     """Represents a detailed job with all available information."""
 
     url: str = Field(description='The URL of the job.')
-    table_id: Optional[str] = Field(
-        description='The ID of the table that the job is running on.',
-        validation_alias=AliasChoices('tableId', 'table_id', 'table-id'),
-        serialization_alias='tableId',
-        default=None,
-    )
+
     config_data: Optional[dict[str, Any]] = Field(
         description='The data of the configuration.',
         validation_alias=AliasChoices('configData', 'config_data', 'config-data'),
         serialization_alias='configData',
         default=None,
     )
-    config_row_ids: Optional[list[str]] = Field(
-        description='The row IDs of the configuration.',
-        validation_alias=AliasChoices('configRowIds', 'config_row_ids', 'config-row-ids'),
-        serialization_alias='configRowIds',
+    config_row: Optional[str] = Field(
+        description='The configuration row ID.',
+        validation_alias=AliasChoices('configRow', 'config_row', 'config-row'),
+        serialization_alias='configRow',
         default=None,
     )
     run_id: Optional[str] = Field(
         description='The ID of the run that the job is running on.',
         validation_alias=AliasChoices('runId', 'run_id', 'run-id'),
         serialization_alias='runId',
-        default=None,
-    )
-    parent_run_id: Optional[str] = Field(
-        description='The ID of the parent run that the job is running on.',
-        validation_alias=AliasChoices('parentRunId', 'parent_run_id', 'parent-run-id'),
-        serialization_alias='parentRunId',
         default=None,
     )
     result: Optional[dict[str, Any]] = Field(
@@ -291,7 +280,9 @@ async def run_job(
         raw_job = await client.jobs_queue_client.create_job(
             component_id=component_id, configuration_id=configuration_id
         )
-        job = JobDetail.model_validate(raw_job)
+        links_manager = await ProjectLinksManager.from_client(client)
+        links = links_manager.get_job_links(str(raw_job['id']))
+        job = JobDetail.model_validate(raw_job | {'links': links})
         LOG.info(
             f'Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}.'
         )
