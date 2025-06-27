@@ -311,9 +311,8 @@ async def create_sql_transformation(
         Sequence[TransformationConfiguration.Parameters.Block.Code],
         Field(
             description=(
-                'The executable SQL query code blocks, each containing a descriptive name and a sequence of '
-                'semantically related sql statements written in the current SQL dialect. Each sql statement is'
-                'a separate item in the list of sql statements.'
+                'The SQL query code blocks, each containing a descriptive name and a sequence of '
+                'semantically related inependently executable sql_statements written in the current SQL dialect.'
             ),
         ),
     ],
