@@ -312,7 +312,7 @@ async def create_sql_transformation(
         Field(
             description=(
                 'The SQL query code blocks, each containing a descriptive name and a sequence of '
-                'semantically related inependently executable sql_statements written in the current SQL dialect.'
+                'semantically related independently executable sql_statements written in the current SQL dialect.'
             ),
         ),
     ],
