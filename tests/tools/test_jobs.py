@@ -244,8 +244,8 @@ async def test_run_job(
     assert job_detail.config_id == configuration_id
     assert job_detail.result == {}
     assert set(job_detail.links) == {
-        Link(type='ui-detail', title='Job: 123', url='test://api.keboola.com/admin/projects/123/queue/123'),
-        Link(type='ui-dashboard', title='Jobs in the project', url='test://api.keboola.com/admin/projects/123/queue'),
+        Link(type='ui-detail', title='Job: 123', url='test://api.keboola.com/admin/projects/69420/queue/123'),
+        Link(type='ui-dashboard', title='Jobs in the project', url='test://api.keboola.com/admin/projects/69420/queue'),
     }
 
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
