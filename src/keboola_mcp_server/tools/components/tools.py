@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context
@@ -19,6 +20,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentRootConfiguration,
     ComponentRowConfiguration,
     ComponentType,
+    ConfigToolOutput,
     ListConfigsOutput,
     ListTransformationsOutput,
 )
@@ -325,7 +327,7 @@ async def create_sql_transformation(
             ),
         ),
     ] = tuple(),
-) -> Annotated[ComponentConfigurationResponse, Field(description='Newly created SQL Transformation Configuration.')]:
+) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
     description, and a list of created table names.
@@ -369,6 +371,7 @@ async def create_sql_transformation(
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Creating new transformation configuration: {name} for component: {component_id}.')
     new_raw_transformation_configuration = await client.storage_client.configuration_create(
@@ -378,26 +381,30 @@ async def create_sql_transformation(
         configuration=transformation_configuration_payload.model_dump(by_alias=True),
     )
 
-    component = await _get_component(client=client, component_id=component_id)
-    new_transformation_configuration = ComponentConfigurationResponse.model_validate(
-        new_raw_transformation_configuration
-        | {
-            'component_id': component_id,
-            'component': component,
-        }
-    )
+    configuration_id = new_raw_transformation_configuration['id']
 
     await _set_cfg_creation_metadata(
         client=client,
         component_id=component_id,
-        configuration_id=new_transformation_configuration.configuration_id,
+        configuration_id=configuration_id,
     )
 
-    LOG.info(
-        f'Created new transformation "{component_id}" with configuration id '
-        f'"{new_transformation_configuration.configuration_id}".'
+    LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
+
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=name,
     )
-    return new_transformation_configuration
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.utcnow(),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
@@ -440,7 +447,7 @@ async def update_sql_transformation(
             description='Whether to disable the transformation configuration. Default is False.',
         ),
     ] = False,
-) -> Annotated[ComponentConfigurationResponse, Field(description='Updated transformation configuration.')]:
+) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration, optionally updating the description and disabling the
     configuration.
@@ -462,6 +469,7 @@ async def update_sql_transformation(
         - returns the updated transformation configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
@@ -488,26 +496,32 @@ async def update_sql_transformation(
         is_disabled=is_disabled,
     )
 
-    updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
-        updated_raw_configuration
-        | {
-            'component_id': transformation.component_id,
-            'component': transformation,
-        }
-    )
-
     await _set_cfg_update_metadata(
         client=client,
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
-        configuration_version=updated_transformation_configuration.version,
+        configuration_version=updated_raw_configuration.get('version'),
+    )
+
+    links = links_manager.get_configuration_links(
+        component_id=sql_transformation_id,
+        configuration_id=str(configuration_id),
+        configuration_name=str(updated_raw_configuration.get('name', '')),
     )
 
     LOG.info(
-        f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
-        f'component: {updated_transformation_configuration.component_id}.'
+        f'Updated transformation configuration: {updated_raw_configuration["id"]} for '
+        f'component: {sql_transformation_id}.'
     )
-    return updated_transformation_configuration
+
+    return ConfigToolOutput(
+        component_id=sql_transformation_id,
+        configuration_id=str(configuration_id),
+        description=updated_description or updated_raw_configuration.get('description', ''),
+        timestamp=datetime.utcnow(),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
@@ -543,7 +557,7 @@ async def create_config(
             ),
         ),
     ],
-) -> Annotated[ComponentRootConfiguration, Field(description='Created component root configuration.')]:
+) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 
@@ -562,6 +576,7 @@ async def create_config(
         - returns the created component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
@@ -590,19 +605,24 @@ async def create_config(
         ),
     )
 
-    new_configuration = ComponentRootConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
-    configuration_id = new_configuration.configuration_id
+    configuration_id = new_raw_configuration['id']
 
     LOG.info(f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     await _set_cfg_creation_metadata(client, component_id, configuration_id)
 
-    return new_configuration
+    links = links_manager.get_configuration_links(
+        component_id=component_id, configuration_id=configuration_id, configuration_name=name
+    )
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.utcnow(),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
@@ -644,7 +664,7 @@ async def add_config_row(
             ),
         ),
     ],
-) -> Annotated[ComponentRowConfiguration, Field(description='Created component row configuration.')]:
+) -> ConfigToolOutput:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
     component ID, configuration JSON, and description.
@@ -664,6 +684,7 @@ async def add_config_row(
         - returns the created component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
         f'Creating new configuration row: {name} for component: {component_id} '
@@ -685,8 +706,6 @@ async def add_config_row(
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
     new_raw_configuration = cast(
         dict[str, Any],
         await client.storage_client.configuration_row_create(
@@ -698,26 +717,31 @@ async def add_config_row(
         ),
     )
 
-    new_configuration = ComponentRowConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
-
     LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
+        f'Created new configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".'
     )
 
     await _set_cfg_update_metadata(
         client=client,
         component_id=component_id,
-        configuration_id=new_configuration.configuration_id,
-        configuration_version=new_configuration.version,
+        configuration_id=configuration_id,
+        configuration_version=new_raw_configuration['version'],
     )
 
-    return new_configuration
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=name,
+    )
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.utcnow(),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
@@ -759,7 +783,7 @@ async def update_config(
             ),
         ),
     ],
-) -> Annotated[ComponentRootConfiguration, Field(description='Updated component root configuration.')]:
+) -> ConfigToolOutput:
     """
     Updates a specific root component configuration using given by component ID, and configuration ID.
 
@@ -779,6 +803,7 @@ async def update_config(
         - returns the updated component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
@@ -809,26 +834,29 @@ async def update_config(
         ),
     )
 
-    new_configuration = ComponentRootConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
-
-    LOG.info(
-        f'Updated configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
-    )
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
     await _set_cfg_update_metadata(
         client=client,
         component_id=component_id,
-        configuration_id=new_configuration.configuration_id,
-        configuration_version=new_configuration.version,
+        configuration_id=configuration_id,
+        configuration_version=new_raw_configuration['version'],
     )
 
-    return new_configuration
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=name,
+    )
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.utcnow(),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
@@ -870,7 +898,7 @@ async def update_config_row(
             ),
         ),
     ],
-) -> Annotated[ComponentRowConfiguration, Field(description='Updated component row configuration.')]:
+) -> ConfigToolOutput:
     """
     Updates a specific component configuration row in the specified configuration_id, using the specified name,
     component ID, configuration JSON, and description.
@@ -889,6 +917,7 @@ async def update_config_row(
         - returns the updated component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
@@ -923,26 +952,29 @@ async def update_config_row(
         ),
     )
 
-    new_configuration = ComponentRowConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
-
-    LOG.info(
-        f'Updated configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
-    )
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
     await _set_cfg_update_metadata(
         client=client,
         component_id=component_id,
-        configuration_id=new_configuration.configuration_id,
-        configuration_version=new_configuration.version,
+        configuration_id=configuration_id,
+        configuration_version=new_raw_configuration['version'],
     )
 
-    return new_configuration
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=name,
+    )
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.utcnow(),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
