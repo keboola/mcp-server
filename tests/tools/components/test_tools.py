@@ -453,7 +453,7 @@ async def test_get_config_examples(
 
 
 @pytest.mark.asyncio
-async def test_create_component_root_configuration(
+async def test_create_config(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
@@ -505,7 +505,7 @@ async def test_create_component_root_configuration(
 
 
 @pytest.mark.asyncio
-async def test_create_component_row_configuration(
+async def test_add_config_row(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
@@ -559,7 +559,7 @@ async def test_create_component_row_configuration(
 
 
 @pytest.mark.asyncio
-async def test_update_component_root_configuration(
+async def test_update_config(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
@@ -617,7 +617,7 @@ async def test_update_component_root_configuration(
 
 
 @pytest.mark.asyncio
-async def test_update_component_row_configuration(
+async def test_update_config_row(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
