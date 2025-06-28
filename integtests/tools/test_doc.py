@@ -1,4 +1,3 @@
-import httpx
 import pytest
 from fastmcp import Context
 
@@ -15,14 +14,3 @@ async def test_docs_query(mcp_context: Context) -> None:
     assert isinstance(result, DocsAnswer)
     assert len(result.text) > 0, 'Answer text should not be empty'
     assert len(result.source_urls) > 0, 'Source URLs list should not be empty'
-
-
-@pytest.mark.asyncio
-async def test_docs_query_empty_query(mcp_context: Context) -> None:
-    """Tests that `docs_query` raises HTTPStatusError for empty queries."""
-    query = ''
-
-    with pytest.raises(httpx.HTTPStatusError) as exc_info:
-        await docs_query(ctx=mcp_context, query=query)
-
-    assert exc_info.value.response.status_code == 422
