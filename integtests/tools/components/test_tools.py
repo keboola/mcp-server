@@ -616,20 +616,26 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         assert created_transformation.description == test_description
         assert created_transformation.component_id == expected_component_id
         assert created_transformation.configuration_id is not None
-        assert frozenset(created_transformation.links) == frozenset([
+        expected_links = frozenset([
             Link(
                 type='ui-detail',
                 title=f'Configuration: {test_name}',
-                url=(f'https://connection.keboola.com/admin/projects/{project_id}/components/{expected_component_id}/'
-                    + f'{created_transformation.configuration_id}'),
+                url=(
+                    f'https://connection.keboola.com/admin/projects/{project_id}/components/'
+                    f'{expected_component_id}/{created_transformation.configuration_id}'
                 ),
+            ),
             Link(
                 type='ui-dashboard',
                 title=f'{expected_component_id} Configurations Dashboard',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{expected_component_id}',
+                url=(
+                    f'https://connection.keboola.com/admin/projects/{project_id}/components/'
+                    f'{expected_component_id}'
                 ),
-            ]
-        )
+            ),
+        ])
+
+        assert frozenset(created_transformation.links) == expected_links
 
         # Verify the configuration exists in the backend by fetching it
         config_detail = await client.storage_client.configuration_detail(
