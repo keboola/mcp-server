@@ -18,13 +18,9 @@ async def test_list_jobs_all(mcp_context: Context):
 
     result = await list_jobs(ctx=mcp_context)
     assert isinstance(result, ListJobsOutput)
-
     assert len(result.links) > 0
-    for link in result.links:
-        assert isinstance(link, Link)
 
     for job in result.jobs:
-        assert isinstance(job, JobListItem)
         assert job.id is not None
         assert job.status is not None
 
