@@ -85,6 +85,9 @@ async def test_list_jobs_with_config_filter(mcp_context: Context, configs: list[
 @pytest.mark.asyncio
 async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
     """Tests that `run_job` creates a job and `get_job` retrieves its details."""
+
+    project_id = keboola_project.project_id
+
     test_config = configs[0]
     component_id = test_config.component_id
     configuration_id = test_config.configuration_id
@@ -97,8 +100,20 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
     assert started_job.component_id == component_id
     assert started_job.config_id == configuration_id
     assert started_job.status is not None
-    assert isinstance(started_job.links, list)
-    assert len(started_job.links) > 0
+    assert frozenset(started_job.links) == frozenset(
+        [
+            Link(
+                type='ui-detail',
+                title=f'Job: {started_job.id}',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{started_job.id}',
+            ),
+            Link(
+                type='ui-dashboard',
+                title='Jobs in the project',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
+            ),
+        ]
+    )
 
     job_detail = await get_job(job_id=started_job.id, ctx=mcp_context)
 
@@ -109,8 +124,20 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
     assert job_detail.config_id == configuration_id
     assert job_detail.status is not None
     assert job_detail.url is not None
-    assert isinstance(job_detail.links, list)
-    assert len(job_detail.links) > 0
+    assert frozenset(job_detail.links) == frozenset(
+        [
+            Link(
+                type='ui-detail',
+                title=f'Job: {job_detail.id}',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{job_detail.id}',
+            ),
+            Link(
+                type='ui-dashboard',
+                title='Jobs in the project',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
+            ),
+        ]
+    )
 
     # Verify job appears in list_jobs for this component
     jobs_list = await list_jobs(ctx=mcp_context, component_id=component_id, limit=50)
@@ -141,7 +168,6 @@ async def test_get_job(mcp_context: Context, configs: list[ConfigDef], keboola_p
     assert job_detail.component_id == component_id
     assert job_detail.config_id == configuration_id
     assert job_detail.status is not None
-
     assert frozenset(job_detail.links) == frozenset(
         [
             Link(
