@@ -78,12 +78,12 @@ async def test_list_jobs_with_config_filter(mcp_context: Context, configs: list[
 
     # Call list_jobs for that config id, sorted by startTime desc to get newest jobs first
     result = await list_jobs(
-        ctx=mcp_context, 
-        component_id=component_id, 
-        config_id=configuration_id, 
+        ctx=mcp_context,
+        component_id=component_id,
+        config_id=configuration_id,
         limit=10,
         sort_by='startTime',
-        sort_order='desc'
+        sort_order='desc',
     )
     assert isinstance(result, ListJobsOutput)
     assert len(result.jobs) >= 2  # Should have at least our 2 created jobs
@@ -154,7 +154,6 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
             ),
         ]
     )
-
 
 
 @pytest.mark.asyncio
