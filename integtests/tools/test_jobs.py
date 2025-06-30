@@ -186,6 +186,8 @@ async def test_run_job_with_newly_created_config(mcp_context: Context, configs: 
         job_detail = await get_job(job_id=started_job.id, ctx=mcp_context)
         assert isinstance(job_detail, JobDetail)
         assert job_detail.id == started_job.id
+        assert job_detail.component_id == component_id
+        assert job_detail.config_id == new_config.configuration_id
 
     finally:
         # Clean up: Delete the configuration
