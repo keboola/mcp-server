@@ -22,7 +22,7 @@ async def test_query_data(mcp_context: Context):
 
     tables_listing = await list_tables(bucket_id=buckets_listing.buckets[0].id, ctx=mcp_context)
     table = await get_table(table_id=tables_listing.tables[0].id, ctx=mcp_context)
-    LOG.error(table)
+    
     assert table.fully_qualified_name is not None, 'Table should have fully qualified name'
 
     sql_query = f'SELECT COUNT(*) as row_count FROM {table.fully_qualified_name}'
