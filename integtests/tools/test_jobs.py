@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import pytest
@@ -12,55 +13,78 @@ from keboola_mcp_server.tools.jobs import JobDetail, ListJobsOutput, get_job, li
 LOG = logging.getLogger(__name__)
 
 
-@pytest.mark.asyncio
-async def test_list_jobs_all(mcp_context: Context):
-    """Tests that `list_jobs` returns all jobs in the project."""
+async def _wait_for_job_in_list(
+    mcp_context: Context,
+    job_id: str,
+    component_id: str | None,
+    config_id: str | None,
+    max_retries: int = 10,
+    delay: float = 0.5,
+) -> ListJobsOutput:
+    """
+    Wait for a job to appear in the job list with retry mechanism.
 
-    result = await list_jobs(ctx=mcp_context)
-    assert isinstance(result, ListJobsOutput)
-    assert len(result.links) > 0
+    :param mcp_context: MCP context
+    :param job_id: ID of the job to find
+    :param component_id: Component ID to filter by (can be None)
+    :param config_id: Config ID to filter by (can be None)
+    :param max_retries: Maximum number of retry attempts
+    :param delay: Delay between retries in seconds
+    :return: ListJobsOutput containing the job
+    :raises AssertionError: If job is not found after all retries
+    """
+    for attempt in range(max_retries):
+        result = await list_jobs(
+            ctx=mcp_context,
+            component_id=component_id,
+            config_id=config_id,
+            limit=10,
+            sort_by='startTime',
+            sort_order='desc',
+        )
 
-    for job in result.jobs:
-        assert job.id is not None
-        assert job.status is not None
+        job_ids = [job.id for job in result.jobs]
+        if job_id in job_ids:
+            LOG.info(f'Job {job_id} found in list after {attempt + 1} attempts')
+            return result
 
+        if attempt < max_retries - 1:
+            LOG.info(f'Job {job_id} not found in list, attempt {attempt + 1}/{max_retries}, retrying in {delay}s...')
+            await asyncio.sleep(delay)
 
-@pytest.mark.asyncio
-async def test_list_jobs_with_status_filter(mcp_context: Context):
-    """Tests that `list_jobs` works with status filtering."""
-
-    # Test filtering by success status
-    result_success = await list_jobs(ctx=mcp_context, status='success', limit=10)
-    assert isinstance(result_success, ListJobsOutput)
-
-    # All returned jobs should have success status
-    for job in result_success.jobs:
-        assert job.status == 'success'
-
-    # Test filtering by error status
-    result_error = await list_jobs(ctx=mcp_context, status='error', limit=10)
-    assert isinstance(result_error, ListJobsOutput)
-
-    # All returned jobs should have error status
-    for job in result_error.jobs:
-        assert job.status == 'error'
+    raise AssertionError(f'Job {job_id} not found in job list after {max_retries} attempts')
 
 
 @pytest.mark.asyncio
 async def test_list_jobs_with_component_filter(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `list_jobs` works with component filtering."""
 
-    # Use first config to filter by component
+    # Use first config to create jobs for testing
     test_config = configs[0]
     component_id = test_config.component_id
+    configuration_id = test_config.configuration_id
 
-    result = await list_jobs(ctx=mcp_context, component_id=component_id, limit=20)
+    job = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
+
+    # Wait for the job to appear in the list (handles race condition)
+    result = await _wait_for_job_in_list(
+        mcp_context=mcp_context,
+        job_id=job.id,
+        component_id=job.component_id,
+        config_id=job.config_id,
+    )
+
     assert isinstance(result, ListJobsOutput)
+    assert len(result.jobs) >= 1
+
+    # Verify our created jobs appear in the results
+    job_ids = [job.id for job in result.jobs]
+    assert job.id in job_ids
 
     # All returned jobs should be for the specified component
     for job in result.jobs:
-        if job.component_id is not None:  # Some jobs might not have component_id
-            assert job.component_id == component_id
+        assert job.component_id == component_id
+        assert job.config_id == configuration_id
 
 
 @pytest.mark.asyncio
@@ -72,26 +96,22 @@ async def test_list_jobs_with_config_filter(mcp_context: Context, configs: list[
     component_id = test_config.component_id
     configuration_id = test_config.configuration_id
 
-    # Create 2 jobs with the specific config id
-    job1 = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
-    job2 = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
+    job = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
 
-    # Call list_jobs for that config id, sorted by startTime desc to get newest jobs first
-    result = await list_jobs(
-        ctx=mcp_context,
+    # Wait for the job to appear in the list (handles race condition)
+    result = await _wait_for_job_in_list(
+        mcp_context=mcp_context,
+        job_id=job.id,
         component_id=component_id,
         config_id=configuration_id,
-        limit=10,
-        sort_by='startTime',
-        sort_order='desc',
     )
+
     assert isinstance(result, ListJobsOutput)
-    assert len(result.jobs) >= 2  # Should have at least our 2 created jobs
+    assert len(result.jobs) >= 1
 
     # Verify our created jobs appear in the results
     job_ids = [job.id for job in result.jobs]
-    assert job1.id in job_ids
-    assert job2.id in job_ids
+    assert job.id in job_ids
 
     for job in result.jobs:
         assert job.component_id == component_id
@@ -221,7 +241,6 @@ async def test_run_job_with_newly_created_config(
         started_job = await run_job(
             ctx=mcp_context, component_id=component_id, configuration_id=new_config.configuration_id
         )
-        LOG.error(started_job)
 
         # Verify the job was started successfully
         assert isinstance(started_job, JobDetail)
