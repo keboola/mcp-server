@@ -67,19 +67,35 @@ async def test_list_jobs_with_component_filter(mcp_context: Context, configs: li
 async def test_list_jobs_with_config_filter(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `list_jobs` works with component and config filtering."""
 
-    # Use first config to filter by component and config
+    # Use first config to create jobs for testing
     test_config = configs[0]
     component_id = test_config.component_id
     configuration_id = test_config.configuration_id
 
-    result = await list_jobs(ctx=mcp_context, component_id=component_id, config_id=configuration_id, limit=10)
-    assert isinstance(result, ListJobsOutput)
+    # Create 2 jobs with the specific config id
+    job1 = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
+    job2 = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
 
-    # All returned jobs should be for the specified component and config
+    # Call list_jobs for that config id, sorted by startTime desc to get newest jobs first
+    result = await list_jobs(
+        ctx=mcp_context, 
+        component_id=component_id, 
+        config_id=configuration_id, 
+        limit=10,
+        sort_by='startTime',
+        sort_order='desc'
+    )
+    assert isinstance(result, ListJobsOutput)
+    assert len(result.jobs) >= 2  # Should have at least our 2 created jobs
+
+    # Verify our created jobs appear in the results
+    job_ids = [job.id for job in result.jobs]
+    assert job1.id in job_ids
+    assert job2.id in job_ids
+
     for job in result.jobs:
-        if job.component_id is not None and job.config_id is not None:
-            assert job.component_id == component_id
-            assert job.config_id == configuration_id
+        assert job.component_id == component_id
+        assert job.config_id == configuration_id
 
 
 @pytest.mark.asyncio
@@ -139,10 +155,6 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
         ]
     )
 
-    # Verify job appears in list_jobs for this component
-    jobs_list = await list_jobs(ctx=mcp_context, component_id=component_id, limit=50)
-    job_ids = [job.id for job in jobs_list.jobs]
-    assert started_job.id in job_ids
 
 
 @pytest.mark.asyncio
