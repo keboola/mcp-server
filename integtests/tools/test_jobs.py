@@ -5,6 +5,7 @@ from mcp.server.fastmcp import Context
 
 from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.tools import create_config
 from keboola_mcp_server.tools.jobs import JobDetail, ListJobsOutput, get_job, list_jobs, run_job
 
@@ -118,38 +119,43 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
 
 
 @pytest.mark.asyncio
-async def test_get_job(mcp_context: Context):
-    """Tests`get_job`."""
+async def test_get_job(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+    """Tests `get_job` by creating a job and then retrieving its details."""
 
-    # First get a list of jobs to find one to examine in detail
-    jobs_list = await list_jobs(ctx=mcp_context, limit=5)
+    project_id = keboola_project.project_id
 
-    if len(jobs_list.jobs) > 0:
-        # Get details for the first job
-        first_job = jobs_list.jobs[0]
-        job_detail = await get_job(job_id=first_job.id, ctx=mcp_context)
+    # Use first config to create a specific job
+    test_config = configs[0]
+    component_id = test_config.component_id
+    configuration_id = test_config.configuration_id
 
-        # Verify all expected fields are present
-        assert isinstance(job_detail, JobDetail)
-        assert job_detail.id == first_job.id
-        assert job_detail.status is not None
-        assert job_detail.url is not None
-        assert isinstance(job_detail.links, list)
+    # Create a specific job to test get_job with
+    created_job = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
 
-        # Verify inherited JobListItem fields
-        assert hasattr(job_detail, 'component_id')
-        assert hasattr(job_detail, 'config_id')
-        assert hasattr(job_detail, 'is_finished')
-        assert hasattr(job_detail, 'created_time')
-        assert hasattr(job_detail, 'start_time')
-        assert hasattr(job_detail, 'end_time')
-        assert hasattr(job_detail, 'duration_seconds')
+    # Now test get_job on the job we just created
+    job_detail = await get_job(job_id=created_job.id, ctx=mcp_context)
 
-        # Verify JobDetail specific fields
-        assert hasattr(job_detail, 'config_data')
-        assert hasattr(job_detail, 'config_row')
-        assert hasattr(job_detail, 'run_id')
-        assert hasattr(job_detail, 'result')
+    # Verify all expected fields are present
+    assert isinstance(job_detail, JobDetail)
+    assert job_detail.id == created_job.id
+    assert job_detail.component_id == component_id
+    assert job_detail.config_id == configuration_id
+    assert job_detail.status is not None
+
+    assert frozenset(job_detail.links) == frozenset(
+        [
+            Link(
+                type='ui-detail',
+                title=f'Job: {created_job.id}',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{created_job.id}',
+            ),
+            Link(
+                type='ui-dashboard',
+                title='Jobs in the project',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
+            ),
+        ]
+    )
 
 
 @pytest.mark.asyncio
