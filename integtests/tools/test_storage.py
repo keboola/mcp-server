@@ -1,4 +1,5 @@
 import csv
+import logging
 
 import pytest
 from fastmcp import Context
@@ -11,13 +12,17 @@ from keboola_mcp_server.tools.storage import (
     ListBucketsOutput,
     ListTablesOutput,
     TableDetail,
+    UpdateDescriptionOutput,
     get_bucket,
     get_table,
     list_buckets,
     list_tables,
     update_bucket_description,
+    update_column_description,
     update_table_description,
 )
+
+LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -93,6 +98,7 @@ async def test_update_bucket_description(mcp_context: Context, buckets: list[Buc
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
         result = await update_bucket_description(bucket.bucket_id, 'New Description', mcp_context)
+        assert isinstance(result, UpdateDescriptionOutput)
         assert result.description == 'New Description'
 
         metadata = await client.storage_client.bucket_metadata_get(bucket.bucket_id)
@@ -113,6 +119,7 @@ async def test_update_table_description(mcp_context: Context, tables: list[Table
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
         result = await update_table_description(table.table_id, 'New Description', mcp_context)
+        assert isinstance(result, UpdateDescriptionOutput)
         assert result.description == 'New Description'
 
         metadata = await client.storage_client.table_metadata_get(table.table_id)
@@ -123,3 +130,27 @@ async def test_update_table_description(mcp_context: Context, tables: list[Table
     finally:
         if md_id is not None:
             await client.storage_client.table_metadata_delete(table_id=table.table_id, metadata_id=md_id)
+
+
+@pytest.mark.asyncio
+async def test_update_column_description(mcp_context: Context, tables: list[TableDef]):
+    """Tests that `update_column_description` updates the description of a column."""
+    table = tables[0]
+
+    # Get the first column name from the table CSV file
+    with table.file_path.open('r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        columns = next(reader)
+
+    column_name = columns[0]  # Use the first column
+    test_description = 'New Column Description'
+
+    # Test the update_column_description function
+    result = await update_column_description(table.table_id, column_name, test_description, mcp_context)
+    LOG.error(result)
+
+    # Verify the function returns expected result
+    assert isinstance(result, UpdateDescriptionOutput)
+    assert result.description == test_description
+    assert result.success is True
+    assert result.timestamp is not None
