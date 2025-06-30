@@ -159,8 +159,12 @@ async def test_get_job(mcp_context: Context, configs: list[ConfigDef], keboola_p
 
 
 @pytest.mark.asyncio
-async def test_run_job_with_newly_created_config(mcp_context: Context, configs: list[ConfigDef]):
+async def test_run_job_with_newly_created_config(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef
+):
     """Tests that `run_job` works with a newly created configuration."""
+
+    project_id = keboola_project.project_id
 
     test_config = configs[0]
     component_id = test_config.component_id
@@ -180,6 +184,7 @@ async def test_run_job_with_newly_created_config(mcp_context: Context, configs: 
         started_job = await run_job(
             ctx=mcp_context, component_id=component_id, configuration_id=new_config.configuration_id
         )
+        LOG.error(started_job)
 
         # Verify the job was started successfully
         assert isinstance(started_job, JobDetail)
@@ -187,6 +192,20 @@ async def test_run_job_with_newly_created_config(mcp_context: Context, configs: 
         assert started_job.component_id == component_id
         assert started_job.config_id == new_config.configuration_id
         assert started_job.status is not None
+        assert frozenset(started_job.links) == frozenset(
+            [
+                Link(
+                    type='ui-detail',
+                    title=f'Job: {started_job.id}',
+                    url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{started_job.id}',
+                ),
+                Link(
+                    type='ui-dashboard',
+                    title='Jobs in the project',
+                    url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
+                ),
+            ]
+        )
 
         # Verify job can be retrieved
         job_detail = await get_job(job_id=started_job.id, ctx=mcp_context)
