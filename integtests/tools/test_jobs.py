@@ -56,38 +56,7 @@ async def _wait_for_job_in_list(
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_with_component_filter(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `list_jobs` works with component filtering."""
-
-    # Use first config to create jobs for testing
-    test_config = configs[0]
-    component_id = test_config.component_id
-    configuration_id = test_config.configuration_id
-
-    job = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
-
-    # Wait for the job to appear in the list (handles race condition)
-    result = await _wait_for_job_in_list(
-        mcp_context=mcp_context,
-        job_id=job.id,
-        component_id=job.component_id,
-        config_id=None
-    )
-
-    assert isinstance(result, ListJobsOutput)
-    assert len(result.jobs) >= 1
-
-    # Verify our created jobs appear in the results
-    job_ids = {job.id for job in result.jobs}
-    assert job.id in job_ids
-
-    # All returned jobs should be for the specified component (but may have different configs)
-    for returned_job in result.jobs:
-        assert returned_job.component_id == component_id
-
-
-@pytest.mark.asyncio
-async def test_list_jobs_with_config_filter(mcp_context: Context, configs: list[ConfigDef]):
+async def test_list_jobs_with_component_and_config_filter(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `list_jobs` works with component and config filtering."""
 
     # Use first config to create jobs for testing
