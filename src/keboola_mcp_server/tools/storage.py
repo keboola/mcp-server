@@ -174,7 +174,8 @@ async def get_bucket(
     links_manager = await ProjectLinksManager.from_client(client)
     assert isinstance(client, KeboolaClient)
     raw_bucket = await client.storage_client.bucket_detail(bucket_id)
-    links = links_manager.get_bucket_links(bucket_id, raw_bucket.get('name') or bucket_id)
+    bucket_name = str(raw_bucket.get('name', bucket_id))
+    links = links_manager.get_bucket_links(bucket_id, bucket_name)
     bucket = BucketDetail.model_validate(raw_bucket | {'links': links})
 
     return bucket
@@ -186,11 +187,16 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    assert isinstance(client, KeboolaClient)
-    raw_bucket_data = await client.storage_client.bucket_list()
+
+    raw_bucket_data = await client.storage_client.bucket_list(include=['metadata'])
+    production_branch_raw_buckets = [
+        bucket
+        for bucket in raw_bucket_data
+        if not (any(meta.get('key') == MetadataField.FAKE_DEVELOPMENT_BRANCH for meta in bucket.get('metadata', [])))
+    ]  # filter out buckets from "Fake production branches"
 
     return ListBucketsOutput(
-        buckets=[BucketDetail.model_validate(bucket) for bucket in raw_bucket_data],
+        buckets=[BucketDetail.model_validate(bucket) for bucket in production_branch_raw_buckets],
         links=[links_manager.get_bucket_dashboard_link()],
     )
 
@@ -232,9 +238,14 @@ async def list_tables(
     #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
     raw_tables = await client.storage_client.bucket_table_list(bucket_id, include=['metadata'])
+    production_branch_raw_tables = [
+        table
+        for table in raw_tables
+        if not (any(meta.get('key') == MetadataField.FAKE_DEVELOPMENT_BRANCH for meta in table.get('metadata', [])))
+    ]  # filter out tables from "Fake production branches"
 
     return ListTablesOutput(
-        tables=[TableDetail.model_validate(raw_table) for raw_table in raw_tables],
+        tables=[TableDetail.model_validate(raw_table) for raw_table in production_branch_raw_tables],
         links=[links_manager.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)],
     )
 
@@ -304,9 +315,7 @@ async def update_column_description(
     response = await client.storage_client.table_metadata_update(
         table_id=table_id,
         columns_metadata={
-            column_name: [
-                {'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}
-            ]
+            column_name: [{'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}]
         },
     )
     column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))

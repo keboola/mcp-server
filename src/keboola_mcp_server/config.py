@@ -133,3 +133,5 @@ class MetadataField:
     # the full key should end by a version number;
     # expected value: 'true'
     UPDATED_BY_MCP_PREFIX = 'KBC.MCP.updatedBy.version.'
+
+    FAKE_DEVELOPMENT_BRANCH = 'KBC.createdBy.branch.id'
