@@ -25,7 +25,6 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
     Create a flow and retrieve it using list_flows.
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
-    :return: None
     """
     assert configs
     assert configs[0].configuration_id is not None
@@ -114,7 +113,6 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
     Update a flow and verify the update.
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
-    :return: None
     """
     assert configs
     assert configs[0].configuration_id is not None
@@ -187,7 +185,6 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
     """
     Retrieve flows when none exist (should not error, may return empty list).
     :param mcp_context: The test context fixture.
-    :return: None
     """
     flows = await list_flows(mcp_context)
     assert isinstance(flows, ListFlowsOutput)
@@ -197,7 +194,6 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
 async def test_get_flow_schema() -> None:
     """
     Test that get_flow_schema returns the flow configuration JSON schema.
-    :return: None
     """
     schema_result = await get_flow_schema()
 
@@ -223,7 +219,6 @@ async def test_create_flow_invalid_structure(mcp_context: Context, configs: list
     Create a flow with invalid structure (should raise ValueError).
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
-    :return: None
     """
     assert configs
     assert configs[0].configuration_id is not None
