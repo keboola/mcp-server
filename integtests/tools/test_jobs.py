@@ -71,7 +71,7 @@ async def test_list_jobs_with_component_filter(mcp_context: Context, configs: li
         mcp_context=mcp_context,
         job_id=job.id,
         component_id=job.component_id,
-        config_id=job.config_id,
+        config_id=None
     )
 
     assert isinstance(result, ListJobsOutput)
@@ -81,10 +81,9 @@ async def test_list_jobs_with_component_filter(mcp_context: Context, configs: li
     job_ids = {job.id for job in result.jobs}
     assert job.id in job_ids
 
-    # All returned jobs should be for the specified component
-    for job in result.jobs:
-        assert job.component_id == component_id
-        assert job.config_id == configuration_id
+    # All returned jobs should be for the specified component (but may have different configs)
+    for returned_job in result.jobs:
+        assert returned_job.component_id == component_id
 
 
 @pytest.mark.asyncio
