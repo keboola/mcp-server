@@ -43,7 +43,7 @@ async def _wait_for_job_in_list(
             sort_order='desc',
         )
 
-        job_ids = [job.id for job in result.jobs]
+        job_ids = {job.id for job in result.jobs}
         if job_id in job_ids:
             LOG.info(f'Job {job_id} found in list after {attempt + 1} attempts')
             return result
@@ -78,7 +78,7 @@ async def test_list_jobs_with_component_filter(mcp_context: Context, configs: li
     assert len(result.jobs) >= 1
 
     # Verify our created jobs appear in the results
-    job_ids = [job.id for job in result.jobs]
+    job_ids = {job.id for job in result.jobs}
     assert job.id in job_ids
 
     # All returned jobs should be for the specified component
@@ -110,7 +110,7 @@ async def test_list_jobs_with_config_filter(mcp_context: Context, configs: list[
     assert len(result.jobs) >= 1
 
     # Verify our created jobs appear in the results
-    job_ids = [job.id for job in result.jobs]
+    job_ids = {job.id for job in result.jobs}
     assert job.id in job_ids
 
     for job in result.jobs:
