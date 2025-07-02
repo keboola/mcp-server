@@ -31,8 +31,6 @@ class KeboolaClient:
     _PREFIX_QUEUE_API_URL = 'https://queue.'
     _PREFIX_AISERVICE_API_URL = 'https://ai.'
 
-    _MCP_SERVER_COMPONENT_ID = "keboola.mcp-server"
-
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'KeboolaClient':
         instance = state[cls.STATE_KEY]
@@ -100,7 +98,7 @@ class RawKeboolaClient:
     and can be used to implement high-level functions in clients for individual services.
     """
 
-    _MCP_SERVER_COMPONENT_ID = "keboola.mcp-server"
+    _MCP_SERVER_COMPONENT_ID = "keboola.mcp-server.tool"
 
     def __init__(
         self,
@@ -193,30 +191,19 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f'{self.base_api_url}/{endpoint}',
-                params=params,
-                headers=headers,
-                json=data or {},
-            )
-            self._raise_for_status(response)
-            return cast(JsonStruct, response.json())
-        request_headers = self.headers | (headers or {})
-        response_json: Optional[JsonStruct] = None
-        error_obj: Optional[Exception] = None
         start_time = time.monotonic()
-
+        response: Optional[JsonStruct] = None
+        error_obj: Optional[Exception] = None
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     f'{self.base_api_url}/{endpoint}',
-                    headers=request_headers,
+                    params=params,
+                    headers=headers,
                     json=data or {},
                 )
-                response.raise_for_status()
-                response_json = cast(JsonStruct, response.json())
-                return response_json
+                self._raise_for_status(response)
+                return cast(JsonStruct, response.json())
         except Exception as e:
             error_obj = e
             raise
@@ -227,7 +214,6 @@ class RawKeboolaClient:
                 await self._send_event_after_request(
                     http_method="POST",
                     endpoint=endpoint,
-                    response_json=response_json,
                     error_obj=error_obj,
                     duration_s=duration_s,
                     mcp_context=mcp_context,
@@ -252,30 +238,19 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.put(
-                f'{self.base_api_url}/{endpoint}',
-                params=params,
-                headers=headers,
-                json=data or {},
-            )
-            self._raise_for_status(response)
-            return cast(JsonStruct, response.json())
-        request_headers = self.headers | (headers or {})
-        response_json: Optional[JsonStruct] = None
+        response: Optional[JsonStruct] = None
         error_obj: Optional[Exception] = None
         start_time = time.monotonic()
-
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.put(
                     f'{self.base_api_url}/{endpoint}',
-                    headers=request_headers,
+                    params=params,
+                    headers=headers,
                     json=data or {},
                 )
-                response.raise_for_status()
-                response_json = cast(JsonStruct, response.json())
-                return response_json
+                self._raise_for_status(response)
+                return cast(JsonStruct, response.json())
         except Exception as e:
             error_obj = e
             raise
@@ -285,7 +260,6 @@ class RawKeboolaClient:
                 await self._send_event_after_request(
                     http_method="PUT",
                     endpoint=endpoint,
-                    response_json=response_json,
                     error_obj=error_obj,
                     duration_s=duration_s,
                     mcp_context=mcp_context,
@@ -306,40 +280,21 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.delete(
-                f'{self.base_api_url}/{endpoint}',
-                headers=headers,
-            )
-            self._raise_for_status(response)
-
-            if response.content:
-                return cast(JsonStruct, response.json())
-
-            return None
-        request_headers = self.headers | (headers or {})
-        response_json: Optional[JsonStruct] = None
+        response: Optional[JsonStruct] = None
         error_obj: Optional[Exception] = None
         start_time = time.monotonic()
-
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.delete(
                     f'{self.base_api_url}/{endpoint}',
-                    headers=request_headers,
+                    headers=headers,
                 )
-                response.raise_for_status()
+                self._raise_for_status(response)
                 # Handle cases where DELETE might return no content or non-JSON content
-                if response.status_code == 204 or not response.content: # No Content
-                    response_json = {} # Or an appropriate representation
-                else:
-                    try:
-                        response_json = cast(JsonStruct, response.json())
-                    except ValueError: # Not JSON
-                        LOG.warning(f"DELETE request to {endpoint} did not return JSON. Status: {response.status_code}")
-                        response_json = {"status": response.status_code, "content": response.text}
-
-                return response_json # Return the potentially modified response_json
+                if response.content: 
+                    return cast(JsonStruct, response.json())
+                
+                return None
         except Exception as e:
             error_obj = e
             raise
@@ -349,7 +304,6 @@ class RawKeboolaClient:
                 await self._send_event_after_request(
                     http_method="DELETE",
                     endpoint=endpoint,
-                    response_json=response_json,
                     error_obj=error_obj,
                     duration_s=duration_s,
                     mcp_context=mcp_context,
@@ -364,7 +318,6 @@ class RawKeboolaClient:
         self,
         http_method: str,
         endpoint: str,
-        response_json: Optional[JsonStruct],
         error_obj: Optional[Exception],
         duration_s: float,
         mcp_context: dict[str, Any],  # Assumed not None if we reach here
@@ -378,11 +331,18 @@ class RawKeboolaClient:
             "type": "error" if error_obj else "info",
             "durationSeconds": round(duration_s, 3),
             "params": {
-                "name": mcp_context["tool_name"],
-                "args": mcp_context["tool_args"], # Ensure this is JSON serializable
-            },
-            "results": {
-                "projectId": self.parsed_project_id, # Use the pre-parsed project_id
+                "mcp-server-context": {
+                    "app_env": os.environ.get("APP_ENV", "development"),
+                    "version": os.environ.get("APP_VERSION", "unknown"),
+                    "user-agent": self.headers['User-Agent'],
+                    "sessionId": mcp_context["session_id"],
+                },
+                "tool": {
+                    "name": mcp_context["tool_name"],
+                    "arguments": [
+                        mcp_context["tool_args"], # Ensure this is JSON serializable "key", "value" pairs
+                    ]
+                },
             },
         }
         if "config_id" in mcp_context:
@@ -392,8 +352,6 @@ class RawKeboolaClient:
 
         if error_obj:
             event_payload["results"]["error"] = str(error_obj)
-        else:
-            event_payload["results"]["query"] = response_json # May need truncation/summarization
 
         try:
             event_headers = {
@@ -413,7 +371,7 @@ class RawKeboolaClient:
                     headers=event_headers,
                     json=event_payload,
                 )
-                response.raise_for_status()
+                self._raise_for_status(response)
                 LOG.info(f"Successfully sent MCP event for {http_method} /v2/storage/{endpoint}")
         except httpx.HTTPStatusError as e:
             LOG.error(
