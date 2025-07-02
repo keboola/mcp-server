@@ -36,12 +36,7 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
-    def __init__(
-        self,
-        storage_api_token: str,
-        storage_api_url: str,
-        bearer_token: str | None = None
-    ) -> None:
+    def __init__(self, storage_api_token: str, storage_api_url: str, bearer_token: str | None = None) -> None:
         """
         Initialize the client.
 
@@ -420,13 +415,17 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'buckets/{bucket_id}'))
 
-    async def bucket_list(self) -> list[JsonDict]:
+    async def bucket_list(self, include: list[str] | None = None) -> list[JsonDict]:
         """
         Lists all buckets.
 
+        :param include: List of fields to include in the response ('metadata' or 'linkedBuckets')
         :return: List of buckets as dictionary
         """
-        return cast(list[JsonDict], await self.get(endpoint='buckets'))
+        params = {}
+        if include is not None and isinstance(include, list):
+            params['include'] = ','.join(include)
+        return cast(list[JsonDict], await self.get(endpoint='buckets', params=params))
 
     async def bucket_metadata_delete(self, bucket_id: str, metadata_id: str) -> None:
         """
@@ -777,10 +776,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param config_id: The ID of the flow configuration to retrieve
         :return: Flow configuration details
         """
-        return await self.configuration_detail(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=config_id
-        )
+        return await self.configuration_detail(component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=config_id)
 
     async def flow_list(self) -> list[JsonDict]:
         """
@@ -885,11 +881,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param read_only_storage_access: If True, the workspace has read-only access to the storage.
         :return: The SAPI call response - created workspace or raise an error.
         """
-        return cast(JsonDict, await self.post(
-            endpoint=f'branch/{self.branch_id}/workspaces',
-            params={'async': async_run},
-            data={'readOnlyStorageAccess': read_only_storage_access},
-        ))
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=f'branch/{self.branch_id}/workspaces',
+                params={'async': async_run},
+                data={'readOnlyStorageAccess': read_only_storage_access},
+            ),
+        )
 
     async def workspace_detail(self, workspace_id: int) -> JsonDict:
         """
@@ -908,10 +907,13 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param query: The query to execute
         :return: The SAPI call response - query result or raise an error.
         """
-        return cast(JsonDict, await self.post(
-            endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}/query',
-            data={'query': query},
-        ))
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}/query',
+                data={'query': query},
+            ),
+        )
 
     async def workspace_list(self) -> list[JsonDict]:
         """
