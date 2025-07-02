@@ -844,7 +844,11 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
+<<<<<<< HEAD
 version = "1.7.1"
+=======
+version = "1.6.1"
+>>>>>>> dedb429 (add new version of MCP server)
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
