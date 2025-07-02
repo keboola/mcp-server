@@ -419,7 +419,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         Lists all buckets.
 
-        :param include: List of fields to include in the response
+        :param include: List of fields to include in the response ('metadata' or 'linkedBuckets')
         :return: List of buckets as dictionary
         """
         params = {}
