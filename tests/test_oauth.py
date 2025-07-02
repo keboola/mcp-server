@@ -1,7 +1,6 @@
 import time
 from typing import Any, Mapping
 
-import jwt
 import pytest
 from mcp.server.auth.provider import AccessToken, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
@@ -62,6 +61,7 @@ class TestSimpleOAuthProvider:
             oauth_provider: SimpleOAuthProvider
     ):
         client_info = OAuthClientInformationFull(client_id='foo-client-id', redirect_uris=[AnyUrl('foo://bar')])
-        auth_code_str = jwt.encode(auth_code, key=key)
+        auth_code_str = oauth_provider._encode(auth_code, key=key)
+        print(f'len(auth_code_str)={len(auth_code_str)}')
         loaded_auth_code = await oauth_provider.load_authorization_code(client_info, auth_code_str)
         assert loaded_auth_code == expected

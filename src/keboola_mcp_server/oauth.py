@@ -1,13 +1,15 @@
+import gzip
+import json
 import logging
 import math
 import secrets
 import time
 from http.client import HTTPException
-from typing import Any, cast
+from typing import Any, Mapping, cast
 from urllib.parse import urljoin
 
 import httpx
-import jwt
+import jwt.api_jws
 from fastmcp.server.auth.auth import OAuthProvider
 from mcp.server.auth.provider import (
     AccessToken,
@@ -154,7 +156,7 @@ class SimpleOAuthProvider(OAuthProvider):
             'client_id': client.client_id,
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
         }
-        state_jwt = jwt.encode(state, self._jwt_secret)
+        state_jwt = self._encode(state)
 
         # create the authorization URL
         url_params = {
@@ -181,7 +183,7 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         # Validate the state first to prevent calling OAuth server with invalid authorization code.
         try:
-            state_data = jwt.decode(state, self._jwt_secret, algorithms=['HS256'])
+            state_data = self._decode(state)
         except jwt.InvalidTokenError:
             LOG.debug(f'[handle_oauth_callback] Invalid state: {state}', exc_info=True)
             raise HTTPException(400, 'Invalid state parameter')
@@ -240,7 +242,7 @@ class SimpleOAuthProvider(OAuthProvider):
             'oauth_access_token': access_token.model_dump(),
             'oauth_refresh_token': refresh_token.model_dump(),
         }
-        auth_code_jwt = jwt.encode(auth_code, self._jwt_secret)
+        auth_code_jwt = self._encode(auth_code)
 
         mcp_redirect_uri = construct_redirect_uri(
             redirect_uri_base=redirect_uri, code=auth_code_jwt, state=state_data['state'],
@@ -263,7 +265,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :return: An `_ExtendedAuthorizationCode` instance if the authorization code is valid, otherwise `None`.
         """
         try:
-            auth_code_raw = jwt.decode(authorization_code, self._jwt_secret, algorithms=['HS256'])
+            auth_code_raw = self._decode(authorization_code)
         except jwt.InvalidTokenError:
             LOG.debug(f'[load_authorization_code] Invalid authorization_code: {authorization_code}', exc_info=True)
             return None
@@ -317,7 +319,7 @@ class SimpleOAuthProvider(OAuthProvider):
             delegate=authorization_code.oauth_access_token,
             sapi_token=sapi_token
         )
-        access_token_jwt = jwt.encode(access_token.model_dump(), self._jwt_secret)
+        access_token_jwt = self._encode(access_token.model_dump())
 
         # wrap the refresh_token from the OAuth into our own refresh_token
         refresh_token = ProxyRefreshToken(
@@ -327,7 +329,7 @@ class SimpleOAuthProvider(OAuthProvider):
             expires_at=authorization_code.oauth_refresh_token.expires_at,
             delegate=authorization_code.oauth_refresh_token,
         )
-        refresh_token_jwt = jwt.encode(refresh_token.model_dump(), self._jwt_secret)
+        refresh_token_jwt = self._encode(refresh_token.model_dump())
 
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
@@ -352,7 +354,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :return: A `ProxyAccessToken` instance if the token is valid and not expired, otherwise `None`.
         """
         try:
-            access_token_raw = jwt.decode(token, self._jwt_secret, algorithms=['HS256'])
+            access_token_raw = self._decode(token)
         except jwt.InvalidTokenError:
             LOG.debug(f'[load_access_token] Invalid token: {token}', exc_info=True)
             return None
@@ -382,7 +384,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :return: A `ProxyRefreshToken` instance if the token is valid and not expired, otherwise `None`.
         """
         try:
-            refresh_token_raw = jwt.decode(refresh_token, self._jwt_secret, algorithms=['HS256'])
+            refresh_token_raw = self._decode(refresh_token)
         except jwt.InvalidTokenError:
             LOG.debug(f'[load_refresh_token] Invalid token: {refresh_token}', exc_info=True)
             return None
@@ -465,7 +467,7 @@ class SimpleOAuthProvider(OAuthProvider):
             delegate=oauth_access_token,
             sapi_token=sapi_token
         )
-        access_token_jwt = jwt.encode(access_token.model_dump(), self._jwt_secret)
+        access_token_jwt = self._encode(access_token.model_dump())
 
         # wrap the refresh_token from the OAuth into our own refresh_token
         refresh_token = ProxyRefreshToken(
@@ -475,7 +477,7 @@ class SimpleOAuthProvider(OAuthProvider):
             expires_at=oauth_refresh_token.expires_at,
             delegate=oauth_refresh_token,
         )
-        refresh_token_jwt = jwt.encode(refresh_token.model_dump(), self._jwt_secret)
+        refresh_token_jwt = self._encode(refresh_token.model_dump())
 
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
@@ -571,3 +573,19 @@ class SimpleOAuthProvider(OAuthProvider):
     @staticmethod
     def _create_http_client():
         return httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30.0))
+
+    def _encode(self, data: Mapping[str, Any], *, key: str | None = None) -> str:
+        json_str = json.dumps(data)
+        json_bytes = json_str.encode('utf-8')
+        json_gzip = gzip.compress(json_bytes)
+        json_encrypted = jwt.api_jws.encode(json_gzip, key or self._jwt_secret)
+        return json_encrypted
+        # return jwt.encode(data, key or self._jwt_secret)
+
+    def _decode(self, data: str, *, key: str | None = None) -> dict[str, Any]:
+        json_gzip = jwt.api_jws.decode(data, key or self._jwt_secret, algorithms=['HS256'])
+        json_bytes = gzip.decompress(json_gzip)
+        json_str = json_bytes.decode('utf-8')
+        json_obj = json.loads(json_str)
+        return json_obj
+        # return jwt.decode(data, key or self._jwt_secret, algorithms=['HS256'])
