@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context
@@ -415,7 +415,7 @@ async def create_sql_transformation(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.now(UTC),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -548,7 +548,7 @@ async def update_sql_transformation(
         component_id=sql_transformation_id,
         configuration_id=str(configuration_id),
         description=updated_description or updated_raw_configuration.get('description', ''),
-        timestamp=datetime.now(UTC),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -663,7 +663,7 @@ async def create_config(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.now(UTC),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -797,7 +797,7 @@ async def add_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.now(UTC),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -925,7 +925,7 @@ async def update_config(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.now(UTC),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -1057,7 +1057,7 @@ async def update_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.now(UTC),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
