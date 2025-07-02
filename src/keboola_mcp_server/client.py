@@ -340,7 +340,7 @@ class RawKeboolaClient:
                     "app_env": os.environ.get("APP_ENV", "development"),
                     "version": os.environ.get("APP_VERSION", "unknown"),
                     "user-agent": self.headers['User-Agent'],
-                    "sessionId": mcp_context["session_id"],
+                    "sessionId": mcp_context["sessionId"],
                 },
                 "tool": {
                     "name": mcp_context["tool_name"],
@@ -349,6 +349,7 @@ class RawKeboolaClient:
                     ]
                 },
             },
+            "results": {},
         }
         if "config_id" in mcp_context:
             event_payload["configurationId"] = mcp_context["config_id"]
@@ -360,7 +361,7 @@ class RawKeboolaClient:
 
         try:
             event_headers = {
-                'X-StorageApi-Token': self.headers['X-StorageApi-Token'],
+                'X-StorageAPI-Token': self.headers['X-StorageAPI-Token'],
                 'Content-Type': 'application/json',
             }
             if 'User-Agent' in self.headers:
