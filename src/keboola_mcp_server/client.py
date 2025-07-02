@@ -178,7 +178,6 @@ class RawKeboolaClient:
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
@@ -187,41 +186,18 @@ class RawKeboolaClient:
         :param data: Request payload
         :param params: Query parameters for the request
         :param headers: Additional headers for the request
-        :param mcp_context: Optional context for MCP event logging
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        start_time = time.monotonic()
-        response: Optional[JsonStruct] = None
-        error_obj: Optional[Exception] = None
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f'{self.base_api_url}/{endpoint}',
-                    params=params,
-                    headers=headers,
-                    json=data or {},
-                )
-                self._raise_for_status(response)
-                return cast(JsonStruct, response.json())
-        except Exception as e:
-            error_obj = e
-            raise
-        finally:
-            duration_s = time.monotonic() - start_time
-            LOG.info(
-                f'MCP: raw_client POST to /{endpoint} - duration {duration_s:.3f}s. '
-                f'Tool: {mcp_context.get("tool_name") if mcp_context else "N/A"}. '
-                f'Full Context: {mcp_context}'
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                f'{self.base_api_url}/{endpoint}',
+                params=params,
+                headers=headers,
+                json=data or {},
             )
-            if mcp_context and self._should_send_event(endpoint):
-                await self._send_event_after_request(
-                    http_method='POST',
-                    endpoint=endpoint,
-                    error_obj=error_obj,
-                    duration_s=duration_s,
-                    mcp_context=mcp_context,
-                )
+            self._raise_for_status(response)
+            return cast(JsonStruct, response.json())
 
     async def put(
         self,
@@ -229,7 +205,6 @@ class RawKeboolaClient:
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
@@ -238,93 +213,56 @@ class RawKeboolaClient:
         :param data: Request payload
         :param params: Query parameters for the request
         :param headers: Additional headers for the request
-        :param mcp_context: Optional context for MCP event logging
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        response: Optional[JsonStruct] = None
-        error_obj: Optional[Exception] = None
-        start_time = time.monotonic()
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.put(
-                    f'{self.base_api_url}/{endpoint}',
-                    params=params,
-                    headers=headers,
-                    json=data or {},
-                )
-                self._raise_for_status(response)
-                return cast(JsonStruct, response.json())
-        except Exception as e:
-            error_obj = e
-            raise
-        finally:
-            duration_s = time.monotonic() - start_time
-            if mcp_context and self._should_send_event(endpoint):
-                await self._send_event_after_request(
-                    http_method='PUT',
-                    endpoint=endpoint,
-                    error_obj=error_obj,
-                    duration_s=duration_s,
-                    mcp_context=mcp_context,
-                )
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.put(
+                f'{self.base_api_url}/{endpoint}',
+                params=params,
+                headers=headers,
+                json=data or {},
+            )
+            self._raise_for_status(response)
+            return cast(JsonStruct, response.json())
 
     async def delete(
         self,
         endpoint: str,
         headers: dict[str, Any] | None = None,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonStruct | None:
         """
         Makes a DELETE request to the service API.
 
         :param endpoint: API endpoint to call
         :param headers: Additional headers for the request
-        :param mcp_context: Optional context for MCP event logging
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        response: Optional[JsonStruct] = None
-        error_obj: Optional[Exception] = None
-        start_time = time.monotonic()
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.delete(
-                    f'{self.base_api_url}/{endpoint}',
-                    headers=headers,
-                )
-                self._raise_for_status(response)
-                # Handle cases where DELETE might return no content or non-JSON content
-                if response.content:
-                    return cast(JsonStruct, response.json())
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.delete(
+                f'{self.base_api_url}/{endpoint}',
+                headers=headers,
+            )
+            self._raise_for_status(response)
+            # Handle cases where DELETE might return no content or non-JSON content
+            if response.content:
+                return cast(JsonStruct, response.json())
 
-                return None
-        except Exception as e:
-            error_obj = e
-            raise
-        finally:
-            duration_s = time.monotonic() - start_time
-            if mcp_context and self._should_send_event(endpoint):
-                await self._send_event_after_request(
-                    http_method='DELETE',
-                    endpoint=endpoint,
-                    error_obj=error_obj,
-                    duration_s=duration_s,
-                    mcp_context=mcp_context,
-                )
+            return None
 
     def _should_send_event(self, endpoint: str) -> bool:
         """Checks if an event should be sent for this operation."""
         # Send events only if the base_api_url is for /v2/storage and the current endpoint is not 'events' itself
         return self.base_api_url.endswith('/v2/storage') and endpoint != 'events'
 
-    async def _send_event_after_request(
+    async def send_event_after_request(
         self,
         http_method: str,
         endpoint: str,
         error_obj: Optional[Exception],
         duration_s: float,
-        mcp_context: dict[str, Any],  # Assumed not None if we reach here
+        mcp_context: dict[str, Any],
     ) -> None:
         """Constructs and sends an event to the Keboola Storage API."""
         # project_id is now derived in the constructor and stored in self.parsed_project_id
@@ -435,7 +373,6 @@ class KeboolaServiceClient:
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
@@ -445,14 +382,13 @@ class KeboolaServiceClient:
         :param params: Query parameters for the request
         :return: API response as dictionary
         """
-        return await self.raw_client.post(endpoint=endpoint, data=data, mcp_context=mcp_context, params=params)
+        return await self.raw_client.post(endpoint=endpoint, data=data, params=params)
 
     async def put(
         self,
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
@@ -462,21 +398,19 @@ class KeboolaServiceClient:
         :param params: Query parameters for the request
         :return: API response as dictionary
         """
-        return await self.raw_client.put(endpoint=endpoint, data=data, mcp_context=mcp_context, params=params)
+        return await self.raw_client.put(endpoint=endpoint, data=data, params=params)
 
     async def delete(
         self,
         endpoint: str,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonStruct | None:
         """
         Makes a DELETE request to the service API.
 
         :param endpoint: API endpoint to call
-        :param mcp_context: Optional context for MCP event logging
         :return: API response as dictionary
         """
-        return await self.raw_client.delete(endpoint=endpoint, mcp_context=mcp_context)
+        return await self.raw_client.delete(endpoint=endpoint)
 
 
 class AsyncStorageClient(KeboolaServiceClient):
@@ -758,7 +692,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         updated_name: Optional[str] = None,
         updated_description: Optional[str] = None,
         is_disabled: bool = False,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonDict:
         """
         Updates a component configuration.
@@ -772,7 +705,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param updated_description: The entire description of the updated configuration, if None, the original
             description is preserved.
         :param is_disabled: Whether the configuration should be disabled.
-        :param mcp_context: Optional context for MCP event logging
         :return: The SAPI call response - updated configuration or raise an error.
         """
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
@@ -790,7 +722,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         if is_disabled:
             payload['isDisabled'] = is_disabled
 
-        return cast(JsonDict, await self.put(endpoint=endpoint, data=payload, mcp_context=mcp_context))
+        return cast(JsonDict, await self.put(endpoint=endpoint, data=payload))
 
     async def configuration_row_create(
         self,
@@ -799,7 +731,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         name: str,
         description: str,
         configuration: dict[str, Any],
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonDict:
         """
         Creates a new row configuration for a component configuration.
@@ -809,7 +740,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param name: The name of the row configuration.
         :param description: The description of the row configuration.
         :param configuration: The configuration data to create row configuration.
-        :param mcp_context: Optional context for MCP event logging
         :return: The SAPI call response - created row configuration or raise an error.
         """
         payload = {
@@ -823,7 +753,6 @@ class AsyncStorageClient(KeboolaServiceClient):
             await self.post(
                 endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
                 data=payload,
-                mcp_context=mcp_context
             ),
         )
 
@@ -836,7 +765,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         change_description: str,
         updated_name: Optional[str] = None,
         updated_description: Optional[str] = None,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonDict:
         """
         Updates a row configuration for a component configuration.
@@ -850,7 +778,6 @@ class AsyncStorageClient(KeboolaServiceClient):
             name is preserved.
         :param updated_description: The updated description of the configuration, if None, the original
             description is preserved.
-        :param mcp_context: Optional context for MCP event logging
         :return: The SAPI call response - updated row configuration or raise an error.
         """
 
@@ -870,7 +797,6 @@ class AsyncStorageClient(KeboolaServiceClient):
                 endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}'
                 f'/rows/{configuration_row_id}',
                 data=payload,
-                mcp_context=mcp_context,
             ),
         )
 
@@ -889,7 +815,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         name: str,
         description: str,
         flow_configuration: dict[str, Any],
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonDict:
         """
         Creates a new flow (orchestrator) configuration.
@@ -900,7 +825,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param name: The name of the flow
         :param description: The description of the flow
         :param flow_configuration: The flow configuration containing phases and tasks directly
-        :param mcp_context: Optional context for MCP event logging
         :return: The SAPI call response - created flow configuration or raise an error
         """
         return await self.configuration_create(
@@ -908,7 +832,6 @@ class AsyncStorageClient(KeboolaServiceClient):
             name=name,
             description=description,
             configuration=flow_configuration,
-            mcp_context=mcp_context,
         )
 
     async def flow_delete(self, configuration_id: str, skip_trash: bool = False) -> None:
@@ -946,7 +869,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         description: str,
         change_description: str,
         flow_configuration: dict[str, Any],
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonDict:
         """
         Updates an existing flow (orchestrator) configuration.
@@ -958,7 +880,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param description: The updated description of the flow
         :param change_description: Description of the changes made
         :param flow_configuration: The updated flow configuration containing phases and tasks directly
-        :param mcp_context: Optional context for MCP event logging
         :return: The SAPI call response - updated flow configuration or raise an error
         """
         return await self.configuration_update(
@@ -968,7 +889,6 @@ class AsyncStorageClient(KeboolaServiceClient):
             change_description=change_description,
             updated_name=name,
             updated_description=description,
-            mcp_context=mcp_context,
         )
 
     async def table_detail(self, table_id: str) -> JsonDict:
@@ -1171,14 +1091,12 @@ class JobsQueueClient(KeboolaServiceClient):
         self,
         component_id: str,
         configuration_id: str,
-        mcp_context: Optional[dict[str, Any]] = None,
     ) -> JsonDict:
         """
         Creates a new job.
 
         :param component_id: The id of the component.
         :param configuration_id: The id of the configuration.
-        :param mcp_context: Optional context for MCP event logging
         :return: The response from the API call - created job or raise an error.
         """
         payload = {
@@ -1186,7 +1104,7 @@ class JobsQueueClient(KeboolaServiceClient):
             'config': configuration_id,
             'mode': 'run',
         }
-        return cast(JsonDict, await self.post(endpoint='jobs', data=payload, mcp_context=mcp_context))
+        return cast(JsonDict, await self.post(endpoint='jobs', data=payload))
 
     async def _search(self, params: dict[str, Any]) -> JsonList:
         """
