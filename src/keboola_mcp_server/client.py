@@ -3,8 +3,8 @@
 import importlib.metadata
 import logging
 import os
-from typing import Any, Literal, Mapping, Optional, Union, cast
 import time
+from typing import Any, Literal, Mapping, Optional, Union, cast
 
 import httpx
 from pydantic import BaseModel, Field
@@ -98,7 +98,7 @@ class RawKeboolaClient:
     and can be used to implement high-level functions in clients for individual services.
     """
 
-    _MCP_SERVER_COMPONENT_ID = "keboola.mcp-server.tool"
+    _MCP_SERVER_COMPONENT_ID = 'keboola.mcp-server.tool'
 
     def __init__(
         self,
@@ -209,10 +209,14 @@ class RawKeboolaClient:
             raise
         finally:
             duration_s = time.monotonic() - start_time
-            LOG.info(f"MCP: raw_client POST to /{endpoint} - duration {duration_s:.3f}s. Tool: {mcp_context.get('tool_name') if mcp_context else 'N/A'}. Full Context: {mcp_context}")
+            LOG.info(
+                f'MCP: raw_client POST to /{endpoint} - duration {duration_s:.3f}s. '
+                f'Tool: {mcp_context.get("tool_name") if mcp_context else "N/A"}. '
+                f'Full Context: {mcp_context}'
+            )
             if mcp_context and self._should_send_event(endpoint):
                 await self._send_event_after_request(
-                    http_method="POST",
+                    http_method='POST',
                     endpoint=endpoint,
                     error_obj=error_obj,
                     duration_s=duration_s,
@@ -258,7 +262,7 @@ class RawKeboolaClient:
             duration_s = time.monotonic() - start_time
             if mcp_context and self._should_send_event(endpoint):
                 await self._send_event_after_request(
-                    http_method="PUT",
+                    http_method='PUT',
                     endpoint=endpoint,
                     error_obj=error_obj,
                     duration_s=duration_s,
@@ -291,9 +295,9 @@ class RawKeboolaClient:
                 )
                 self._raise_for_status(response)
                 # Handle cases where DELETE might return no content or non-JSON content
-                if response.content: 
+                if response.content:
                     return cast(JsonStruct, response.json())
-                
+
                 return None
         except Exception as e:
             error_obj = e
@@ -302,7 +306,7 @@ class RawKeboolaClient:
             duration_s = time.monotonic() - start_time
             if mcp_context and self._should_send_event(endpoint):
                 await self._send_event_after_request(
-                    http_method="DELETE",
+                    http_method='DELETE',
                     endpoint=endpoint,
                     error_obj=error_obj,
                     duration_s=duration_s,
@@ -312,7 +316,7 @@ class RawKeboolaClient:
     def _should_send_event(self, endpoint: str) -> bool:
         """Checks if an event should be sent for this operation."""
         # Send events only if the base_api_url is for /v2/storage and the current endpoint is not 'events' itself
-        return self.base_api_url.endswith('/v2/storage') and endpoint != "events"
+        return self.base_api_url.endswith('/v2/storage') and endpoint != 'events'
 
     async def _send_event_after_request(
         self,
@@ -326,33 +330,33 @@ class RawKeboolaClient:
         # project_id is now derived in the constructor and stored in self.parsed_project_id
 
         event_payload: dict[str, Any] = {
-            "component": self._MCP_SERVER_COMPONENT_ID,
-            "message": f"MCP: {mcp_context['tool_name']} - {http_method} /v2/storage/{endpoint}",
-            "type": "error" if error_obj else "info",
-            "durationSeconds": round(duration_s, 3),
-            "params": {
-                "mcp-server-context": {
-                    "app_env": os.environ.get("APP_ENV", "development"),
-                    "version": os.environ.get("APP_VERSION", "unknown"),
-                    "user-agent": self.headers['User-Agent'],
-                    "sessionId": mcp_context["sessionId"],
+            'component': self._MCP_SERVER_COMPONENT_ID,
+            'message': f'MCP: {mcp_context["tool_name"]} - {http_method} /v2/storage/{endpoint}',
+            'type': 'error' if error_obj else 'info',
+            'durationSeconds': round(duration_s, 3),
+            'params': {
+                'mcp-server-context': {
+                    'app_env': os.environ.get('APP_ENV', 'development'),
+                    'version': os.environ.get('APP_VERSION', 'unknown'),
+                    'user-agent': self.headers['User-Agent'],
+                    'sessionId': mcp_context['sessionId'],
                 },
-                "tool": {
-                    "name": mcp_context["tool_name"],
-                    "arguments": [
-                        mcp_context["tool_args"], # Ensure this is JSON serializable "key", "value" pairs
+                'tool': {
+                    'name': mcp_context['tool_name'],
+                    'arguments': [
+                        mcp_context['tool_args'],  # Ensure this is JSON serializable "key", "value" pairs
                     ]
                 },
             },
-            "results": {},
+            'results': {},
         }
-        if "config_id" in mcp_context:
-            event_payload["configurationId"] = mcp_context["config_id"]
-        if "run_id" in mcp_context:
-            event_payload["runId"] = mcp_context["run_id"]
+        if 'config_id' in mcp_context:
+            event_payload['configurationId'] = mcp_context['config_id']
+        if 'run_id' in mcp_context:
+            event_payload['runId'] = mcp_context['run_id']
 
         if error_obj:
-            event_payload["results"]["error"] = str(error_obj)
+            event_payload['results']['error'] = str(error_obj)
 
         try:
             event_headers = {
@@ -362,9 +366,8 @@ class RawKeboolaClient:
             if 'User-Agent' in self.headers:
                 event_headers['User-Agent'] = self.headers['User-Agent']
 
-            event_post_url = f"{self.base_api_url}/events"
-            
-            LOG.debug(f"Attempting to send MCP event: {event_payload} to {event_post_url}")
+            event_post_url = f'{self.base_api_url}/events'
+            LOG.debug(f'Attempting to send MCP event: {event_payload} to {event_post_url}')
             # Use a new httpx.AsyncClient for sending the event
             async with httpx.AsyncClient(timeout=self.timeout) as event_client:
                 response = await event_client.post(
@@ -373,14 +376,14 @@ class RawKeboolaClient:
                     json=event_payload,
                 )
                 self._raise_for_status(response)
-                LOG.info(f"Successfully sent MCP event for {http_method} /v2/storage/{endpoint}")
+                LOG.info(f'Successfully sent MCP event for {http_method} /v2/storage/{endpoint}')
         except httpx.HTTPStatusError as e:
             LOG.error(
-                f"Error sending MCP event for {http_method} /v2/storage/{endpoint}: "
-                f"HTTPStatusError {e.response.status_code} - {e.response.text}"
+                f'Error sending MCP event for {http_method} /v2/storage/{endpoint}: '
+                f'HTTPStatusError {e.response.status_code} - {e.response.text}'
             )
         except Exception as e:
-            LOG.error(f"Unexpected error sending MCP event for {http_method} /v2/storage/{endpoint}: {e}")
+            LOG.error(f'Unexpected error sending MCP event for {http_method} /v2/storage/{endpoint}: {e}')
 
 
 class KeboolaServiceClient:
@@ -818,7 +821,9 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows', data=payload, mcp_context=mcp_context
+                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
+                data=payload,
+                mcp_context=mcp_context
             ),
         )
 
