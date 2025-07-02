@@ -192,7 +192,7 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
         bucket
         for bucket in raw_bucket_data
         if not (any(meta.get('key') == MetadataField.FAKE_DEVELOPMENT_BRANCH for meta in bucket.get('metadata', [])))
-    ]  # filter out buckets from "Fake production branches"
+    ]  # filter out buckets from "Fake development branches"
 
     return ListBucketsOutput(
         buckets=[BucketDetail.model_validate(bucket) for bucket in production_branch_raw_buckets],
