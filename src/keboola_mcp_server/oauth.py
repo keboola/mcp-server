@@ -580,7 +580,6 @@ class SimpleOAuthProvider(OAuthProvider):
         json_gzip = gzip.compress(json_bytes)
         json_encrypted = jwt.api_jws.encode(json_gzip, key or self._jwt_secret)
         return json_encrypted
-        # return jwt.encode(data, key or self._jwt_secret)
 
     def _decode(self, data: str, *, key: str | None = None) -> dict[str, Any]:
         json_gzip = jwt.api_jws.decode(data, key or self._jwt_secret, algorithms=['HS256'])
@@ -588,4 +587,3 @@ class SimpleOAuthProvider(OAuthProvider):
         json_str = json_bytes.decode('utf-8')
         json_obj = json.loads(json_str)
         return json_obj
-        # return jwt.decode(data, key or self._jwt_secret, algorithms=['HS256'])
