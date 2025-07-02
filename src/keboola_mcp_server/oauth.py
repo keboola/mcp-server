@@ -529,8 +529,13 @@ class SimpleOAuthProvider(OAuthProvider):
             token=data['refresh_token'],
             client_id=self._oauth_client_id,
             scopes=scopes,
-            # this is slightly different from 'expires_at' kept by the OAuth server
-            expires_at=current_time + expires_in,
+            # The expires_in refers to the access token.
+            # There is no way of knowing when the refresh token expires.
+            # The Keboola OAuth server issues refresh tokens that expire in 1 month and access tokens that
+            # expire in 1 hour.
+            # We derive the lifespan of a refresh token from the lifespan of an access token and make it approximately
+            # 1 week long under the default circumstances.
+            expires_at=current_time + self._ceil_to_hour(min(168 * expires_in, 168 * 3600)),
         )
 
         return access_token, refresh_token
