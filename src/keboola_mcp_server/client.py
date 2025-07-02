@@ -3,7 +3,7 @@
 import importlib.metadata
 import logging
 import os
-from typing import Any, Literal, Mapping, Optional, Union, cast
+from typing import Any, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
 from pydantic import BaseModel, Field
@@ -16,6 +16,23 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 ComponentResource = Literal['configuration', 'rows', 'state']
+
+# Feature flag for the global search if it is enabled in the project
+GlobalSearchFeatureFlag = Literal['global-search']
+# Input types for the global search endpoint parameters
+GlobalSearchBranchTypes = Literal['production', 'development']
+GlobalSearchTypes = Literal[
+    'flow',
+    'bucket',
+    'table',
+    'transformation',
+    'configuration',
+    'configuration-row',
+    'workspace',
+    'shared-code',
+    'rows',
+    'state',
+]
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 
@@ -36,12 +53,7 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
-    def __init__(
-        self,
-        storage_api_token: str,
-        storage_api_url: str,
-        bearer_token: str | None = None
-    ) -> None:
+    def __init__(self, storage_api_token: str, storage_api_url: str, bearer_token: str | None = None) -> None:
         """
         Initialize the client.
 
@@ -777,10 +789,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param config_id: The ID of the flow configuration to retrieve
         :return: Flow configuration details
         """
-        return await self.configuration_detail(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=config_id
-        )
+        return await self.configuration_detail(component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=config_id)
 
     async def flow_list(self) -> list[JsonDict]:
         """
@@ -818,6 +827,39 @@ class AsyncStorageClient(KeboolaServiceClient):
             updated_name=name,
             updated_description=description,
         )
+
+    async def global_search(
+        self,
+        query: str,
+        limit: int = 100,
+        offset: int = 0,
+        types: Sequence[GlobalSearchTypes] = [],
+        branch_ids: Optional[Sequence[str]] = []
+    ) -> JsonDict:
+        """
+        Searches for items in the storage. It allows you to search for entities by name across all projects within an
+        organization, even those you do not have direct access to. The search is conducted only through entity names to
+        ensure confidentiality.
+
+        :param query: The query to search for.
+        :param limit: The maximum number of items to return.
+        :param offset: The offset to start from.
+        :param types: The types of items to search for.
+        :param project_ids: The project ids to search in.
+        :param branch_types: The types of branches to search in.
+        :param branch_ids: The ids of the branches to search in.
+        """
+        params : dict[str, Any] = {
+            'query': query,
+            'projectIds[]': [await self.project_id()],
+            'branchTypes[]': 'production',
+            'types[]': types,
+            'limit': limit,
+            'offset': offset,
+            'branchIds[]': branch_ids,
+        }
+        params = {k: v for k, v in params.items() if v}
+        return cast(JsonDict, await self.get(endpoint=f'global-search', params=params))
 
     async def table_detail(self, table_id: str) -> JsonDict:
         """
@@ -885,11 +927,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param read_only_storage_access: If True, the workspace has read-only access to the storage.
         :return: The SAPI call response - created workspace or raise an error.
         """
-        return cast(JsonDict, await self.post(
-            endpoint=f'branch/{self.branch_id}/workspaces',
-            params={'async': async_run},
-            data={'readOnlyStorageAccess': read_only_storage_access},
-        ))
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=f'branch/{self.branch_id}/workspaces',
+                params={'async': async_run},
+                data={'readOnlyStorageAccess': read_only_storage_access},
+            ),
+        )
 
     async def workspace_detail(self, workspace_id: int) -> JsonDict:
         """
@@ -908,10 +953,13 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param query: The query to execute
         :return: The SAPI call response - query result or raise an error.
         """
-        return cast(JsonDict, await self.post(
-            endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}/query',
-            data={'query': query},
-        ))
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}/query',
+                data={'query': query},
+            ),
+        )
 
     async def workspace_list(self) -> list[JsonDict]:
         """
@@ -936,6 +984,16 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
         return str(raw_data['owner']['id'])
+
+    async def has_global_search(self) -> bool:
+        """
+        Checks if the global search is enabled in the project.
+        :return: True if the global search is enabled, False otherwise.
+        """
+        verified_info = await self.verify_token()
+        project_data = cast(JsonDict, verified_info['owner'])
+        features = cast(list[str], project_data.get('features', []))
+        return GlobalSearchFeatureFlag in features
 
 
 class JobsQueueClient(KeboolaServiceClient):
