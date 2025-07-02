@@ -134,6 +134,5 @@ class MetadataField:
     # expected value: 'true'
     UPDATED_BY_MCP_PREFIX = 'KBC.MCP.updatedBy.version.'
 
-    # keboola refers to all non-default branches as
-    # "fake development branches"
+    # Brnach filtering works only for "fake development branches"
     FAKE_DEVELOPMENT_BRANCH = 'KBC.createdBy.branch.id'
