@@ -985,6 +985,16 @@ class AsyncStorageClient(KeboolaServiceClient):
         raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
         return str(raw_data['owner']['id'])
 
+    async def has_global_search(self) -> bool:
+        """
+        Checks if the global search is enabled in the project.
+        :return: True if the global search is enabled, False otherwise.
+        """
+        verified_info = await self.verify_token()
+        project_data = cast(JsonDict, verified_info['owner'])
+        features = cast(list[str], project_data.get('features', []))
+        return GlobalSearchFeatureFlag in features
+
 
 class JobsQueueClient(KeboolaServiceClient):
     """
