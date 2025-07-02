@@ -50,8 +50,16 @@ async def docs_query(
 async def global_search(
     ctx: Context,
     query: Annotated[str, Field(description='to be added')],
-) -> Annotated[str, Field(description='to be added')]:
+    types: Annotated[list[str], Field(description='Which types of objects to search for.')] = [],
+    limit: Annotated[int, Field(description='The maximum number of items to return.')] = 100,
+    offset: Annotated[int, Field(description='The offset to start from.')] = 0,
+) -> Annotated[str, Field(description='The search results.')]:
     """
-    to be added
+    Searches for items in the current project storage only for production branch.
+
+    :param query: The query to search for.
+    :param types: The types of items to search for.
+    :param limit: The maximum number of items to return.
+    :param offset: The offset to start from.
     """
     return ''
