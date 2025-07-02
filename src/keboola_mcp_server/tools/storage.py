@@ -174,8 +174,7 @@ async def get_bucket(
     links_manager = await ProjectLinksManager.from_client(client)
     assert isinstance(client, KeboolaClient)
     raw_bucket = await client.storage_client.bucket_detail(bucket_id)
-    bucket_name = str(raw_bucket.get('name', bucket_id))
-    links = links_manager.get_bucket_links(bucket_id, bucket_name)
+    links = links_manager.get_bucket_links(bucket_id, raw_bucket.get('name') or bucket_id)
     bucket = BucketDetail.model_validate(raw_bucket | {'links': links})
 
     return bucket
