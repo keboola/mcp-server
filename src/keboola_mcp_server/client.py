@@ -3,7 +3,7 @@
 import importlib.metadata
 import logging
 import os
-from typing import Any, Literal, Mapping, Optional, Sequence, Union, cast
+from typing import Any, Literal, Mapping, Optional, Union, cast
 
 import httpx
 from pydantic import BaseModel, Field
@@ -833,8 +833,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         query: str,
         limit: int = 100,
         offset: int = 0,
-        types: Sequence[GlobalSearchTypes] = [],
-        branch_ids: Optional[Sequence[str]] = []
+        types: list[GlobalSearchTypes] | None = None,
+        branch_ids: list[str] | None = None
     ) -> JsonDict:
         """
         Searches for items in the storage. It allows you to search for entities by name across all projects within an
@@ -859,7 +859,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             'branchIds[]': branch_ids,
         }
         params = {k: v for k, v in params.items() if v}
-        return cast(JsonDict, await self.get(endpoint=f'global-search', params=params))
+        return cast(JsonDict, await self.get(endpoint='global-search', params=params))
 
     async def table_detail(self, table_id: str) -> JsonDict:
         """
