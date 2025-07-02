@@ -5,7 +5,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import GlobalSearchTypes, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
 
@@ -44,14 +44,3 @@ async def docs_query(
     answer = await client.ai_service_client.docs_question(query)
 
     return DocsAnswer(text=answer.text, source_urls=answer.source_urls)
-
-@tool_errors()
-@with_session_state()
-async def global_search(
-    ctx: Context,
-    query: Annotated[str, Field(description='to be added')],
-) -> Annotated[str, Field(description='to be added')]:
-    """
-    to be added
-    """
-    return ''

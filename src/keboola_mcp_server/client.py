@@ -852,14 +852,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         params : dict[str, Any] = {
             'query': query,
             'projectIds[]': [await self.project_id()],
-            'branchTypes': 'production',
+            'branchTypes[]': 'production',
             'types[]': types,
             'limit': limit,
             'offset': offset,
             'branchIds[]': branch_ids,
         }
         params = {k: v for k, v in params.items() if v}
-        return cast(JsonDict, await self.get(endpoint=f'storage/global-search', params=params))
+        return cast(JsonDict, await self.get(endpoint=f'global-search', params=params))
 
     async def table_detail(self, table_id: str) -> JsonDict:
         """
