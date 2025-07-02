@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastmcp import Context
 
@@ -11,6 +13,7 @@ from keboola_mcp_server.tools.flow.tools import (
     ListFlowsOutput,
     create_flow,
     get_flow,
+    get_flow_schema,
     list_flows,
     update_flow,
 )
@@ -22,7 +25,6 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
     Create a flow and retrieve it using list_flows.
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
-    :return: None
     """
     assert configs
     assert configs[0].configuration_id is not None
@@ -92,8 +94,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=flow_id
+            component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=flow_id
         )
 
         # Convert metadata list to dictionary for easier checking
@@ -112,7 +113,6 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
     Update a flow and verify the update.
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
-    :return: None
     """
     assert configs
     assert configs[0].configuration_id is not None
@@ -166,8 +166,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
 
         # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=flow_id
+            component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=flow_id
         )
 
         assert isinstance(metadata, list)
@@ -186,10 +185,32 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
     """
     Retrieve flows when none exist (should not error, may return empty list).
     :param mcp_context: The test context fixture.
-    :return: None
     """
     flows = await list_flows(mcp_context)
     assert isinstance(flows, ListFlowsOutput)
+
+
+@pytest.mark.asyncio
+async def test_get_flow_schema() -> None:
+    """
+    Test that get_flow_schema returns the flow configuration JSON schema.
+    """
+    schema_result = await get_flow_schema()
+
+    assert isinstance(schema_result, str)
+    assert schema_result.startswith('```json\n')
+    assert schema_result.endswith('\n```')
+
+    # Extract and parse the JSON content to verify it's valid
+    json_content = schema_result[8:-4]  # Remove ```json\n and \n```
+    parsed_schema = json.loads(json_content)
+
+    # Verify basic schema structure
+    assert isinstance(parsed_schema, dict)
+    assert '$schema' in parsed_schema
+    assert 'properties' in parsed_schema
+    assert 'phases' in parsed_schema['properties']
+    assert 'tasks' in parsed_schema['properties']
 
 
 @pytest.mark.asyncio
@@ -198,7 +219,6 @@ async def test_create_flow_invalid_structure(mcp_context: Context, configs: list
     Create a flow with invalid structure (should raise ValueError).
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
-    :return: None
     """
     assert configs
     assert configs[0].configuration_id is not None
