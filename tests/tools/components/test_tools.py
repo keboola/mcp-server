@@ -346,6 +346,7 @@ async def test_create_sql_transformation(
                 },
             },
         },
+        mcp_context=mocker.ANY,
     )
 
 
@@ -425,6 +426,7 @@ async def test_update_sql_transformation(
         configuration={'parameters': new_config, 'storage': new_storage},
         updated_description=None,
         is_disabled=False,
+        mcp_context=mocker.ANY,
     )
 
 
@@ -517,6 +519,7 @@ async def test_create_config(
         name=name,
         description=description,
         configuration={'storage': storage, 'parameters': parameters},
+        mcp_context=mocker.ANY,
     )
 
 
@@ -571,6 +574,7 @@ async def test_add_config_row(
         name=name,
         description=description,
         configuration={'storage': storage, 'parameters': parameters},
+        mcp_context=mocker.ANY,
     )
 
 
@@ -629,6 +633,7 @@ async def test_update_config(
         change_description=change_description,
         updated_name=name,
         updated_description=description,
+        mcp_context=mocker.ANY,
     )
 
 
@@ -688,4 +693,5 @@ async def test_update_config_row(
         change_description=change_description,
         updated_name=name,
         updated_description=description,
+        mcp_context=mocker.ANY,
     )
