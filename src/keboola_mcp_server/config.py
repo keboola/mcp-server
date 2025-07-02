@@ -133,3 +133,6 @@ class MetadataField:
     # the full key should end by a version number;
     # expected value: 'true'
     UPDATED_BY_MCP_PREFIX = 'KBC.MCP.updatedBy.version.'
+
+    # Brnach filtering works only for "fake development branches"
+    FAKE_DEVELOPMENT_BRANCH = 'KBC.createdBy.branch.id'
