@@ -238,14 +238,9 @@ async def list_tables(
     #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
     raw_tables = await client.storage_client.bucket_table_list(bucket_id, include=['metadata'])
-    production_branch_raw_tables = [
-        table
-        for table in raw_tables
-        if not (any(meta.get('key') == MetadataField.FAKE_DEVELOPMENT_BRANCH for meta in table.get('metadata', [])))
-    ]  # filter out tables from "Fake production branches"
 
     return ListTablesOutput(
-        tables=[TableDetail.model_validate(raw_table) for raw_table in production_branch_raw_tables],
+        tables=[TableDetail.model_validate(raw_table) for raw_table in raw_tables],
         links=[links_manager.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)],
     )
 
