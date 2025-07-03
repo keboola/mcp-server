@@ -1,6 +1,12 @@
 import logging
+import time
 from functools import wraps
 from typing import Any, Callable, Optional, Type, TypeVar, cast
+
+from fastmcp import Context
+from fastmcp.utilities.types import find_kwarg_by_type
+
+from keboola_mcp_server.client import KeboolaClient
 
 LOG = logging.getLogger(__name__)
 F = TypeVar('F', bound=Callable[..., Any])
@@ -13,12 +19,71 @@ class ToolException(Exception):
         super().__init__(f'{str(original_exception)} | Recovery: {recovery_instruction}')
 
 
+def _extract_session_id_from_context(ctx: Context) -> str:
+    """
+    Extract sessionId from the Context object.
+
+    The sessionId can be found in various places in the ctx object depending on the MCP implementation.
+    This function tries different possible locations where sessionId might be stored.
+    """
+    # Try to get sessionId from ctx.session.id if available
+    if hasattr(ctx.session, 'id') and ctx.session.id:
+        return str(ctx.session.id)
+
+    # Try to get sessionId from ctx.request_context if available
+    if hasattr(ctx, 'request_context') and ctx.request_context:
+        if hasattr(ctx.request_context, 'session_id') and ctx.request_context.session_id:
+            return str(ctx.request_context.session_id)
+
+        # Check if sessionId is in the request scope
+        if hasattr(ctx.request_context, 'request') and ctx.request_context.request:
+            request = ctx.request_context.request
+            if hasattr(request, 'scope') and 'session_id' in request.scope:
+                return str(request.scope['session_id'])
+
+    # Fallback to a default session ID if none found
+    # In a real implementation, you might want to generate a unique ID or handle this differently
+    return 'unknown-session'
+
+
+def _extract_tool_name_and_args(func: Callable, args: tuple, kwargs: dict) -> tuple[str, dict[str, Any]]:
+    """
+    Extract tool name and arguments from the function call.
+
+    :param func: The decorated function
+    :param args: Positional arguments
+    :param kwargs: Keyword arguments
+    :return: Tuple of (tool_name, tool_args)
+    """
+    tool_name = func.__name__
+
+    # Convert args and kwargs to a single arguments dict
+    import inspect
+    sig = inspect.signature(func)
+    bound_args = sig.bind(*args, **kwargs)
+    bound_args.apply_defaults()
+
+    # Filter out the Context parameter as it's not part of the tool arguments
+    tool_args = {}
+    for param_name, param_value in bound_args.arguments.items():
+        if param_name != 'ctx' and not isinstance(param_value, Context):
+            tool_args[param_name] = param_value
+
+    return tool_name, tool_args
+
+
 def tool_errors(
     default_recovery: Optional[str] = None,
     recovery_instructions: Optional[dict[Type[Exception], str]] = None,
 ) -> Callable[[F], F]:
     """
     The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
+
+    This decorator now automatically:
+    - Extracts sessionId from the Context object
+    - Uses RawStorageClient.trigger_event for error logging
+    - Removes the need for manual mcp_context construction in tools
+    - Maintains existing recovery instruction functionality
 
     :param default_recovery: A fallback recovery instruction to use when no specific instruction
                              is found for the exception.
@@ -30,11 +95,53 @@ def tool_errors(
 
         @wraps(func)
         async def wrapped(*args, **kwargs):
+            start_time = time.monotonic()
+
             try:
                 return await func(*args, **kwargs)
             except Exception as e:
+                duration_s = time.monotonic() - start_time
                 logging.exception(f'Failed to run tool {func.__name__}: {e}')
 
+                # Extract sessionId and tool information
+                ctx_kwarg = find_kwarg_by_type(func, Context)
+                session_id = 'unknown-session'
+                tool_name, tool_args = _extract_tool_name_and_args(func, args, kwargs)
+
+                if ctx_kwarg:
+                    # Convert positional args to kwargs to find ctx
+                    import inspect
+                    sig = inspect.signature(func)
+                    bound_args = sig.bind(*args, **kwargs)
+                    ctx = bound_args.arguments.get(ctx_kwarg)
+
+                    if isinstance(ctx, Context):
+                        session_id = _extract_session_id_from_context(ctx)
+
+                        # Try to get RawStorageClient for event logging
+                        try:
+                            if hasattr(ctx, 'session') and hasattr(ctx.session, 'state'):
+                                client = KeboolaClient.from_state(ctx.session.state)
+                                raw_client = client.storage_client.raw_client
+
+                                # Construct mcp_context for event logging
+                                mcp_context = {
+                                    'tool_name': tool_name,
+                                    'tool_args': tool_args,
+                                    'sessionId': session_id,
+                                }
+
+                                # Send error event to Storage API
+                                await raw_client.trigger_event(
+                                    error_obj=e,
+                                    duration_s=duration_s,
+                                    mcp_context=mcp_context,
+                                )
+                        except Exception as event_error:
+                            # Log but don't fail the main error handling if event sending fails
+                            LOG.warning(f'Failed to send error event: {event_error}')
+
+                # Handle recovery instructions
                 recovery_msg = default_recovery
                 if recovery_instructions:
                     for exc_type, msg in recovery_instructions.items():
