@@ -72,6 +72,81 @@ def _extract_tool_name_and_args(func: Callable, args: tuple, kwargs: dict) -> tu
     return tool_name, tool_args
 
 
+def _extract_additional_context_from_args(tool_args: dict[str, Any], tool_name: str) -> dict[str, Any]:
+    """
+    Extract additional context values from tool arguments that are used in event logging.
+
+    :param tool_args: The tool arguments dictionary
+    :param tool_name: The name of the tool that was executed
+    :return: Dictionary with additional context values (config_id, job_id)
+    """
+    additional_context = {}
+
+    # Extract config_id from various possible parameter names
+    config_id = tool_args.get('config_id') or tool_args.get('configuration_id')
+    if config_id:
+        additional_context['config_id'] = config_id
+
+    # Extract job_id from arguments for get_job tool
+    if tool_name == 'get_job':
+        job_id = tool_args.get('job_id')
+        if job_id:
+            additional_context['job_id'] = str(job_id)
+
+    return additional_context
+
+
+def _extract_configuration_id_from_result(result: Any) -> Optional[str]:
+    """
+    Extract configuration_id from function result if it's a ConfigToolOutput.
+
+    :param result: The result from the function execution
+    :return: configuration_id if found, None otherwise
+    """
+    try:
+        # Check if result has configuration_id attribute (ConfigToolOutput)
+        if hasattr(result, 'configuration_id'):
+            return str(result.configuration_id)
+
+        # Check if result is a dict with configuration_id
+        if isinstance(result, dict) and 'configuration_id' in result:
+            return str(result['configuration_id'])
+
+    except Exception:
+        # If any error occurs during extraction, return None
+        pass
+
+    return None
+
+
+def _extract_job_id_from_result(result: Any, tool_name: str) -> Optional[str]:
+    """
+    Extract job_id from function result if it's a JobDetail and tool is run_job.
+
+    :param result: The result from the function execution
+    :param tool_name: The name of the tool that was executed
+    :return: job_id if found and tool is run_job, None otherwise
+    """
+    # Only extract job_id for run_job tool
+    if tool_name != 'run_job':
+        return None
+
+    try:
+        # Check if result has id attribute (JobDetail)
+        if hasattr(result, 'id'):
+            return str(result.id)
+
+        # Check if result is a dict with id
+        if isinstance(result, dict) and 'id' in result:
+            return str(result['id'])
+
+    except Exception:
+        # If any error occurs during extraction, return None
+        pass
+
+    return None
+
+
 def tool_errors(
     default_recovery: Optional[str] = None,
     recovery_instructions: Optional[dict[Type[Exception], str]] = None,
@@ -84,6 +159,8 @@ def tool_errors(
     - Uses RawStorageClient.trigger_event for error logging
     - Removes the need for manual mcp_context construction in tools
     - Maintains existing recovery instruction functionality
+    - Captures function results to extract additional context (e.g., configuration_id from
+      ConfigToolOutput, job_id from run_job result and get_job arguments)
 
     :param default_recovery: A fallback recovery instruction to use when no specific instruction
                              is found for the exception.
@@ -96,9 +173,11 @@ def tool_errors(
         @wraps(func)
         async def wrapped(*args, **kwargs):
             start_time = time.monotonic()
+            result = None
 
             try:
-                return await func(*args, **kwargs)
+                result = await func(*args, **kwargs)
+                return result
             except Exception as e:
                 duration_s = time.monotonic() - start_time
                 logging.exception(f'Failed to run tool {func.__name__}: {e}')
@@ -124,11 +203,25 @@ def tool_errors(
                                 client = KeboolaClient.from_state(ctx.session.state)
                                 raw_client = client.storage_client.raw_client
 
+                                additional_context = _extract_additional_context_from_args(
+                                    tool_args, tool_name
+                                )
+                                # Extract configuration_id and job_id from result if available
+                                if result is not None:
+                                    result_config_id = _extract_configuration_id_from_result(result)
+                                    if result_config_id:
+                                        additional_context['config_id'] = result_config_id
+
+                                    result_job_id = _extract_job_id_from_result(result, tool_name)
+                                    if result_job_id:
+                                        additional_context['job_id'] = result_job_id
+
                                 # Construct mcp_context for event logging
                                 mcp_context = {
                                     'tool_name': tool_name,
                                     'tool_args': tool_args,
                                     'sessionId': session_id,
+                                    **additional_context,  # Include config_id and job_id if present
                                 }
 
                                 # Send error event to Storage API
