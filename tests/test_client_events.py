@@ -60,7 +60,7 @@ class TestRawKeboolaClientEventLogic:
             'tool_name': 'test_tool',
             'tool_args': {'arg1': 'val1'},
             'config_id': 'cfg123',
-            'run_id': 'run456',
+            'job_id': '456',
             'sessionId': 'test-session-123',
         }
 
@@ -83,7 +83,7 @@ class TestRawKeboolaClientEventLogic:
         assert sent_payload['params']['tool']['arguments'] == [{'arg1': 'val1'}]
         assert 'error' not in sent_payload['results']
         assert sent_payload['configurationId'] == 'cfg123'
-        assert sent_payload['runId'] == 'run456'
+        assert sent_payload['runId'] == '456'
         # Check mcp-server-context is filled
         mcp_ctx = sent_payload['params']['mcp-server-context']
         assert mcp_ctx['sessionId'] == 'test-session-123'

@@ -287,27 +287,20 @@ class RawKeboolaClient:
         }
         if 'config_id' in mcp_context:
             event_payload['configurationId'] = mcp_context['config_id']
-        if 'run_id' in mcp_context:
-            event_payload['runId'] = mcp_context['run_id']
+        if 'job_id' in mcp_context:
+            event_payload['runId'] = mcp_context['job_id']
 
         if error_obj:
             event_payload['results']['error'] = str(error_obj)
 
         try:
-            event_headers = {
-                'X-StorageAPI-Token': self.headers['X-StorageAPI-Token'],
-                'Content-Type': 'application/json',
-            }
-            if 'User-Agent' in self.headers:
-                event_headers['User-Agent'] = self.headers['User-Agent']
-
             event_post_url = f'{self.base_api_url}/events'
             LOG.debug(f'Attempting to send MCP event: {event_payload} to {event_post_url}')
             # Use a new httpx.AsyncClient for sending the event
             async with httpx.AsyncClient(timeout=self.timeout) as event_client:
                 response = await event_client.post(
                     event_post_url,
-                    headers=event_headers,
+                    headers=self.headers,
                     json=event_payload,
                 )
                 self._raise_for_status(response)
