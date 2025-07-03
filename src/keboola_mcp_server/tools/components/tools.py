@@ -375,24 +375,11 @@ async def create_sql_transformation(
 
     LOG.info(f'Creating new transformation configuration: {name} for component: {component_id}.')
 
-    # Construct the mcp_context for event logging
-    # using attributes from FastMCP's Context object
-    tool_event_context = {
-        'tool_name': 'create_sql_transformation',  # Typically holds the tool's registered name
-        'tool_args': {  # Contains all arguments passed to the tool
-            'name': name,
-            'description': description,
-            'sql_code_blocks': [block.model_dump() for block in sql_code_blocks],
-            'created_table_names': list(created_table_names),
-        }
-    }
-
     new_raw_transformation_configuration = await client.storage_client.configuration_create(
         component_id=component_id,
         name=name,
         description=description,
         configuration=transformation_configuration_payload.model_dump(by_alias=True),
-        mcp_context=tool_event_context,
     )
 
     configuration_id = new_raw_transformation_configuration['id']
@@ -502,20 +489,6 @@ async def update_sql_transformation(
 
     LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
 
-    # Construct the mcp_context for event logging
-    # using attributes from FastMCP's Context object
-    tool_event_context = {
-        'tool_name': 'update_sql_transformation',  # Typically holds the tool's registered name
-        'tool_args': {  # Contains all arguments passed to the tool
-            'configuration_id': configuration_id,
-            'change_description': change_description,
-            'parameters': parameters.model_dump(),
-            'storage': storage,
-            'updated_description': updated_description,
-            'is_disabled': is_disabled,
-        }
-    }
-
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
@@ -523,7 +496,6 @@ async def update_sql_transformation(
         change_description=change_description,
         updated_description=updated_description if updated_description else None,
         is_disabled=is_disabled,
-        mcp_context=tool_event_context,
     )
 
     await _set_cfg_update_metadata(
@@ -625,19 +597,6 @@ async def create_config(
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    # Construct the mcp_context for event logging
-    # using attributes from FastMCP's Context object
-    tool_event_context = {
-        'tool_name': 'create_config',  # Typically holds the tool's registered name
-        'tool_args': {  # Contains all arguments passed to the tool
-            'name': name,
-            'description': description,
-            'component_id': component_id,
-            'parameters': parameters,
-            'storage': storage,
-        }
-    }
-
     new_raw_configuration = cast(
         dict[str, Any],
         await client.storage_client.configuration_create(
@@ -645,7 +604,6 @@ async def create_config(
             name=name,
             description=description,
             configuration=configuration_payload,
-            mcp_context=tool_event_context,  # Pass the constructed context
         ),
     )
 
@@ -750,20 +708,6 @@ async def add_config_row(
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    # Construct the mcp_context for event logging
-    # using attributes from FastMCP's Context object
-    tool_event_context = {
-        'tool_name': 'add_config_row',  # Typically holds the tool's registered name
-        'tool_args': {  # Contains all arguments passed to the tool
-            'name': name,
-            'description': description,
-            'component_id': component_id,
-            'configuration_id': configuration_id,
-            'parameters': parameters,
-            'storage': storage,
-        }
-    }
-
     new_raw_configuration = cast(
         dict[str, Any],
         await client.storage_client.configuration_row_create(
@@ -772,7 +716,6 @@ async def add_config_row(
             name=name,
             description=description,
             configuration=configuration_payload,
-            mcp_context=tool_event_context,  # Pass the constructed context
         ),
     )
 
@@ -881,21 +824,6 @@ async def update_config(
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    # Construct the mcp_context for event logging
-    # using attributes from FastMCP's Context object
-    tool_event_context = {
-        'tool_name': 'update_config',  # Typically holds the tool's registered name
-        'tool_args': {  # Contains all arguments passed to the tool
-            'name': name,
-            'description': description,
-            'change_description': change_description,
-            'component_id': component_id,
-            'configuration_id': configuration_id,
-            'parameters': parameters,
-            'storage': storage,
-        }
-    }
-
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=component_id,
         configuration_id=configuration_id,
@@ -903,7 +831,6 @@ async def update_config(
         change_description=change_description,
         updated_name=name,
         updated_description=description,
-        mcp_context=tool_event_context,  # Pass the constructed context
     )
 
     LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
@@ -1011,22 +938,6 @@ async def update_config_row(
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    # Construct the mcp_context for event logging
-    # using attributes from FastMCP's Context object
-    tool_event_context = {
-        'tool_name': 'update_config_row',  # Typically holds the tool's registered name
-        'tool_args': {  # Contains all arguments passed to the tool
-            'name': name,
-            'description': description,
-            'change_description': change_description,
-            'component_id': component_id,
-            'configuration_id': configuration_id,
-            'configuration_row_id': configuration_row_id,
-            'parameters': parameters,
-            'storage': storage,
-        }
-    }
-
     updated_raw_configuration = await client.storage_client.configuration_row_update(
         component_id=component_id,
         config_id=configuration_id,
@@ -1035,7 +946,6 @@ async def update_config_row(
         change_description=change_description,
         updated_name=name,
         updated_description=description,
-        mcp_context=tool_event_context,  # Pass the constructed context
     )
 
     LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')

@@ -3,7 +3,6 @@
 import importlib.metadata
 import logging
 import os
-import time
 from typing import Any, Literal, Mapping, Optional, Union, cast
 
 import httpx
@@ -256,10 +255,8 @@ class RawKeboolaClient:
         # Send events only if the base_api_url is for /v2/storage and the current endpoint is not 'events' itself
         return self.base_api_url.endswith('/v2/storage') and endpoint != 'events'
 
-    async def send_event_after_request(
+    async def trigger_event(
         self,
-        http_method: str,
-        endpoint: str,
         error_obj: Optional[Exception],
         duration_s: float,
         mcp_context: dict[str, Any],
@@ -269,7 +266,7 @@ class RawKeboolaClient:
 
         event_payload: dict[str, Any] = {
             'component': self._MCP_SERVER_COMPONENT_ID,
-            'message': f'MCP: {mcp_context["tool_name"]} - {http_method} /v2/storage/{endpoint}',
+            'message': f'MCP: {mcp_context["tool_name"]} - /v2/storage/events',
             'type': 'error' if error_obj else 'info',
             'durationSeconds': round(duration_s, 3),
             'params': {
@@ -314,14 +311,14 @@ class RawKeboolaClient:
                     json=event_payload,
                 )
                 self._raise_for_status(response)
-                LOG.info(f'Successfully sent MCP event for {http_method} /v2/storage/{endpoint}')
+                LOG.info('Successfully sent MCP event for POST /v2/storage/events')
         except httpx.HTTPStatusError as e:
             LOG.error(
-                f'Error sending MCP event for {http_method} /v2/storage/{endpoint}: '
+                f'Error sending MCP event for POST /v2/storage/events: '
                 f'HTTPStatusError {e.response.status_code} - {e.response.text}'
             )
         except Exception as e:
-            LOG.error(f'Unexpected error sending MCP event for {http_method} /v2/storage/{endpoint}: {e}')
+            LOG.error(f'Unexpected error sending MCP event for POST /v2/storage/events: {e}')
 
 
 class KeboolaServiceClient:

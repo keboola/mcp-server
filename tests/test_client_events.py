@@ -1,5 +1,4 @@
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -31,7 +30,9 @@ def raw_client_non_storage() -> RawKeboolaClient:
 class TestRawKeboolaClientEventLogic:
     """Test the event sending logic in RawKeboolaClient."""
 
-    def test_should_send_event_true_for_v2_storage_non_event_endpoint(self, raw_client_storage_v2: RawKeboolaClient):
+    def test_should_send_event_true_for_v2_storage_non_event_endpoint(
+        self, raw_client_storage_v2: RawKeboolaClient
+    ):
         """Test _should_send_event is True for /v2/storage and non-'events' endpoint."""
         assert raw_client_storage_v2._should_send_event('tables') is True
         assert raw_client_storage_v2._should_send_event('branch/my_branch/components/comp/configs') is True
@@ -40,12 +41,14 @@ class TestRawKeboolaClientEventLogic:
         """Test _should_send_event is False for /v2/storage and 'events' endpoint."""
         assert raw_client_storage_v2._should_send_event('events') is False
 
-    def test_should_send_event_false_for_non_v2_storage_url(self, raw_client_non_storage: RawKeboolaClient):
+    def test_should_send_event_false_for_non_v2_storage_url(
+        self, raw_client_non_storage: RawKeboolaClient
+    ):
         """Test _should_send_event is False for non-/v2/storage URL."""
         assert raw_client_non_storage._should_send_event('jobs') is False
 
     @pytest.mark.asyncio
-    async def test_send_event_after_request_success_payload(self, raw_client_storage_v2: RawKeboolaClient, mocker):
+    async def test_trigger_event_success_payload(self, raw_client_storage_v2: RawKeboolaClient, mocker):
         """Test the payload construction for a successful API call event."""
         # Mock the httpx.AsyncClient context manager to return a mock client
         mock_client = AsyncMock()
@@ -61,9 +64,7 @@ class TestRawKeboolaClientEventLogic:
             'sessionId': 'test-session-123',
         }
 
-        await raw_client_storage_v2.send_event_after_request(
-            http_method='POST',
-            endpoint='tables',
+        await raw_client_storage_v2.trigger_event(
             error_obj=None,
             duration_s=1.234,
             mcp_context=mcp_context,
@@ -75,7 +76,7 @@ class TestRawKeboolaClientEventLogic:
 
         sent_payload = call_args[1]['json']  # kwargs['json']
         assert sent_payload['component'] == RawKeboolaClient._MCP_SERVER_COMPONENT_ID
-        assert sent_payload['message'] == 'MCP: test_tool - POST /v2/storage/tables'
+        assert sent_payload['message'] == 'MCP: test_tool - /v2/storage/events'
         assert sent_payload['type'] == 'info'
         assert sent_payload['durationSeconds'] == 1.234
         assert sent_payload['params']['tool']['name'] == 'test_tool'
@@ -91,7 +92,7 @@ class TestRawKeboolaClientEventLogic:
         assert mcp_ctx['user-agent'] == 'cursor'
 
     @pytest.mark.asyncio
-    async def test_send_event_after_request_error_payload(self, raw_client_storage_v2: RawKeboolaClient, mocker):
+    async def test_trigger_event_error_payload(self, raw_client_storage_v2: RawKeboolaClient, mocker):
         """Test the payload construction for an errored API call event."""
         # Mock the httpx.AsyncClient context manager to return a mock client
         mock_client = AsyncMock()
@@ -102,9 +103,7 @@ class TestRawKeboolaClientEventLogic:
         mcp_context = {'tool_name': 'error_tool', 'tool_args': ['argA'], 'sessionId': 'test-session-456'}
         error = ValueError('Test error')
 
-        await raw_client_storage_v2.send_event_after_request(
-            http_method='PUT',
-            endpoint='configs/conf1',
+        await raw_client_storage_v2.trigger_event(
             error_obj=error,
             duration_s=0.567,
             mcp_context=mcp_context,
@@ -119,11 +118,10 @@ class TestRawKeboolaClientEventLogic:
         assert 'runId' not in sent_payload  # Not in mcp_context
 
     @pytest.mark.asyncio
-    @patch.object(RawKeboolaClient, 'send_event_after_request', new_callable=AsyncMock)
-    async def test_post_triggers_event_on_success(
-        self, mock_send_event_method: AsyncMock, raw_client_storage_v2: RawKeboolaClient, mocker
+    async def test_post_does_not_trigger_event_anymore(
+        self, raw_client_storage_v2: RawKeboolaClient, mocker
     ):
-        """Test that RawKeboolaClient.post calls send_event_after_request on success."""
+        """Test that RawKeboolaClient.post does NOT call trigger_event anymore."""
         mock_response_content: JsonDict = {'id': 'new_resource', 'status': 'created'}
 
         # Mock the actual HTTP call for the main operation
@@ -131,119 +129,76 @@ class TestRawKeboolaClientEventLogic:
         mock_main_post.return_value = MagicMock(spec=httpx.Response, status_code=201)
         mock_main_post.return_value.json.return_value = mock_response_content
 
-        mcp_context = {'tool_name': 'creator_tool', 'tool_args': {}, 'sessionId': 'test-session-789'}
         endpoint = 'some_resource'
         data = {'key': 'value'}
 
-        start_time = time.monotonic()
         response = await raw_client_storage_v2.post(endpoint, data=data)
-        duration_s = time.monotonic() - start_time
 
         assert response == mock_response_content
-        mock_send_event_method.assert_called_once()
-
-        call_args = mock_send_event_method.call_args[1]  # kwargs
-        assert call_args['http_method'] == 'POST'
-        assert call_args['endpoint'] == endpoint
-        assert call_args['error_obj'] is None
-        assert abs(call_args['duration_s'] - duration_s) < 0.1  # Check duration is close
-        assert call_args['mcp_context'] == mcp_context
+        # No event should be triggered by HTTP methods anymore
 
     @pytest.mark.asyncio
-    @patch.object(RawKeboolaClient, 'send_event_after_request', new_callable=AsyncMock)
-    async def test_put_triggers_event_on_http_error(
-        self, mock_send_event_method: AsyncMock, raw_client_storage_v2: RawKeboolaClient, mocker
+    async def test_put_does_not_trigger_event_on_http_error(
+        self, raw_client_storage_v2: RawKeboolaClient, mocker
     ):
-        """Test that RawKeboolaClient.put calls send_event_after_request on HTTP error."""
+        """Test that RawKeboolaClient.put does NOT call trigger_event on HTTP error."""
         # Mock the actual HTTP call for the main operation to raise an error
         http_error = httpx.HTTPStatusError(
             'Test HTTP Error', request=MagicMock(), response=MagicMock(status_code=400)
         )
         mocker.patch('httpx.AsyncClient.put', new_callable=AsyncMock, side_effect=http_error)
 
-        mcp_context = {
-            'tool_name': 'updater_tool',
-            'tool_args': {},
-            'config_id': 'cfg789',
-            'sessionId': 'test-session-101',
-        }
         endpoint = 'another_resource/id1'
         data = {'field': 'new_value'}
 
-        start_time = time.monotonic()
         with pytest.raises(httpx.HTTPStatusError):
             await raw_client_storage_v2.put(endpoint, data=data)
-        duration_s = time.monotonic() - start_time
-
-        mock_send_event_method.assert_called_once()
-        call_args = mock_send_event_method.call_args[1]
-        assert call_args['http_method'] == 'PUT'
-        assert call_args['endpoint'] == endpoint
-        assert call_args['error_obj'] is http_error
-        assert abs(call_args['duration_s'] - duration_s) < 0.1
-        assert call_args['mcp_context'] == mcp_context
+        # No event should be triggered by HTTP methods anymore
 
     @pytest.mark.asyncio
-    @patch.object(RawKeboolaClient, 'send_event_after_request', new_callable=AsyncMock)
-    async def test_delete_no_mcp_context_no_event(
-        self, mock_send_event_method: AsyncMock, raw_client_storage_v2: RawKeboolaClient, mocker
+    async def test_delete_does_not_trigger_event_anymore(
+        self, raw_client_storage_v2: RawKeboolaClient, mocker
     ):
-        """Test that RawKeboolaClient.delete does NOT call event sender if no mcp_context."""
+        """Test that RawKeboolaClient.delete does NOT call trigger_event anymore."""
         mock_main_delete = mocker.patch('httpx.AsyncClient.delete', new_callable=AsyncMock)
         mock_main_delete.return_value = MagicMock(spec=httpx.Response, status_code=204, content=b'')
 
         await raw_client_storage_v2.delete('resource_to_delete')
-
-        mock_send_event_method.assert_not_called()
+        # No event should be triggered by HTTP methods anymore
 
     @pytest.mark.asyncio
-    @patch.object(RawKeboolaClient, 'send_event_after_request', new_callable=AsyncMock)
-    async def test_post_non_storage_url_no_event(
-        self, mock_send_event_method: AsyncMock, raw_client_non_storage: RawKeboolaClient, mocker
+    async def test_post_non_storage_url_does_not_trigger_event(
+        self, raw_client_non_storage: RawKeboolaClient, mocker
     ):
-        """Test that RawKeboolaClient.post does NOT call event sender if URL is not /v2/storage."""
+        """Test that RawKeboolaClient.post does NOT call trigger_event for non-storage URLs."""
         mock_main_post = mocker.patch('httpx.AsyncClient.post', new_callable=AsyncMock)
         mock_main_post.return_value = MagicMock(spec=httpx.Response, status_code=200)
         mock_main_post.return_value.json.return_value = {'jobId': 123}
 
-        mcp_context = {'tool_name': 'job_runner', 'tool_args': {}, 'sessionId': 'test-session-202'}
         await raw_client_non_storage.post('jobs', data={})
-
-        mock_send_event_method.assert_not_called()
+        # No event should be triggered by HTTP methods anymore
 
     @pytest.mark.asyncio
-    async def test_delete_handles_no_content_response_for_event(
+    async def test_delete_handles_no_content_response_without_event(
         self, raw_client_storage_v2: RawKeboolaClient, mocker
     ):
-        """Test DELETE with 204 No Content correctly forms event payload (empty query_result)."""
-        mock_send_event = mocker.patch.object(
-            raw_client_storage_v2, 'send_event_after_request', new_callable=AsyncMock
-        )
-
+        """Test DELETE with 204 No Content works without triggering events (events handled by tool_errors decorator)."""
         mock_main_delete = mocker.patch('httpx.AsyncClient.delete', new_callable=AsyncMock)
-        mock_main_delete.return_value = MagicMock(spec=httpx.Response, status_code=204, content=b'')  # No content
+        mock_main_delete.return_value = MagicMock(
+            spec=httpx.Response, status_code=204, content=b''
+        )  # No content
 
-        mcp_context = {
-            'tool_name': 'deleter_tool',
-            'tool_args': {'id': 'res_xyz'},
-            'sessionId': 'test-session-303',
-        }
         endpoint = 'foo/res_xyz'
 
-        await raw_client_storage_v2.delete(endpoint)
-
-        mock_send_event.assert_called_once()
-        call_args = mock_send_event.call_args[1]
-        assert call_args['http_method'] == 'DELETE'
-        assert call_args['endpoint'] == endpoint
-        assert call_args['error_obj'] is None
-        assert call_args['mcp_context'] == mcp_context
+        result = await raw_client_storage_v2.delete(endpoint)
+        # No event should be triggered by HTTP methods anymore
+        assert result is None  # DELETE with 204 returns None
 
     @pytest.mark.asyncio
-    async def test_delete_handles_non_json_response_for_event(
+    async def test_delete_handles_non_json_response_without_event(
         self, raw_client_storage_v2: RawKeboolaClient, mocker
     ):
-        """Test DELETE with non-JSON response correctly forms event payload."""
+        """Test DELETE with non-JSON response raises error without triggering events."""
         text_content = 'Plain text response'
 
         # Mock the main DELETE operation
@@ -254,22 +209,14 @@ class TestRawKeboolaClientEventLogic:
             content=text_content.encode('utf-8'),
             text=text_content
         )
-        mock_response.json.side_effect = ValueError('Not JSON')  # Make .json() raise error
+        # Make .json() raise error
+        mock_response.json.side_effect = ValueError('Not JSON')
         mock_main_client.delete.return_value = mock_response
-
-        # Mock the event sending operation
-        mock_event_client = AsyncMock()
-        mock_event_client.post.return_value = MagicMock(spec=httpx.Response, status_code=200)
 
         # Use a side effect to return different clients for different calls
         mock_async_client = mocker.patch('keboola_mcp_server.client.httpx.AsyncClient')
-        mock_async_client.return_value.__aenter__.side_effect = [mock_main_client, mock_event_client]
+        mock_async_client.return_value.__aenter__.return_value = mock_main_client
 
-        mcp_context = {
-            'tool_name': 'deleter_tool_non_json',
-            'tool_args': {'id': 'res_abc'},
-            'sessionId': 'test-session-404',
-        }
         endpoint = 'bar/res_abc'
 
         with pytest.raises(ValueError, match='Not JSON'):
@@ -277,16 +224,4 @@ class TestRawKeboolaClientEventLogic:
 
         # Verify the main DELETE was called
         mock_main_client.delete.assert_called_once()
-
-        # Verify the event was sent
-        mock_event_client.post.assert_called_once()
-        event_call_args = mock_event_client.post.call_args
-        assert event_call_args[0][0] == f'{STORAGE_API_URL_V2}/events'
-
-        # Check the event payload
-        sent_payload = event_call_args[1]['json']
-        assert sent_payload['component'] == RawKeboolaClient._MCP_SERVER_COMPONENT_ID
-        assert sent_payload['message'] == 'MCP: deleter_tool_non_json - DELETE /v2/storage/bar/res_abc'
-        assert sent_payload['type'] == 'error'
-        assert 'query_result' not in sent_payload['results']  # No JSON response to include
-        assert sent_payload['results']['error'] == 'Not JSON'
+        # No event should be triggered by HTTP methods anymore
