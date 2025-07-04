@@ -873,20 +873,33 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
 
-    async def workspace_create(self, async_run: bool = True, read_only_storage_access: bool = False) -> JsonDict:
+    async def workspace_create(
+        self,
+        async_run: bool = True,
+        read_only_storage_access: bool = False,
+        login_type: Optional[str] = None,
+        backend: Optional[str] = None,
+    ) -> JsonDict:
         """
         Creates a new workspace.
 
         :param async_run: If True, the workspace creation is run asynchronously.
         :param read_only_storage_access: If True, the workspace has read-only access to the storage.
+        :param login_type: Credentials type for new workspace
+        :param backend: Backend for the new workspace
         :return: The SAPI call response - created workspace or raise an error.
         """
+        payload: dict[str, Any] = {'readOnlyStorageAccess': read_only_storage_access}
+        if login_type is not None:
+            payload['loginType'] = login_type
+        if backend is not None:
+            payload['backend'] = backend
         return cast(
             JsonDict,
             await self.post(
                 endpoint=f'branch/{self.branch_id}/workspaces',
                 params={'async': async_run},
-                data={'readOnlyStorageAccess': read_only_storage_access},
+                data=payload,
             ),
         )
 
