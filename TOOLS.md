@@ -8,9 +8,9 @@ This document provides details about the tools available in the Keboola MCP serv
 - [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
 - [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
 - [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
-- [update_bucket_description](#update_bucket_description): Update the description for a given Keboola bucket.
-- [update_column_description](#update_column_description): Update the description for a given column in a Keboola table.
-- [update_table_description](#update_table_description): Update the description for a given Keboola table.
+- [update_bucket_description](#update_bucket_description): Updates the description for a given Keboola bucket.
+- [update_column_description](#update_column_description): Updates the description for a given column in a Keboola table.
+- [update_table_description](#update_table_description): Updates the description for a given Keboola table.
 
 ### SQL Tools
 - [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
@@ -21,8 +21,7 @@ This document provides details about the tools available in the Keboola MCP serv
 component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
-description, and optionally a list of created table names if and only if they are generated within the SQL
-statements.
+description, and a list of created table names.
 - [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
 - [get_component](#get_component): Gets information about a specific component given its ID.
 - [get_config](#get_config): Gets information about a specific component/transformation configuration.
@@ -154,7 +153,7 @@ Retrieves all tables in a specific bucket with their basic information.
 ## update_bucket_description
 **Description**:
 
-Update the description for a given Keboola bucket.
+Updates the description for a given Keboola bucket.
 
 
 **Input JSON Schema**:
@@ -185,7 +184,7 @@ Update the description for a given Keboola bucket.
 ## update_column_description
 **Description**:
 
-Update the description for a given column in a Keboola table.
+Updates the description for a given column in a Keboola table.
 
 
 **Input JSON Schema**:
@@ -222,7 +221,7 @@ Update the description for a given column in a Keboola table.
 ## update_table_description
 **Description**:
 
-Update the description for a given Keboola table.
+Updates the description for a given Keboola table.
 
 
 **Input JSON Schema**:
@@ -442,14 +441,15 @@ EXAMPLES:
 **Description**:
 
 Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
-description, and optionally a list of created table names if and only if they are generated within the SQL
-statements.
+description, and a list of created table names.
 
 CONSIDERATIONS:
+- By default, SQL transformation must create at least one table to produce a result; omit only if the user
+  explicitly indicates that no table creation is needed.
 - Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
   semantically related SQL statements.
-- Each SQL query statement must be executable and follow the current SQL dialect, which can be retrieved using
-  appropriate tool.
+- Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
+  retrieved using appropriate tool.
 - When referring to the input tables within the SQL query, use fully qualified table names, which can be
   retrieved using appropriate tools.
 - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
@@ -461,11 +461,11 @@ USAGE:
 - Use when you want to create a new SQL transformation.
 
 EXAMPLES:
-- user_input: `Can you save me the SQL query you generated as a new transformation?`
-    - set the sql_statements to the query, and set other parameters accordingly.
+- user_input: `Can you create a new transformation out of this sql query?`
+    - set the sql_code_blocks to the query, and set other parameters accordingly.
     - returns the created SQL transformation configuration if successful.
 - user_input: `Generate me an SQL transformation which [USER INTENT]`
-    - set the sql_statements to the query based on the [USER INTENT], and set other parameters accordingly.
+    - set the sql_code_blocks to the query based on the [USER INTENT], and set other parameters accordingly.
     - returns the created SQL transformation configuration if successful.
 
 
@@ -510,7 +510,7 @@ EXAMPLES:
       "type": "string"
     },
     "sql_code_blocks": {
-      "description": "The executable SQL query code blocks, each containing a descriptive name and a sequence of semantically related sql statements written in the current SQL dialect. Each sql statement isexecutable and a separate item in the list of sql statements.",
+      "description": "The SQL query code blocks, each containing a descriptive name and a sequence of semantically related independently executable sql_statements written in the current SQL dialect.",
       "items": {
         "$ref": "#/$defs/Code"
       },
@@ -519,7 +519,7 @@ EXAMPLES:
     },
     "created_table_names": {
       "default": [],
-      "description": "An empty list or a list of created table names if and only if they are generated within SQL statements (e.g., using `CREATE TABLE ...`).",
+      "description": "A list of created table names if they are generated within the SQL query statements (e.g., using `CREATE TABLE ...`).",
       "items": {
         "type": "string"
       },
