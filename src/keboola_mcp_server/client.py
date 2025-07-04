@@ -874,10 +874,11 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
 
     async def workspace_create(
-        self, async_run: bool = True,
-        login_type: str = 'default',
-        backend: str = 'bigquery',
-        read_only_storage_access: bool = False
+        self,
+        login_type: str,
+        backend: str,
+        async_run: bool = True,
+        read_only_storage_access: bool = False,
     ) -> JsonDict:
         """
         Creates a new workspace.

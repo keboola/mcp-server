@@ -293,16 +293,16 @@ class WorkspaceManager:
         resp = None
         if default_backend == 'snowflake':
             resp = await self._client.storage_client.workspace_create(
-                async_run=True,
                 login_type='snowflake-person-sso',
                 backend=default_backend,
+                async_run=True,
                 read_only_storage_access=True
             )
         elif default_backend == 'bigquery':
             resp = await self._client.storage_client.workspace_create(
-                async_run=True,
                 login_type='default',
                 backend=default_backend,
+                async_run=True,
                 read_only_storage_access=True
             )
         else:
