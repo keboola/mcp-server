@@ -886,7 +886,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             await self.post(
                 endpoint=f'branch/{self.branch_id}/workspaces',
                 params={'async': async_run},
-                data={'readOnlyStorageAccess': read_only_storage_access},
+                data={'readOnlyStorageAccess': read_only_storage_access, 'loginType': 'snowflake-person-sso'},
             ),
         )
 
