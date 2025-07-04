@@ -219,7 +219,7 @@ class _WspInfo:
 
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
-    MCP_META_KEY = 'KBC.MCP.workspaceId'
+    MCP_META_KEY = 'KBC.McpServer.workspaceId'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'WorkspaceManager':
