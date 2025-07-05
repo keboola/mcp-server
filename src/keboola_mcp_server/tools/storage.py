@@ -103,6 +103,9 @@ class TableColumnInfo(BaseModel):
         validation_alias=AliasChoices('quotedName', 'quoted_name', 'quoted-name'),
         serialization_alias='quotedName',
     )
+    data_type: Optional[str] = Field(None, description='Data type of the column.')
+    base_type: Optional[str] = Field(None, description='Base data type of the column.')
+    nullable: Optional[bool] = Field(None, description='Whether the column can contain null values.')
 
 
 class TableDetail(BaseModel):
@@ -212,12 +215,42 @@ async def get_table(
 
     raw_table = await client.storage_client.table_detail(table_id)
     raw_columns = cast(list[str], raw_table.get('columns', []))
-    column_info = [
-        TableColumnInfo(name=col, quoted_name=await workspace_manager.get_quoted_name(col)) for col in raw_columns
-    ]
+    column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))
+
+    def extract_column_metadata(column_name: str) -> dict[str, Any]:
+        """Extract data type information from column metadata."""
+        metadata_entries = column_metadata.get(column_name, [])
+        result = {}
+
+        for entry in metadata_entries:
+            key = entry.get('key')
+            value = entry.get('value')
+
+            if key == MetadataField.DATATYPE_TYPE:
+                result['data_type'] = value
+            elif key == MetadataField.DATATYPE_BASETYPE:
+                result['base_type'] = value
+            elif key == MetadataField.DATATYPE_NULLABLE:
+                result['nullable'] = value == '1' if value is not None else None
+
+        return result
+
+    column_info = []
+    for col in raw_columns:
+        metadata = extract_column_metadata(col)
+        column_info.append(TableColumnInfo(
+            name=col,
+            quoted_name=await workspace_manager.get_quoted_name(col),
+            data_type=metadata.get('data_type'),
+            base_type=metadata.get('base_type'),
+            nullable=metadata.get('nullable')
+        ))
 
     table_fqn = await workspace_manager.get_table_fqn(raw_table)
-    links = links_manager.get_table_links(raw_table['bucket']['id'], raw_table['name'])
+    bucket_info = cast(dict[str, Any], raw_table.get('bucket', {}))
+    bucket_id = cast(str, bucket_info.get('id', ''))
+    table_name = cast(str, raw_table.get('name', ''))
+    links = links_manager.get_table_links(bucket_id, table_name)
 
     return TableDetail.model_validate(
         raw_table
