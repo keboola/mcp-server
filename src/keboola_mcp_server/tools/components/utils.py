@@ -150,17 +150,28 @@ async def _get_component(
     is not found (404) or returns empty data (private components), falls back to using the
     Storage API endpoint.
 
+    Uses new clean data models internally while maintaining backward compatibility.
+
     Used in tools:
     - get_config
 
     :param client: The Keboola client
     :param component_id: The ID of the component to retrieve
-    :return: The component
+    :return: The component (legacy format for backward compatibility)
     """
+    # Import here to avoid circular imports
+    from keboola_mcp_server.tools.components.adapters import ComponentAdapter
+    from keboola_mcp_server.tools.components.api_models import APIComponentResponse
+
     try:
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component {component_id} from AI service catalog.')
-        return Component.model_validate(raw_component)
+
+        # Convert using unified model and adapter (AI Service response includes documentation metadata)
+        component_response = APIComponentResponse.model_validate(raw_component)
+        domain_component = ComponentAdapter.from_raw_response(component_response)
+        return ComponentAdapter.to_legacy_component(domain_component)
+
     except HTTPStatusError as e:
         if e.response.status_code == 404:
             LOG.info(
@@ -170,7 +181,11 @@ async def _get_component(
 
             raw_component = await client.storage_client.component_detail(component_id=component_id)
             LOG.info(f'Retrieved component {component_id} from Storage API.')
-            return Component.model_validate(raw_component)
+
+            # Convert using unified model and adapter (Storage API response will have None for documentation fields)
+            component_response = APIComponentResponse.model_validate(raw_component)
+            domain_component = ComponentAdapter.from_raw_response(component_response)
+            return ComponentAdapter.to_legacy_component(domain_component)
         else:
             # If it's not a 404, re-raise the error
             raise
