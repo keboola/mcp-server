@@ -7,6 +7,8 @@ from httpx import HTTPStatusError
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.tools.components.adapters import ComponentAdapter
+from keboola_mcp_server.tools.components.api_models import APIComponentResponse
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     Component,
@@ -80,9 +82,6 @@ async def _list_configs_by_types(
             ]
 
             # Convert raw component through proper data flow: Raw -> API model -> Domain model
-            from keboola_mcp_server.tools.components.adapters import ComponentAdapter
-            from keboola_mcp_server.tools.components.api_models import APIComponentResponse
-            
             api_component = APIComponentResponse.model_validate(raw_component)
             domain_component = ComponentAdapter.to_component_summary(api_component)
             
@@ -119,8 +118,10 @@ async def _list_configs_by_ids(
     for component_id in component_ids:
         # retrieve configurations for component ids
         raw_configurations = await client.storage_client.configuration_list(component_id=component_id)
-        # retrieve components
+        # retrieve component and convert
         raw_component = await client.storage_client.component_detail(component_id=component_id)
+        api_component = APIComponentResponse.model_validate(raw_component)
+        domain_component = ComponentAdapter.to_component_summary(api_component)
         # build component configurations list grouped by components
         raw_configuration_responses = [
             ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
@@ -130,13 +131,6 @@ async def _list_configs_by_ids(
             ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
             for raw_response in raw_configuration_responses
         ]
-
-        # Convert raw component through proper data flow: Raw -> API model -> Domain model
-        from keboola_mcp_server.tools.components.adapters import ComponentAdapter
-        from keboola_mcp_server.tools.components.api_models import APIComponentResponse
-        
-        api_component = APIComponentResponse.model_validate(raw_component)
-        domain_component = ComponentAdapter.to_component_summary(api_component)
         
         components_with_configurations.append(
             ComponentWithConfigurations(
@@ -173,10 +167,6 @@ async def _get_component(
     :param component_id: The ID of the component to retrieve
     :return: The component
     """
-    # Import here to avoid circular imports
-    from keboola_mcp_server.tools.components.adapters import ComponentAdapter
-    from keboola_mcp_server.tools.components.api_models import APIComponentResponse
-
     try:
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component {component_id} from AI service catalog.')

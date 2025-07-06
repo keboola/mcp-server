@@ -10,7 +10,7 @@ from keboola_mcp_server.tools.components.model import Component, ComponentCapabi
 
 
 class ComponentAdapter:
-    """Converts between raw API responses and domain models for components."""
+    """Converts between API response objects and domain models for components."""
 
     @staticmethod
     def to_component_detail(api_response: APIComponentResponse) -> Component:
