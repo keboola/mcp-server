@@ -12,9 +12,9 @@ from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentConfigurationMetadata,
     ComponentConfigurationResponse,
-    ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
+    ComponentSummary,
 )
 
 LOG = logging.getLogger(__name__)
@@ -79,9 +79,16 @@ async def _list_configs_by_types(
                 for raw_response in raw_configuration_responses
             ]
 
+            # Convert raw component through proper data flow: Raw -> API model -> Domain model
+            from keboola_mcp_server.tools.components.adapters import ComponentAdapter
+            from keboola_mcp_server.tools.components.api_models import APIComponentResponse
+            
+            api_component = APIComponentResponse.model_validate(raw_component)
+            domain_component = ComponentAdapter.to_component_summary(api_component)
+            
             components_with_configurations.append(
                 ComponentWithConfigurations(
-                    component=ComponentSummary.model_validate(raw_component),
+                    component=domain_component,
                     configurations=configurations_metadata,
                 )
             )
@@ -124,9 +131,16 @@ async def _list_configs_by_ids(
             for raw_response in raw_configuration_responses
         ]
 
+        # Convert raw component through proper data flow: Raw -> API model -> Domain model
+        from keboola_mcp_server.tools.components.adapters import ComponentAdapter
+        from keboola_mcp_server.tools.components.api_models import APIComponentResponse
+        
+        api_component = APIComponentResponse.model_validate(raw_component)
+        domain_component = ComponentAdapter.to_component_summary(api_component)
+        
         components_with_configurations.append(
             ComponentWithConfigurations(
-                component=ComponentSummary.model_validate(raw_component),
+                component=domain_component,
                 configurations=configurations_metadata,
             )
         )
@@ -142,7 +156,7 @@ async def _list_configs_by_ids(
 async def _get_component(
     client: KeboolaClient,
     component_id: str,
-):
+) -> Component:
     """
     Utility function to retrieve a component by ID using new domain models.
 
