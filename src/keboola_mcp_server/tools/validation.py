@@ -12,7 +12,7 @@ import jsonschema
 import jsonschema.validators
 
 from keboola_mcp_server.client import JsonDict, JsonPrimitive, JsonStruct
-from keboola_mcp_server.tools.components.model import Component
+from keboola_mcp_server.tools.components.domain_models import Component
 from keboola_mcp_server.tools.components.utils import BIGQUERY_TRANSFORMATION_ID, SNOWFLAKE_TRANSFORMATION_ID
 
 LOG = logging.getLogger(__name__)
