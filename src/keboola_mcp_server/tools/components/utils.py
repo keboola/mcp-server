@@ -12,9 +12,9 @@ from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentConfigurationMetadata,
     ComponentConfigurationResponse,
+    ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
-    ReducedComponent,
 )
 
 LOG = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ async def _list_configs_by_types(
 
             components_with_configurations.append(
                 ComponentWithConfigurations(
-                    component=ReducedComponent.model_validate(raw_component),
+                    component=ComponentSummary.model_validate(raw_component),
                     configurations=configurations_metadata,
                 )
             )
@@ -126,7 +126,7 @@ async def _list_configs_by_ids(
 
         components_with_configurations.append(
             ComponentWithConfigurations(
-                component=ReducedComponent.model_validate(raw_component),
+                component=ComponentSummary.model_validate(raw_component),
                 configurations=configurations_metadata,
             )
         )
@@ -142,22 +142,22 @@ async def _list_configs_by_ids(
 async def _get_component(
     client: KeboolaClient,
     component_id: str,
-) -> Component:
+):
     """
-    Utility function to retrieve a component by ID.
+    Utility function to retrieve a component by ID using new domain models.
 
     First tries to get component from the AI service catalog. If the component
     is not found (404) or returns empty data (private components), falls back to using the
     Storage API endpoint.
 
-    Uses new clean data models internally while maintaining backward compatibility.
+    Returns new clean domain models directly without legacy conversion.
 
     Used in tools:
-    - get_config
+    - get_component
 
     :param client: The Keboola client
     :param component_id: The ID of the component to retrieve
-    :return: The component (legacy format for backward compatibility)
+    :return: The component
     """
     # Import here to avoid circular imports
     from keboola_mcp_server.tools.components.adapters import ComponentAdapter
@@ -169,8 +169,7 @@ async def _get_component(
 
         # Convert using unified model and adapter (AI Service response includes documentation metadata)
         component_response = APIComponentResponse.model_validate(raw_component)
-        domain_component = ComponentAdapter.from_raw_response(component_response)
-        return ComponentAdapter.to_legacy_component(domain_component)
+        return ComponentAdapter.to_component_detail(component_response)
 
     except HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -184,8 +183,7 @@ async def _get_component(
 
             # Convert using unified model and adapter (Storage API response will have None for documentation fields)
             component_response = APIComponentResponse.model_validate(raw_component)
-            domain_component = ComponentAdapter.from_raw_response(component_response)
-            return ComponentAdapter.to_legacy_component(domain_component)
+            return ComponentAdapter.to_component_detail(component_response)
         else:
             # If it's not a 404, re-raise the error
             raise

@@ -50,7 +50,12 @@ class APIComponentResponse(BaseModel):
     categories: list[str] = Field(
         default_factory=list,
         description='Component categories',
-        validation_alias=AliasChoices('categories', 'component_categories', 'componentCategories', 'component-categories'),
+        validation_alias=AliasChoices(
+            'categories',
+            'component_categories',
+            'componentCategories',
+            'component-categories',
+        ),
         serialization_alias='componentCategories',
     )
 

@@ -15,10 +15,12 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
 from keboola_mcp_server.tools.components.model import (
     Component,
+    ComponentCapabilities,
     ComponentConfigurationOutput,
     ComponentConfigurationResponse,
     ComponentRootConfiguration,
     ComponentRowConfiguration,
+    ComponentSummary,
     ComponentType,
     ConfigToolOutput,
     ListConfigsOutput,
