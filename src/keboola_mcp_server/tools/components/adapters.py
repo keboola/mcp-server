@@ -6,7 +6,7 @@ into clean domain models for business logic.
 """
 
 from keboola_mcp_server.tools.components.api_models import APIComponentResponse
-from keboola_mcp_server.tools.components.model import Component, ComponentCapabilities, ComponentSummary
+from keboola_mcp_server.tools.components.domain_models import Component, ComponentCapabilities, ComponentSummary
 
 
 class ComponentAdapter:

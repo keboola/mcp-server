@@ -9,7 +9,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.tools.components.adapters import ComponentAdapter
 from keboola_mcp_server.tools.components.api_models import APIComponentResponse
-from keboola_mcp_server.tools.components.model import (
+from keboola_mcp_server.tools.components.domain_models import (
     AllComponentTypes,
     Component,
     ComponentConfigurationMetadata,
@@ -157,8 +157,6 @@ async def _get_component(
     First tries to get component from the AI service catalog. If the component
     is not found (404) or returns empty data (private components), falls back to using the
     Storage API endpoint.
-
-    Returns new clean domain models directly without legacy conversion.
 
     Used in tools:
     - get_component

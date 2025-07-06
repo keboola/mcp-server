@@ -13,7 +13,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
-from keboola_mcp_server.tools.components.model import (
+from keboola_mcp_server.tools.components.domain_models import (
     Component,
     ComponentCapabilities,
     ComponentConfigurationOutput,
