@@ -6,7 +6,7 @@ import os
 from typing import Any, Iterable, Literal, Mapping, Optional, Union, cast
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 LOG = logging.getLogger(__name__)
 
@@ -354,6 +354,26 @@ class KeboolaServiceClient:
         """
         return await self.raw_client.delete(endpoint=endpoint)
 
+
+class GlobalSearchResponse(BaseModel):
+    """The SAPI global search response."""
+
+    all: int = Field(description='Total number of found results.')
+    items: list[dict[str, Any]] = Field(
+        description='List of search results containing the items of the GlobalSearchType.'
+    )
+    by_type: dict[str, JsonPrimitive] = Field(description='Search results grouped by type.', alias='byType')
+    by_project: dict[str, JsonPrimitive] = Field(
+        description='Mapping of project id to project name.', alias='byProject'
+    )  
+
+    @field_validator('by_type', 'by_project', mode='before')
+    @classmethod
+    def validate_dict_fields(cls, current_value: Any) -> Any:
+        # If the value is empty-list, return an empty dictionary, otherwise return the value
+        if not current_value:
+            return dict()
+        return current_value
 
 class AsyncStorageClient(KeboolaServiceClient):
 
@@ -834,7 +854,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         limit: int = 100,
         offset: int = 0,
         types: list[GlobalSearchTypes] | None = None,
-    ) -> JsonDict:
+    ) -> GlobalSearchResponse:
         """
         Searches for items in the storage. It allows you to search for entities by name across all projects within an
         organization, even those you do not have direct access to. The search is conducted only through entity names to
@@ -845,7 +865,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param offset: The offset to start from, pagination parameter.
         :param types: The types of items to search for.
         """
-        params : dict[str, Any] = {
+        params: dict[str, Any] = {
             'query': query,
             'projectIds[]': [await self.project_id()],
             'branchTypes[]': 'production',
@@ -854,7 +874,9 @@ class AsyncStorageClient(KeboolaServiceClient):
             'offset': offset,
         }
         params = {k: v for k, v in params.items() if v}
-        return cast(JsonDict, await self.get(endpoint='global-search', params=params))
+        raw_resp = await self.get(endpoint='global-search', params=params)
+        print(raw_resp)
+        return GlobalSearchResponse.model_validate(raw_resp)
 
     async def table_detail(self, table_id: str) -> JsonDict:
         """
