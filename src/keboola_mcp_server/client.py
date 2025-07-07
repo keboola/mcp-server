@@ -453,13 +453,17 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'buckets/{bucket_id}'))
 
-    async def bucket_list(self) -> list[JsonDict]:
+    async def bucket_list(self, include: list[str] | None = None) -> list[JsonDict]:
         """
         Lists all buckets.
 
+        :param include: List of fields to include in the response ('metadata' or 'linkedBuckets')
         :return: List of buckets as dictionary
         """
-        return cast(list[JsonDict], await self.get(endpoint='buckets'))
+        params = {}
+        if include is not None and isinstance(include, list):
+            params['include'] = ','.join(include)
+        return cast(list[JsonDict], await self.get(endpoint='buckets', params=params))
 
     async def bucket_metadata_delete(self, bucket_id: str, metadata_id: str) -> None:
         """
@@ -937,7 +941,13 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
 
-    async def workspace_create(self, async_run: bool = True, read_only_storage_access: bool = False) -> JsonDict:
+    async def workspace_create(
+        self,
+        login_type: str,
+        backend: str,
+        async_run: bool = True,
+        read_only_storage_access: bool = False,
+    ) -> JsonDict:
         """
         Creates a new workspace.
 
@@ -950,7 +960,11 @@ class AsyncStorageClient(KeboolaServiceClient):
             await self.post(
                 endpoint=f'branch/{self.branch_id}/workspaces',
                 params={'async': async_run},
-                data={'readOnlyStorageAccess': read_only_storage_access},
+                data={
+                    'readOnlyStorageAccess': read_only_storage_access,
+                    'loginType': login_type,
+                    'backend': backend,
+                },
             ),
         )
 
