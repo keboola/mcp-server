@@ -13,7 +13,7 @@ class ComponentAdapter:
     """Converts between API response objects and domain models for components."""
 
     @staticmethod
-    def to_component_detail(api_response: APIComponentResponse) -> Component:
+    def to_component(api_response: APIComponentResponse) -> Component:
         """
         Convert API component response to detailed domain model.
 

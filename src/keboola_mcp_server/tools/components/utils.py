@@ -171,7 +171,7 @@ async def _get_component(
 
         # Convert using unified model and adapter (AI Service response includes documentation metadata)
         component_response = APIComponentResponse.model_validate(raw_component)
-        return ComponentAdapter.to_component_detail(component_response)
+        return ComponentAdapter.to_component(component_response)
 
     except HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -185,7 +185,7 @@ async def _get_component(
 
             # Convert using unified model and adapter (Storage API response will have None for documentation fields)
             component_response = APIComponentResponse.model_validate(raw_component)
-            return ComponentAdapter.to_component_detail(component_response)
+            return ComponentAdapter.to_component(component_response)
         else:
             # If it's not a 404, re-raise the error
             raise
