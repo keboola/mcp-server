@@ -244,7 +244,7 @@ class RawKeboolaClient:
                 headers=headers,
             )
             self._raise_for_status(response)
-            # Handle cases where DELETE might return no content or non-JSON content
+
             if response.content:
                 return cast(JsonStruct, response.json())
 
