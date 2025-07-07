@@ -186,11 +186,16 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    assert isinstance(client, KeboolaClient)
-    raw_bucket_data = await client.storage_client.bucket_list()
+
+    raw_bucket_data = await client.storage_client.bucket_list(include=['metadata'])
+    production_branch_raw_buckets = [
+        bucket
+        for bucket in raw_bucket_data
+        if not (any(meta.get('key') == MetadataField.FAKE_DEVELOPMENT_BRANCH for meta in bucket.get('metadata', [])))
+    ]  # filter out buckets from "Fake development branches"
 
     return ListBucketsOutput(
-        buckets=[BucketDetail.model_validate(bucket) for bucket in raw_bucket_data],
+        buckets=[BucketDetail.model_validate(bucket) for bucket in production_branch_raw_buckets],
         links=[links_manager.get_bucket_dashboard_link()],
     )
 
@@ -304,9 +309,7 @@ async def update_column_description(
     response = await client.storage_client.table_metadata_update(
         table_id=table_id,
         columns_metadata={
-            column_name: [
-                {'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}
-            ]
+            column_name: [{'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}]
         },
     )
     column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
