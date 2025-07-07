@@ -1,0 +1,49 @@
+name: 'Update Version in pyproject.toml'
+description: 'Automatically updates the version in pyproject.toml based on git tag'
+
+inputs:
+  version:
+    description: 'Version to set (without v prefix)'
+    required: true
+  file-path:
+    description: 'Path to pyproject.toml file'
+    required: false
+    default: 'pyproject.toml'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Update version in pyproject.toml
+      shell: bash
+      run: |
+        # Validate version format (semantic versioning)
+        if [[ ! ${{ inputs.version }} =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$ ]]; then
+          echo "Error: Invalid version format. Expected semantic version (e.g., 1.2.3)"
+          exit 1
+        fi
+        
+        # Update the version in pyproject.toml
+        sed -i "s/^version = \".*\"/version = \"${{ inputs.version }}\"/" ${{ inputs.file-path }}
+        echo "✅ Updated ${{ inputs.file-path }} version to ${{ inputs.version }}"
+        
+        # Show the updated version for verification
+        echo "📋 Current version in ${{ inputs.file-path }}:"
+        grep "^version = " ${{ inputs.file-path }}
+
+    - name: Commit and push changes
+      shell: bash
+      run: |
+        # Configure git
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Check if there are changes to commit
+        if git diff --quiet ${{ inputs.file-path }}; then
+          echo "ℹ️ No changes to commit - version already matches"
+        else
+          # Add and commit the changes
+          git add ${{ inputs.file-path }}
+          git commit -m "chore: update version to ${{ inputs.version }} [skip ci]"
+          git push
+          echo "✅ Committed and pushed version update"
+        fi 
