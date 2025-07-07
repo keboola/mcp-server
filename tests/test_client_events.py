@@ -30,23 +30,6 @@ def raw_client_non_storage() -> RawKeboolaClient:
 class TestRawKeboolaClientEventLogic:
     """Test the event sending logic in RawKeboolaClient."""
 
-    def test_should_send_event_true_for_v2_storage_non_event_endpoint(
-        self, raw_client_storage_v2: RawKeboolaClient
-    ):
-        """Test _should_send_event is True for /v2/storage and non-'events' endpoint."""
-        assert raw_client_storage_v2._should_send_event('tables') is True
-        assert raw_client_storage_v2._should_send_event('branch/my_branch/components/comp/configs') is True
-
-    def test_should_send_event_false_for_v2_storage_event_endpoint(self, raw_client_storage_v2: RawKeboolaClient):
-        """Test _should_send_event is False for /v2/storage and 'events' endpoint."""
-        assert raw_client_storage_v2._should_send_event('events') is False
-
-    def test_should_send_event_false_for_non_v2_storage_url(
-        self, raw_client_non_storage: RawKeboolaClient
-    ):
-        """Test _should_send_event is False for non-/v2/storage URL."""
-        assert raw_client_non_storage._should_send_event('jobs') is False
-
     @pytest.mark.asyncio
     async def test_trigger_event_success_payload(self, raw_client_storage_v2: RawKeboolaClient, mocker):
         """Test the payload construction for a successful API call event."""

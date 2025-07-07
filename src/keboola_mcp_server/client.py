@@ -250,11 +250,6 @@ class RawKeboolaClient:
 
             return None
 
-    def _should_send_event(self, endpoint: str) -> bool:
-        """Checks if an event should be sent for this operation."""
-        # Send events only if the base_api_url is for /v2/storage and the current endpoint is not 'events' itself
-        return self.base_api_url.endswith('/v2/storage') and endpoint != 'events'
-
     async def trigger_event(
         self,
         error_obj: Optional[Exception],
