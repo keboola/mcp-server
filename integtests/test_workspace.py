@@ -31,8 +31,14 @@ def dynamic_manager(
         pytest.fail(f'Expecting empty Keboola project {project_id}, but found {metas} in the default branch')
 
     workspaces = storage_client.workspaces.list()
-    # ignore the static workspace
-    workspaces = [w for w in workspaces if w['connection']['schema'] != workspace_schema]
+    # ignore the static workspaces
+    workspaces = [
+        w for w in workspaces
+        if all([
+            w['connection']['schema'] != workspace_schema,
+            w.get('creatorToken', {}).get('description') != 'Background Indexing Token'
+        ])
+    ]
     if workspaces:
         pytest.fail(
             f'Expecting empty Keboola project {project_id}, but found {len(workspaces)} extra workspaces: '
