@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated
+from typing import Annotated, Sequence
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -45,12 +45,13 @@ async def docs_query(
 
     return DocsAnswer(text=answer.text, source_urls=answer.source_urls)
 
+
 @tool_errors()
 @with_session_state()
 async def global_search(
     ctx: Context,
     query: Annotated[str, Field(description='name-based search query')],
-    types: Annotated[list[GlobalSearchTypes], Field(description='Which types of objects to search for.')] = [],
+    types: Annotated[Sequence[GlobalSearchTypes], Field(description='Which types of objects to search for.')] = tuple(),
     limit: Annotated[int, Field(description='The maximum number of items to return.')] = 100,
     offset: Annotated[int, Field(description='The offset to start from.')] = 0,
 ) -> Annotated[str, Field(description='The search results.')]:

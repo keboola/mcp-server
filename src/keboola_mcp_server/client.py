@@ -3,10 +3,10 @@
 import importlib.metadata
 import logging
 import os
-from typing import Any, Iterable, Literal, Mapping, Optional, Union, cast
+from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 LOG = logging.getLogger(__name__)
 
@@ -365,7 +365,7 @@ class GlobalSearchResponse(BaseModel):
     by_type: dict[str, JsonPrimitive] = Field(description='Search results grouped by type.', alias='byType')
     by_project: dict[str, JsonPrimitive] = Field(
         description='Mapping of project id to project name.', alias='byProject'
-    )  
+    )
 
     @field_validator('by_type', 'by_project', mode='before')
     @classmethod
@@ -374,6 +374,7 @@ class GlobalSearchResponse(BaseModel):
         if not current_value:
             return dict()
         return current_value
+
 
 class AsyncStorageClient(KeboolaServiceClient):
 
@@ -853,7 +854,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         query: str,
         limit: int = 100,
         offset: int = 0,
-        types: list[GlobalSearchTypes] | None = None,
+        types: Sequence[GlobalSearchTypes] = tuple(),
     ) -> GlobalSearchResponse:
         """
         Searches for items in the storage. It allows you to search for entities by name across all projects within an
