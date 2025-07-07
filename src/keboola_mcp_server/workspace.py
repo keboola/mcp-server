@@ -219,7 +219,7 @@ class _WspInfo:
 
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
-    MCP_META_KEY = 'KBC.MCP.workspaceId'
+    MCP_META_KEY = 'KBC.McpServer.workspaceId'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'WorkspaceManager':
@@ -283,7 +283,31 @@ class WorkspaceManager:
         :return: The workspace info if the workspace was created successfully, None otherwise.
         """
 
-        resp = await self._client.storage_client.workspace_create(async_run=True, read_only_storage_access=True)
+        # Verify token before creating workspace to ensure it has proper permissions
+        token_info = await self._client.storage_client.verify_token()
+
+        # Check for defaultBackend parameter in token info under owner object
+        owner_info = token_info.get('owner', {})
+        default_backend = owner_info.get('defaultBackend')
+
+        resp = None
+        if default_backend == 'snowflake':
+            resp = await self._client.storage_client.workspace_create(
+                login_type='snowflake-person-sso',
+                backend=default_backend,
+                async_run=True,
+                read_only_storage_access=True
+            )
+        elif default_backend == 'bigquery':
+            resp = await self._client.storage_client.workspace_create(
+                login_type='default',
+                backend=default_backend,
+                async_run=True,
+                read_only_storage_access=True
+            )
+        else:
+            raise ValueError(f'Unexpected default backend: {default_backend}')
+
         assert 'id' in resp, f'Expected job ID in response: {resp}'
         assert isinstance(resp['id'], int)
 
