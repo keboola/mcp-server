@@ -5,7 +5,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import GlobalSearchTypes, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
 
@@ -49,17 +49,20 @@ async def docs_query(
 @with_session_state()
 async def global_search(
     ctx: Context,
-    query: Annotated[str, Field(description='query to search for in the storage')],
+    query: Annotated[str, Field(description='name-based search query')],
     types: Annotated[list[GlobalSearchTypes], Field(description='Which types of objects to search for.')] = [],
     limit: Annotated[int, Field(description='The maximum number of items to return.')] = 100,
     offset: Annotated[int, Field(description='The offset to start from.')] = 0,
 ) -> Annotated[str, Field(description='The search results.')]:
     """
-    Searches for items in the current project storage only for production branch.
-
-    :param query: The query to search for.
-    :param types: The types of items to search for.
-    :param limit: The maximum number of items to return.
-    :param offset: The offset to start from.
+    Performs a name-based search for Keboola entities within the current project and only in the production branch.
+    It supports filtering by entity type and returns results ordered by relevance and creation time.
     """
-    return ''
+
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    if not await client.storage_client.is_enabled('global-search'):
+        raise ValueError('Global search is not enabled in the project. Please enable it in the project settings.')
+
+    ret = await client.storage_client.global_search(query=query, types=types, limit=limit, offset=offset)
+    return ret.model_dump_json()
