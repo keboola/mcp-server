@@ -371,3 +371,145 @@ class ListTransformationsOutput(BaseModel):
     links: List[Link] = Field(
         description='The list of links relevant to the listing of transformation components with configurations.',
     )
+
+
+# ============================================================================
+# NEW CONFIGURATION MODELS (Phase 1 - Non-breaking additions)
+# ============================================================================
+
+
+class ConfigurationRoot(BaseModel):
+    """
+    Domain model for root configuration settings.
+    
+    Represents the main configuration parameters and storage mappings.
+    Contains identical fields to ConfigurationRow - semantic difference only.
+    """
+    
+    # Core identification
+    component_id: str = Field(description='The ID of the component')
+    configuration_id: str = Field(description='The ID of the configuration')
+    name: str = Field(description='The name of the configuration')
+    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    
+    # Versioning and state  
+    version: int = Field(description='The version of the configuration')
+    is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
+    
+    # Configuration content
+    parameters: dict[str, Any] = Field(
+        description='The configuration parameters, adhering to the root configuration schema'
+    )
+    storage: Optional[dict[str, Any]] = Field(
+        default=None,
+        description='The table and/or file input/output mapping configuration'
+    )
+    
+    # Metadata
+    configuration_metadata: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description='Configuration metadata'
+    )
+
+
+class ConfigurationRow(BaseModel):
+    """
+    Domain model for individual row configuration.
+    
+    Represents a specific task/extraction within a configuration.
+    Contains identical fields to ConfigurationRoot - semantic difference only.
+    """
+    
+    # Core identification  
+    component_id: str = Field(description='The ID of the component')
+    configuration_id: str = Field(description='The ID of the parent configuration')
+    row_id: str = Field(description='The ID of this row configuration')
+    name: str = Field(description='The name of the row configuration')
+    description: Optional[str] = Field(default=None, description='The description of the row configuration')
+    
+    # Versioning and state
+    version: int = Field(description='The version of the row configuration')
+    is_disabled: bool = Field(default=False, description='Whether the row configuration is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the row configuration is deleted')
+    
+    # Configuration content
+    parameters: dict[str, Any] = Field(
+        description='The row configuration parameters, adhering to the row configuration schema'
+    )
+    storage: Optional[dict[str, Any]] = Field(
+        default=None,
+        description='The table and/or file input/output mapping configuration'
+    )
+    
+    # Metadata
+    configuration_metadata: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description='Row configuration metadata'
+    )
+
+
+class ConfigurationSummary(BaseModel):
+    """
+    Lightweight domain model for configuration listings.
+    
+    Contains essential configuration data without heavyweight component details or links.
+    Used by list operations and groupings where many configurations are returned.
+    """
+    
+    # Core identification
+    component_id: str = Field(description='The ID of the component')
+    configuration_id: str = Field(description='The ID of the configuration')
+    name: str = Field(description='The name of the configuration')
+    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    
+    # State information
+    is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
+    
+    # Configuration structure
+    root_configuration: ConfigurationRoot = Field(
+        description='The root configuration of this configuration'
+    )
+    row_configurations: Optional[list[ConfigurationRow]] = Field(
+        default=None,
+        description='The row configurations within this configuration'
+    )
+
+
+class Configuration(BaseModel):
+    """
+    Full domain model for detailed configuration views.
+    
+    Contains complete configuration data including component details and UI links.
+    Used by get operations where detailed configuration information is needed.
+    """
+    
+    # Core identification
+    component_id: str = Field(description='The ID of the component')
+    configuration_id: str = Field(description='The ID of the configuration')
+    name: str = Field(description='The name of the configuration')
+    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    
+    # State information
+    is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
+    
+    # Configuration structure
+    root_configuration: ConfigurationRoot = Field(
+        description='The root configuration of this configuration'
+    )
+    row_configurations: Optional[list[ConfigurationRow]] = Field(
+        default=None,
+        description='The row configurations within this configuration'
+    )
+    
+    # Additional context (for detailed views)
+    component: Optional[Component] = Field(
+        default=None,
+        description='The component this configuration belongs to'
+    )
+    links: list[Link] = Field(
+        default_factory=list,
+        description='MCP-specific links for UI navigation'
+    )
