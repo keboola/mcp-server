@@ -29,7 +29,7 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.tools.components.api_models import APIComponentResponse, APIConfigurationResponse
-from keboola_mcp_server.tools.components.domain_models import (
+from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     ComponentSummary,
     ComponentType,

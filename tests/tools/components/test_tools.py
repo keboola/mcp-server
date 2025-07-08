@@ -6,27 +6,28 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components import (
+from keboola_mcp_server.tools.components.model import (
+    ComponentSummary,
     ComponentWithConfigurations,
+    ConfigToolOutput,
+    Configuration,
+    ConfigurationRootSummary,
+    ConfigurationSummary,
+    ListConfigsOutput,
+    ListTransformationsOutput,
+)
+from keboola_mcp_server.tools.components.tools import (
     add_config_row,
     create_config,
     create_sql_transformation,
     get_config,
+    get_config_examples,
     list_configs,
     list_transformations,
     update_config,
     update_config_row,
     update_sql_transformation,
 )
-from keboola_mcp_server.tools.components.model import (
-    ComponentConfigurationMetadata,
-    ComponentConfigurationOutput,
-    ComponentConfigurationResponseBase,
-    ConfigToolOutput,
-    ListConfigsOutput,
-    ListTransformationsOutput
-)
-from keboola_mcp_server.tools.components.tools import get_config_examples
 from keboola_mcp_server.tools.components.utils import TransformationConfiguration, _clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -52,10 +53,10 @@ def assert_retrieve_components() -> Callable[
         assert len(components_with_configurations) == len(components)
         # assert basics
         assert all(isinstance(component, ComponentWithConfigurations) for component in components_with_configurations)
-        assert all(isinstance(component.component, ReducedComponent) for component in components_with_configurations)
+        assert all(isinstance(component.component, ComponentSummary) for component in components_with_configurations)
         assert all(isinstance(component.configurations, list) for component in components_with_configurations)
         assert all(
-            all(isinstance(config, ComponentConfigurationMetadata) for config in component.configurations)
+            all(isinstance(config, ConfigurationSummary) for config in component.configurations)
             for component in components_with_configurations
         )
         # assert component list details
@@ -77,7 +78,7 @@ def assert_retrieve_components() -> Callable[
         assert all(len(component.configurations) == len(configurations) for component in components_with_configurations)
         assert all(
             all(
-                isinstance(config.root_configuration, ComponentConfigurationResponseBase)
+                isinstance(config.root_configuration, ConfigurationRootSummary)
                 for config in component.configurations
             )
             for component in components_with_configurations
@@ -92,7 +93,7 @@ def assert_retrieve_components() -> Callable[
         )
         assert all(
             all(
-                config.root_configuration.configuration_name == expected['name']
+                config.root_configuration.name == expected['name']
                 for config, expected in zip(component.configurations, configurations)
             )
             for component in components_with_configurations
@@ -234,9 +235,9 @@ async def test_get_config(
         ctx=context,
     )
 
-    assert isinstance(result, ComponentConfigurationOutput)
+    assert isinstance(result, Configuration)
     assert result.root_configuration.configuration_id == mock_configuration['id']
-    assert result.root_configuration.configuration_name == mock_configuration['name']
+    assert result.root_configuration.name == mock_configuration['name']
     assert result.component is not None
     assert result.component.component_id == mock_component['id']
     assert result.component.component_name == mock_component['name']
