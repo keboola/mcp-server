@@ -24,8 +24,7 @@ from keboola_mcp_server.tools.components.domain_models import (
     ComponentConfigurationResponseBase,
     ConfigToolOutput,
     ListConfigsOutput,
-    ListTransformationsOutput,
-    ReducedComponent,
+    ListTransformationsOutput
 )
 from keboola_mcp_server.tools.components.tools import get_config_examples
 from keboola_mcp_server.tools.components.utils import TransformationConfiguration, _clean_bucket_name
