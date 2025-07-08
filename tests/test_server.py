@@ -36,6 +36,7 @@ class TestServer:
             'get_project_info',
             'get_sql_dialect',
             'get_table',
+            'global_search',
             'list_buckets',
             'list_configs',
             'list_flows',
