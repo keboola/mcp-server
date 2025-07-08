@@ -10,7 +10,7 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.tools.components.domain_models import ComponentConfigurationOutput
+from keboola_mcp_server.tools.components.model import ComponentConfigurationOutput
 from keboola_mcp_server.workspace import WorkspaceManager
 
 

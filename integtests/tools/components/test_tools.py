@@ -8,7 +8,7 @@ from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.domain_models import (
+from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentType,
     ComponentWithConfigurations,

@@ -16,7 +16,7 @@ import jsonschema
 import pytest
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.tools.components.domain_models import Component
+from keboola_mcp_server.tools.components.model import Component
 from keboola_mcp_server.tools.validation import KeboolaParametersValidator
 
 LOG = logging.getLogger(__name__)
