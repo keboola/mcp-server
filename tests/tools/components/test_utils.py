@@ -2,7 +2,7 @@ from typing import Sequence, Union
 
 import pytest
 
-from keboola_mcp_server.tools.components.domain_models import ComponentType
+from keboola_mcp_server.tools.components.model import ComponentType
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
     _clean_bucket_name,
