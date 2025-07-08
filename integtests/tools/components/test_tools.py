@@ -13,6 +13,7 @@ from keboola_mcp_server.tools.components.domain_models import (
     ComponentConfigurationOutput,
     ComponentType,
     ComponentWithConfigurations,
+    Configuration,
     ConfigToolOutput,
     ListConfigsOutput,
     ListTransformationsOutput,
@@ -47,22 +48,22 @@ async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
     for config in configs:
         assert config.configuration_id is not None
 
-        result = await get_config(
+        configuration = await get_config(
             component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context
         )
 
-        assert isinstance(result, ComponentConfigurationOutput)
-        assert result.component is not None
-        assert result.component.component_id == config.component_id
-        assert result.component.component_type is not None
-        assert result.component.component_name is not None
+        assert isinstance(configuration, Configuration)
+        assert configuration.component is not None
+        assert configuration.component.component_id == config.component_id
+        assert configuration.component.component_type is not None
+        assert configuration.component.component_name is not None
 
-        assert result.root_configuration is not None
-        assert result.root_configuration.configuration_id == config.configuration_id
-        assert result.root_configuration.component_id == config.component_id
+        assert configuration.root_configuration is not None
+        assert configuration.root_configuration.configuration_id == config.configuration_id
+        assert configuration.root_configuration.component_id == config.component_id
         # Check links field
-        assert result.links, 'Links list should not be empty.'
-        for link in result.links:
+        assert configuration.links, 'Links list should not be empty.'
+        for link in configuration.links:
             assert isinstance(link, Link)
 
 

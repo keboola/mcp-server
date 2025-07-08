@@ -7,7 +7,7 @@ import pytest
 
 from keboola_mcp_server.client import JsonDict
 from keboola_mcp_server.tools import validation
-from keboola_mcp_server.tools.components.model import Component
+from keboola_mcp_server.tools.components.domain_models import Component
 
 
 @pytest.mark.parametrize(

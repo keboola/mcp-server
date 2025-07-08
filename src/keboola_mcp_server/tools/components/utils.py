@@ -14,9 +14,9 @@ from keboola_mcp_server.tools.components.domain_models import (
     Component,
     ComponentConfigurationMetadata,
     ComponentConfigurationResponse,
+    ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
-    ComponentSummary,
 )
 
 LOG = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ async def _list_configs_by_types(
             # Convert raw component through proper data flow: Raw -> API model -> Domain model
             api_component = APIComponentResponse.model_validate(raw_component)
             domain_component = ComponentAdapter.to_component_summary(api_component)
-            
+
             components_with_configurations.append(
                 ComponentWithConfigurations(
                     component=domain_component,
@@ -131,7 +131,7 @@ async def _list_configs_by_ids(
             ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
             for raw_response in raw_configuration_responses
         ]
-        
+
         components_with_configurations.append(
             ComponentWithConfigurations(
                 component=domain_component,
@@ -147,12 +147,12 @@ async def _list_configs_by_ids(
     return components_with_configurations
 
 
-async def _get_component(
+async def _fetch_component(
     client: KeboolaClient,
     component_id: str,
-) -> Component:
+) -> APIComponentResponse:
     """
-    Utility function to retrieve a component by ID using new domain models.
+    Utility function to fetch a component by ID, returning the raw API response.
 
     First tries to get component from the AI service catalog. If the component
     is not found (404) or returns empty data (private components), falls back to using the
@@ -163,15 +163,14 @@ async def _get_component(
 
     :param client: The Keboola client
     :param component_id: The ID of the component to retrieve
-    :return: The component
+    :return: The raw API component response
     """
     try:
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component {component_id} from AI service catalog.')
 
-        # Convert using unified model and adapter (AI Service response includes documentation metadata)
-        component_response = APIComponentResponse.model_validate(raw_component)
-        return ComponentAdapter.to_component(component_response)
+        # Return the unified API response model (AI Service response includes documentation metadata)
+        return APIComponentResponse.model_validate(raw_component)
 
     except HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -183,9 +182,8 @@ async def _get_component(
             raw_component = await client.storage_client.component_detail(component_id=component_id)
             LOG.info(f'Retrieved component {component_id} from Storage API.')
 
-            # Convert using unified model and adapter (Storage API response will have None for documentation fields)
-            component_response = APIComponentResponse.model_validate(raw_component)
-            return ComponentAdapter.to_component(component_response)
+            # Return the unified API response model (Storage API response will have None for documentation fields)
+            return APIComponentResponse.model_validate(raw_component)
         else:
             # If it's not a 404, re-raise the error
             raise

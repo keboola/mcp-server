@@ -1,9 +1,10 @@
 from datetime import datetime
 from typing import Any, List, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.tools.components.api_models import APIComponentResponse, APIConfigurationResponse
 
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
@@ -120,6 +121,26 @@ class ComponentCapabilities(BaseModel):
         serialization_alias='hasOauth',
     )
 
+    @classmethod
+    def from_flags(cls, flags: list[str]) -> 'ComponentCapabilities':
+        """
+        Derive component capabilities from developer portal flags.
+
+        :param flags: List of developer portal flags
+        :return: Component capabilities
+        """
+        return cls(
+            is_row_based='genericDockerUI-rows' in flags,
+            has_table_input=any(flag in flags for flag in [
+                'genericDockerUI-tableInput',
+                'genericDockerUI-simpleTableInput'
+            ]),
+            has_table_output='genericDockerUI-tableOutput' in flags,
+            has_file_input='genericDockerUI-fileInput' in flags,
+            has_file_output='genericDockerUI-fileOutput' in flags,
+            requires_oauth='genericDockerUI-authorization' in flags,
+        )
+
 
 class Component(BaseModel):
     """
@@ -184,6 +205,28 @@ class Component(BaseModel):
     # Optional MCP-specific metadata (populated when needed)
     links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
 
+    @classmethod
+    def from_api_response(cls, api_response: APIComponentResponse) -> 'Component':
+        """
+        Create Component from API response.
+
+        :param api_response: Parsed API response (works for both Storage API and AI Service API)
+        :return: Full component domain model with detailed metadata
+        """
+        capabilities = ComponentCapabilities.from_flags(api_response.flags)
+
+        return cls(
+            component_id=api_response.component_id,
+            component_name=api_response.component_name,
+            component_type=api_response.type,
+            component_categories=api_response.categories,
+            capabilities=capabilities,
+            documentation_url=api_response.documentation_url,
+            documentation=api_response.documentation,
+            configuration_schema=api_response.configuration_schema,
+            configuration_row_schema=api_response.configuration_row_schema,
+        )
+
 
 class ComponentSummary(BaseModel):
     """
@@ -210,6 +253,23 @@ class ComponentSummary(BaseModel):
         serialization_alias='componentType',
     )
     capabilities: ComponentCapabilities = Field(description='Component capabilities')
+
+    @classmethod
+    def from_api_response(cls, api_response: APIComponentResponse) -> 'ComponentSummary':
+        """
+        Create ComponentSummary from API response.
+
+        :param api_response: Parsed API response (works for both Storage API and AI Service API)
+        :return: Lightweight component domain model for list operations
+        """
+        capabilities = ComponentCapabilities.from_flags(api_response.flags)
+
+        return cls(
+            component_id=api_response.component_id,
+            component_name=api_response.component_name,
+            component_type=api_response.type,
+            capabilities=capabilities,
+        )
 
 
 class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
@@ -381,22 +441,22 @@ class ListTransformationsOutput(BaseModel):
 class ConfigurationRoot(BaseModel):
     """
     Domain model for root configuration settings.
-    
+
     Represents the main configuration parameters and storage mappings.
     Contains identical fields to ConfigurationRow - semantic difference only.
     """
-    
+
     # Core identification
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of the configuration')
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
-    
-    # Versioning and state  
+
+    # Versioning and state
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
-    
+
     # Configuration content
     parameters: dict[str, Any] = Field(
         description='The configuration parameters, adhering to the root configuration schema'
@@ -405,34 +465,54 @@ class ConfigurationRoot(BaseModel):
         default=None,
         description='The table and/or file input/output mapping configuration'
     )
-    
+
     # Metadata
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list,
         description='Configuration metadata'
     )
 
+    @classmethod
+    def from_api_response(cls, api_config: 'APIConfigurationResponse') -> 'ConfigurationRoot':
+        """
+        Create ConfigurationRoot from API response.
+
+        Handles the flattening of nested configuration.parameters and configuration.storage.
+        """
+        return cls(
+            component_id=api_config.component_id,
+            configuration_id=api_config.configuration_id,
+            name=api_config.name,
+            description=api_config.description,
+            version=api_config.version,
+            is_disabled=api_config.is_disabled,
+            is_deleted=api_config.is_deleted,
+            parameters=api_config.configuration.get('parameters', {}),
+            storage=api_config.configuration.get('storage'),
+            configuration_metadata=api_config.metadata,
+        )
+
 
 class ConfigurationRow(BaseModel):
     """
     Domain model for individual row configuration.
-    
+
     Represents a specific task/extraction within a configuration.
     Contains identical fields to ConfigurationRoot - semantic difference only.
     """
-    
-    # Core identification  
+
+    # Core identification
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of the parent configuration')
     row_id: str = Field(description='The ID of this row configuration')
     name: str = Field(description='The name of the row configuration')
     description: Optional[str] = Field(default=None, description='The description of the row configuration')
-    
+
     # Versioning and state
     version: int = Field(description='The version of the row configuration')
     is_disabled: bool = Field(default=False, description='Whether the row configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the row configuration is deleted')
-    
+
     # Configuration content
     parameters: dict[str, Any] = Field(
         description='The row configuration parameters, adhering to the row configuration schema'
@@ -441,60 +521,79 @@ class ConfigurationRow(BaseModel):
         default=None,
         description='The table and/or file input/output mapping configuration'
     )
-    
+
     # Metadata
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list,
         description='Row configuration metadata'
     )
 
+    @classmethod
+    def from_api_row_data(
+        cls,
+        row_data: dict[str, Any],
+        component_id: str,
+        configuration_id: str,
+    ) -> 'ConfigurationRow':
+        """
+        Create ConfigurationRow from API row data.
+
+        Row data comes from the 'rows' array in the main configuration response.
+        """
+        return cls(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            row_id=row_data.get('id', ''),
+            name=row_data.get('name', ''),
+            description=row_data.get('description'),
+            version=row_data.get('version', 0),
+            is_disabled=row_data.get('isDisabled', False),
+            is_deleted=row_data.get('isDeleted', False),
+            parameters=row_data.get('configuration', {}).get('parameters', {}),
+            storage=row_data.get('configuration', {}).get('storage'),
+            configuration_metadata=row_data.get('metadata', []),
+        )
+
 
 class ConfigurationSummary(BaseModel):
     """
     Lightweight domain model for configuration listings.
-    
-    Contains essential configuration data without heavyweight component details or links.
+
+    Contains only essential metadata without heavyweight configuration data.
     Used by list operations and groupings where many configurations are returned.
     """
-    
+
     # Core identification
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of the configuration')
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
-    
+
     # State information
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
-    
-    # Configuration structure
-    root_configuration: ConfigurationRoot = Field(
-        description='The root configuration of this configuration'
-    )
-    row_configurations: Optional[list[ConfigurationRow]] = Field(
-        default=None,
-        description='The row configurations within this configuration'
-    )
+
+    @classmethod
+    def from_api_response(cls, api_config: 'APIConfigurationResponse') -> 'ConfigurationSummary':
+        """Create ConfigurationSummary from API response."""
+        return cls(
+            component_id=api_config.component_id,
+            configuration_id=api_config.configuration_id,
+            name=api_config.name,
+            description=api_config.description,
+            is_disabled=api_config.is_disabled,
+            is_deleted=api_config.is_deleted,
+        )
 
 
 class Configuration(BaseModel):
     """
     Full domain model for detailed configuration views.
-    
-    Contains complete configuration data including component details and UI links.
+
+    Contains complete configuration data including component summary and UI links.
     Used by get operations where detailed configuration information is needed.
     """
-    
-    # Core identification
-    component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of the configuration')
-    name: str = Field(description='The name of the configuration')
-    description: Optional[str] = Field(default=None, description='The description of the configuration')
-    
-    # State information
-    is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
-    is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
-    
+
     # Configuration structure
     root_configuration: ConfigurationRoot = Field(
         description='The root configuration of this configuration'
@@ -503,9 +602,9 @@ class Configuration(BaseModel):
         default=None,
         description='The row configurations within this configuration'
     )
-    
-    # Additional context (for detailed views)
-    component: Optional[Component] = Field(
+
+    # Additional context
+    component: Optional[ComponentSummary] = Field(
         default=None,
         description='The component this configuration belongs to'
     )
@@ -513,3 +612,45 @@ class Configuration(BaseModel):
         default_factory=list,
         description='MCP-specific links for UI navigation'
     )
+
+    @classmethod
+    def from_api_response(
+        cls,
+        api_config: 'APIConfigurationResponse',
+        component: Optional[ComponentSummary] = None,
+        links: Optional[list[Link]] = None,
+    ) -> 'Configuration':
+        """
+        Create Configuration from API response.
+
+        Converts the API response into a full domain model with root and row configurations.
+        """
+        # Create root configuration
+        root_config = ConfigurationRoot.from_api_response(api_config)
+
+        # Create row configurations if they exist
+        row_configs = None
+        if api_config.rows:
+            row_configs = []
+            for row_data in api_config.rows:
+                if row_data is None:
+                    continue
+                row_config = ConfigurationRow.from_api_row_data(
+                    row_data=row_data,
+                    component_id=api_config.component_id,
+                    configuration_id=api_config.configuration_id,
+                )
+                row_configs.append(row_config)
+
+        return cls(
+            component_id=api_config.component_id,
+            configuration_id=api_config.configuration_id,
+            name=api_config.name,
+            description=api_config.description,
+            is_disabled=api_config.is_disabled,
+            is_deleted=api_config.is_deleted,
+            root_configuration=root_config,
+            row_configurations=row_configs,
+            component=component,
+            links=links or [],
+        )

@@ -5,7 +5,7 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
+from keboola_mcp_server.tools.components.domain_models import ComponentConfigurationResponseBase
 
 
 class ListFlowsOutput(BaseModel):

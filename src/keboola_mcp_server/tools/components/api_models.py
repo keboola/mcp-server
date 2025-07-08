@@ -89,14 +89,14 @@ class APIComponentResponse(BaseModel):
 class APIConfigurationResponse(BaseModel):
     """
     Raw API response for configuration endpoints.
-    
+
     Mirrors the actual JSON structure returned by Keboola Storage API for:
     - configuration_detail()
-    - configuration_list() 
+    - configuration_list()
     - configuration_create()
     - configuration_update()
     """
-    
+
     # Core identification fields
     component_id: str = Field(
         description='The ID of the component',
@@ -110,7 +110,7 @@ class APIConfigurationResponse(BaseModel):
     )
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
-    
+
     # Versioning and state
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(
@@ -125,18 +125,18 @@ class APIConfigurationResponse(BaseModel):
         validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
         serialization_alias='isDeleted',
     )
-    
+
     # Nested configuration data (as returned by API)
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters and storage'
     )
-    
+
     # Row configurations (if present)
     rows: Optional[list[dict[str, Any]]] = Field(
         default=None,
         description='The row configurations within this configuration'
     )
-    
+
     # Change tracking
     change_description: Optional[str] = Field(
         default=None,
@@ -144,7 +144,7 @@ class APIConfigurationResponse(BaseModel):
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
         serialization_alias='changeDescription',
     )
-    
+
     # Metadata
     metadata: list[dict[str, Any]] = Field(
         default_factory=list,

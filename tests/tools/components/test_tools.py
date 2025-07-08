@@ -18,7 +18,7 @@ from keboola_mcp_server.tools.components import (
     update_config_row,
     update_sql_transformation,
 )
-from keboola_mcp_server.tools.components.model import (
+from keboola_mcp_server.tools.components.domain_models import (
     ComponentConfigurationMetadata,
     ComponentConfigurationOutput,
     ComponentConfigurationResponseBase,
