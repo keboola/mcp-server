@@ -880,7 +880,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         }
         params = {k: v for k, v in params.items() if v}
         raw_resp = await self.get(endpoint='global-search', params=params)
-        print(raw_resp)
         return GlobalSearchResponse.model_validate(raw_resp)
 
     async def table_detail(self, table_id: str) -> JsonDict:
