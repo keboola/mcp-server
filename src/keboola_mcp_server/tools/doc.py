@@ -1,5 +1,5 @@
-from datetime import datetime
 import logging
+from datetime import datetime
 from typing import Annotated, Any, Sequence
 
 from fastmcp import Context, FastMCP
@@ -38,6 +38,7 @@ class GlobalSearchAnswer(BaseModel):
 
     class Item(BaseModel):
         """An item found in the global search."""
+
         name: str = Field(description='The name of the item.')
         id: str = Field(description='The id of the item.')
         type: GlobalSearchTypes = Field(description='The type of the item.')
@@ -65,9 +66,9 @@ class GlobalSearchAnswer(BaseModel):
 
     total_count: int = Field(description='Total number of items found in the global search.')
     counts_by_type: dict[str, int] = Field(description='Number of items found by type.')
-    items: list[Item] = Field(description=(
-        'List of items found in the global search, sorted by relevance and creation time.'
-    ))
+    items: list[Item] = Field(
+        description=('List of items found in the global search, sorted by relevance and creation time.')
+    )
 
     @classmethod
     def from_api_response(cls, response: GlobalSearchResponse) -> 'GlobalSearchAnswer':
@@ -77,6 +78,7 @@ class GlobalSearchAnswer(BaseModel):
             total_count=response.all,
             counts_by_type=response.by_type,
         )
+
 
 @tool_errors()
 @with_session_state()
