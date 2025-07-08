@@ -35,3 +35,6 @@ class TestAsyncStorageClient:
         ret = await storage_client.global_search(query=search_for_name, types=['table'])
         assert isinstance(ret, GlobalSearchResponse)
         assert ret.all == len(tables)
+        assert len(ret.items) == len(tables)
+        assert all(isinstance(item, GlobalSearchResponse.GlobalSearchResponseItem) for item in ret.items)
+        assert all(item.type == 'table' for item in ret.items)
