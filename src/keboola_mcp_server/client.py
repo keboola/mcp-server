@@ -3,6 +3,7 @@
 import importlib.metadata
 import logging
 import os
+from datetime import datetime
 from typing import Any, Iterable, Literal, Mapping, Optional, Union, cast
 
 import httpx
@@ -358,19 +359,40 @@ class KeboolaServiceClient:
 class GlobalSearchResponse(BaseModel):
     """The SAPI global search response."""
 
+    class GlobalSearchResponseItem(BaseModel):
+        id: str = Field(description='The id of the item.')
+        name: str = Field(description='The name of the item.')
+        type: GlobalSearchTypes = Field(description='The type of the item.')
+        full_path: dict[str, Any] = Field(
+            description=(
+                'The full path of the item containing project, branch and other information depending on the '
+                'type of the item.'
+            ),
+            alias='fullPath',
+        )
+        component_id: Optional[str] = Field(
+            default=None, description='The id of the component the item belongs to.', alias='componentId'
+        )
+        organization_id: int = Field(
+            description='The id of the organization the item belongs to.', alias='organizationId'
+        )
+        project_id: int = Field(description='The id of the project the item belongs to.', alias='projectId')
+        project_name: str = Field(description='The name of the project the item belongs to.', alias='projectName')
+        created: datetime = Field(description='The date and time the item was created in ISO format.')
+
     all: int = Field(description='Total number of found results.')
-    items: list[dict[str, Any]] = Field(
+    items: list[GlobalSearchResponseItem] = Field(
         description='List of search results containing the items of the GlobalSearchType.'
     )
-    by_type: dict[str, JsonPrimitive] = Field(description='Search results grouped by type.', alias='byType')
-    by_project: dict[str, JsonPrimitive] = Field(
-        description='Mapping of project id to project name.', alias='byProject'
+    by_type: dict[str, int] = Field(
+        description='Mapping of found types to the number of corresponding results.', alias='byType'
     )
+    by_project: dict[str, str] = Field(description='Mapping of project id to project name.', alias='byProject')
 
     @field_validator('by_type', 'by_project', mode='before')
     @classmethod
     def validate_dict_fields(cls, current_value: Any) -> Any:
-        # If the value is empty-list, return an empty dictionary, otherwise return the value
+        # If the value is empty-list/None, return an empty dictionary, otherwise return the value
         if not current_value:
             return dict()
         return current_value
