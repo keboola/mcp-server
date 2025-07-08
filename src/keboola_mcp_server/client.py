@@ -3,7 +3,7 @@
 import importlib.metadata
 import logging
 import os
-from typing import Any, Literal, Mapping, Optional, Union, cast
+from typing import Any, Iterable, Literal, Mapping, Optional, Union, cast
 
 import httpx
 from pydantic import BaseModel, Field
@@ -16,6 +16,23 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 ComponentResource = Literal['configuration', 'rows', 'state']
+
+# Project features that can be checked with the is_enabled method
+ProjectFeature = Literal['global-search']
+# Input types for the global search endpoint parameters
+GlobalSearchBranchTypes = Literal['production', 'development']
+GlobalSearchTypes = Literal[
+    'flow',
+    'bucket',
+    'table',
+    'transformation',
+    'configuration',
+    'configuration-row',
+    'workspace',
+    'shared-code',
+    'rows',
+    'state',
+]
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 
@@ -815,6 +832,34 @@ class AsyncStorageClient(KeboolaServiceClient):
             updated_description=description,
         )
 
+    async def global_search(
+        self,
+        query: str,
+        limit: int = 100,
+        offset: int = 0,
+        types: list[GlobalSearchTypes] | None = None,
+    ) -> JsonDict:
+        """
+        Searches for items in the storage. It allows you to search for entities by name across all projects within an
+        organization, even those you do not have direct access to. The search is conducted only through entity names to
+        ensure confidentiality. We restrict the search to the project and branch production type of the user.
+
+        :param query: The query to search for.
+        :param limit: The maximum number of items to return.
+        :param offset: The offset to start from, pagination parameter.
+        :param types: The types of items to search for.
+        """
+        params : dict[str, Any] = {
+            'query': query,
+            'projectIds[]': [await self.project_id()],
+            'branchTypes[]': 'production',
+            'types[]': types,
+            'limit': limit,
+            'offset': offset,
+        }
+        params = {k: v for k, v in params.items() if v}
+        return cast(JsonDict, await self.get(endpoint='global-search', params=params))
+
     async def table_detail(self, table_id: str) -> JsonDict:
         """
         Retrieves information about a given table.
@@ -948,6 +993,18 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
         return str(raw_data['owner']['id'])
+
+    async def is_enabled(self, features: ProjectFeature | Iterable[ProjectFeature]) -> bool:
+        """
+        Checks if the features are enabled in the project - conjunction of features.
+        :param features: The features to check.
+        :return: True if the features are enabled, False otherwise.
+        """
+        features = features if isinstance(features, Iterable) else [features]
+        verified_info = await self.verify_token()
+        project_data = cast(JsonDict, verified_info['owner'])
+        project_features = cast(list[str], project_data.get('features', []))
+        return all(feature in project_features for feature in features)
 
 
 class JobsQueueClient(KeboolaServiceClient):
