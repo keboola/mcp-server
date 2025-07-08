@@ -10,11 +10,10 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.domain_models import (
     Component,
-    ComponentConfigurationOutput,
     ComponentType,
     ComponentWithConfigurations,
-    Configuration,
     ConfigToolOutput,
+    Configuration,
     ListConfigsOutput,
     ListTransformationsOutput,
 )

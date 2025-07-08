@@ -1,3 +1,30 @@
+"""
+Keboola Component Management Tools for MCP Server.
+
+This module provides the core tools for managing Keboola components and their configurations
+through the Model Context Protocol (MCP) interface. It serves as the main entry point for
+component-related operations in the MCP server.
+
+## Tool Categories
+
+### Component Discovery
+- `get_component`: Retrieve detailed component information including schemas
+- `find_component_id`: Search for components by natural language query
+- `get_config_examples`: Get sample configuration examples for a component
+
+### Configuration Management
+- `get_config`: Retrieve detailed configuration with root + row structure
+- `list_configs`: List all component configurations (with filtering)
+- `create_config`: Create new root component configurations
+- `update_config`: Update existing root configurations
+- `add_config_row`: Add new configuration rows to existing configurations
+- `update_config_row`: Update existing configuration rows
+
+### SQL Transformations
+- `list_transformations`: List transformation configurations
+- `create_sql_transformation`: Create new SQL transformations with code blocks
+- `update_sql_transformation`: Update existing SQL transformation configurations
+"""
 import json
 import logging
 from datetime import datetime
@@ -16,11 +43,6 @@ from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, 
 from keboola_mcp_server.tools.components.api_models import APIConfigurationResponse
 from keboola_mcp_server.tools.components.domain_models import (
     Component,
-    ComponentCapabilities,
-    ComponentConfigurationOutput,
-    ComponentConfigurationResponse,
-    ComponentRootConfiguration,
-    ComponentRowConfiguration,
     ComponentSummary,
     ComponentType,
     ConfigToolOutput,
@@ -48,27 +70,36 @@ from keboola_mcp_server.tools.validation import (
 LOG = logging.getLogger(__name__)
 
 
-# Add component tools to the MCP server #########################################
+# ============================================================================
+# TOOL REGISTRATION
+# ============================================================================
+
 def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
-
+    # Component discovery tools
     mcp.add_tool(FunctionTool.from_function(get_component))
+    mcp.add_tool(FunctionTool.from_function(find_component_id))
+    mcp.add_tool(FunctionTool.from_function(get_config_examples))
+
+    # Configuration management tools
     mcp.add_tool(FunctionTool.from_function(get_config))
     mcp.add_tool(FunctionTool.from_function(list_configs, serializer=listing_output_serializer))
     mcp.add_tool(FunctionTool.from_function(create_config))
-    mcp.add_tool(FunctionTool.from_function(add_config_row))
     mcp.add_tool(FunctionTool.from_function(update_config))
+    mcp.add_tool(FunctionTool.from_function(add_config_row))
     mcp.add_tool(FunctionTool.from_function(update_config_row))
-    mcp.add_tool(FunctionTool.from_function(get_config_examples))
-    mcp.add_tool(FunctionTool.from_function(find_component_id))
+
+    # SQL transformation tools
+    mcp.add_tool(FunctionTool.from_function(list_transformations, serializer=listing_output_serializer))
     mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
     mcp.add_tool(FunctionTool.from_function(update_sql_transformation))
-    mcp.add_tool(FunctionTool.from_function(list_transformations))
 
     LOG.info('Component tools added to the MCP server.')
 
 
-# tools #########################################
+# ============================================================================
+# Configuration LISTING TOOLS
+# ============================================================================
 
 
 @tool_errors()
@@ -167,6 +198,10 @@ async def list_transformations(
     )
 
 
+# ============================================================================
+# COMPONENT DISCOVERY TOOLS
+# ============================================================================
+
 @tool_errors()
 @with_session_state()
 async def get_component(
@@ -249,6 +284,10 @@ async def get_config(
 
     return configuration
 
+
+# ============================================================================
+# CONFIGURATION MANAGEMENT TOOLS
+# ============================================================================
 
 async def _set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
     """Sets configuration metadata to indicate it was created by MCP."""
