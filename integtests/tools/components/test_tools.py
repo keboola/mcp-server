@@ -42,7 +42,7 @@ LOG = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_config` returns a `ComponentConfigurationOutput` instance."""
+    """Tests that `get_config` returns a `Configuration` instance."""
 
     for config in configs:
         assert config.configuration_id is not None

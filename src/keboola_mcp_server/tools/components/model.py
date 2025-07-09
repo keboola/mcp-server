@@ -28,11 +28,8 @@ from individual tasks:
 - ListConfigsOutput: Response for list_configs tool
 - ListTransformationsOutput: Response for list_transformations tool
 
-## Legacy Models (Compatibility)
-- ComponentConfigurationResponseBase: Legacy base for configurations
-- ComponentConfigurationResponse: Legacy detailed configuration
-- ComponentConfigurationMetadata: Legacy metadata model
-
+## Legacy Models
+- ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
 """
 from __future__ import annotations
 
@@ -602,7 +599,7 @@ class ListTransformationsOutput(BaseModel):
 
 
 # ============================================================================
-# LEGACY MODELS (maintained for backward compatibility)
+# LEGACY MODELS (minimal set for Flow tools compatibility)
 # ============================================================================
 
 class ComponentConfigurationResponseBase(BaseModel):
@@ -657,139 +654,4 @@ class ComponentConfigurationResponseBase(BaseModel):
     )
 
 
-class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
-    """
-    Legacy detailed configuration model.
 
-    DEPRECATED: Use Configuration instead for structured root + rows approach.
-    Maintained for backward compatibility with existing code.
-    """
-
-    version: int = Field(description='The version of the component configuration')
-    configuration: dict[str, Any] = Field(description='The configuration of the component')
-    rows: Optional[list[dict[str, Any]]] = Field(description='The rows of the component configuration', default=None)
-    change_description: Optional[str] = Field(
-        description='The description of the changes made to the component configuration',
-        default=None,
-        validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
-    )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        description='The metadata of the component configuration',
-        default_factory=list,
-        validation_alias=AliasChoices(
-            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-        ),
-    )
-    component: Optional[Component] = Field(
-        description='The component this configuration belongs to',
-        default=None,
-    )
-
-
-class ComponentRowConfiguration(ComponentConfigurationResponseBase):
-    """
-    Legacy row configuration model.
-
-    DEPRECATED: Use ConfigurationRow instead.
-    Maintained for backward compatibility with existing code.
-    """
-
-    version: int = Field(description='The version of the component configuration')
-    storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration.',
-        default=None,
-    )
-    parameters: dict[str, Any] = Field(
-        description='The user parameters, adhering to the row configuration schema',
-    )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        description='The metadata of the component configuration',
-        default_factory=list,
-        validation_alias=AliasChoices(
-            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-        ),
-    )
-
-
-class ComponentRootConfiguration(ComponentConfigurationResponseBase):
-    """
-    Legacy root configuration model.
-
-    DEPRECATED: Use ConfigurationRoot instead.
-    Maintained for backward compatibility with existing code.
-    """
-
-    version: int = Field(description='The version of the component configuration')
-    storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration.',
-        default=None,
-    )
-    parameters: dict[str, Any] = Field(
-        description='The component configuration parameters, adhering to the root configuration schema',
-    )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        description='The metadata of the component configuration',
-        default_factory=list,
-        validation_alias=AliasChoices(
-            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-        ),
-    )
-
-
-class ComponentConfigurationOutput(BaseModel):
-    """
-    Legacy configuration output model.
-
-    DEPRECATED: Use Configuration instead for the new structured approach.
-    Maintained for backward compatibility with existing code.
-    """
-
-    root_configuration: ComponentRootConfiguration = Field(
-        description='The root configuration of the component configuration'
-    )
-    row_configurations: Optional[list[ComponentRowConfiguration]] = Field(
-        description='The row configurations of the component configuration',
-        default=None,
-    )
-    component: Optional[Component] = Field(
-        description='The component this configuration belongs to',
-        default=None,
-    )
-    links: list[Link] = Field(..., description='The links relevant to the component configuration.')
-
-
-class ComponentConfigurationMetadata(BaseModel):
-    """
-    Legacy metadata model for configurations.
-
-    DEPRECATED: Use ConfigurationSummary instead for the new structured approach.
-    Maintained for backward compatibility with existing code.
-    """
-
-    root_configuration: ComponentConfigurationResponseBase = Field(
-        description='The root configuration metadata of the component configuration'
-    )
-    row_configurations: Optional[list[ComponentConfigurationResponseBase]] = Field(
-        description='The row configurations metadata of the component configuration',
-        default=None,
-    )
-
-    @classmethod
-    def from_component_configuration_response(
-        cls, configuration: ComponentConfigurationResponse
-    ) -> 'ComponentConfigurationMetadata':
-        """
-        Create ComponentConfigurationMetadata from ComponentConfigurationResponse.
-
-        DEPRECATED: This method exists for backward compatibility only.
-        """
-        root_configuration = ComponentConfigurationResponseBase.model_validate(configuration.model_dump())
-        row_configurations = None
-        if configuration.rows:
-            component_id = root_configuration.component_id
-            row_configurations = [
-                ComponentConfigurationResponseBase.model_validate(row | {'component_id': component_id})
-                for row in configuration.rows
-                if row is not None
-            ]
-        return cls(root_configuration=root_configuration, row_configurations=row_configurations)
