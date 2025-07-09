@@ -24,7 +24,7 @@ async def test_global_search_end_to_end(
     """
 
     # skip this test if the global search is not available
-    if not keboola_client.storage_client.is_enabled('global-search'):
+    if not await keboola_client.storage_client.is_enabled('global-search'):
         LOG.warning('Global search is not available. Please enable it in the project settings.')
         pytest.skip('Global search is not available. Please enable it in the project settings.')
 
