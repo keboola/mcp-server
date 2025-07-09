@@ -1,18 +1,33 @@
+import logging
+
 import pytest
 from fastmcp import Context
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.search import GlobalSearchAnswer, global_search
+
+LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
 async def test_global_search_end_to_end(
-    mcp_context: Context, buckets: list[BucketDef], tables: list[TableDef], configs: list[ConfigDef]
+    keboola_client: KeboolaClient,
+    mcp_context: Context,
+    buckets: list[BucketDef],
+    tables: list[TableDef],
+    configs: list[ConfigDef],
 ) -> None:
     """
     Test the global_search tool end-to-end by searching for entities that exist in the test project.
     This verifies that the search returns expected results for buckets, tables, and configurations.
     """
+
+    # skip this test if the global search is not available
+    if not keboola_client.storage_client.is_enabled('global-search'):
+        LOG.warning('Global search is not available. Please enable it in the project settings.')
+        pytest.skip('Global search is not available. Please enable it in the project settings.')
+
     # Search for test entities by name prefix 'test' which should match our test data
     result = await global_search(
         ctx=mcp_context, name_prefixes=['test'], entity_types=tuple(), limit=50, offset=0  # Search all types
