@@ -652,6 +652,3 @@ class ComponentConfigurationResponseBase(BaseModel):
         validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
         default=False,
     )
-
-
-
