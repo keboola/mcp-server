@@ -8,7 +8,7 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.client import GlobalSearchResponse, KeboolaClient
 from keboola_mcp_server.tools.search import (
     DEFAULT_GLOBAL_SEARCH_LIMIT,
-    GlobalSearchAnswer,
+    GlobalSearchResult,
     GlobalSearchGroupItems,
     global_search,
 )
@@ -220,7 +220,7 @@ class TestGlobalSearchAnswerFromApiResponse:
 
     def test_from_api_responses(self, parsed_global_search_response):
         """Test creating answer from API response."""
-        result = GlobalSearchAnswer.from_api_responses(parsed_global_search_response)
+        result = GlobalSearchResult.from_api_responses(parsed_global_search_response)
 
         assert result.counts == {
             'table': 1,
@@ -242,7 +242,7 @@ class TestGlobalSearchAnswerFromApiResponse:
         """Test creating answer from empty API response."""
         empty_response = GlobalSearchResponse(all=0, items=[], byType={}, byProject={})
 
-        result = GlobalSearchAnswer.from_api_responses(empty_response)
+        result = GlobalSearchResult.from_api_responses(empty_response)
 
         assert result.counts == {}
         assert len(result.type_groups) == 0
@@ -270,7 +270,7 @@ class TestGlobalSearchTool:
             offset=0,
         )
 
-        assert isinstance(result, GlobalSearchAnswer)
+        assert isinstance(result, GlobalSearchResult)
         assert result.counts['table'] == 1
         assert result.counts['configuration'] == 1
 
@@ -292,7 +292,7 @@ class TestGlobalSearchTool:
 
         result = await global_search(ctx=mcp_context_client, name_prefixes=['test'])
 
-        assert isinstance(result, GlobalSearchAnswer)
+        assert isinstance(result, GlobalSearchResult)
 
         # Verify the storage client was called with default parameters
         keboola_client.storage_client.global_search.assert_called_once_with(

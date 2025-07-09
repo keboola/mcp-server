@@ -5,7 +5,7 @@ from fastmcp import Context
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.search import GlobalSearchAnswer, global_search
+from keboola_mcp_server.tools.search import GlobalSearchResult, global_search
 
 LOG = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ async def test_global_search_end_to_end(
     )
 
     # Verify the result structure
-    assert isinstance(result, GlobalSearchAnswer)
+    assert isinstance(result, GlobalSearchResult)
     assert isinstance(result.counts, dict)
     assert isinstance(result.type_groups, list)
     assert 'total' in result.counts
