@@ -1,0 +1,57 @@
+import pytest
+from fastmcp import Context
+
+from integtests.conftest import BucketDef, ConfigDef, TableDef
+from keboola_mcp_server.tools.search import GlobalSearchAnswer, global_search
+
+
+@pytest.mark.asyncio
+async def test_global_search_end_to_end(
+    mcp_context: Context, buckets: list[BucketDef], tables: list[TableDef], configs: list[ConfigDef]
+) -> None:
+    """
+    Test the global_search tool end-to-end by searching for entities that exist in the test project.
+    This verifies that the search returns expected results for buckets, tables, and configurations.
+    """
+    # Search for test entities by name prefix 'test' which should match our test data
+    result = await global_search(
+        ctx=mcp_context, name_prefixes=['test'], entity_types=tuple(), limit=50, offset=0  # Search all types
+    )
+
+    # Verify the result structure
+    assert isinstance(result, GlobalSearchAnswer)
+    assert isinstance(result.counts, dict)
+    assert isinstance(result.type_groups, list)
+    assert 'total' in result.counts
+
+    # Verify we found some results
+    assert result.counts['total'] > 0, 'Should find at least some test entities'
+
+    # Create sets of expected IDs for verification
+    expected_bucket_ids = {bucket.bucket_id for bucket in buckets}
+    expected_table_ids = {table.table_id for table in tables}
+    expected_config_ids = {config.configuration_id for config in configs if config.configuration_id}
+
+    # Check that we can find test buckets
+    bucket_groups = [group for group in result.type_groups if group.group_type == 'bucket']
+    if bucket_groups:
+        bucket_group = bucket_groups[0]
+        found_bucket_ids = {item.id for item in bucket_group.group_items}
+        # At least some test buckets should be found
+        assert found_bucket_ids.intersection(expected_bucket_ids), 'Should find at least one test bucket'
+
+    # Check that we can find test tables
+    table_groups = [group for group in result.type_groups if group.group_type == 'table']
+    if table_groups:
+        table_group = table_groups[0]
+        found_table_ids = {item.id for item in table_group.group_items}
+        # At least some test tables should be found
+        assert found_table_ids.intersection(expected_table_ids), 'Should find at least one test table'
+
+    # Check that we can find test configurations
+    config_groups = [group for group in result.type_groups if group.group_type == 'configuration']
+    if config_groups:
+        config_group = config_groups[0]
+        found_config_ids = {item.id for item in config_group.group_items}
+        # At least some test configurations should be found
+        assert found_config_ids.intersection(expected_config_ids), 'Should find at least one test configuration'
