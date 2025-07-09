@@ -381,7 +381,7 @@ class GlobalSearchResponse(BaseModel):
         created: datetime = Field(description='The date and time the item was created in ISO format.')
 
     all: int = Field(description='Total number of found results.')
-    items: list[Item] = Field(description='List of search results containing the items of the GlobalSearchType.')
+    items: list[Item] = Field(description='List of search results of the GlobalSearchType.')
     by_type: dict[str, int] = Field(
         description='Mapping of found types to the number of corresponding results.', alias='byType'
     )
