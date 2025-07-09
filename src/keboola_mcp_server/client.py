@@ -3,10 +3,11 @@
 import importlib.metadata
 import logging
 import os
-from typing import Any, Literal, Mapping, Optional, Union, cast
+from datetime import datetime
+from typing import Any, Iterable, Literal, Mapping, Optional, Union, cast
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 LOG = logging.getLogger(__name__)
 
@@ -16,6 +17,23 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 ComponentResource = Literal['configuration', 'rows', 'state']
+
+# Project features that can be checked with the is_enabled method
+ProjectFeature = Literal['global-search']
+# Input types for the global search endpoint parameters
+GlobalSearchBranchTypes = Literal['production', 'development']
+GlobalSearchTypes = Literal[
+    'flow',
+    'bucket',
+    'table',
+    'transformation',
+    'configuration',
+    'configuration-row',
+    'workspace',
+    'shared-code',
+    'rows',
+    'state',
+]
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 
@@ -336,6 +354,48 @@ class KeboolaServiceClient:
         :return: API response as dictionary
         """
         return await self.raw_client.delete(endpoint=endpoint)
+
+
+class GlobalSearchResponse(BaseModel):
+    """The SAPI global search response."""
+
+    class GlobalSearchResponseItem(BaseModel):
+        id: str = Field(description='The id of the item.')
+        name: str = Field(description='The name of the item.')
+        type: GlobalSearchTypes = Field(description='The type of the item.')
+        full_path: dict[str, Any] = Field(
+            description=(
+                'The full path of the item containing project, branch and other information depending on the '
+                'type of the item.'
+            ),
+            alias='fullPath',
+        )
+        component_id: Optional[str] = Field(
+            default=None, description='The id of the component the item belongs to.', alias='componentId'
+        )
+        organization_id: int = Field(
+            description='The id of the organization the item belongs to.', alias='organizationId'
+        )
+        project_id: int = Field(description='The id of the project the item belongs to.', alias='projectId')
+        project_name: str = Field(description='The name of the project the item belongs to.', alias='projectName')
+        created: datetime = Field(description='The date and time the item was created in ISO format.')
+
+    all: int = Field(description='Total number of found results.')
+    items: list[GlobalSearchResponseItem] = Field(
+        description='List of search results containing the items of the GlobalSearchType.'
+    )
+    by_type: dict[str, int] = Field(
+        description='Mapping of found types to the number of corresponding results.', alias='byType'
+    )
+    by_project: dict[str, str] = Field(description='Mapping of project id to project name.', alias='byProject')
+
+    @field_validator('by_type', 'by_project', mode='before')
+    @classmethod
+    def validate_dict_fields(cls, current_value: Any) -> Any:
+        # If the value is empty-list/None, return an empty dictionary, otherwise return the value
+        if not current_value:
+            return dict()
+        return current_value
 
 
 class AsyncStorageClient(KeboolaServiceClient):
@@ -815,6 +875,35 @@ class AsyncStorageClient(KeboolaServiceClient):
             updated_description=description,
         )
 
+    async def global_search(
+        self,
+        query: str,
+        limit: int = 100,
+        offset: int = 0,
+        types: list[GlobalSearchTypes] | None = None,
+    ) -> GlobalSearchResponse:
+        """
+        Searches for items in the storage. It allows you to search for entities by name across all projects within an
+        organization, even those you do not have direct access to. The search is conducted only through entity names to
+        ensure confidentiality. We restrict the search to the project and branch production type of the user.
+
+        :param query: The query to search for.
+        :param limit: The maximum number of items to return.
+        :param offset: The offset to start from, pagination parameter.
+        :param types: The types of items to search for.
+        """
+        params: dict[str, Any] = {
+            'query': query,
+            'projectIds[]': [await self.project_id()],
+            'branchTypes[]': 'production',
+            'types[]': types,
+            'limit': limit,
+            'offset': offset,
+        }
+        params = {k: v for k, v in params.items() if v}
+        raw_resp = await self.get(endpoint='global-search', params=params)
+        return GlobalSearchResponse.model_validate(raw_resp)
+
     async def table_detail(self, table_id: str) -> JsonDict:
         """
         Retrieves information about a given table.
@@ -948,6 +1037,18 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
         return str(raw_data['owner']['id'])
+
+    async def is_enabled(self, features: ProjectFeature | Iterable[ProjectFeature]) -> bool:
+        """
+        Checks if the features are enabled in the project - conjunction of features.
+        :param features: The features to check.
+        :return: True if the features are enabled, False otherwise.
+        """
+        features = features if isinstance(features, Iterable) else [features]
+        verified_info = await self.verify_token()
+        project_data = cast(JsonDict, verified_info['owner'])
+        project_features = cast(list[str], project_data.get('features', []))
+        return all(feature in project_features for feature in features)
 
 
 class JobsQueueClient(KeboolaServiceClient):
