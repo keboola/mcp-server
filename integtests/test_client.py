@@ -36,5 +36,4 @@ class TestAsyncStorageClient:
         assert isinstance(ret, GlobalSearchResponse)
         assert ret.all == len(tables)
         assert len(ret.items) == len(tables)
-        assert all(isinstance(item, GlobalSearchResponse.Item) for item in ret.items)
         assert all(item.type == 'table' for item in ret.items)

@@ -57,7 +57,7 @@ class GlobalSearchGroupItems(BaseModel):
                     configuration_info = item.full_path.get('configuration', {})
                     add_info['configuration_id'] = configuration_info.get('id', 'unknown')
                     add_info['configuration_name'] = configuration_info.get('name', 'unknown')
-            return cls(name=item.name, id=item.id, created=item.created, additional_info=add_info)
+            return cls.model_construct(name=item.name, id=item.id, created=item.created, additional_info=add_info)
 
     group_type: GlobalSearchTypes = Field(description='The type of the items in the group.')
     group_count: int = Field(description='Number of items in the group.')
@@ -72,26 +72,26 @@ class GlobalSearchGroupItems(BaseModel):
         """Creates a GlobalSearchItemsGroupedByType from the API response items and a type."""
         # filter the items by the given type to be sure
         group_items = [item for item in group_items if item.type == group_type]
-        return cls(
+        return cls.model_construct(
             group_type=group_type,
             group_count=len(group_items),
             group_items=[GlobalSearchGroupItems.GroupTypeItem.from_api_response(item) for item in group_items],
         )
 
 
-class GlobalSearchAnswer(BaseModel):
-    """An answer to a global search query for multiple name substrings."""
+class GlobalSearchResult(BaseModel):
+    """A result of a global search query for multiple name substrings."""
 
     counts: dict[str, int] = Field(description='Number of items found for each type.')
     type_groups: list[GlobalSearchGroupItems] = Field(description='List of results grouped by type.')
 
     @classmethod
-    def from_api_responses(cls, response: GlobalSearchResponse) -> 'GlobalSearchAnswer':
-        """Creates a GlobalSearchAnswer from the API responses."""
+    def from_api_responses(cls, response: GlobalSearchResponse) -> 'GlobalSearchResult':
+        """Creates a GlobalSearchResult from the API responses."""
         items_by_type = defaultdict(list)
         for item in response.items:
             items_by_type[item.type].append(item)
-        return cls(
+        return cls.model_construct(
             counts=response.by_type,  # contains counts for "total", and for each found type.
             type_groups=[
                 GlobalSearchGroupItems.from_api_response(group_type=type, group_items=items)
@@ -116,7 +116,7 @@ async def global_search(
         ),
     ] = DEFAULT_GLOBAL_SEARCH_LIMIT,
     offset: Annotated[int, Field(description='How many matching items to skip, pagination.')] = 0,
-) -> Annotated[GlobalSearchAnswer, Field(description='Search results ordered by relevance, then creation time.')]:
+) -> Annotated[GlobalSearchResult, Field(description='Search results ordered by relevance, then creation time.')]:
     """
     Searches for Keboola entities by each name prefix in the production branch of the current project, potentially
     narrowed down by entity type, limited and paginated. Results are ordered by relevance, then creation time.
@@ -145,4 +145,4 @@ async def global_search(
     response = await client.storage_client.global_search(
         query=joined_prefixes, types=entity_types, limit=limit, offset=offset
     )
-    return GlobalSearchAnswer.from_api_responses(response)
+    return GlobalSearchResult.from_api_responses(response)
