@@ -8,8 +8,8 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.client import GlobalSearchResponse, KeboolaClient
 from keboola_mcp_server.tools.search import (
     DEFAULT_GLOBAL_SEARCH_LIMIT,
-    GlobalSearchResult,
     GlobalSearchGroupItems,
+    GlobalSearchResult,
     global_search,
 )
 

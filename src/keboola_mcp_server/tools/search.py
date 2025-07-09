@@ -7,7 +7,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import GlobalSearchResponse, GlobalSearchTypes, KeboolaClient
+from keboola_mcp_server.client import GlobalSearchResponse, GlobalSearchTypes, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
 
@@ -21,6 +21,7 @@ def add_search_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     doc_tools = [
         global_search,
+        find_component_id,
     ]
     for tool in doc_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -146,3 +147,24 @@ async def global_search(
         query=joined_prefixes, types=entity_types, limit=limit, offset=offset
     )
     return GlobalSearchResult.from_api_responses(response)
+
+
+@tool_errors()
+@with_session_state()
+async def find_component_id(
+    ctx: Context,
+    query: Annotated[str, Field(description='Natural language query to find the requested component.')],
+) -> list[SuggestedComponent]:
+    """
+    Returns list of component IDs that match the given query.
+
+    USAGE:
+    - Use when you want to find the component for a specific purpose.
+
+    EXAMPLES:
+    - user_input: `I am looking for a salesforce extractor component`
+        - returns a list of component IDs that match the query, ordered by relevance/best match.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    suggestion_response = await client.ai_service_client.suggest_component(query)
+    return suggestion_response.components
