@@ -59,20 +59,19 @@ class TestRawKeboolaClientEventLogic:
 
         sent_payload = call_args[1]['json']  # kwargs['json']
         assert sent_payload['component'] == RawKeboolaClient._MCP_SERVER_COMPONENT_ID
-        assert sent_payload['message'] == 'MCP: test_tool - /v2/storage/events'
+        assert sent_payload['message'] == 'MCP tool execution: test_tool'
         assert sent_payload['type'] == 'info'
         assert sent_payload['durationSeconds'] == 1.234
         assert sent_payload['params']['tool']['name'] == 'test_tool'
         assert sent_payload['params']['tool']['arguments'] == [{'arg1': 'val1'}]
-        assert 'error' not in sent_payload['results']
         assert sent_payload['configurationId'] == 'cfg123'
         assert sent_payload['runId'] == '456'
-        # Check mcp-server-context is filled
-        mcp_ctx = sent_payload['params']['mcp-server-context']
+        # Check mcpServerContext is filled
+        mcp_ctx = sent_payload['params']['mcpServerContext']
         assert mcp_ctx['sessionId'] == 'test-session-123'
-        assert mcp_ctx['app_env'] == 'development'
+        assert mcp_ctx['appEnv'] == 'development'
         assert mcp_ctx['version'] == 'unknown'
-        assert mcp_ctx['user-agent'] == 'cursor'
+        assert mcp_ctx['userAgent'] == 'cursor'
 
     @pytest.mark.asyncio
     async def test_trigger_event_error_payload(self, raw_client_storage_v2: RawKeboolaClient, mocker):
@@ -95,8 +94,7 @@ class TestRawKeboolaClientEventLogic:
         mock_client.post.assert_called_once()
         sent_payload = mock_client.post.call_args[1]['json']
         assert sent_payload['type'] == 'error'
-        assert sent_payload['results']['error'] == 'Test error'
-        assert 'query_result' not in sent_payload['results']
+        assert sent_payload['message'] == 'Test error'
         assert 'configurationId' not in sent_payload  # Not in mcp_context
         assert 'runId' not in sent_payload  # Not in mcp_context
 

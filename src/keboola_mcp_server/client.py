@@ -261,14 +261,14 @@ class RawKeboolaClient:
 
         event_payload: dict[str, Any] = {
             'component': self._MCP_SERVER_COMPONENT_ID,
-            'message': f'MCP: {mcp_context["tool_name"]} - /v2/storage/events',
+            'message': f'MCP tool execution: {mcp_context["tool_name"]}',
             'type': 'error' if error_obj else 'info',
             'durationSeconds': round(duration_s, 3),
             'params': {
-                'mcp-server-context': {
-                    'app_env': os.environ.get('APP_ENV', 'development'),
+                'mcpServerContext': {
+                    'appEnv': os.environ.get('APP_ENV', 'development'),
                     'version': os.environ.get('APP_VERSION', 'unknown'),
-                    'user-agent': self.headers['User-Agent'],
+                    'userAgent': self.headers['User-Agent'],
                     'sessionId': mcp_context['sessionId'],
                 },
                 'tool': {
@@ -278,7 +278,6 @@ class RawKeboolaClient:
                     ]
                 },
             },
-            'results': {},
         }
         if 'config_id' in mcp_context:
             event_payload['configurationId'] = mcp_context['config_id']
@@ -286,7 +285,7 @@ class RawKeboolaClient:
             event_payload['runId'] = mcp_context['job_id']
 
         if error_obj:
-            event_payload['results']['error'] = str(error_obj)
+            event_payload['message'] = str(error_obj)
 
         try:
             event_post_url = f'{self.base_api_url}/events'
