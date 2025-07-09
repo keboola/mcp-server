@@ -21,8 +21,8 @@ ComponentResource = Literal['configuration', 'rows', 'state']
 # Project features that can be checked with the is_enabled method
 ProjectFeature = Literal['global-search']
 # Input types for the global search endpoint parameters
-GlobalSearchBranchTypes = Literal['production', 'development']
-GlobalSearchTypes = Literal[
+GlobalSearchBranchType = Literal['production', 'development']
+GlobalSearchType = Literal[
     'flow',
     'bucket',
     'table',
@@ -362,7 +362,7 @@ class GlobalSearchResponse(BaseModel):
     class Item(BaseModel):
         id: str = Field(description='The id of the item.')
         name: str = Field(description='The name of the item.')
-        type: GlobalSearchTypes = Field(description='The type of the item.')
+        type: GlobalSearchType = Field(description='The type of the item.')
         full_path: dict[str, Any] = Field(
             description=(
                 'The full path of the item containing project, branch and other information depending on the '
@@ -381,7 +381,7 @@ class GlobalSearchResponse(BaseModel):
         created: datetime = Field(description='The date and time the item was created in ISO format.')
 
     all: int = Field(description='Total number of found results.')
-    items: list[Item] = Field(description='List of search results containing the items of the GlobalSearchType.')
+    items: list[Item] = Field(description='List of search results of the GlobalSearchType.')
     by_type: dict[str, int] = Field(
         description='Mapping of found types to the number of corresponding results.', alias='byType'
     )
@@ -878,7 +878,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         query: str,
         limit: int = 100,
         offset: int = 0,
-        types: Sequence[GlobalSearchTypes] = tuple(),
+        types: Sequence[GlobalSearchType] = tuple(),
     ) -> GlobalSearchResponse:
         """
         Searches for items in the storage. It allows you to search for entities by name across all projects within an

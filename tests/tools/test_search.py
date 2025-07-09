@@ -8,8 +8,8 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.client import GlobalSearchResponse, KeboolaClient
 from keboola_mcp_server.tools.search import (
     DEFAULT_GLOBAL_SEARCH_LIMIT,
-    GlobalSearchGroupItems,
-    GlobalSearchResult,
+    GlobalSearchItemsGroup,
+    GlobalSearchOutput,
     global_search,
 )
 
@@ -97,7 +97,7 @@ class TestGlobalSearchGroupItemsFromApiResponse:
         """Test creating group items for table type."""
         table_items = [item for item in parsed_global_search_response.items if item.type == 'table']
 
-        result = GlobalSearchGroupItems.from_api_response('table', table_items)
+        result = GlobalSearchItemsGroup.from_api_response('table', table_items)
 
         assert result.group_type == 'table'
         assert result.group_count == 1
@@ -114,7 +114,7 @@ class TestGlobalSearchGroupItemsFromApiResponse:
         """Test creating group items for configuration type."""
         config_items = [item for item in parsed_global_search_response.items if item.type == 'configuration']
 
-        result = GlobalSearchGroupItems.from_api_response('configuration', config_items)
+        result = GlobalSearchItemsGroup.from_api_response('configuration', config_items)
 
         assert result.group_type == 'configuration'
         assert result.group_count == 1
@@ -130,7 +130,7 @@ class TestGlobalSearchGroupItemsFromApiResponse:
         """Test creating group items for configuration-row type."""
         row_items = [item for item in parsed_global_search_response.items if item.type == 'configuration-row']
 
-        result = GlobalSearchGroupItems.from_api_response('configuration-row', row_items)
+        result = GlobalSearchItemsGroup.from_api_response('configuration-row', row_items)
 
         assert result.group_type == 'configuration-row'
         assert result.group_count == 1
@@ -148,7 +148,7 @@ class TestGlobalSearchGroupItemsFromApiResponse:
         """Test creating group items for flow type."""
         flow_items = [item for item in parsed_global_search_response.items if item.type == 'flow']
 
-        result = GlobalSearchGroupItems.from_api_response('flow', flow_items)
+        result = GlobalSearchItemsGroup.from_api_response('flow', flow_items)
 
         assert result.group_type == 'flow'
         assert result.group_count == 1
@@ -164,7 +164,7 @@ class TestGlobalSearchGroupItemsFromApiResponse:
         """Test that from_api_response filters items by the specified type."""
         all_items = parsed_global_search_response.items
 
-        result = GlobalSearchGroupItems.from_api_response('table', all_items)
+        result = GlobalSearchItemsGroup.from_api_response('table', all_items)
 
         assert result.group_count == 1
         assert len(result.group_items) == 1
@@ -172,7 +172,7 @@ class TestGlobalSearchGroupItemsFromApiResponse:
 
     def test_from_api_response_empty_items(self):
         """Test from_api_response with empty items list."""
-        result = GlobalSearchGroupItems.from_api_response('table', [])
+        result = GlobalSearchItemsGroup.from_api_response('table', [])
 
         assert result.group_type == 'table'
         assert result.group_count == 0
@@ -186,7 +186,7 @@ class TestGlobalSearchGroupItemsGroupTypeItemFromApiResponse:
         """Test creating item from table API response."""
         table_item = next(item for item in parsed_global_search_response.items if item.type == 'table')
 
-        result = GlobalSearchGroupItems.GroupTypeItem.from_api_response(table_item)
+        result = GlobalSearchItemsGroup.GroupItem.from_api_response(table_item)
 
         assert result.name == 'table1'
         assert result.id == 'in.c-bucket.table1'
@@ -195,7 +195,7 @@ class TestGlobalSearchGroupItemsGroupTypeItemFromApiResponse:
         assert result.additional_info['bucket_name'] == 'bucket'
 
     def test_from_api_response_missing_bucket_info(self):
-        """Test creating item when bucket info is missing."""
+        """Test creating item when bucket info is missing it should fail with KeyError."""
         item_data = {
             'id': 'table_without_bucket',
             'name': 'Table',
@@ -208,11 +208,8 @@ class TestGlobalSearchGroupItemsGroupTypeItemFromApiResponse:
             'created': '2024-01-01T00:00:00Z',
         }
         item = GlobalSearchResponse.Item.model_validate(item_data)
-
-        result = GlobalSearchGroupItems.GroupTypeItem.from_api_response(item)
-
-        assert result.additional_info['bucket_id'] == 'unknown'
-        assert result.additional_info['bucket_name'] == 'unknown'
+        with pytest.raises(KeyError):
+            GlobalSearchItemsGroup.GroupItem.from_api_response(item)
 
 
 class TestGlobalSearchAnswerFromApiResponse:
@@ -220,7 +217,7 @@ class TestGlobalSearchAnswerFromApiResponse:
 
     def test_from_api_responses(self, parsed_global_search_response):
         """Test creating answer from API response."""
-        result = GlobalSearchResult.from_api_responses(parsed_global_search_response)
+        result = GlobalSearchOutput.from_api_responses(parsed_global_search_response)
 
         assert result.counts == {
             'table': 1,
@@ -242,7 +239,7 @@ class TestGlobalSearchAnswerFromApiResponse:
         """Test creating answer from empty API response."""
         empty_response = GlobalSearchResponse(all=0, items=[], byType={}, byProject={})
 
-        result = GlobalSearchResult.from_api_responses(empty_response)
+        result = GlobalSearchOutput.from_api_responses(empty_response)
 
         assert result.counts == {}
         assert len(result.type_groups) == 0
@@ -270,7 +267,7 @@ class TestGlobalSearchTool:
             offset=0,
         )
 
-        assert isinstance(result, GlobalSearchResult)
+        assert isinstance(result, GlobalSearchOutput)
         assert result.counts['table'] == 1
         assert result.counts['configuration'] == 1
 
@@ -292,7 +289,7 @@ class TestGlobalSearchTool:
 
         result = await global_search(ctx=mcp_context_client, name_prefixes=['test'])
 
-        assert isinstance(result, GlobalSearchResult)
+        assert isinstance(result, GlobalSearchOutput)
 
         # Verify the storage client was called with default parameters
         keboola_client.storage_client.global_search.assert_called_once_with(

@@ -7,7 +7,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import GlobalSearchResponse, GlobalSearchTypes, KeboolaClient, SuggestedComponent
+from keboola_mcp_server.client import GlobalSearchResponse, GlobalSearchType, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
 
@@ -19,21 +19,21 @@ DEFAULT_GLOBAL_SEARCH_LIMIT = 50
 
 def add_search_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    doc_tools = [
+    search_tools = [
         global_search,
         find_component_id,
     ]
-    for tool in doc_tools:
+    for tool in search_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
         mcp.add_tool(FunctionTool.from_function(tool))
 
     LOG.info('Search tools initialized.')
 
 
-class GlobalSearchGroupItems(BaseModel):
+class GlobalSearchItemsGroup(BaseModel):
     """Group of items of the same type found in the global search."""
 
-    class GroupTypeItem(BaseModel):
+    class GroupItem(BaseModel):
         """An item corresponding to its group type found in the global search."""
 
         name: str = Field(description='The name of the item.')
@@ -42,52 +42,52 @@ class GlobalSearchGroupItems(BaseModel):
         additional_info: dict[str, Any] = Field(description='Additional information about the item.')
 
         @classmethod
-        def from_api_response(cls, item: GlobalSearchResponse.Item) -> 'GlobalSearchGroupItems.GroupTypeItem':
+        def from_api_response(cls, item: GlobalSearchResponse.Item) -> 'GlobalSearchItemsGroup.GroupItem':
             """Creates an Item from the item API response."""
             add_info = {}
             if item.type == 'table':
-                bucket_info = item.full_path.get('bucket', {})
-                add_info['bucket_id'] = bucket_info.get('id', 'unknown')
-                add_info['bucket_name'] = bucket_info.get('name', 'unknown')
+                bucket_info = item.full_path['bucket']
+                add_info['bucket_id'] = bucket_info['id']
+                add_info['bucket_name'] = bucket_info['name']
             elif item.type in ['configuration', 'configuration-row', 'transformation', 'flow']:
-                component_info = item.full_path.get('component', {})
-                add_info['component_id'] = component_info.get('id', 'unknown')
-                add_info['component_name'] = component_info.get('name', 'unknown')
+                component_info = item.full_path['component']
+                add_info['component_id'] = component_info['id']
+                add_info['component_name'] = component_info['name']
                 if item.type == 'configuration-row':
                     # as row_config is identified by root_config id and component id.
-                    configuration_info = item.full_path.get('configuration', {})
-                    add_info['configuration_id'] = configuration_info.get('id', 'unknown')
-                    add_info['configuration_name'] = configuration_info.get('name', 'unknown')
+                    configuration_info = item.full_path['configuration']
+                    add_info['configuration_id'] = configuration_info['id']
+                    add_info['configuration_name'] = configuration_info['name']
             return cls.model_construct(name=item.name, id=item.id, created=item.created, additional_info=add_info)
 
-    group_type: GlobalSearchTypes = Field(description='The type of the items in the group.')
+    group_type: GlobalSearchType = Field(description='The type of the items in the group.')
     group_count: int = Field(description='Number of items in the group.')
-    group_items: list[GroupTypeItem] = Field(
+    group_items: list[GroupItem] = Field(
         description=('List of items for the type found in the global search, sorted by relevance and creation time.')
     )
 
     @classmethod
     def from_api_response(
-        cls, group_type: GlobalSearchTypes, group_items: list[GlobalSearchResponse.Item]
-    ) -> 'GlobalSearchGroupItems':
+        cls, group_type: GlobalSearchType, group_items: list[GlobalSearchResponse.Item]
+    ) -> 'GlobalSearchItemsGroup':
         """Creates a GlobalSearchItemsGroupedByType from the API response items and a type."""
         # filter the items by the given type to be sure
         group_items = [item for item in group_items if item.type == group_type]
         return cls.model_construct(
             group_type=group_type,
             group_count=len(group_items),
-            group_items=[GlobalSearchGroupItems.GroupTypeItem.from_api_response(item) for item in group_items],
+            group_items=[GlobalSearchItemsGroup.GroupItem.from_api_response(item) for item in group_items],
         )
 
 
-class GlobalSearchResult(BaseModel):
+class GlobalSearchOutput(BaseModel):
     """A result of a global search query for multiple name substrings."""
 
     counts: dict[str, int] = Field(description='Number of items found for each type.')
-    type_groups: list[GlobalSearchGroupItems] = Field(description='List of results grouped by type.')
+    type_groups: list[GlobalSearchItemsGroup] = Field(description='List of results grouped by type.')
 
     @classmethod
-    def from_api_responses(cls, response: GlobalSearchResponse) -> 'GlobalSearchResult':
+    def from_api_responses(cls, response: GlobalSearchResponse) -> 'GlobalSearchOutput':
         """Creates a GlobalSearchResult from the API responses."""
         items_by_type = defaultdict(list)
         for item in response.items:
@@ -95,7 +95,7 @@ class GlobalSearchResult(BaseModel):
         return cls.model_construct(
             counts=response.by_type,  # contains counts for "total", and for each found type.
             type_groups=[
-                GlobalSearchGroupItems.from_api_response(group_type=type, group_items=items)
+                GlobalSearchItemsGroup.from_api_response(group_type=type, group_items=items)
                 for type, items in sorted(items_by_type.items(), key=lambda x: x[0])
             ],
         )
@@ -107,7 +107,7 @@ async def global_search(
     ctx: Context,
     name_prefixes: Annotated[list[str], Field(description='Name prefixes to look for inside entity name.')],
     entity_types: Annotated[
-        Sequence[GlobalSearchTypes], Field(description='Optional list of keboola object types to search for.')
+        Sequence[GlobalSearchType], Field(description='Optional list of keboola object types to search for.')
     ] = tuple(),
     limit: Annotated[
         int,
@@ -117,7 +117,7 @@ async def global_search(
         ),
     ] = DEFAULT_GLOBAL_SEARCH_LIMIT,
     offset: Annotated[int, Field(description='How many matching items to skip, pagination.')] = 0,
-) -> Annotated[GlobalSearchResult, Field(description='Search results ordered by relevance, then creation time.')]:
+) -> Annotated[GlobalSearchOutput, Field(description='Search results ordered by relevance, then creation time.')]:
     """
     Searches for Keboola entities by each name prefix in the production branch of the current project, potentially
     narrowed down by entity type, limited and paginated. Results are ordered by relevance, then creation time.
@@ -146,7 +146,7 @@ async def global_search(
     response = await client.storage_client.global_search(
         query=joined_prefixes, types=entity_types, limit=limit, offset=offset
     )
-    return GlobalSearchResult.from_api_responses(response)
+    return GlobalSearchOutput.from_api_responses(response)
 
 
 @tool_errors()
