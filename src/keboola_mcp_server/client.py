@@ -1042,7 +1042,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param features: The features to check.
         :return: True if the features are enabled, False otherwise.
         """
-        features = features if isinstance(features, Iterable) else [features]
+        features = [features] if isinstance(features, str) else features
         verified_info = await self.verify_token()
         project_data = cast(JsonDict, verified_info['owner'])
         project_features = cast(list[str], project_data.get('features', []))
