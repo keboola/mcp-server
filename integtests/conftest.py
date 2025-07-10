@@ -174,7 +174,7 @@ _CONFIG_DEFS_IN = [
     ConfigDef(
         component_id='ex-generic-v2',
         configuration_id=None,
-        internal_id='config1',
+        internal_id='test_config1',
     ),
 ]
 
