@@ -115,6 +115,8 @@ class RawKeboolaClient:
     and can be used to implement high-level functions in clients for individual services.
     """
 
+    _MCP_SERVER_COMPONENT_ID = 'keboola.mcp-server.tool'
+
     def __init__(
         self,
         base_api_url: str,
@@ -265,6 +267,63 @@ class RawKeboolaClient:
                 return cast(JsonStruct, response.json())
 
             return None
+
+    async def trigger_event(
+        self,
+        error_obj: Optional[Exception],
+        duration_s: float,
+        mcp_context: dict[str, Any],
+    ) -> None:
+        """Constructs and sends an event to the Keboola Storage API."""
+        # project_id is now derived in the constructor and stored in self.parsed_project_id
+
+        event_payload: dict[str, Any] = {
+            'component': self._MCP_SERVER_COMPONENT_ID,
+            'message': f'MCP tool execution: {mcp_context["tool_name"]}',
+            'type': 'error' if error_obj else 'info',
+            'durationSeconds': round(duration_s, 3),
+            'params': {
+                'mcpServerContext': {
+                    'appEnv': os.environ.get('APP_ENV', 'development'),
+                    'version': os.environ.get('APP_VERSION', 'unknown'),
+                    'userAgent': self.headers['User-Agent'],
+                    'sessionId': mcp_context['sessionId'],
+                },
+                'tool': {
+                    'name': mcp_context['tool_name'],
+                    'arguments': [
+                        mcp_context['tool_args'],  # Ensure this is JSON serializable "key", "value" pairs
+                    ]
+                },
+            },
+        }
+        if 'config_id' in mcp_context:
+            event_payload['configurationId'] = mcp_context['config_id']
+        if 'job_id' in mcp_context:
+            event_payload['runId'] = mcp_context['job_id']
+
+        if error_obj:
+            event_payload['message'] = str(error_obj)
+
+        try:
+            event_post_url = f'{self.base_api_url}/events'
+            LOG.debug(f'Attempting to send MCP event: {event_payload} to {event_post_url}')
+            # Use a new httpx.AsyncClient for sending the event
+            async with httpx.AsyncClient(timeout=self.timeout) as event_client:
+                response = await event_client.post(
+                    event_post_url,
+                    headers=self.headers,
+                    json=event_payload,
+                )
+                self._raise_for_status(response)
+                LOG.info('Successfully sent MCP event for POST /v2/storage/events')
+        except httpx.HTTPStatusError as e:
+            LOG.error(
+                f'Error sending MCP event for POST /v2/storage/events: '
+                f'HTTPStatusError {e.response.status_code} - {e.response.text}'
+            )
+        except Exception as e:
+            LOG.error(f'Unexpected error sending MCP event for POST /v2/storage/events: {e}')
 
 
 class KeboolaServiceClient:
@@ -736,7 +795,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows', data=payload
+                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
+                data=payload,
             ),
         )
 
