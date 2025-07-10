@@ -3,6 +3,7 @@ from typing import Annotated, Any
 
 import pytest
 from fastmcp import Client, Context
+from fastmcp.client.client import CallToolResult
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
@@ -134,8 +135,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
         # check if the inputSchema contains the expected param description
         assert expected_param_description in str(tools[-1].inputSchema)
         result = await client.call_tool('assessed-function', {'param': 'value'})
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == 'value'
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text == 'value'
 
 
 @pytest.mark.asyncio
@@ -192,5 +193,5 @@ async def test_keboola_injection_and_lifespan(
 
     async with Client(server) as client:
         result = await client.call_tool('assessed_function', {'param': 'value'})
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == 'value'
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text == 'value'
