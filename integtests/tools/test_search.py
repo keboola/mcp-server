@@ -30,7 +30,7 @@ async def test_global_search_end_to_end(
 
     # Search for test items by name prefix 'test' which should match our test data
     result = await global_search(
-        ctx=mcp_context, name_prefixes=['test', 'config'], item_types=tuple(), limit=50, offset=0  # Search all types
+        ctx=mcp_context, name_prefixes=['test'], item_types=tuple(), limit=50, offset=0  # Search all types
     )
 
     # Verify the result structure
