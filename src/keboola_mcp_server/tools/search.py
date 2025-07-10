@@ -82,8 +82,8 @@ class ItemsGroup(BaseModel):
 class GlobalSearchOutput(BaseModel):
     """A result of a global search query for multiple name substrings."""
 
-    counts: dict[str, int] = Field(description='Number of items found for each type.')
-    groups: dict[ItemType, ItemsGroup] = Field(description='List of results grouped by type.')
+    counts: dict[str, int] = Field(description='Number of items in total and for each type.')
+    groups: dict[ItemType, ItemsGroup] = Field(description='Search results.')
 
     @classmethod
     def from_api_responses(cls, response: GlobalSearchResponse) -> 'GlobalSearchOutput':
