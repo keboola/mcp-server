@@ -7,7 +7,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import GlobalSearchResponse, GlobalSearchType, KeboolaClient
+from keboola_mcp_server.client import GlobalSearchResponse, ItemType, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import with_session_state
 
@@ -29,19 +29,19 @@ def add_search_tools(mcp: FastMCP) -> None:
     LOG.info('Search tools initialized.')
 
 
-class GlobalSearchItemsGroup(BaseModel):
+class ItemsGroup(BaseModel):
     """Group of items of the same type found in the global search."""
 
-    class GroupItem(BaseModel):
+    class Item(BaseModel):
         """An item corresponding to its group type found in the global search."""
 
         name: str = Field(description='The name of the item.')
         id: str = Field(description='The id of the item.')
-        created: datetime = Field(description='The date and time the entity was created.')
+        created: datetime = Field(description='The date and time the item was created.')
         additional_info: dict[str, Any] = Field(description='Additional information about the item.')
 
         @classmethod
-        def from_api_response(cls, item: GlobalSearchResponse.Item) -> 'GlobalSearchItemsGroup.GroupItem':
+        def from_api_response(cls, item: GlobalSearchResponse.Item) -> 'ItemsGroup.Item':
             """Creates an Item from the item API response."""
             add_info = {}
             if item.type == 'table':
@@ -59,23 +59,23 @@ class GlobalSearchItemsGroup(BaseModel):
                     add_info['configuration_name'] = configuration_info['name']
             return cls.model_construct(name=item.name, id=item.id, created=item.created, additional_info=add_info)
 
-    group_type: GlobalSearchType = Field(description='The type of the items in the group.')
-    group_count: int = Field(description='Number of items in the group.')
-    group_items: list[GroupItem] = Field(
+    type: ItemType = Field(description='The type of the items in the group.')
+    count: int = Field(description='Number of items in the group.')
+    items: list[Item] = Field(
         description=('List of items for the type found in the global search, sorted by relevance and creation time.')
     )
 
     @classmethod
     def from_api_response(
-        cls, group_type: GlobalSearchType, group_items: list[GlobalSearchResponse.Item]
-    ) -> 'GlobalSearchItemsGroup':
-        """Creates a GlobalSearchItemsGroupedByType from the API response items and a type."""
+        cls, type: ItemType, items: list[GlobalSearchResponse.Item]
+    ) -> 'ItemsGroup':
+        """Creates a ItemsGroup from the API response items and a type."""
         # filter the items by the given type to be sure
-        group_items = [item for item in group_items if item.type == group_type]
+        items = [item for item in items if item.type == type]
         return cls.model_construct(
-            group_type=group_type,
-            group_count=len(group_items),
-            group_items=[GlobalSearchItemsGroup.GroupItem.from_api_response(item) for item in group_items],
+            type=type,
+            count=len(items),
+            items=[ItemsGroup.Item.from_api_response(item) for item in items],
         )
 
 
@@ -83,20 +83,19 @@ class GlobalSearchOutput(BaseModel):
     """A result of a global search query for multiple name substrings."""
 
     counts: dict[str, int] = Field(description='Number of items found for each type.')
-    type_groups: list[GlobalSearchItemsGroup] = Field(description='List of results grouped by type.')
+    groups: dict[ItemType, ItemsGroup] = Field(description='List of results grouped by type.')
 
     @classmethod
     def from_api_responses(cls, response: GlobalSearchResponse) -> 'GlobalSearchOutput':
-        """Creates a GlobalSearchResult from the API responses."""
+        """Creates a GlobalSearchOutput from the API responses."""
         items_by_type = defaultdict(list)
         for item in response.items:
             items_by_type[item.type].append(item)
         return cls.model_construct(
             counts=response.by_type,  # contains counts for "total", and for each found type.
-            type_groups=[
-                GlobalSearchItemsGroup.from_api_response(group_type=type, group_items=items)
-                for type, items in sorted(items_by_type.items(), key=lambda x: x[0])
-            ],
+            groups={
+                type: ItemsGroup.from_api_response(type=type, items=items) for type, items in items_by_type.items()
+            },
         )
 
 
@@ -105,8 +104,8 @@ class GlobalSearchOutput(BaseModel):
 async def global_search(
     ctx: Context,
     name_prefixes: Annotated[list[str], Field(description='Name prefixes to look for inside entity name.')],
-    entity_types: Annotated[
-        Sequence[GlobalSearchType], Field(description='Optional list of keboola object types to search for.')
+    item_types: Annotated[
+        Sequence[ItemType], Field(description='Optional list of keboola item types to search for.')
     ] = tuple(),
     limit: Annotated[
         int,
@@ -118,11 +117,11 @@ async def global_search(
     offset: Annotated[int, Field(description='How many matching items to skip, pagination.')] = 0,
 ) -> Annotated[GlobalSearchOutput, Field(description='Search results ordered by relevance, then creation time.')]:
     """
-    Searches for Keboola entities by each name prefix in the production branch of the current project, potentially
-    narrowed down by entity type, limited and paginated. Results are ordered by relevance, then creation time.
+    Searches for Keboola items by each name prefix in the production branch of the current project, potentially
+    narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.
 
     Considerations:
-    - The search is purely name-based, and an entity is returned when its name or any word in the name starts with any
+    - The search is purely name-based, and an item is returned when its name or any word in the name starts with any
       of the "name_prefixes" parameter.
     """
 
@@ -143,6 +142,6 @@ async def global_search(
     # separately.
     joined_prefixes = ' '.join(name_prefixes)
     response = await client.storage_client.global_search(
-        query=joined_prefixes, types=entity_types, limit=limit, offset=offset
+        query=joined_prefixes, types=item_types, limit=limit, offset=offset
     )
     return GlobalSearchOutput.from_api_responses(response)
