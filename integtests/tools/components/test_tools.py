@@ -8,16 +8,7 @@ from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.model import (
-    Component,
-    ComponentType,
-    ComponentWithConfigurations,
-    ConfigToolOutput,
-    Configuration,
-    ListConfigsOutput,
-    ListTransformationsOutput,
-)
-from keboola_mcp_server.tools.components.tools import (
+from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
     create_sql_transformation,
@@ -30,6 +21,15 @@ from keboola_mcp_server.tools.components.tools import (
     update_config,
     update_config_row,
     update_sql_transformation,
+)
+from keboola_mcp_server.tools.components.model import (
+    Component,
+    ComponentType,
+    ComponentWithConfigurations,
+    ConfigToolOutput,
+    Configuration,
+    ListConfigsOutput,
+    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
