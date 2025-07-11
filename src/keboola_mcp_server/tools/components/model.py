@@ -153,7 +153,7 @@ class ComponentSummary(BaseModel):
         """
         capabilities = ComponentCapabilities.from_flags(api_response.flags)
 
-        return cls(
+        return cls.model_construct(
             component_id=api_response.component_id,
             component_name=api_response.component_name,
             component_type=api_response.type,
@@ -234,7 +234,7 @@ class Component(BaseModel):
         """
         capabilities = ComponentCapabilities.from_flags(api_response.flags)
 
-        return cls(
+        return cls.model_construct(
             component_id=api_response.component_id,
             component_name=api_response.component_name,
             component_type=api_response.type,
@@ -297,7 +297,7 @@ class ConfigurationRoot(BaseModel):
         :param api_config: Validated API configuration response
         :return: Complete root configuration domain model
         """
-        return cls(
+        return cls.model_construct(
             component_id=api_config.component_id,
             configuration_id=api_config.configuration_id,
             name=api_config.name,
@@ -396,7 +396,7 @@ class ConfigurationRootSummary(BaseModel):
     @classmethod
     def from_api_response(cls, api_config: 'APIConfigurationResponse') -> 'ConfigurationRootSummary':
         """Create lightweight root configuration summary from API response."""
-        return cls(
+        return cls.model_construct(
             component_id=api_config.component_id,
             configuration_id=api_config.configuration_id,
             name=api_config.name,
@@ -481,7 +481,7 @@ class ConfigurationSummary(BaseModel):
                 for row in api_config.rows
             ]
 
-        return cls(
+        return cls.model_construct(
             root_configuration=root_configuration,
             row_configurations=row_configurations,
         )
@@ -546,7 +546,7 @@ class Configuration(BaseModel):
                 for row in api_config.rows
             ]
 
-        return cls(
+        return cls.model_construct(
             root_configuration=root_configuration,
             row_configurations=row_configurations,
             component=component,
