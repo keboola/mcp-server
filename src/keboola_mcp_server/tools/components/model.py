@@ -262,7 +262,7 @@ class ConfigurationRoot(BaseModel):
 
     # Core identification
     component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of the configuration')
+    configuration_id: str = Field(description='The ID of this root configuration')
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
 
@@ -322,8 +322,8 @@ class ConfigurationRow(BaseModel):
 
     # Core identification
     component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of the parent configuration')
-    row_id: str = Field(description='The ID of this row configuration')
+    configuration_id: str = Field(description='The ID of the corresponding root configuration')
+    row_configuration_id: str = Field(description='The ID of this row configuration')
     name: str = Field(description='The name of the row configuration')
     description: Optional[str] = Field(default=None, description='The description of the row configuration')
 
@@ -368,7 +368,7 @@ class ConfigurationRow(BaseModel):
         return cls(
             component_id=component_id,
             configuration_id=configuration_id,
-            row_id=row_data['id'],
+            row_configuration_id=row_data['id'],
             name=row_data['name'],
             description=row_data.get('description'),
             version=row_data['version'],
@@ -385,7 +385,7 @@ class ConfigurationRootSummary(BaseModel):
 
     # Core identification
     component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of the configuration')
+    configuration_id: str = Field(description='The ID of this root configuration')
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
 
@@ -411,8 +411,8 @@ class ConfigurationRowSummary(BaseModel):
 
     # Core identification
     component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of the parent configuration')
-    row_id: str = Field(description='The ID of this row configuration')
+    configuration_id: str = Field(description='The ID of the corresponding root configuration')
+    row_configuration_id: str = Field(description='The ID of this row configuration')
     name: str = Field(description='The name of the row configuration')
     description: Optional[str] = Field(default=None, description='The description of the row configuration')
 
@@ -431,7 +431,7 @@ class ConfigurationRowSummary(BaseModel):
         return cls(
             component_id=component_id,
             configuration_id=configuration_id,
-            row_id=row_data['id'],
+            row_configuration_id=row_data['id'],
             name=row_data['name'],
             description=row_data.get('description'),
             is_disabled=row_data.get('isDisabled', False),
