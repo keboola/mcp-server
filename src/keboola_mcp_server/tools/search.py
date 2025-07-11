@@ -20,7 +20,7 @@ DEFAULT_GLOBAL_SEARCH_LIMIT = 50
 def add_search_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     search_tools = [
-        global_search,
+        find_by_name,
     ]
     for tool in search_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -66,9 +66,7 @@ class ItemsGroup(BaseModel):
     )
 
     @classmethod
-    def from_api_response(
-        cls, type: ItemType, items: list[GlobalSearchResponse.Item]
-    ) -> 'ItemsGroup':
+    def from_api_response(cls, type: ItemType, items: list[GlobalSearchResponse.Item]) -> 'ItemsGroup':
         """Creates a ItemsGroup from the API response items and a type."""
         # filter the items by the given type to be sure
         items = [item for item in items if item.type == type]
@@ -101,11 +99,11 @@ class GlobalSearchOutput(BaseModel):
 
 @tool_errors()
 @with_session_state()
-async def global_search(
+async def find_by_name(
     ctx: Context,
-    name_prefixes: Annotated[list[str], Field(description='Name prefixes to look for inside entity name.')],
+    name_prefixes: Annotated[list[str], Field(description='Name prefixes to match against item names.')],
     item_types: Annotated[
-        Sequence[ItemType], Field(description='Optional list of keboola item types to search for.')
+        Sequence[ItemType], Field(description='Optional list of keboola item types to filter by.')
     ] = tuple(),
     limit: Annotated[
         int,
@@ -114,11 +112,14 @@ async def global_search(
             f'{MAX_GLOBAL_SEARCH_LIMIT}).'
         ),
     ] = DEFAULT_GLOBAL_SEARCH_LIMIT,
-    offset: Annotated[int, Field(description='How many matching items to skip, pagination.')] = 0,
-) -> Annotated[GlobalSearchOutput, Field(description='Search results ordered by relevance, then creation time.')]:
+    offset: Annotated[int, Field(description='Number of matching items to skip, pagination.')] = 0,
+) -> Annotated[
+    GlobalSearchOutput,
+    Field(description='Search results grouped by item type, ordered by relevance and creation time.'),
+]:
     """
-    Searches for Keboola items by each name prefix in the production branch of the current project, potentially
-    narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.
+    Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
+    potentially narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.
 
     Considerations:
     - The search is purely name-based, and an item is returned when its name or any word in the name starts with any
