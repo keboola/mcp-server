@@ -67,7 +67,7 @@ class ComponentCapabilities(BaseModel):
 
     is_row_based: bool = Field(
         default=False,
-        description='Whether the component supports configuration rows',
+        description='Whether the component supports row configurations',
         validation_alias=AliasChoices('is_row_based', 'isRowBased', 'is-row-based'),
         serialization_alias='isRowBased',
     )
