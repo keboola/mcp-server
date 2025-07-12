@@ -87,9 +87,6 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert flow.configuration.phases[0].name == 'Extract'
         assert flow.configuration.phases[1].name == 'Transform'
         assert flow.configuration.tasks[0].task['componentId'] == configs[0].component_id
-
-        # Verify the links of the retrieved flow
-        assert flow.links is not None
         assert set(flow.links) == set(expected_links)
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'

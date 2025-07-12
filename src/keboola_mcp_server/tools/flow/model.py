@@ -164,6 +164,7 @@ class Flow(BaseModel):
             phases=[FlowPhase.model_validate(p) for p in api_config.configuration.get('phases', [])],
             tasks=[FlowTask.model_validate(t) for t in api_config.configuration.get('tasks', [])],
         )
+        links = links if links else []
         return cls.model_construct(
             component_id=component_id,
             configuration_id=api_config.configuration_id,
@@ -177,6 +178,7 @@ class Flow(BaseModel):
             configuration_metadata=api_config.metadata,
             created=api_config.created,
             updated=api_config.updated,
+            links=links
         )
 
 
