@@ -6,6 +6,7 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
+from keboola_mcp_server.tools.flow.api_models import APIFlowListResponse, APIFlowResponse
 
 
 class ListFlowsOutput(BaseModel):
@@ -135,3 +136,81 @@ class FlowToolResponse(BaseModel):
     )
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the flow.')
+
+
+class Flow(BaseModel):
+    """
+    Complete flow configuration with all data (domain model).
+    """
+    component_id: str = Field(description='The ID of the component (orchestrator)')
+    configuration_id: str = Field(description='The ID of this flow configuration')
+    name: str = Field(description='The name of the flow configuration')
+    description: Optional[str] = Field(default=None, description='The description of the flow configuration')
+    version: int = Field(description='The version of the flow configuration')
+    is_disabled: bool = Field(default=False, description='Whether the flow configuration is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the flow configuration is deleted')
+    configuration: FlowConfiguration = Field(description='The flow configuration containing phases and tasks')
+    change_description: Optional[str] = Field(default=None, description='The description of the latest changes')
+    configuration_metadata: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description='Flow configuration metadata including MCP tracking')
+    created: Optional[str] = Field(None, description='Creation timestamp')
+    updated: Optional[str] = Field(None, description='Last update timestamp')
+    links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
+
+    @classmethod
+    def from_api_response(cls, api_config: 'APIFlowResponse', links: Optional[list[Link]] = None) -> 'Flow':
+        component_id = getattr(api_config, 'component_id', None) or ORCHESTRATOR_COMPONENT_ID
+        config = FlowConfiguration(
+            phases=[FlowPhase.model_validate(p) for p in api_config.configuration.get('phases', [])],
+            tasks=[FlowTask.model_validate(t) for t in api_config.configuration.get('tasks', [])],
+        )
+        return cls.model_construct(
+            component_id=component_id,
+            configuration_id=api_config.configuration_id,
+            name=api_config.name,
+            description=api_config.description,
+            version=api_config.version,
+            is_disabled=api_config.is_disabled,
+            is_deleted=api_config.is_deleted,
+            configuration=config,
+            change_description=api_config.change_description,
+            configuration_metadata=api_config.metadata,
+            created=api_config.created,
+            updated=api_config.updated,
+        )
+
+
+class FlowSummary(BaseModel):
+    """
+    Lightweight flow configuration for list operations (domain model).
+    """
+    component_id: str = Field(description='The ID of the component (orchestrator)')
+    configuration_id: str = Field(description='The ID of this flow configuration')
+    name: str = Field(description='The name of the flow configuration')
+    description: Optional[str] = Field(default=None, description='The description of the flow configuration')
+    version: int = Field(description='The version of the flow configuration')
+    is_disabled: bool = Field(default=False, description='Whether the flow configuration is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the flow configuration is deleted')
+    phases_count: int = Field(description='Number of phases in the flow')
+    tasks_count: int = Field(description='Number of tasks in the flow')
+    created: Optional[str] = Field(None, description='Creation timestamp')
+    updated: Optional[str] = Field(None, description='Last update timestamp')
+
+    @classmethod
+    def from_api_response(cls, api_config: APIFlowListResponse) -> 'FlowSummary':
+        component_id = getattr(api_config, 'component_id', None) or ORCHESTRATOR_COMPONENT_ID
+        config = getattr(api_config, 'configuration', {}) or {}
+        return cls.model_construct(
+            component_id=component_id,
+            configuration_id=api_config.configuration_id,
+            name=api_config.name,
+            description=api_config.description,
+            version=api_config.version,
+            is_disabled=api_config.is_disabled,
+            is_deleted=api_config.is_deleted,
+            phases_count=len(config.get('phases', [])),
+            tasks_count=len(config.get('tasks', [])),
+            created=api_config.created,
+            updated=api_config.updated,
+        )
