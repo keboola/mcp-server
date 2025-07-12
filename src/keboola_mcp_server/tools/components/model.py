@@ -67,39 +67,27 @@ class ComponentCapabilities(BaseModel):
 
     is_row_based: bool = Field(
         default=False,
-        description='Whether the component supports row configurations',
-        validation_alias=AliasChoices('is_row_based', 'isRowBased', 'is-row-based'),
-        serialization_alias='isRowBased',
+        description='Whether the component supports row configurations'
     )
     has_table_input: bool = Field(
         default=False,
-        description='Whether the component can read from tables',
-        validation_alias=AliasChoices('has_table_input_mapping', 'hasTableInputMapping', 'has-table-input-mapping'),
-        serialization_alias='hasTableInputMapping',
+        description='Whether the component can read from tables'
     )
     has_table_output: bool = Field(
         default=False,
-        description='Whether the component can write to tables',
-        validation_alias=AliasChoices('has_table_output_mapping', 'hasTableOutputMapping', 'has-table-output-mapping'),
-        serialization_alias='hasTableOutputMapping',
+        description='Whether the component can write to tables'
     )
     has_file_input: bool = Field(
         default=False,
-        description='Whether the component can read from files',
-        validation_alias=AliasChoices('has_file_input_mapping', 'hasFileInputMapping', 'has-file-input-mapping'),
-        serialization_alias='hasFileInputMapping',
+        description='Whether the component can read from files'
     )
     has_file_output: bool = Field(
         default=False,
-        description='Whether the component can write to files',
-        validation_alias=AliasChoices('has_file_output_mapping', 'hasFileOutputMapping', 'has-file-output-mapping'),
-        serialization_alias='hasFileOutputMapping',
+        description='Whether the component can write to files'
     )
     requires_oauth: bool = Field(
         default=False,
-        description='Whether the component requires OAuth authorization',
-        validation_alias=AliasChoices('has_oauth', 'hasOauth', 'has-oauth'),
-        serialization_alias='hasOauth',
+        description='Whether the component requires OAuth authorization'
     )
 
     @classmethod
@@ -128,18 +116,12 @@ class ComponentSummary(BaseModel):
 
     component_id: str = Field(
         description='Component ID',
-        validation_alias=AliasChoices('id', 'component_id', 'componentId', 'component-id'),
-        serialization_alias='componentId',
     )
     component_name: str = Field(
         description='Component name',
-        validation_alias=AliasChoices('name', 'component_name', 'componentName', 'component-name'),
-        serialization_alias='componentName',
     )
     component_type: str = Field(
         description='Component type',
-        validation_alias=AliasChoices('type', 'component_type', 'componentType', 'component-type'),
-        serialization_alias='componentType',
     )
     capabilities: ComponentCapabilities = Field(description='Component capabilities')
 
@@ -173,27 +155,16 @@ class Component(BaseModel):
     # Core component metadata (shared with ComponentSummary)
     component_id: str = Field(
         description='Component ID',
-        validation_alias=AliasChoices('id', 'component_id', 'componentId', 'component-id'),
-        serialization_alias='componentId',
     )
     component_name: str = Field(
         description='Component name',
-        validation_alias=AliasChoices('name', 'component_name', 'componentName', 'component-name'),
-        serialization_alias='componentName',
     )
     component_type: str = Field(
         description='Component type',
-        validation_alias=AliasChoices('type', 'component_type', 'componentType', 'component-type'),
-        serialization_alias='componentType',
     )
     component_categories: list[str] = Field(
         default_factory=list,
         description='Component categories',
-        validation_alias=AliasChoices('componentCategories',
-                                      'component_categories',
-                                      'component-categories',
-                                      'categories'),
-        serialization_alias='categories'
     )
     capabilities: ComponentCapabilities = Field(description='Component capabilities')
 
@@ -201,8 +172,6 @@ class Component(BaseModel):
     documentation_url: str | None = Field(
         default=None,
         description='URL to component documentation',
-        validation_alias=AliasChoices('documentationUrl', 'documentation_url', 'documentation-url'),
-        serialization_alias='documentationUrl'
     )
     documentation: str | None = Field(
         default=None,
@@ -211,14 +180,10 @@ class Component(BaseModel):
     configuration_schema: dict[str, Any] | None = Field(
         default=None,
         description='JSON schema for root configuration validation',
-        validation_alias=AliasChoices('configurationSchema', 'configuration_schema', 'configuration-schema'),
-        serialization_alias='configurationSchema'
     )
     configuration_row_schema: dict[str, Any] | None = Field(
         default=None,
         description='JSON schema for row configuration validation',
-        validation_alias=AliasChoices('configurationRowSchema', 'configuration_row_schema', 'configuration-row-schema'),
-        serialization_alias='configurationRowSchema'
     )
 
     # MCP-specific metadata
