@@ -1,3 +1,30 @@
+"""
+Keboola Component Management Tools for MCP Server.
+
+This module provides the core tools for managing Keboola components and their configurations
+through the Model Context Protocol (MCP) interface. It serves as the main entry point for
+component-related operations in the MCP server.
+
+## Tool Categories
+
+### Component Discovery
+- `get_component`: Retrieve detailed component information including schemas
+- `find_component_id`: Search for components by natural language query
+- `get_config_examples`: Get sample configuration examples for a component
+
+### Configuration Management
+- `get_config`: Retrieve detailed configuration with root + row structure
+- `list_configs`: List all component configurations (with filtering)
+- `create_config`: Create new root component configurations
+- `update_config`: Update existing root configurations
+- `add_config_row`: Add new configuration rows to existing configurations
+- `update_config_row`: Update existing configuration rows
+
+### SQL Transformations
+- `list_transformations`: List transformation configurations
+- `create_sql_transformation`: Create new SQL transformations with code blocks
+- `update_sql_transformation`: Update existing SQL transformation configurations
+"""
 import json
 import logging
 from datetime import datetime
@@ -13,20 +40,19 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
+from keboola_mcp_server.tools.components.api_models import APIConfigurationResponse
 from keboola_mcp_server.tools.components.model import (
     Component,
-    ComponentConfigurationOutput,
-    ComponentConfigurationResponse,
-    ComponentRootConfiguration,
-    ComponentRowConfiguration,
+    ComponentSummary,
     ComponentType,
     ConfigToolOutput,
+    Configuration,
     ListConfigsOutput,
     ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
-    _get_component,
+    _fetch_component,
     _get_sql_transformation_id_from_sql_dialect,
     _get_transformation_configuration,
     _handle_component_types,
@@ -44,27 +70,36 @@ from keboola_mcp_server.tools.validation import (
 LOG = logging.getLogger(__name__)
 
 
-# Add component tools to the MCP server #########################################
+# ============================================================================
+# TOOL REGISTRATION
+# ============================================================================
+
 def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
-
+    # Component discovery tools
     mcp.add_tool(FunctionTool.from_function(get_component))
+    mcp.add_tool(FunctionTool.from_function(find_component_id))
+    mcp.add_tool(FunctionTool.from_function(get_config_examples))
+
+    # Configuration management tools
     mcp.add_tool(FunctionTool.from_function(get_config))
     mcp.add_tool(FunctionTool.from_function(list_configs, serializer=listing_output_serializer))
     mcp.add_tool(FunctionTool.from_function(create_config))
-    mcp.add_tool(FunctionTool.from_function(add_config_row))
     mcp.add_tool(FunctionTool.from_function(update_config))
+    mcp.add_tool(FunctionTool.from_function(add_config_row))
     mcp.add_tool(FunctionTool.from_function(update_config_row))
-    mcp.add_tool(FunctionTool.from_function(get_config_examples))
-    mcp.add_tool(FunctionTool.from_function(find_component_id))
+
+    # SQL transformation tools
+    mcp.add_tool(FunctionTool.from_function(list_transformations, serializer=listing_output_serializer))
     mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
     mcp.add_tool(FunctionTool.from_function(update_sql_transformation))
-    mcp.add_tool(FunctionTool.from_function(list_transformations))
 
     LOG.info('Component tools added to the MCP server.')
 
 
-# tools #########################################
+# ============================================================================
+# Configuration LISTING TOOLS
+# ============================================================================
 
 
 @tool_errors()
@@ -163,6 +198,10 @@ async def list_transformations(
     )
 
 
+# ============================================================================
+# COMPONENT DISCOVERY TOOLS
+# ============================================================================
+
 @tool_errors()
 @with_session_state()
 async def get_component(
@@ -184,7 +223,8 @@ async def get_component(
         - returns the component
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    return await _get_component(component_id=component_id, client=client)
+    api_component = await _fetch_component(client=client, component_id=component_id)
+    return Component.from_api_response(api_component)
 
 
 @tool_errors()
@@ -198,7 +238,7 @@ async def get_config(
         ),
     ],
     ctx: Context,
-) -> Annotated[ComponentConfigurationOutput, Field(description='The component/transformation and its configuration.')]:
+) -> Annotated[Configuration, Field(description='The component/transformation and its configuration.')]:
     """
     Gets information about a specific component/transformation configuration.
 
@@ -213,50 +253,41 @@ async def get_config(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    component = await _get_component(client=client, component_id=component_id)
+
+    # Get raw API response
     raw_configuration = cast(
         JsonDict,
         await client.storage_client.configuration_detail(component_id=component_id, configuration_id=configuration_id),
     )
-    configuration_response = ComponentConfigurationResponse.model_validate(
+
+    api_config = APIConfigurationResponse.model_validate(
         raw_configuration | {'component_id': component_id}
     )
 
-    # Create root configuration
-    root_configuration = ComponentRootConfiguration.model_validate(
-        configuration_response.model_dump()
-        | {
-            'parameters': configuration_response.configuration.get('parameters', {}),
-            'storage': configuration_response.configuration.get('storage'),
-        }
-    )
+    # Get component information and convert to ComponentSummary using factory method
+    api_component = await _fetch_component(client=client, component_id=component_id)
+    component_summary = ComponentSummary.from_api_response(api_component)
 
-    # Create row configurations if they exist
-    row_configurations = None
-    if configuration_response.rows:
-        row_configurations = []
-        for row in configuration_response.rows:
-            if row is None:
-                continue
-            row_configuration = ComponentRowConfiguration.model_validate(
-                row
-                | {
-                    'component_id': configuration_response.component_id,
-                    'parameters': row.get('configuration', {}).get('parameters', {}),
-                    'storage': row.get('configuration', {}).get('storage'),
-                }
-            )
-            row_configurations.append(row_configuration)
-
+    # Generate links
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_name=raw_configuration.get('name', ''),
     )
-    return ComponentConfigurationOutput(
-        root_configuration=root_configuration, row_configurations=row_configurations, component=component, links=links
+
+    # Convert to domain model
+    configuration = Configuration.from_api_response(
+        api_config=api_config,
+        component=component_summary,
+        links=links,
     )
 
+    return configuration
+
+
+# ============================================================================
+# CONFIGURATION MANAGEMENT TOOLS
+# ============================================================================
 
 async def _set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
     """Sets configuration metadata to indicate it was created by MCP."""
@@ -473,7 +504,8 @@ async def update_sql_transformation(
     sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    transformation = await _get_component(client=client, component_id=sql_transformation_id)
+    api_component = await _fetch_component(client=client, component_id=sql_transformation_id)
+    transformation = Component.from_api_response(api_component)
 
     storage = validate_root_storage_configuration(
         component=transformation,
@@ -580,7 +612,8 @@ async def create_config(
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    component = await _get_component(client=client, component_id=component_id)
+    api_component = await _fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
 
     storage_cfg = validate_root_storage_configuration(
         component=component,
@@ -691,7 +724,8 @@ async def add_config_row(
         f'and configuration {configuration_id}.'
     )
 
-    component = await _get_component(client=client, component_id=component_id)
+    api_component = await _fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
 
     storage_cfg = validate_row_storage_configuration(
         component=component,
@@ -807,7 +841,8 @@ async def update_config(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    component = await _get_component(client=client, component_id=component_id)
+    api_component = await _fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
 
     storage_cfg = validate_root_storage_configuration(
         component=component,
@@ -924,7 +959,8 @@ async def update_config_row(
         f'and row id {configuration_row_id}.'
     )
 
-    component = await _get_component(client=client, component_id=component_id)
+    api_component = await _fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
 
     storage_cfg = validate_row_storage_configuration(
         component=component,
