@@ -7,7 +7,7 @@ from integtests.conftest import ConfigDef
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.tools.flow.model import FlowConfigurationResponse
+from keboola_mcp_server.tools.flow.model import Flow
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
     ListFlowsOutput,
@@ -79,18 +79,18 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         result = await list_flows(mcp_context)
         assert any(f.name == flow_name for f in result.flows)
         found = [f for f in result.flows if f.id == flow_id][0]
-        detail = await get_flow(mcp_context, configuration_id=found.id)
+        flow = await get_flow(mcp_context, configuration_id=found.id)
 
-        assert isinstance(detail, FlowConfigurationResponse)
-        assert detail.component_id == ORCHESTRATOR_COMPONENT_ID
-        assert detail.configuration_id == found.id
-        assert detail.configuration.phases[0].name == 'Extract'
-        assert detail.configuration.phases[1].name == 'Transform'
-        assert detail.configuration.tasks[0].task['componentId'] == configs[0].component_id
+        assert isinstance(flow, Flow)
+        assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert flow.configuration_id == found.id
+        assert flow.configuration.phases[0].name == 'Extract'
+        assert flow.configuration.phases[1].name == 'Transform'
+        assert flow.configuration.tasks[0].task['componentId'] == configs[0].component_id
 
         # Verify the links of the retrieved flow
-        assert detail.links is not None
-        assert set(detail.links) == set(expected_links)
+        assert flow.links is not None
+        assert set(flow.links) == set(expected_links)
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(

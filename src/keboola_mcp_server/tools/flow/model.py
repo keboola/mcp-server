@@ -5,7 +5,6 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.model import ComponentConfigurationResponseBase
 from keboola_mcp_server.tools.flow.api_models import APIFlowListResponse, APIFlowResponse
 
 
@@ -55,36 +54,36 @@ class FlowConfiguration(BaseModel):
     tasks: List[FlowTask] = Field(description='List of tasks in the flow')
 
 
-class FlowConfigurationResponse(ComponentConfigurationResponseBase):
-    """
-    Detailed information about a Keboola Flow Configuration, extending the base configuration response.
-    """
-    version: int = Field(description='The version of the flow configuration')
-    configuration: FlowConfiguration = Field(description='The flow configuration containing phases and tasks')
-    change_description: Optional[str] = Field(
-        description='The description of the changes made to the flow configuration',
-        default=None,
-        validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
-        serialization_alias='changeDescription',
-    )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        description='The metadata of the flow configuration',
-        default_factory=list,
-        validation_alias=AliasChoices(
-            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-        ),
-        serialization_alias='configurationMetadata',
-    )
-    created: Optional[str] = Field(None, description='Creation timestamp')
-    links: Optional[list[Link]] = Field(None, description='Links relevant to the flow configuration.')
+# class FlowConfigurationResponse(ComponentConfigurationResponseBase):
+#     """
+#     Detailed information about a Keboola Flow Configuration, extending the base configuration response.
+#     """
+#     version: int = Field(description='The version of the flow configuration')
+#     configuration: FlowConfiguration = Field(description='The flow configuration containing phases and tasks')
+#     change_description: Optional[str] = Field(
+#         description='The description of the changes made to the flow configuration',
+#         default=None,
+#         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
+#         serialization_alias='changeDescription',
+#     )
+#     configuration_metadata: list[dict[str, Any]] = Field(
+#         description='The metadata of the flow configuration',
+#         default_factory=list,
+#         validation_alias=AliasChoices(
+#             'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
+#         ),
+#         serialization_alias='configurationMetadata',
+#     )
+#     created: Optional[str] = Field(None, description='Creation timestamp')
+#     links: Optional[list[Link]] = Field(None, description='Links relevant to the flow configuration.')
 
-    @model_validator(mode='before')
-    @classmethod
-    def _initialize_component_id_to_orchestrator(cls, data: Any) -> Any:
-        """Initialize component_id to Orchestrator if not provided."""
-        if isinstance(data, dict) and 'component_id' not in data:
-            data['component_id'] = ORCHESTRATOR_COMPONENT_ID
-        return data
+#     @model_validator(mode='before')
+#     @classmethod
+#     def _initialize_component_id_to_orchestrator(cls, data: Any) -> Any:
+#         """Initialize component_id to Orchestrator if not provided."""
+#         if isinstance(data, dict) and 'component_id' not in data:
+#             data['component_id'] = ORCHESTRATOR_COMPONENT_ID
+#         return data
 
 
 class ReducedFlow(BaseModel):
