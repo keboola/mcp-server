@@ -8,16 +8,7 @@ from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.model import (
-    Component,
-    ComponentConfigurationOutput,
-    ComponentType,
-    ComponentWithConfigurations,
-    ConfigToolOutput,
-    ListConfigsOutput,
-    ListTransformationsOutput,
-)
-from keboola_mcp_server.tools.components.tools import (
+from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
     create_sql_transformation,
@@ -31,6 +22,15 @@ from keboola_mcp_server.tools.components.tools import (
     update_config_row,
     update_sql_transformation,
 )
+from keboola_mcp_server.tools.components.model import (
+    Component,
+    ComponentType,
+    ComponentWithConfigurations,
+    ConfigToolOutput,
+    Configuration,
+    ListConfigsOutput,
+    ListTransformationsOutput,
+)
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
     _get_sql_transformation_id_from_sql_dialect,
@@ -42,27 +42,27 @@ LOG = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_config` returns a `ComponentConfigurationOutput` instance."""
+    """Tests that `get_config` returns a `Configuration` instance."""
 
     for config in configs:
         assert config.configuration_id is not None
 
-        result = await get_config(
+        configuration = await get_config(
             component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context
         )
 
-        assert isinstance(result, ComponentConfigurationOutput)
-        assert result.component is not None
-        assert result.component.component_id == config.component_id
-        assert result.component.component_type is not None
-        assert result.component.component_name is not None
+        assert isinstance(configuration, Configuration)
+        assert configuration.component is not None
+        assert configuration.component.component_id == config.component_id
+        assert configuration.component.component_type is not None
+        assert configuration.component.component_name is not None
 
-        assert result.root_configuration is not None
-        assert result.root_configuration.configuration_id == config.configuration_id
-        assert result.root_configuration.component_id == config.component_id
+        assert configuration.root_configuration is not None
+        assert configuration.root_configuration.configuration_id == config.configuration_id
+        assert configuration.root_configuration.component_id == config.component_id
         # Check links field
-        assert result.links, 'Links list should not be empty.'
-        for link in result.links:
+        assert configuration.links, 'Links list should not be empty.'
+        for link in configuration.links:
             assert isinstance(link, Link)
 
 

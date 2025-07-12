@@ -1,3 +1,24 @@
+"""
+Utility functions for Keboola component and configuration management.
+
+This module contains helper functions and utilities used across the component tools:
+
+## Component Retrieval
+- _fetch_component: Fetches component details with AI Service/Storage API fallback
+- _handle_component_types: Normalizes component type filtering
+
+## Configuration Listing
+- _list_configs_by_types: Retrieves components+configs filtered by type
+- _list_configs_by_ids: Retrieves components+configs filtered by ID
+
+## SQL Transformation Utilities
+- _get_sql_transformation_id_from_sql_dialect: Maps SQL dialect to component ID
+- _get_transformation_configuration: Builds transformation config payloads
+- _clean_bucket_name: Sanitizes bucket names for transformations
+
+## Data Models
+- TransformationConfiguration: Pydantic model for SQL transformation structure
+"""
 import logging
 import re
 import unicodedata
@@ -7,22 +28,28 @@ from httpx import HTTPStatusError
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.tools.components.api_models import APIComponentResponse, APIConfigurationResponse
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
-    Component,
-    ComponentConfigurationMetadata,
-    ComponentConfigurationResponse,
+    ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
-    ReducedComponent,
+    ConfigurationSummary,
 )
 
 LOG = logging.getLogger(__name__)
 
+# ============================================================================
+# CONSTANTS
+# ============================================================================
 
 SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
 BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 
+
+# ============================================================================
+# COMPONENT TYPE HANDLING
+# ============================================================================
 
 def _handle_component_types(
     types: Optional[Union[ComponentType, Sequence[ComponentType]]],
@@ -41,48 +68,55 @@ def _handle_component_types(
     return types
 
 
+# ============================================================================
+# CONFIGURATION LISTING UTILITIES
+# ============================================================================
+
 async def _list_configs_by_types(
     client: KeboolaClient, component_types: Sequence[AllComponentTypes]
 ) -> list[ComponentWithConfigurations]:
     """
-    Utility function to retrieve components with configurations by types.
+    Retrieve components with their configurations filtered by component types.
 
-    Used in tools:
-    - list_configs
-    - list_transformations
+    Used by:
+    - list_configs tool
+    - list_transformations tool
 
-    :param client: The Keboola client
-    :param component_types: The component types/type to retrieve
-    :return: A list of items, each containing a component and its associated configurations
+    :param client: Authenticated Keboola client instance
+    :param component_types: Types of components to retrieve (extractor, writer, application, transformation)
+    :return: List of components paired with their configuration summaries
     """
-    # retrieve components by types - unable to use list of types as parameter, we need to iterate over types
     components_with_configurations = []
 
     for comp_type in component_types:
-
+        # Fetch raw components with configurations included
         raw_components_with_configurations_by_type = await client.storage_client.component_list(
             component_type=comp_type, include=['configuration']
         )
-        # extend the list with the raw components with configurations
-        # TODO: ugly, refactor
+
+        # Process each component and its configurations
         for raw_component in raw_components_with_configurations_by_type:
-            # build components with configurations list, each item contains a component and its
-            # associated configurations
             raw_configuration_responses = [
-                ComponentConfigurationResponse.model_validate(
+                APIConfigurationResponse.model_validate(
                     raw_configuration | {'component_id': raw_component['id']}
                 )
                 for raw_configuration in cast(list[JsonDict], raw_component.get('configurations', []))
             ]
-            configurations_metadata = [
-                ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
-                for raw_response in raw_configuration_responses
+
+            # Convert to domain models
+            configuration_summaries = [
+                ConfigurationSummary.from_api_response(api_config)
+                for api_config in raw_configuration_responses
             ]
+
+            # Process component
+            api_component = APIComponentResponse.model_validate(raw_component)
+            domain_component = ComponentSummary.from_api_response(api_component)
 
             components_with_configurations.append(
                 ComponentWithConfigurations(
-                    component=ReducedComponent.model_validate(raw_component),
-                    configurations=configurations_metadata,
+                    component=domain_component,
+                    configurations=configuration_summaries,
                 )
             )
 
@@ -98,36 +132,41 @@ async def _list_configs_by_ids(
     client: KeboolaClient, component_ids: Sequence[str]
 ) -> list[ComponentWithConfigurations]:
     """
-    Utility function to retrieve components with configurations by component IDs.
+    Retrieve components with their configurations filtered by specific component IDs.
 
-    Used in tools:
-    - list_configs
-    - list_transformations
+    Used by:
+    - list_configs tool (when specific component IDs are requested)
+    - list_transformations tool (when specific transformation IDs are requested)
 
-    :param client: The Keboola client
-    :param component_ids: The component IDs to retrieve
-    :return: A list of items, each containing a component and its associated configurations
+    :param client: Authenticated Keboola client instance
+    :param component_ids: Specific component IDs to retrieve
+    :return: List of components paired with their configuration summaries
     """
     components_with_configurations = []
+
     for component_id in component_ids:
-        # retrieve configurations for component ids
+        # Fetch configurations and component details
         raw_configurations = await client.storage_client.configuration_list(component_id=component_id)
-        # retrieve components
         raw_component = await client.storage_client.component_detail(component_id=component_id)
-        # build component configurations list grouped by components
+
+        # Process component
+        api_component = APIComponentResponse.model_validate(raw_component)
+        domain_component = ComponentSummary.from_api_response(api_component)
+
+        # Process configurations
         raw_configuration_responses = [
-            ComponentConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
+            APIConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
             for raw_configuration in raw_configurations
         ]
-        configurations_metadata = [
-            ComponentConfigurationMetadata.from_component_configuration_response(raw_response)
-            for raw_response in raw_configuration_responses
+        configuration_summaries = [
+            ConfigurationSummary.from_api_response(api_config)
+            for api_config in raw_configuration_responses
         ]
 
         components_with_configurations.append(
             ComponentWithConfigurations(
-                component=ReducedComponent.model_validate(raw_component),
-                configurations=configurations_metadata,
+                component=domain_component,
+                configurations=configuration_summaries,
             )
         )
 
@@ -139,30 +178,40 @@ async def _list_configs_by_ids(
     return components_with_configurations
 
 
-async def _get_component(
+# ============================================================================
+# COMPONENT FETCHING
+# ============================================================================
+
+async def _fetch_component(
     client: KeboolaClient,
     component_id: str,
-) -> Component:
+) -> APIComponentResponse:
     """
-    Utility function to retrieve a component by ID.
+    Utility function to fetch a component by ID, returning the raw API response.
 
     First tries to get component from the AI service catalog. If the component
     is not found (404) or returns empty data (private components), falls back to using the
     Storage API endpoint.
 
-    Used in tools:
-    - get_config
+    Used by:
+    - get_component tool
+    - Configuration creation/update operations that need component schemas
 
-    :param client: The Keboola client
-    :param component_id: The ID of the component to retrieve
-    :return: The component
+    :param client: Authenticated Keboola client instance
+    :param component_id: Unique identifier of the component to fetch
+    :return: Unified API component response with available metadata
+    :raises HTTPStatusError: If component is not found in either API
     """
     try:
+        # First attempt: AI Service catalog (includes documentation & schemas)
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component {component_id} from AI service catalog.')
-        return Component.model_validate(raw_component)
+
+        return APIComponentResponse.model_validate(raw_component)
+
     except HTTPStatusError as e:
         if e.response.status_code == 404:
+            # Fallback: Storage API (basic component info only)
             LOG.info(
                 f'Component {component_id} not found in AI service catalog (possibly private). '
                 f'Falling back to Storage API.'
@@ -170,20 +219,28 @@ async def _get_component(
 
             raw_component = await client.storage_client.component_detail(component_id=component_id)
             LOG.info(f'Retrieved component {component_id} from Storage API.')
-            return Component.model_validate(raw_component)
+
+            return APIComponentResponse.model_validate(raw_component)
         else:
             # If it's not a 404, re-raise the error
             raise
 
 
+# ============================================================================
+# SQL TRANSFORMATION UTILITIES
+# ============================================================================
+
 def _get_sql_transformation_id_from_sql_dialect(
     sql_dialect: str,
 ) -> str:
     """
-    Utility function to retrieve the SQL transformation ID from the given SQL dialect.
+    Map SQL dialect to the appropriate transformation component ID.
 
-    :param sql_dialect: The SQL dialect
-    :return: The SQL transformation ID
+    Keboola has different transformation components for different SQL dialects.
+    This function maps the workspace SQL dialect to the correct component ID.
+
+    :param sql_dialect: SQL dialect from workspace configuration (e.g., 'snowflake', 'bigquery')
+    :return: Component ID for the appropriate SQL transformation
     :raises ValueError: If the SQL dialect is not supported
     """
     if sql_dialect.lower() == 'snowflake':
@@ -192,6 +249,34 @@ def _get_sql_transformation_id_from_sql_dialect(
         return BIGQUERY_TRANSFORMATION_ID
     else:
         raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
+
+
+def _clean_bucket_name(bucket_name: str) -> str:
+    """
+    Utility function to clean the bucket name.
+    Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
+    Converts spaces to dashes.
+    Removes leading underscores, dashes, and whitespace.
+    Removes any character that is not alphanumeric, dash, or underscore.
+    """
+    max_bucket_length = 96
+    bucket_name = bucket_name.strip()
+    # Convert the bucket name to ASCII
+    bucket_name = unicodedata.normalize('NFKD', bucket_name)
+    bucket_name = bucket_name.encode('ascii', 'ignore').decode('ascii')  # český -> cesky
+    # Replace all whitespace (including tabs, newlines) with dashes
+    bucket_name = re.sub(r'\s+', '-', bucket_name)
+    # Remove any character that is not alphanumeric, dash, or underscore
+    bucket_name = re.sub(r'[^a-zA-Z0-9_-]', '', bucket_name)
+    # Remove leading underscores if present
+    bucket_name = re.sub(r'^_+', '', bucket_name)
+    bucket_name = bucket_name[:max_bucket_length]
+    return bucket_name
+
+
+# ============================================================================
+# DATA MODELS
+# ============================================================================
 
 
 class TransformationConfiguration(BaseModel):
@@ -244,29 +329,6 @@ class TransformationConfiguration(BaseModel):
 
     parameters: Parameters = Field(description='The parameters for the transformation')
     storage: Storage = Field(description='The storage configuration for the transformation')
-
-
-def _clean_bucket_name(bucket_name: str) -> str:
-    """
-    Utility function to clean the bucket name.
-    Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
-    Converts spaces to dashes.
-    Removes leading underscores, dashes, and whitespace.
-    Removes any character that is not alphanumeric, dash, or underscore.
-    """
-    max_bucket_length = 96
-    bucket_name = bucket_name.strip()
-    # Convert the bucket name to ASCII
-    bucket_name = unicodedata.normalize('NFKD', bucket_name)
-    bucket_name = bucket_name.encode('ascii', 'ignore').decode('ascii')  # český -> cesky
-    # Replace all whitespace (including tabs, newlines) with dashes
-    bucket_name = re.sub(r'\s+', '-', bucket_name)
-    # Remove any character that is not alphanumeric, dash, or underscore
-    bucket_name = re.sub(r'[^a-zA-Z0-9_-]', '', bucket_name)
-    # Remove leading underscores if present
-    bucket_name = re.sub(r'^_+', '', bucket_name)
-    bucket_name = bucket_name[:max_bucket_length]
-    return bucket_name
 
 
 def _get_transformation_configuration(

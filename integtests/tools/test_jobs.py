@@ -7,7 +7,7 @@ from mcp.server.fastmcp import Context
 from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.tools import create_config
+from keboola_mcp_server.tools.components import create_config
 from keboola_mcp_server.tools.jobs import JobDetail, ListJobsOutput, get_job, list_jobs, run_job
 
 LOG = logging.getLogger(__name__)

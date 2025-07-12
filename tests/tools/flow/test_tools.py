@@ -9,7 +9,7 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.tools.flow.model import (
-    FlowConfigurationResponse,
+    Flow,
     ListFlowsOutput,
     ReducedFlow,
 )
@@ -137,10 +137,10 @@ class TestFlowTools:
 
         result = await get_flow(ctx=mcp_context_client, configuration_id='21703284')
 
-        assert isinstance(result, FlowConfigurationResponse)
+        assert isinstance(result, Flow)
         assert result.component_id == ORCHESTRATOR_COMPONENT_ID
         assert result.configuration_id == '21703284'
-        assert result.configuration_name == 'Test Flow'
+        assert result.name == 'Test Flow'
         assert len(result.configuration.phases) == 2
         assert len(result.configuration.tasks) == 2
         assert result.configuration.phases[0].name == 'Data Extraction'
@@ -278,6 +278,6 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     assert isinstance(updated, FlowToolResponse)
 
     detail = await get_flow(ctx=mcp_context_client, configuration_id='123456')
-    assert isinstance(detail, FlowConfigurationResponse)
+    assert isinstance(detail, Flow)
     assert len(detail.configuration.phases) == 1
     assert len(detail.configuration.tasks) == 1
