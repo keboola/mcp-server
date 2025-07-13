@@ -3,10 +3,11 @@
 import json
 import logging
 from importlib import resources
-from typing import Any
+from typing import Any, Sequence
 
-from keboola_mcp_server.client import JsonDict
-from keboola_mcp_server.tools.flow.model import FlowPhase, FlowTask
+from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
+from keboola_mcp_server.tools.flow.model import FlowPhase, FlowSummary, FlowTask
 
 LOG = logging.getLogger(__name__)
 
@@ -162,3 +163,20 @@ def _check_circular_dependencies(phases: list[FlowPhase]) -> None:
             if cycle_path is not None:
                 cycle_str = ' -> '.join(str(pid) for pid in cycle_path)
                 raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
+
+
+async def _get_flows_by_ids(client: KeboolaClient, flow_ids: Sequence[str]) -> list[FlowSummary]:
+    flows = []
+    for flow_id in flow_ids:
+        try:
+            raw_flow = await client.storage_client.flow_detail(flow_id)
+            api_flow = APIFlowResponse.model_validate(raw_flow)
+            flows.append(FlowSummary.from_api_response(api_flow))
+        except Exception as e:
+            LOG.warning(f'Failed to retrieve flow {flow_id}: {e}')
+    return flows
+
+
+async def _get_all_flows(client: KeboolaClient) -> list[FlowSummary]:
+    raw_flows = await client.storage_client.flow_list()
+    return [FlowSummary.from_api_response(APIFlowResponse.model_validate(raw)) for raw in raw_flows]

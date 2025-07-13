@@ -1,7 +1,7 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
 import logging
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -15,11 +15,12 @@ from keboola_mcp_server.tools.components import _set_cfg_creation_metadata, _set
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
     Flow,
-    FlowSummary,
     FlowToolResponse,
     ListFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.utils import (
+    _get_all_flows,
+    _get_flows_by_ids,
     ensure_phase_ids,
     ensure_task_ids,
     get_schema_as_markdown,
@@ -188,9 +189,7 @@ async def update_flow(
 @with_session_state()
 async def list_flows(
     ctx: Context,
-    flow_ids: Annotated[
-        Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
-    ] = tuple(),
+    flow_ids: Annotated[Optional[Sequence[str]], Field(description='IDs of the flows to retrieve.')] = None,
 ) -> ListFlowsOutput:
     """Retrieves flow configurations from the project."""
 
@@ -198,22 +197,11 @@ async def list_flows(
     links_manager = await ProjectLinksManager.from_client(client)
 
     if flow_ids:
-        flows = []
-        for flow_id in flow_ids:
-            try:
-                raw_config = await client.storage_client.flow_detail(flow_id)
-                api_flow = APIFlowResponse.model_validate(raw_config)
-                flow = FlowSummary.from_api_response(api_flow)
-                flows.append(flow)
-            except Exception as e:
-                LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
+        flows = await _get_flows_by_ids(client, flow_ids)
+        LOG.info(f'Retrieved {len(flows)} flows by ID.')
     else:
-        raw_flows = await client.storage_client.flow_list()
-        flows = [
-            FlowSummary.from_api_response(APIFlowResponse.model_validate(raw_flow))
-            for raw_flow in raw_flows
-        ]
-        LOG.info(f'Found {len(flows)} flows in the project')
+        flows = await _get_all_flows(client)
+        LOG.info(f'Retrieved {len(flows)} flows in the project.')
 
     links = [links_manager.get_flows_dashboard_link()]
 
