@@ -222,7 +222,7 @@ async def get_flow(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    raw_config = await client.storage_client.flow_detail(config_id=configuration_id, component_id=flow_type)
+    raw_config = await client.storage_client.flow_detail(config_id=configuration_id, flow_type=flow_type)
     api_flow = APIFlowResponse.model_validate(raw_config)
     links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name)
     flow = Flow.from_api_response(api_config=api_flow, links=links)
