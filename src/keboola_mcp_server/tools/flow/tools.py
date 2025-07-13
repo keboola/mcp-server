@@ -1,7 +1,7 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
 import logging
-from typing import Annotated, Any, Optional, Sequence, cast
+from typing import Annotated, Any, Literal, Optional, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -29,6 +29,8 @@ from keboola_mcp_server.tools.flow.utils import (
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
 LOG = logging.getLogger(__name__)
+
+FLOW_TYPE = Literal['keboola.flow', 'keboola.orchestrator']
 
 
 def add_flow_tools(mcp: FastMCP) -> None:
@@ -212,14 +214,15 @@ async def list_flows(
 @with_session_state()
 async def get_flow(
     ctx: Context,
-    configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve.')],
+    configuration_id: Annotated[str, Field(description='ID of the flow to retrieve.')],
+    flow_type: Annotated[FLOW_TYPE, Field(description='Type of the flow to retrieve.')]
 ) -> Annotated[Flow, Field(description='Detailed flow configuration.')]:
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    raw_config = await client.storage_client.flow_detail(configuration_id)
+    raw_config = await client.storage_client.flow_detail(config_id=configuration_id, component_id=flow_type)
     api_flow = APIFlowResponse.model_validate(raw_config)
     links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name)
     flow = Flow.from_api_response(api_config=api_flow, links=links)

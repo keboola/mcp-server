@@ -79,7 +79,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         result = await list_flows(mcp_context)
         assert any(f.name == flow_name for f in result.flows)
         found = [f for f in result.flows if f.configuration_id == flow_id][0]
-        flow = await get_flow(mcp_context, configuration_id=found.configuration_id)
+        flow = await get_flow(mcp_context, flow_type=ORCHESTRATOR_COMPONENT_ID, configuration_id=found.configuration_id)
 
         assert isinstance(flow, Flow)
         assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
@@ -168,7 +168,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
 
         assert isinstance(metadata, list)
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-        sync_flow = await client.storage_client.flow_detail(flow_id)
+        sync_flow = await client.storage_client.flow_detail(flow_type=ORCHESTRATOR_COMPONENT_ID, config_id=flow_id)
         updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow["version"]}'
         assert updated_by_md_key in metadata_dict
         assert metadata_dict[updated_by_md_key] == 'true'

@@ -36,6 +36,8 @@ GlobalSearchTypes = Literal[
 ]
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
+CONDITIONAL_FLOW_ID = 'keboola.flow'
+FLOW_TYPE = Literal['keboola.flow', 'keboola.orchestrator']
 
 
 class KeboolaClient:
@@ -829,14 +831,15 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         await self.configuration_delete(ORCHESTRATOR_COMPONENT_ID, configuration_id, skip_trash)
 
-    async def flow_detail(self, config_id: str) -> JsonDict:
+    async def flow_detail(self, config_id: str, flow_type: FLOW_TYPE) -> JsonDict:
         """
-        Retrieves a specific flow (orchestrator) configuration.
+        Retrieves a specific flow configuration (orchestrator or conditional).
 
         :param config_id: The ID of the flow configuration to retrieve
+        :param flow_type: The component ID (orchestrator or keboola.flow)
         :return: Flow configuration details
         """
-        return await self.configuration_detail(component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=config_id)
+        return await self.configuration_detail(component_id=flow_type, configuration_id=config_id)
 
     async def flow_list(self) -> list[JsonDict]:
         """
