@@ -21,6 +21,7 @@ from keboola_mcp_server.tools.flow.model import (
 from keboola_mcp_server.tools.flow.utils import (
     _get_all_flows,
     _get_flows_by_ids,
+    _get_flows_by_type,
     ensure_phase_ids,
     ensure_task_ids,
     get_schema_as_markdown,
@@ -192,21 +193,25 @@ async def update_flow(
 async def list_flows(
     ctx: Context,
     flow_ids: Annotated[Optional[Sequence[str]], Field(description='IDs of the flows to retrieve.')] = None,
+    flow_type: Annotated[Optional[FLOW_TYPE], Field(description='Type of flows to retrieve.')] = None,
 ) -> ListFlowsOutput:
-    """Retrieves flow configurations from the project."""
+    """Retrieves flow configurations from the project. Optionally filtered by IDs or type."""
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
     if flow_ids:
         flows = await _get_flows_by_ids(client, flow_ids)
-        LOG.info(f'Retrieved {len(flows)} flows by ID.')
+        LOG.info(f'Retrieved {len(flows)} flows by ID (type={flow_type or "all"}).')
     else:
-        flows = await _get_all_flows(client)
-        LOG.info(f'Retrieved {len(flows)} flows in the project.')
+        if flow_type:
+            flows = await _get_flows_by_type(client, flow_type)
+            LOG.info(f'Retrieved {len(flows)} flows of type {flow_type}.')
+        else:
+            flows = await _get_all_flows(client)
+            LOG.info(f'Retrieved {len(flows)} flows (all types).')
 
     links = [links_manager.get_flows_dashboard_link()]
-
     return ListFlowsOutput(flows=flows, links=links)
 
 

@@ -5,7 +5,13 @@ import logging
 from importlib import resources
 from typing import Any, Sequence
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    FLOW_TYPE,
+    ORCHESTRATOR_COMPONENT_ID,
+    JsonDict,
+    KeboolaClient,
+)
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import FlowPhase, FlowSummary, FlowTask
 
@@ -165,18 +171,43 @@ def _check_circular_dependencies(phases: list[FlowPhase]) -> None:
                 raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
 
 
-async def _get_flows_by_ids(client: KeboolaClient, flow_ids: Sequence[str]) -> list[FlowSummary]:
+async def _get_flows_by_ids(
+    client: KeboolaClient,
+    flow_ids: Sequence[str]
+) -> list[FlowSummary]:
     flows = []
     for flow_id in flow_ids:
-        try:
-            raw_flow = await client.storage_client.flow_detail(flow_id)
-            api_flow = APIFlowResponse.model_validate(raw_flow)
-            flows.append(FlowSummary.from_api_response(api_flow))
-        except Exception as e:
-            LOG.warning(f'Failed to retrieve flow {flow_id}: {e}')
+        for flow_type in (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID):
+            try:
+                raw_flow = await client.storage_client.flow_detail(flow_id, flow_type)
+                api_flow = APIFlowResponse.model_validate(raw_flow)
+                flows.append(FlowSummary.from_api_response(api_flow))
+                break
+            except Exception:
+                continue
+        else:
+            LOG.warning(f'Failed to retrieve flow {flow_id}.')
     return flows
 
 
+async def _get_flows_by_type(
+    client: KeboolaClient,
+    flow_type: FLOW_TYPE
+) -> list[FlowSummary]:
+    raw_flows = await client.storage_client.flow_list(flow_type=flow_type)
+    return [
+        FlowSummary.from_api_response(APIFlowResponse.model_validate(raw))
+        for raw in raw_flows
+    ]
+
+
 async def _get_all_flows(client: KeboolaClient) -> list[FlowSummary]:
-    raw_flows = await client.storage_client.flow_list()
-    return [FlowSummary.from_api_response(APIFlowResponse.model_validate(raw)) for raw in raw_flows]
+    flow_types: list[FLOW_TYPE] = [CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID]
+    all_flows = []
+    for flow_type in flow_types:
+        raw_flows = await client.storage_client.flow_list(flow_type=flow_type)
+        all_flows.extend([
+            FlowSummary.from_api_response(APIFlowResponse.model_validate(raw))
+            for raw in raw_flows
+        ])
+    return all_flows

@@ -7,7 +7,7 @@ from dateutil import parser
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowSummary,
@@ -79,9 +79,10 @@ class TestFlowTools:
     ):
         """Test listing all flows."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_list = mocker.AsyncMock(
-            return_value=[mock_raw_flow_config, mock_empty_flow_config]
-        )
+        keboola_client.storage_client.flow_list = mocker.AsyncMock(side_effect=lambda flow_type: {
+            ORCHESTRATOR_COMPONENT_ID: [mock_raw_flow_config, mock_empty_flow_config],
+            CONDITIONAL_FLOW_COMPONENT_ID: [],
+        }[flow_type])
 
         result = await list_flows(ctx=mcp_context_client)
 
@@ -105,7 +106,8 @@ class TestFlowTools:
 
         assert len(result.flows) == 1
         assert result.flows[0].configuration_id == '21703284'
-        keboola_client.storage_client.flow_detail.assert_called_once_with('21703284')
+        # conditional is tried first and hence returned
+        keboola_client.storage_client.flow_detail.assert_called_once_with('21703284', CONDITIONAL_FLOW_COMPONENT_ID)
 
     @pytest.mark.asyncio
     async def test_list_flows_with_missing_id(
@@ -114,7 +116,7 @@ class TestFlowTools:
         """Test listing flows when some IDs don't exist."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-        def mock_get_flow(flow_id):
+        def mock_get_flow(flow_id, component_id=None):
             if flow_id == '21703284':
                 return mock_raw_flow_config
             else:
@@ -251,7 +253,9 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     }
 
     keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=created_flow)
-    keboola_client.storage_client.flow_list = mocker.AsyncMock(return_value=[created_flow])
+    keboola_client.storage_client.flow_list = mocker.AsyncMock(side_effect=lambda flow_type: {
+        ORCHESTRATOR_COMPONENT_ID: [created_flow],
+        CONDITIONAL_FLOW_COMPONENT_ID: []}[flow_type])
     keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=updated_flow)
     keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=updated_flow)
 
