@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, List, Optional, Union
+from typing import Any, Optional
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -10,20 +10,16 @@ from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 
 class ListFlowsOutput(BaseModel):
     """Output of list_flows tool."""
-
-    flows: List['FlowSummary'] = Field(description='The retrieved flow configurations.')
-    links: List[Link] = Field(
-        description='The list of links relevant to the flows.',
-    )
+    flows: list['FlowSummary'] = Field(description='The retrieved flow configurations.')
+    links: list[Link] = Field(description='The list of links relevant to the flows.')
 
 
 class FlowPhase(BaseModel):
     """Represents a phase in a flow configuration."""
-
-    id: Union[int, str] = Field(description='Unique identifier of the phase')
+    id: int | str = Field(description='Unique identifier of the phase')
     name: str = Field(description='Name of the phase', min_length=1)
     description: str = Field(default_factory=str, description='Description of the phase')
-    depends_on: List[Union[int, str]] = Field(
+    depends_on: list[int | str] = Field(
         default_factory=list,
         description='List of phase IDs this phase depends on',
         validation_alias=AliasChoices('dependsOn', 'depends_on', 'depends-on'),
@@ -33,10 +29,9 @@ class FlowPhase(BaseModel):
 
 class FlowTask(BaseModel):
     """Represents a task in a flow configuration."""
-
-    id: Union[int, str] = Field(description='Unique identifier of the task')
+    id: int | str = Field(description='Unique identifier of the task')
     name: str = Field(description='Name of the task')
-    phase: Union[int, str] = Field(description='ID of the phase this task belongs to')
+    phase: int | str = Field(description='ID of the phase this task belongs to')
     enabled: bool = Field(default=True, description='Whether the task is enabled')
     continue_on_failure: bool = Field(
         default=False,
@@ -49,87 +44,23 @@ class FlowTask(BaseModel):
 
 class FlowConfiguration(BaseModel):
     """Represents a complete flow configuration."""
-
-    phases: List[FlowPhase] = Field(description='List of phases in the flow')
-    tasks: List[FlowTask] = Field(description='List of tasks in the flow')
-
-
-# class FlowConfigurationResponse(ComponentConfigurationResponseBase):
-#     """
-#     Detailed information about a Keboola Flow Configuration, extending the base configuration response.
-#     """
-#     version: int = Field(description='The version of the flow configuration')
-#     configuration: FlowConfiguration = Field(description='The flow configuration containing phases and tasks')
-#     change_description: Optional[str] = Field(
-#         description='The description of the changes made to the flow configuration',
-#         default=None,
-#         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
-#         serialization_alias='changeDescription',
-#     )
-#     configuration_metadata: list[dict[str, Any]] = Field(
-#         description='The metadata of the flow configuration',
-#         default_factory=list,
-#         validation_alias=AliasChoices(
-#             'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-#         ),
-#         serialization_alias='configurationMetadata',
-#     )
-#     created: Optional[str] = Field(None, description='Creation timestamp')
-#     links: Optional[list[Link]] = Field(None, description='Links relevant to the flow configuration.')
-
-#     @model_validator(mode='before')
-#     @classmethod
-#     def _initialize_component_id_to_orchestrator(cls, data: Any) -> Any:
-#         """Initialize component_id to Orchestrator if not provided."""
-#         if isinstance(data, dict) and 'component_id' not in data:
-#             data['component_id'] = ORCHESTRATOR_COMPONENT_ID
-#         return data
-
-
-# class ReducedFlow(BaseModel):
-#     """Lightweight flow summary for listing operations - consistent with ReducedComponent naming."""
-
-#     id: str = Field(
-#         description='Configuration ID of the flow',
-#         validation_alias=AliasChoices('id', 'configuration_id', 'configurationId'),
-#     )
-#     name: str = Field(description='Name of the flow')
-#     description: str = Field(default='', description='Description of the flow')
-#     created: Optional[str] = Field(None, description='Creation timestamp')
-#     version: int = Field(default=1, description='Version number of the flow')
-#     is_disabled: bool = Field(
-#         default=False,
-#         description='Whether the flow is disabled',
-#         validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
-#         serialization_alias='isDisabled',
-#     )
-#     is_deleted: bool = Field(
-#         default=False,
-#         description='Whether the flow is deleted',
-#         validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
-#         serialization_alias='isDeleted',
-#     )
-#     phases_count: int = Field(description='Number of phases in the flow')
-#     tasks_count: int = Field(description='Number of tasks in the flow')
-
-#     @model_validator(mode='before')
-#     @classmethod
-#     def _initialize_phases_and_tasks_count(cls, data: Any) -> Any:
-#         """Initialize phases_count and tasks_count if not provided."""
-#         if isinstance(data, dict):
-#             config_data = data.get('configuration', {})
-#             if 'tasks_count' not in data:
-#                 data['tasks_count'] = len(config_data.get('tasks', []))
-#             if 'phases_count' not in data:
-#                 data['phases_count'] = len(config_data.get('phases', []))
-#         return data
+    phases: list[FlowPhase] = Field(description='List of phases in the flow')
+    tasks: list[FlowTask] = Field(description='List of tasks in the flow')
 
 
 class FlowToolResponse(BaseModel):
-    flow_id: str = Field(..., description='The id of the flow.', validation_alias=AliasChoices('id', 'flow_id'))
-    description: str = Field(..., description='The description of the Flow.')
+    """
+    Standard response model for flow tool operations.
+
+    :param flow_id: The id of the flow.
+    :param description: The description of the Flow.
+    :param timestamp: The timestamp of the operation.
+    :param success: Indicates if the operation succeeded.
+    :param links: The links relevant to the flow.
+    """
+    flow_id: str = Field(description='The id of the flow.', validation_alias=AliasChoices('id', 'flow_id'))
+    description: str = Field(description='The description of the Flow.')
     timestamp: datetime = Field(
-        ...,
         description='The timestamp of the operation.',
         validation_alias=AliasChoices('timestamp', 'created'),
     )
@@ -138,9 +69,7 @@ class FlowToolResponse(BaseModel):
 
 
 class Flow(BaseModel):
-    """
-    Complete flow configuration with all data (domain model).
-    """
+    """Complete flow configuration with all data."""
     component_id: str = Field(description='The ID of the component (orchestrator)')
     configuration_id: str = Field(description='The ID of this flow configuration')
     name: str = Field(description='The name of the flow configuration')
@@ -158,7 +87,14 @@ class Flow(BaseModel):
     links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
 
     @classmethod
-    def from_api_response(cls, api_config: 'APIFlowResponse', links: Optional[list[Link]] = None) -> 'Flow':
+    def from_api_response(cls, api_config: APIFlowResponse, links: Optional[list[Link]] = None) -> 'Flow':
+        """
+        Create a Flow domain model from an APIFlowResponse.
+
+        :param api_config: The APIFlowResponse instance.
+        :param links: Optional list of navigation links.
+        :return: Flow domain model.
+        """
         component_id = getattr(api_config, 'component_id', None) or ORCHESTRATOR_COMPONENT_ID
         config = FlowConfiguration(
             phases=[FlowPhase.model_validate(p) for p in api_config.configuration.get('phases', [])],
@@ -183,9 +119,7 @@ class Flow(BaseModel):
 
 
 class FlowSummary(BaseModel):
-    """
-    Lightweight flow configuration for list operations (domain model).
-    """
+    """Lightweight flow configuration for list operations."""
     component_id: str = Field(description='The ID of the component (orchestrator)')
     configuration_id: str = Field(description='The ID of this flow configuration')
     name: str = Field(description='The name of the flow configuration')
@@ -200,6 +134,12 @@ class FlowSummary(BaseModel):
 
     @classmethod
     def from_api_response(cls, api_config: APIFlowResponse) -> 'FlowSummary':
+        """
+        Create a FlowSummary domain model from an APIFlowResponse.
+
+        :param api_config: The APIFlowResponse instance.
+        :return: FlowSummary domain model.
+        """
         component_id = getattr(api_config, 'component_id', None) or ORCHESTRATOR_COMPONENT_ID
         config = getattr(api_config, 'configuration', {}) or {}
         return cls.model_construct(
