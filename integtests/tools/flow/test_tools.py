@@ -83,7 +83,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
 
         assert isinstance(flow, Flow)
         assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
-        assert flow.configuration_id == found.id
+        assert flow.configuration_id == found.configuration_id
         assert flow.configuration.phases[0].name == 'Extract'
         assert flow.configuration.phases[1].name == 'Transform'
         assert flow.configuration.tasks[0].task['componentId'] == configs[0].component_id
