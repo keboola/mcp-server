@@ -1,17 +1,17 @@
 from datetime import datetime
 from typing import Any, List, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.flow.api_models import APIFlowListResponse, APIFlowResponse
+from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 
 
 class ListFlowsOutput(BaseModel):
     """Output of list_flows tool."""
 
-    flows: List['ReducedFlow'] = Field(description='The retrieved flow configurations.')
+    flows: List['FlowSummary'] = Field(description='The retrieved flow configurations.')
     links: List[Link] = Field(
         description='The list of links relevant to the flows.',
     )
@@ -86,43 +86,43 @@ class FlowConfiguration(BaseModel):
 #         return data
 
 
-class ReducedFlow(BaseModel):
-    """Lightweight flow summary for listing operations - consistent with ReducedComponent naming."""
+# class ReducedFlow(BaseModel):
+#     """Lightweight flow summary for listing operations - consistent with ReducedComponent naming."""
 
-    id: str = Field(
-        description='Configuration ID of the flow',
-        validation_alias=AliasChoices('id', 'configuration_id', 'configurationId'),
-    )
-    name: str = Field(description='Name of the flow')
-    description: str = Field(default='', description='Description of the flow')
-    created: Optional[str] = Field(None, description='Creation timestamp')
-    version: int = Field(default=1, description='Version number of the flow')
-    is_disabled: bool = Field(
-        default=False,
-        description='Whether the flow is disabled',
-        validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
-        serialization_alias='isDisabled',
-    )
-    is_deleted: bool = Field(
-        default=False,
-        description='Whether the flow is deleted',
-        validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
-        serialization_alias='isDeleted',
-    )
-    phases_count: int = Field(description='Number of phases in the flow')
-    tasks_count: int = Field(description='Number of tasks in the flow')
+#     id: str = Field(
+#         description='Configuration ID of the flow',
+#         validation_alias=AliasChoices('id', 'configuration_id', 'configurationId'),
+#     )
+#     name: str = Field(description='Name of the flow')
+#     description: str = Field(default='', description='Description of the flow')
+#     created: Optional[str] = Field(None, description='Creation timestamp')
+#     version: int = Field(default=1, description='Version number of the flow')
+#     is_disabled: bool = Field(
+#         default=False,
+#         description='Whether the flow is disabled',
+#         validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
+#         serialization_alias='isDisabled',
+#     )
+#     is_deleted: bool = Field(
+#         default=False,
+#         description='Whether the flow is deleted',
+#         validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
+#         serialization_alias='isDeleted',
+#     )
+#     phases_count: int = Field(description='Number of phases in the flow')
+#     tasks_count: int = Field(description='Number of tasks in the flow')
 
-    @model_validator(mode='before')
-    @classmethod
-    def _initialize_phases_and_tasks_count(cls, data: Any) -> Any:
-        """Initialize phases_count and tasks_count if not provided."""
-        if isinstance(data, dict):
-            config_data = data.get('configuration', {})
-            if 'tasks_count' not in data:
-                data['tasks_count'] = len(config_data.get('tasks', []))
-            if 'phases_count' not in data:
-                data['phases_count'] = len(config_data.get('phases', []))
-        return data
+#     @model_validator(mode='before')
+#     @classmethod
+#     def _initialize_phases_and_tasks_count(cls, data: Any) -> Any:
+#         """Initialize phases_count and tasks_count if not provided."""
+#         if isinstance(data, dict):
+#             config_data = data.get('configuration', {})
+#             if 'tasks_count' not in data:
+#                 data['tasks_count'] = len(config_data.get('tasks', []))
+#             if 'phases_count' not in data:
+#                 data['phases_count'] = len(config_data.get('phases', []))
+#         return data
 
 
 class FlowToolResponse(BaseModel):
@@ -199,7 +199,7 @@ class FlowSummary(BaseModel):
     updated: Optional[str] = Field(None, description='Last update timestamp')
 
     @classmethod
-    def from_api_response(cls, api_config: APIFlowListResponse) -> 'FlowSummary':
+    def from_api_response(cls, api_config: APIFlowResponse) -> 'FlowSummary':
         component_id = getattr(api_config, 'component_id', None) or ORCHESTRATOR_COMPONENT_ID
         config = getattr(api_config, 'configuration', {}) or {}
         return cls.model_construct(

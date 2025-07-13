@@ -10,8 +10,8 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.tools.flow.model import (
     Flow,
+    FlowSummary,
     ListFlowsOutput,
-    ReducedFlow,
 )
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
@@ -87,9 +87,9 @@ class TestFlowTools:
 
         assert isinstance(result, ListFlowsOutput)
         assert len(result.flows) == 2
-        assert all(isinstance(flow, ReducedFlow) for flow in result.flows)
-        assert result.flows[0].id == '21703284'
-        assert result.flows[1].id == '21703285'
+        assert all(isinstance(flow, FlowSummary) for flow in result.flows)
+        assert result.flows[0].configuration_id == '21703284'
+        assert result.flows[1].configuration_id == '21703285'
         assert result.flows[0].phases_count == 2
         assert result.flows[1].phases_count == 0
 
@@ -104,7 +104,7 @@ class TestFlowTools:
         result = await list_flows(ctx=mcp_context_client, flow_ids=['21703284'])
 
         assert len(result.flows) == 1
-        assert result.flows[0].id == '21703284'
+        assert result.flows[0].configuration_id == '21703284'
         keboola_client.storage_client.flow_detail.assert_called_once_with('21703284')
 
     @pytest.mark.asyncio
@@ -125,7 +125,7 @@ class TestFlowTools:
         result = await list_flows(ctx=mcp_context_client, flow_ids=['21703284', 'nonexistent'])
 
         assert len(result.flows) == 1
-        assert result.flows[0].id == '21703284'
+        assert result.flows[0].configuration_id == '21703284'
 
     @pytest.mark.asyncio
     async def test_get_flow(

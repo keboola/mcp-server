@@ -15,9 +15,9 @@ from keboola_mcp_server.tools.components import _set_cfg_creation_metadata, _set
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
     Flow,
+    FlowSummary,
     FlowToolResponse,
     ListFlowsOutput,
-    ReducedFlow,
 )
 from keboola_mcp_server.tools.flow.utils import (
     ensure_phase_ids,
@@ -202,13 +202,17 @@ async def list_flows(
         for flow_id in flow_ids:
             try:
                 raw_config = await client.storage_client.flow_detail(flow_id)
-                flow = ReducedFlow.model_validate(raw_config)
+                api_flow = APIFlowResponse.model_validate(raw_config)
+                flow = FlowSummary.from_api_response(api_flow)
                 flows.append(flow)
             except Exception as e:
                 LOG.warning(f'Could not retrieve flow {flow_id}: {e}')
     else:
         raw_flows = await client.storage_client.flow_list()
-        flows = [ReducedFlow.model_validate(raw_flow) for raw_flow in raw_flows]
+        flows = [
+            FlowSummary.from_api_response(APIFlowResponse.model_validate(raw_flow))
+            for raw_flow in raw_flows
+        ]
         LOG.info(f'Found {len(flows)} flows in the project')
 
     links = [links_manager.get_flows_dashboard_link()]

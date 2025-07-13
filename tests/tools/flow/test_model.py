@@ -6,19 +6,18 @@ from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowConfiguration,
     FlowPhase,
+    FlowSummary,
     FlowTask,
-    ReducedFlow,
 )
 
 # --- Test Model Parsing ---
 
-
 class TestFlowModels:
-    """Test Flow Pydantic models."""
+    """Test Flow models."""
 
     def test_flow_from_api_response(self, mock_raw_flow_config: dict[str, Any]):
-        """Test Flow.from_api_response from raw API response."""
-        assert 'component_id' not in mock_raw_flow_config, 'component_id must not be present in the raw flow config'
+        """Test Flow.from_api_response from a typical raw API response."""
+        assert 'component_id' not in mock_raw_flow_config
         api_model = APIFlowResponse.model_validate(mock_raw_flow_config)
         flow = Flow.from_api_response(api_model)
         assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
@@ -32,6 +31,7 @@ class TestFlowModels:
         assert isinstance(config, FlowConfiguration)
         assert len(config.phases) == 2
         assert len(config.tasks) == 2
+        # Check phase and task structure
         phase1 = config.phases[0]
         assert isinstance(phase1, FlowPhase)
         assert phase1.id == 1
@@ -47,29 +47,31 @@ class TestFlowModels:
         assert task1.phase == 1
         assert task1.task['componentId'] == 'keboola.ex-aws-s3'
 
-    def test_reduced_flow_model_validate(self, mock_raw_flow_config: dict[str, Any]):
-        """Test model validation of ReducedFlow from raw API response."""
-        assert 'tasks_count' not in mock_raw_flow_config, 'tasks_count must not be present in the raw flow config'
-        assert 'phases_count' not in mock_raw_flow_config, 'phases_count must not be present in the raw flow config'
-        reduced_flow = ReducedFlow.model_validate(mock_raw_flow_config)
-        assert reduced_flow.id == '21703284'
-        assert reduced_flow.name == 'Test Flow'
-        assert reduced_flow.description == 'Test flow description'
-        assert reduced_flow.version == 1
-        assert reduced_flow.phases_count == 2
-        assert reduced_flow.tasks_count == 2
-        assert reduced_flow.is_disabled is False
-        assert reduced_flow.is_deleted is False
+    def test_flow_summary_from_api_response(self, mock_raw_flow_config: dict[str, Any]):
+        """Test FlowSummary.from_api_response from a typical raw API response."""
+        assert 'tasks_count' not in mock_raw_flow_config
+        assert 'phases_count' not in mock_raw_flow_config
+        api_model = APIFlowResponse.model_validate(mock_raw_flow_config)
+        flow_summary = FlowSummary.from_api_response(api_model)
+        assert flow_summary.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert flow_summary.configuration_id == '21703284'
+        assert flow_summary.name == 'Test Flow'
+        assert flow_summary.description == 'Test flow description'
+        assert flow_summary.version == 1
+        assert flow_summary.phases_count == 2
+        assert flow_summary.tasks_count == 2
+        assert flow_summary.is_disabled is False
+        assert flow_summary.is_deleted is False
 
     def test_empty_flow_from_api_response(self, mock_empty_flow_config: dict[str, Any]):
-        """Test Flow.from_api_response with empty flow configuration."""
-        assert 'component_id' not in mock_empty_flow_config, 'component_id must not be present in the empty flow config'
-        assert 'tasks_count' not in mock_empty_flow_config, 'tasks_count must not be present in the empty flow config'
-        assert 'phases_count' not in mock_empty_flow_config, 'phases_count must not be present in the empty flow config'
+        """Test Flow and FlowSummary from_api_response with an empty flow configuration."""
+        assert 'component_id' not in mock_empty_flow_config
+        assert 'tasks_count' not in mock_empty_flow_config
+        assert 'phases_count' not in mock_empty_flow_config
         api_model = APIFlowResponse.model_validate(mock_empty_flow_config)
         flow = Flow.from_api_response(api_model)
-        reduced_flow = ReducedFlow.model_validate(mock_empty_flow_config)
+        flow_summary = FlowSummary.from_api_response(api_model)
         assert len(flow.configuration.phases) == 0
         assert len(flow.configuration.tasks) == 0
-        assert reduced_flow.phases_count == 0
-        assert reduced_flow.tasks_count == 0
+        assert flow_summary.phases_count == 0
+        assert flow_summary.tasks_count == 0

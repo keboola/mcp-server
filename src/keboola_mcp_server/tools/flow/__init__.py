@@ -1,5 +1,4 @@
 from keboola_mcp_server.tools.flow.api_models import (
-    APIFlowListResponse,
     APIFlowResponse,
 )
 from keboola_mcp_server.tools.flow.model import (
@@ -9,7 +8,6 @@ from keboola_mcp_server.tools.flow.model import (
     FlowTask,
     FlowToolResponse,
     ListFlowsOutput,
-    ReducedFlow,
 )
 from keboola_mcp_server.tools.flow.tools import (
     add_flow_tools,

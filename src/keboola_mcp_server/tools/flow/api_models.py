@@ -85,43 +85,43 @@ class APIFlowResponse(BaseModel):
         return data
 
 
-class APIFlowListResponse(BaseModel):
-    """
-    Raw API response for flow list endpoints.
+# class APIFlowListResponse(BaseModel):
+#     """
+#     Raw API response for flow list endpoints.
 
-    Lightweight model for list operations that mirrors the structure returned by flow_list().
-    """
+#     Lightweight model for list operations that mirrors the structure returned by flow_list().
+#     """
 
-    # Core identification fields
-    configuration_id: str = Field(
-        description='The ID of the flow configuration',
-        validation_alias=AliasChoices('id', 'configuration_id', 'configurationId', 'configuration-id'),
-        serialization_alias='id',
-    )
-    name: str = Field(description='The name of the flow configuration')
-    description: Optional[str] = Field(default='', description='The description of the flow configuration')
+#     # Core identification fields
+#     configuration_id: str = Field(
+#         description='The ID of the flow configuration',
+#         validation_alias=AliasChoices('id', 'configuration_id', 'configurationId', 'configuration-id'),
+#         serialization_alias='id',
+#     )
+#     name: str = Field(description='The name of the flow configuration')
+#     description: Optional[str] = Field(default='', description='The description of the flow configuration')
 
-    # Versioning and state
-    version: int = Field(default=1, description='The version of the flow configuration')
-    is_disabled: bool = Field(
-        default=False,
-        description='Whether the flow configuration is disabled',
-        validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
-        serialization_alias='isDisabled',
-    )
-    is_deleted: bool = Field(
-        default=False,
-        description='Whether the flow configuration is deleted',
-        validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
-        serialization_alias='isDeleted',
-    )
+#     # Versioning and state
+#     version: int = Field(default=1, description='The version of the flow configuration')
+#     is_disabled: bool = Field(
+#         default=False,
+#         description='Whether the flow configuration is disabled',
+#         validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
+#         serialization_alias='isDisabled',
+#     )
+#     is_deleted: bool = Field(
+#         default=False,
+#         description='Whether the flow configuration is deleted',
+#         validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
+#         serialization_alias='isDeleted',
+#     )
 
-    # Flow-specific configuration data (for count calculations)
-    configuration: dict[str, Any] = Field(
-        default_factory=dict,
-        description='The nested flow configuration object containing phases and tasks'
-    )
+#     # Flow-specific configuration data (for count calculations)
+#     configuration: dict[str, Any] = Field(
+#         default_factory=dict,
+#         description='The nested flow configuration object containing phases and tasks'
+#     )
 
-    # Timestamps
-    created: Optional[str] = Field(None, description='Creation timestamp')
-    updated: Optional[str] = Field(None, description='Last update timestamp')
+#     # Timestamps
+#     created: Optional[str] = Field(None, description='Creation timestamp')
+#     updated: Optional[str] = Field(None, description='Last update timestamp')
