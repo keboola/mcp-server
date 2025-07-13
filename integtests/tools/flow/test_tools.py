@@ -78,7 +78,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         # Verify the flow is listed in the list_flows tool
         result = await list_flows(mcp_context)
         assert any(f.name == flow_name for f in result.flows)
-        found = [f for f in result.flows if f.id == flow_id][0]
+        found = [f for f in result.flows if f.configuration_id == flow_id][0]
         flow = await get_flow(mcp_context, configuration_id=found.id)
 
         assert isinstance(flow, Flow)
