@@ -4,7 +4,7 @@ import importlib.metadata
 import logging
 import os
 from datetime import datetime
-from typing import Any, Iterable, Literal, Mapping, Optional, Union, cast
+from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
 from pydantic import BaseModel, Field, field_validator
@@ -21,8 +21,8 @@ ComponentResource = Literal['configuration', 'rows', 'state']
 # Project features that can be checked with the is_enabled method
 ProjectFeature = Literal['global-search']
 # Input types for the global search endpoint parameters
-GlobalSearchBranchTypes = Literal['production', 'development']
-GlobalSearchTypes = Literal[
+BranchType = Literal['production', 'development']
+ItemType = Literal[
     'flow',
     'bucket',
     'table',
@@ -359,10 +359,10 @@ class KeboolaServiceClient:
 class GlobalSearchResponse(BaseModel):
     """The SAPI global search response."""
 
-    class GlobalSearchResponseItem(BaseModel):
+    class Item(BaseModel):
         id: str = Field(description='The id of the item.')
         name: str = Field(description='The name of the item.')
-        type: GlobalSearchTypes = Field(description='The type of the item.')
+        type: ItemType = Field(description='The type of the item.')
         full_path: dict[str, Any] = Field(
             description=(
                 'The full path of the item containing project, branch and other information depending on the '
@@ -381,9 +381,7 @@ class GlobalSearchResponse(BaseModel):
         created: datetime = Field(description='The date and time the item was created in ISO format.')
 
     all: int = Field(description='Total number of found results.')
-    items: list[GlobalSearchResponseItem] = Field(
-        description='List of search results containing the items of the GlobalSearchType.'
-    )
+    items: list[Item] = Field(description='List of search results of the GlobalSearchType.')
     by_type: dict[str, int] = Field(
         description='Mapping of found types to the number of corresponding results.', alias='byType'
     )
@@ -880,7 +878,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         query: str,
         limit: int = 100,
         offset: int = 0,
-        types: list[GlobalSearchTypes] | None = None,
+        types: Sequence[ItemType] = tuple(),
     ) -> GlobalSearchResponse:
         """
         Searches for items in the storage. It allows you to search for entities by name across all projects within an
@@ -1044,7 +1042,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param features: The features to check.
         :return: True if the features are enabled, False otherwise.
         """
-        features = features if isinstance(features, Iterable) else [features]
+        features = [features] if isinstance(features, str) else features
         verified_info = await self.verify_token()
         project_data = cast(JsonDict, verified_info['owner'])
         project_features = cast(list[str], project_data.get('features', []))
