@@ -1,5 +1,6 @@
 import logging
 import time
+import inspect
 from functools import wraps
 from typing import Any, Callable, Optional, Type, TypeVar, cast
 
@@ -23,27 +24,11 @@ def _extract_session_id_from_context(ctx: Context) -> str:
     """
     Extract sessionId from the Context object.
 
-    The sessionId can be found in various places in the ctx object depending on the MCP implementation.
-    This function tries different possible locations where sessionId might be stored.
+    For HTTP-based MCP servers, ctx.session_id should be set.
+    For local/stdio MCP servers, session_id may not be present; in that case, return 'unknown-session'.
     """
-    # Try to get sessionId from ctx.session.id if available
-    if hasattr(ctx.session, 'id') and ctx.session.id:
-        return str(ctx.session.id)
-
-    # Try to get sessionId from ctx.request_context if available
-    if hasattr(ctx, 'request_context') and ctx.request_context:
-        if hasattr(ctx.request_context, 'session_id') and ctx.request_context.session_id:
-            return str(ctx.request_context.session_id)
-
-        # Check if sessionId is in the request scope
-        if hasattr(ctx.request_context, 'request') and ctx.request_context.request:
-            request = ctx.request_context.request
-            if hasattr(request, 'scope') and 'session_id' in request.scope:
-                return str(request.scope['session_id'])
-
-    # Fallback to a default session ID if none found
-    # In a real implementation, you might want to generate a unique ID or handle this differently
-    return 'unknown-session'
+    session_id = getattr(ctx, 'session_id', None)
+    return str(session_id) if session_id else 'unknown-session'
 
 
 def _extract_tool_name_and_args(func: Callable, args: tuple, kwargs: dict) -> tuple[str, dict[str, Any]]:
@@ -58,7 +43,6 @@ def _extract_tool_name_and_args(func: Callable, args: tuple, kwargs: dict) -> tu
     tool_name = func.__name__
 
     # Convert args and kwargs to a single arguments dict
-    import inspect
     sig = inspect.signature(func)
     bound_args = sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
@@ -189,7 +173,6 @@ def tool_errors(
 
                 if ctx_kwarg:
                     # Convert positional args to kwargs to find ctx
-                    import inspect
                     sig = inspect.signature(func)
                     bound_args = sig.bind(*args, **kwargs)
                     ctx = bound_args.arguments.get(ctx_kwarg)
