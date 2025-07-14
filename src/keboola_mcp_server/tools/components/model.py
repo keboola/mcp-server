@@ -165,11 +165,11 @@ class Component(BaseModel):
     )
     configuration_schema: dict[str, Any] | None = Field(
         default=None,
-        description='JSON schema for root configuration validation',
+        description='JSON schema for configuration root validation',
     )
     configuration_row_schema: dict[str, Any] | None = Field(
         default=None,
-        description='JSON schema for row configuration validation',
+        description='JSON schema for configuration row validation',
     )
 
     links: list[Link] = Field(default_factory=list, description='Links for UI navigation')
@@ -203,21 +203,21 @@ class Component(BaseModel):
 
 class ConfigurationRoot(BaseModel):
     """
-    Complete root configuration with all data.
+    Complete configuration root with all data.
 
     Represents the shared configuration settings for a component including
     credentials, global parameters, and shared storage mappings. For row-based
     components, this contains the common settings that apply to all rows.
     """
     component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of this root configuration')
+    configuration_id: str = Field(description='The ID of this configuration root')
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
     parameters: dict[str, Any] = Field(
-        description='The configuration parameters, adhering to the root configuration schema'
+        description='The configuration parameters, adhering to the configuration root schema'
     )
     storage: Optional[dict[str, Any]] = Field(
         default=None,
@@ -237,7 +237,7 @@ class ConfigurationRoot(BaseModel):
         from the API response structure into the domain model.
 
         :param api_config: Validated API configuration response
-        :return: Complete root configuration domain model
+        :return: Complete configuration root domain model
         """
         return cls.model_construct(
             component_id=api_config.component_id,
@@ -255,22 +255,22 @@ class ConfigurationRoot(BaseModel):
 
 class ConfigurationRow(BaseModel):
     """
-    Complete row configuration with all data.
+    Complete configuration row with all data.
 
     Represents an individual task or extraction within a configuration.
     For row-based components, each row typically handles a specific data source,
     destination, or transformation operation.
     """
     component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of the corresponding root configuration')
-    row_configuration_id: str = Field(description='The ID of this row configuration')
-    name: str = Field(description='The name of the row configuration')
-    description: Optional[str] = Field(default=None, description='The description of the row configuration')
-    version: int = Field(description='The version of the row configuration')
-    is_disabled: bool = Field(default=False, description='Whether the row configuration is disabled')
-    is_deleted: bool = Field(default=False, description='Whether the row configuration is deleted')
+    configuration_id: str = Field(description='The ID of the corresponding configuration root')
+    configuration_row_id: str = Field(description='The ID of this configuration row')
+    name: str = Field(description='The name of the configuration row')
+    description: Optional[str] = Field(default=None, description='The description of the configuration row')
+    version: int = Field(description='The version of the configuration row')
+    is_disabled: bool = Field(default=False, description='Whether the configuration row is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration row is deleted')
     parameters: dict[str, Any] = Field(
-        description='The row configuration parameters, adhering to the row configuration schema'
+        description='The configuration row parameters, adhering to the configuration row schema'
     )
     storage: Optional[dict[str, Any]] = Field(
         default=None,
@@ -278,7 +278,7 @@ class ConfigurationRow(BaseModel):
     )
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list,
-        description='Row configuration metadata'
+        description='Configuration row metadata'
     )
 
     @classmethod
@@ -292,17 +292,17 @@ class ConfigurationRow(BaseModel):
         Create ConfigurationRow from API row data.
 
         Converts individual row data from the API into a structured domain model.
-        Handles the nested structure of row configuration data.
+        Handles the nested structure of configuration row data.
 
         :param row_data: Raw row data from API response
         :param component_id: ID of the parent component
         :param configuration_id: ID of the parent configuration
-        :return: Complete row configuration domain model
+        :return: Complete configuration row domain model
         """
         return cls(
             component_id=component_id,
             configuration_id=configuration_id,
-            row_configuration_id=row_data['id'],
+            configuration_row_id=row_data['id'],
             name=row_data['name'],
             description=row_data.get('description'),
             version=row_data['version'],
@@ -315,9 +315,9 @@ class ConfigurationRow(BaseModel):
 
 
 class ConfigurationRootSummary(BaseModel):
-    """Lightweight root configuration for list operations."""
+    """Lightweight configuration root for list operations."""
     component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of this root configuration')
+    configuration_id: str = Field(description='The ID of this configuration root')
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
@@ -325,7 +325,7 @@ class ConfigurationRootSummary(BaseModel):
 
     @classmethod
     def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRootSummary':
-        """Create lightweight root configuration summary from API response."""
+        """Create lightweight configuration root summary from API response."""
         return cls.model_construct(
             component_id=api_config.component_id,
             configuration_id=api_config.configuration_id,
@@ -337,14 +337,14 @@ class ConfigurationRootSummary(BaseModel):
 
 
 class ConfigurationRowSummary(BaseModel):
-    """Lightweight row configuration for list operations."""
+    """Lightweight configuration row for list operations."""
     component_id: str = Field(description='The ID of the component')
-    configuration_id: str = Field(description='The ID of the corresponding root configuration')
-    row_configuration_id: str = Field(description='The ID of this row configuration')
-    name: str = Field(description='The name of the row configuration')
-    description: Optional[str] = Field(default=None, description='The description of the row configuration')
-    is_disabled: bool = Field(default=False, description='Whether the row configuration is disabled')
-    is_deleted: bool = Field(default=False, description='Whether the row configuration is deleted')
+    configuration_id: str = Field(description='The ID of the corresponding configuration root')
+    row_configuration_id: str = Field(description='The ID of this configuration row')
+    name: str = Field(description='The name of the configuration row')
+    description: Optional[str] = Field(default=None, description='The description of the configuration row')
+    is_disabled: bool = Field(default=False, description='Whether the configuration row is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration row is deleted')
 
     @classmethod
     def from_api_row_data(
@@ -353,7 +353,7 @@ class ConfigurationRowSummary(BaseModel):
         component_id: str,
         configuration_id: str,
     ) -> 'ConfigurationRowSummary':
-        """Create lightweight row configuration summary from API row data."""
+        """Create lightweight configuration row summary from API row data."""
         return cls(
             component_id=component_id,
             configuration_id=configuration_id,
@@ -373,12 +373,12 @@ class ConfigurationSummary(BaseModel):
     but with lightweight summary data. Used by list operations where many
     configurations are returned.
     """
-    root_configuration: ConfigurationRootSummary = Field(
-        description='The root configuration summary'
+    configuration_root: ConfigurationRootSummary = Field(
+        description='The configuration root summary'
     )
-    row_configurations: Optional[list[ConfigurationRowSummary]] = Field(
+    configuration_rows: Optional[list[ConfigurationRowSummary]] = Field(
         default=None,
-        description='The row configuration summaries'
+        description='The configuration row summaries'
     )
 
     @classmethod
@@ -387,16 +387,16 @@ class ConfigurationSummary(BaseModel):
         Create ConfigurationSummary from API response.
 
         Builds a lightweight configuration structure by creating summary models
-        for both root and row configurations from the API response data.
+        for both configuration root and configurations row from the API response data.
 
         :param api_config: Validated API configuration response
         :return: Lightweight configuration structure for list operations
         """
-        root_configuration = ConfigurationRootSummary.from_api_response(api_config)
+        configuration_root = ConfigurationRootSummary.from_api_response(api_config)
 
-        row_configurations = None
+        configuration_rows = None
         if api_config.rows:
-            row_configurations = [
+            configuration_rows = [
                 ConfigurationRowSummary.from_api_row_data(
                     row_data=row,
                     component_id=api_config.component_id,
@@ -406,8 +406,8 @@ class ConfigurationSummary(BaseModel):
             ]
 
         return cls.model_construct(
-            root_configuration=root_configuration,
-            row_configurations=row_configurations,
+            configuration_root=configuration_root,
+            configuration_rows=configuration_rows,
         )
 
 
@@ -415,16 +415,16 @@ class Configuration(BaseModel):
     """
     Complete configuration structure for detailed views.
 
-    Container model that holds both root and row configurations along with
+    Container model that holds both configuration root and configuration rows along with
     component context and UI links. Used by get operations where detailed
     configuration information is needed.
     """
-    root_configuration: ConfigurationRoot = Field(
-        description='The complete root configuration'
+    configuration_root: ConfigurationRoot = Field(
+        description='The complete configuration root'
     )
-    row_configurations: Optional[list[ConfigurationRow]] = Field(
+    configuration_rows: Optional[list[ConfigurationRow]] = Field(
         default=None,
-        description='The complete row configurations'
+        description='The complete configuration rows'
     )
     component: Optional[ComponentSummary] = Field(
         default=None,
@@ -453,11 +453,11 @@ class Configuration(BaseModel):
         :param links: UI navigation links (optional)
         :return: Complete configuration model for detailed operations
         """
-        root_configuration = ConfigurationRoot.from_api_response(api_config)
+        configuration_root = ConfigurationRoot.from_api_response(api_config)
 
-        row_configurations = None
+        configuration_rows = None
         if api_config.rows:
-            row_configurations = [
+            configuration_rows = [
                 ConfigurationRow.from_api_row_data(
                     row_data=row,
                     component_id=api_config.component_id,
@@ -467,8 +467,8 @@ class Configuration(BaseModel):
             ]
 
         return cls.model_construct(
-            root_configuration=root_configuration,
-            row_configurations=row_configurations,
+            configuration_root=configuration_root,
+            configuration_rows=configuration_rows,
             component=component,
             links=links or [],
         )

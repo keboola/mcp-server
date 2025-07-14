@@ -266,7 +266,7 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     assert component_config.component.component_type is not None
     assert component_config.component.component_name is not None
 
-    assert component_config.root_configuration is not None
-    assert component_config.root_configuration.configuration_id == config.configuration_id
+    assert component_config.configuration_root is not None
+    assert component_config.configuration_root.configuration_id == config.configuration_id
 
-    assert component_config.row_configurations is None
+    assert component_config.configuration_rows is None

@@ -57,9 +57,9 @@ async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
         assert configuration.component.component_type is not None
         assert configuration.component.component_name is not None
 
-        assert configuration.root_configuration is not None
-        assert configuration.root_configuration.configuration_id == config.configuration_id
-        assert configuration.root_configuration.component_id == config.component_id
+        assert configuration.configuration_root is not None
+        assert configuration.configuration_root.configuration_id == config.configuration_id
+        assert configuration.configuration_root.component_id == config.component_id
         # Check links field
         assert configuration.links, 'Links list should not be empty.'
         for link in configuration.links:
@@ -86,7 +86,7 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
 
         # Check that configurations belong to this component
         for config in item.configurations:
-            assert config.root_configuration.component_id == item.component.component_id
+            assert config.configuration_root.component_id == item.component.component_id
 
 
 @pytest.mark.asyncio
@@ -932,7 +932,7 @@ async def test_list_transformations_by_ids(mcp_context: Context):
         assert component_with_configs.component.component_id == created_transformation.component_id
         assert component_with_configs.component.component_type == 'transformation'
         assert (
-            component_with_configs.configurations[0].root_configuration.configuration_id
+            component_with_configs.configurations[0].configuration_root.configuration_id
             == created_transformation.configuration_id
         )
 
