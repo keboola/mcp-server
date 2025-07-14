@@ -88,7 +88,6 @@ class APIConfigurationResponse(BaseModel):
     - configuration_update()
     """
 
-    # Core identification fields
     component_id: str = Field(
         description='The ID of the component',
         validation_alias=AliasChoices('component_id', 'componentId', 'component-id'),
@@ -99,8 +98,6 @@ class APIConfigurationResponse(BaseModel):
     )
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
-
-    # Versioning and state
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(
         default=False,
@@ -112,26 +109,18 @@ class APIConfigurationResponse(BaseModel):
         description='Whether the configuration is deleted',
         validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
     )
-
-    # Nested configuration data (as returned by API)
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters and storage'
     )
-
-    # Row configurations (if present)
     rows: Optional[list[dict[str, Any]]] = Field(
         default=None,
         description='The row configurations within this configuration'
     )
-
-    # Change tracking
     change_description: Optional[str] = Field(
         default=None,
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
     )
-
-    # Metadata
     metadata: list[dict[str, Any]] = Field(
         default_factory=list,
         description='Configuration metadata',
