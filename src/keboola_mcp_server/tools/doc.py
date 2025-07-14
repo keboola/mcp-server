@@ -11,9 +11,6 @@ from keboola_mcp_server.mcp import with_session_state
 
 LOG = logging.getLogger(__name__)
 
-MAX_GLOBAL_SEARCH_LIMIT = 100
-DEFAULT_GLOBAL_SEARCH_LIMIT = 50
-
 
 def add_doc_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
