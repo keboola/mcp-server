@@ -1,6 +1,7 @@
+import inspect
 import logging
 import time
-import inspect
+from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Callable, Optional, Type, TypeVar, cast
 
@@ -18,6 +19,17 @@ class ToolException(Exception):
 
     def __init__(self, original_exception: Exception, recovery_instruction: str):
         super().__init__(f'{str(original_exception)} | Recovery: {recovery_instruction}')
+
+
+@dataclass
+class TriggerEventContext:
+    """
+    Holds all context information needed for event logging and error handling.
+    """
+    session_id: str
+    tool_name: str
+    tool_args: dict[str, Any]
+    additional_context: dict[str, Any] = field(default_factory=dict)
 
 
 def _extract_session_id_from_context(ctx: Context) -> str:
@@ -54,30 +66,6 @@ def _extract_tool_name_and_args(func: Callable, args: tuple, kwargs: dict) -> tu
             tool_args[param_name] = param_value
 
     return tool_name, tool_args
-
-
-def _extract_additional_context_from_args(tool_args: dict[str, Any], tool_name: str) -> dict[str, Any]:
-    """
-    Extract additional context values from tool arguments that are used in event logging.
-
-    :param tool_args: The tool arguments dictionary
-    :param tool_name: The name of the tool that was executed
-    :return: Dictionary with additional context values (config_id, job_id)
-    """
-    additional_context = {}
-
-    # Extract config_id from various possible parameter names
-    config_id = tool_args.get('config_id') or tool_args.get('configuration_id')
-    if config_id:
-        additional_context['config_id'] = config_id
-
-    # Extract job_id from arguments for get_job tool
-    if tool_name == 'get_job':
-        job_id = tool_args.get('job_id')
-        if job_id:
-            additional_context['job_id'] = str(job_id)
-
-    return additional_context
 
 
 def _extract_configuration_id_from_result(result: Any) -> Optional[str]:
@@ -131,6 +119,56 @@ def _extract_job_id_from_result(result: Any, tool_name: str) -> Optional[str]:
     return None
 
 
+def _extract_trigger_event_context(
+    func: Callable,
+    args: tuple,
+    kwargs: dict,
+    result: Any = None,
+) -> TriggerEventContext:
+    """
+    Extracts all relevant context for event logging and error handling in one place.
+    Returns a TriggerEventContext object.
+    """
+    # Extract tool name and arguments
+    tool_name, tool_args = _extract_tool_name_and_args(func, args, kwargs)
+
+    # Try to extract ctx (Context) from args/kwargs
+    ctx_kwarg = find_kwarg_by_type(func, Context)
+    session_id = 'unknown-session'
+    ctx = None
+    if ctx_kwarg:
+        sig = inspect.signature(func)
+        bound_args = sig.bind(*args, **kwargs)
+        ctx = bound_args.arguments.get(ctx_kwarg)
+        if isinstance(ctx, Context):
+            session_id = _extract_session_id_from_context(ctx)
+
+    # Build additional_context dict
+    additional_context = {}
+    # config_id from tool_args or result
+    config_id = tool_args.get('config_id') or tool_args.get('configuration_id')
+    if not config_id and result is not None:
+        config_id = _extract_configuration_id_from_result(result)
+    if config_id:
+        additional_context['config_id'] = config_id
+    # job_id from tool_args (for get_job) or result (for run_job)
+    if tool_name == 'get_job':
+        job_id = tool_args.get('job_id')
+        if job_id:
+            additional_context['job_id'] = str(job_id)
+    elif tool_name == 'run_job' and result is not None:
+        job_id = _extract_job_id_from_result(result, tool_name)
+        if job_id:
+            additional_context['job_id'] = job_id
+
+    return TriggerEventContext(
+        session_id=session_id,
+        tool_name=tool_name,
+        tool_args=tool_args,
+        additional_context=additional_context,
+    )
+
+
 def tool_errors(
     default_recovery: Optional[str] = None,
     recovery_instructions: Optional[dict[Type[Exception], str]] = None,
@@ -138,18 +176,7 @@ def tool_errors(
     """
     The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
 
-    This decorator now automatically:
-    - Extracts sessionId from the Context object
-    - Uses RawStorageClient.trigger_event for error logging
-    - Removes the need for manual mcp_context construction in tools
-    - Maintains existing recovery instruction functionality
-    - Captures function results to extract additional context (e.g., configuration_id from
-      ConfigToolOutput, job_id from run_job result and get_job arguments)
-
-    :param default_recovery: A fallback recovery instruction to use when no specific instruction
-                             is found for the exception.
-    :param recovery_instructions: A dictionary mapping exception types to recovery instructions.
-    :return: The decorated function with error-handling logic applied.
+    This decorator now uses a single context extraction function to gather all relevant event context.
     """
 
     def decorator(func: Callable):
@@ -166,57 +193,40 @@ def tool_errors(
                 duration_s = time.monotonic() - start_time
                 logging.exception(f'Failed to run tool {func.__name__}: {e}')
 
-                # Extract sessionId and tool information
-                ctx_kwarg = find_kwarg_by_type(func, Context)
-                session_id = 'unknown-session'
-                tool_name, tool_args = _extract_tool_name_and_args(func, args, kwargs)
+                # Extract all event context in one place
+                event_ctx = _extract_trigger_event_context(func, args, kwargs, result)
 
+                # Try to get RawStorageClient for event logging if possible
+                ctx_kwarg = find_kwarg_by_type(func, Context)
+                ctx = None
                 if ctx_kwarg:
-                    # Convert positional args to kwargs to find ctx
                     sig = inspect.signature(func)
                     bound_args = sig.bind(*args, **kwargs)
                     ctx = bound_args.arguments.get(ctx_kwarg)
 
-                    if isinstance(ctx, Context):
-                        session_id = _extract_session_id_from_context(ctx)
+                if isinstance(ctx, Context):
+                    try:
+                        if hasattr(ctx, 'session') and hasattr(ctx.session, 'state'):
+                            client = KeboolaClient.from_state(ctx.session.state)
+                            raw_client = client.storage_client.raw_client
 
-                        # Try to get RawStorageClient for event logging
-                        try:
-                            if hasattr(ctx, 'session') and hasattr(ctx.session, 'state'):
-                                client = KeboolaClient.from_state(ctx.session.state)
-                                raw_client = client.storage_client.raw_client
+                            # Construct event for event logging
+                            event = TriggerEventRequest(
+                                tool_name=event_ctx.tool_name,
+                                tool_args=event_ctx.tool_args,
+                                session_id=event_ctx.session_id,
+                                config_id=event_ctx.additional_context.get('config_id'),
+                                job_id=event_ctx.additional_context.get('job_id'),
+                            )
 
-                                additional_context = _extract_additional_context_from_args(
-                                    tool_args, tool_name
-                                )
-                                # Extract configuration_id and job_id from result if available
-                                if result is not None:
-                                    result_config_id = _extract_configuration_id_from_result(result)
-                                    if result_config_id:
-                                        additional_context['config_id'] = result_config_id
-
-                                    result_job_id = _extract_job_id_from_result(result, tool_name)
-                                    if result_job_id:
-                                        additional_context['job_id'] = result_job_id
-
-                                # Construct event for event logging
-                                event = TriggerEventRequest(
-                                    tool_name=tool_name,
-                                    tool_args=tool_args,
-                                    session_id=session_id,
-                                    config_id=additional_context.get('config_id'),
-                                    job_id=additional_context.get('job_id'),
-                                )
-
-                                # Send error event to Storage API
-                                await raw_client.trigger_event(
-                                    error_obj=e,
-                                    duration_s=duration_s,
-                                    event=event,
-                                )
-                        except Exception as event_error:
-                            # Log but don't fail the main error handling if event sending fails
-                            LOG.warning(f'Failed to send error event: {event_error}')
+                            # Send error event to Storage API
+                            await raw_client.trigger_event(
+                                error_obj=e,
+                                duration_s=duration_s,
+                                event=event,
+                            )
+                    except Exception as event_error:
+                        LOG.warning(f'Failed to send error event: {event_error}')
 
                 # Handle recovery instructions
                 recovery_msg = default_recovery
