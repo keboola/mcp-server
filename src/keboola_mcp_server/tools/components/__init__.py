@@ -10,7 +10,6 @@ from keboola_mcp_server.tools.components.tools import (
     add_config_row,
     create_config,
     create_sql_transformation,
-    find_component_id,
     get_component,
     get_config,
     get_config_examples,

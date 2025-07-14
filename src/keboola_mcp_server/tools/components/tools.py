@@ -79,7 +79,6 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
     # Component/Configuration discovery tools
     mcp.add_tool(FunctionTool.from_function(get_component))
-    mcp.add_tool(FunctionTool.from_function(find_component_id))
     mcp.add_tool(FunctionTool.from_function(get_config))
     mcp.add_tool(FunctionTool.from_function(list_configs, serializer=listing_output_serializer))
     mcp.add_tool(FunctionTool.from_function(get_config_examples))
