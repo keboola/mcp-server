@@ -24,7 +24,6 @@ class APIComponentResponse(BaseModel):
     component_id: str = Field(
         description='The ID of the component',
         validation_alias=AliasChoices('id', 'component_id', 'componentId', 'component-id'),
-        serialization_alias='componentId',
     )
     component_name: str = Field(
         description='The name of the component',
@@ -34,18 +33,15 @@ class APIComponentResponse(BaseModel):
             'componentName',
             'component-name',
         ),
-        serialization_alias='componentName',
     )
     type: str = Field(
         description='Component type (extractor, writer, application)',
         validation_alias=AliasChoices('type', 'component_type', 'componentType', 'component-type'),
-        serialization_alias='componentType',
     )
     flags: list[str] = Field(
         default_factory=list,
         description='Developer portal flags',
         validation_alias=AliasChoices('flags', 'component_flags', 'componentFlags', 'component-flags'),
-        serialization_alias='componentFlags',
     )
     categories: list[str] = Field(
         default_factory=list,
@@ -56,7 +52,6 @@ class APIComponentResponse(BaseModel):
             'componentCategories',
             'component-categories',
         ),
-        serialization_alias='componentCategories',
     )
 
     # Optional metadata fields only present in AI Service API responses
@@ -64,25 +59,21 @@ class APIComponentResponse(BaseModel):
         default=None,
         description='Documentation URL',
         validation_alias=AliasChoices('documentationUrl', 'documentation_url', 'documentation-url'),
-        serialization_alias='documentationUrl',
     )
     documentation: str | None = Field(
         default=None,
         description='Component documentation',
         validation_alias=AliasChoices('documentation'),
-        serialization_alias='documentation',
     )
     configuration_schema: dict[str, Any] | None = Field(
         default=None,
         description='Configuration schema',
         validation_alias=AliasChoices('configurationSchema', 'configuration_schema', 'configuration-schema'),
-        serialization_alias='configurationSchema',
     )
     configuration_row_schema: dict[str, Any] | None = Field(
         default=None,
         description='Configuration row schema',
         validation_alias=AliasChoices('configurationRowSchema', 'configuration_row_schema', 'configuration-row-schema'),
-        serialization_alias='configurationRowSchema',
     )
 
 
@@ -101,12 +92,10 @@ class APIConfigurationResponse(BaseModel):
     component_id: str = Field(
         description='The ID of the component',
         validation_alias=AliasChoices('component_id', 'componentId', 'component-id'),
-        serialization_alias='componentId',
     )
     configuration_id: str = Field(
         description='The ID of the configuration',
         validation_alias=AliasChoices('id', 'configuration_id', 'configurationId', 'configuration-id'),
-        serialization_alias='id',
     )
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
@@ -117,13 +106,11 @@ class APIConfigurationResponse(BaseModel):
         default=False,
         description='Whether the configuration is disabled',
         validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
-        serialization_alias='isDisabled',
     )
     is_deleted: bool = Field(
         default=False,
         description='Whether the configuration is deleted',
         validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
-        serialization_alias='isDeleted',
     )
 
     # Nested configuration data (as returned by API)
@@ -142,7 +129,6 @@ class APIConfigurationResponse(BaseModel):
         default=None,
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
-        serialization_alias='changeDescription',
     )
 
     # Metadata
