@@ -12,6 +12,7 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
+from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowToolResponse,
