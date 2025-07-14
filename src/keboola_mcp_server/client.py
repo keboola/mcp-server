@@ -254,14 +254,12 @@ class RawKeboolaClient:
         self,
         error_obj: Optional[Exception],
         duration_s: float,
-        mcp_context: dict[str, Any],
+        event: 'TriggerEventRequest',
     ) -> None:
         """Constructs and sends an event to the Keboola Storage API."""
-        # project_id is now derived in the constructor and stored in self.parsed_project_id
-
         event_payload: dict[str, Any] = {
             'component': self._MCP_SERVER_COMPONENT_ID,
-            'message': f'MCP tool execution: {mcp_context["tool_name"]}',
+            'message': f'MCP tool execution: {event.tool_name}',
             'type': 'error' if error_obj else 'info',
             'durationSeconds': round(duration_s, 3),
             'params': {
@@ -269,20 +267,20 @@ class RawKeboolaClient:
                     'appEnv': os.environ.get('APP_ENV', 'development'),
                     'version': os.environ.get('APP_VERSION', 'unknown'),
                     'userAgent': self.headers['User-Agent'],
-                    'sessionId': mcp_context['sessionId'],
+                    'sessionId': event.session_id,
                 },
                 'tool': {
-                    'name': mcp_context['tool_name'],
+                    'name': event.tool_name,
                     'arguments': [
-                        mcp_context['tool_args'],  # Ensure this is JSON serializable "key", "value" pairs
-                    ]
+                        {'key': k, 'value': v} for k, v in event.tool_args.items()
+                    ],
                 },
             },
         }
-        if 'config_id' in mcp_context:
-            event_payload['configurationId'] = mcp_context['config_id']
-        if 'job_id' in mcp_context:
-            event_payload['runId'] = mcp_context['job_id']
+        if event.configuration_id:
+            event_payload['configurationId'] = event.configuration_id
+        if event.job_id:
+            event_payload['runId'] = event.job_id
 
         if error_obj:
             event_payload['message'] = str(error_obj)
@@ -290,7 +288,6 @@ class RawKeboolaClient:
         try:
             event_post_url = f'{self.base_api_url}/events'
             LOG.debug(f'Attempting to send MCP event: {event_payload} to {event_post_url}')
-            # Use a new httpx.AsyncClient for sending the event
             async with httpx.AsyncClient(timeout=self.timeout) as event_client:
                 response = await event_client.post(
                     event_post_url,
@@ -1130,6 +1127,17 @@ class JobsQueueClient(KeboolaServiceClient):
                 values: asc, desc
         """
         return cast(JsonList, await self.get(endpoint='search/jobs', params=params))
+
+
+class TriggerEventRequest(BaseModel):
+    tool_name: str
+    tool_args: dict[str, Any]
+    session_id: str = Field(..., alias='sessionId')
+    configuration_id: str | None = Field(None, alias='configurationId')
+    job_id: str | None = Field(None, alias='jobId')
+
+    class Config:
+        populate_by_name = True
 
 
 class DocsQuestionResponse(BaseModel):

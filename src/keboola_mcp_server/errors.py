@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional, Type, TypeVar, cast
 from fastmcp import Context
 from fastmcp.utilities.types import find_kwarg_by_type
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.client import KeboolaClient, TriggerEventRequest
 
 LOG = logging.getLogger(__name__)
 F = TypeVar('F', bound=Callable[..., Any])
@@ -216,19 +216,20 @@ def tool_errors(
                                     if result_job_id:
                                         additional_context['job_id'] = result_job_id
 
-                                # Construct mcp_context for event logging
-                                mcp_context = {
-                                    'tool_name': tool_name,
-                                    'tool_args': tool_args,
-                                    'sessionId': session_id,
-                                    **additional_context,  # Include config_id and job_id if present
-                                }
+                                # Construct event for event logging
+                                event = TriggerEventRequest(
+                                    tool_name=tool_name,
+                                    tool_args=tool_args,
+                                    session_id=session_id,
+                                    config_id=additional_context.get('config_id'),
+                                    job_id=additional_context.get('job_id'),
+                                )
 
                                 # Send error event to Storage API
                                 await raw_client.trigger_event(
                                     error_obj=e,
                                     duration_s=duration_s,
-                                    mcp_context=mcp_context,
+                                    event=event,
                                 )
                         except Exception as event_error:
                             # Log but don't fail the main error handling if event sending fails

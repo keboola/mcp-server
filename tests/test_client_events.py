@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from keboola_mcp_server.client import JsonDict, RawKeboolaClient
+from keboola_mcp_server.client import JsonDict, RawKeboolaClient, TriggerEventRequest
 
 # Base URL for testing storage related event sending
 STORAGE_API_URL_V2 = 'https://connection.keboola.com/v2/storage'
@@ -37,18 +37,17 @@ class TestRawKeboolaClientEventLogic:
         mock_async_client = mocker.patch('keboola_mcp_server.client.httpx.AsyncClient')
         mock_async_client.return_value.__aenter__.return_value = mock_client
 
-        mcp_context = {
-            'tool_name': 'test_tool',
-            'tool_args': {'arg1': 'val1'},
-            'config_id': 'cfg123',
-            'job_id': '456',
-            'sessionId': 'test-session-123',
-        }
-
+        event = TriggerEventRequest(
+            tool_name='test_tool',
+            tool_args={'region': 'eu-central-1', 'branchId': '67890'},
+            configurationId='cfg123',
+            jobId='456',
+            sessionId='test-session-123',
+        )
         await raw_client_storage_v2.trigger_event(
             error_obj=None,
             duration_s=1.234,
-            mcp_context=mcp_context,
+            event=event,
         )
 
         mock_client.post.assert_called_once()
@@ -61,7 +60,10 @@ class TestRawKeboolaClientEventLogic:
         assert sent_payload['type'] == 'info'
         assert sent_payload['durationSeconds'] == 1.234
         assert sent_payload['params']['tool']['name'] == 'test_tool'
-        assert sent_payload['params']['tool']['arguments'] == [{'arg1': 'val1'}]
+        assert sent_payload['params']['tool']['arguments'] == [
+            {'key': 'region', 'value': 'eu-central-1'},
+            {'key': 'branchId', 'value': '67890'}
+        ]
         assert sent_payload['configurationId'] == 'cfg123'
         assert sent_payload['runId'] == '456'
         # Check mcpServerContext is filled
@@ -80,13 +82,16 @@ class TestRawKeboolaClientEventLogic:
         mock_async_client = mocker.patch('keboola_mcp_server.client.httpx.AsyncClient')
         mock_async_client.return_value.__aenter__.return_value = mock_client
 
-        mcp_context = {'tool_name': 'error_tool', 'tool_args': ['argA'], 'sessionId': 'test-session-456'}
+        event = TriggerEventRequest(
+            tool_name='error_tool',
+            tool_args={'region': 'eu-central-1'},
+            sessionId='test-session-456',
+        )
         error = ValueError('Test error')
-
         await raw_client_storage_v2.trigger_event(
             error_obj=error,
             duration_s=0.567,
-            mcp_context=mcp_context,
+            event=event,
         )
 
         mock_client.post.assert_called_once()
@@ -95,6 +100,9 @@ class TestRawKeboolaClientEventLogic:
         assert sent_payload['message'] == 'Test error'
         assert 'configurationId' not in sent_payload  # Not in mcp_context
         assert 'runId' not in sent_payload  # Not in mcp_context
+        assert sent_payload['params']['tool']['arguments'] == [
+            {'key': 'region', 'value': 'eu-central-1'}
+        ]
 
     @pytest.mark.asyncio
     async def test_post_does_not_trigger_event_anymore(
