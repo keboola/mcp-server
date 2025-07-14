@@ -40,7 +40,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
-from keboola_mcp_server.tools.components.api_models import APIConfigurationResponse
+from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentSummary,
@@ -260,7 +260,7 @@ async def get_config(
         await client.storage_client.configuration_detail(component_id=component_id, configuration_id=configuration_id),
     )
 
-    api_config = APIConfigurationResponse.model_validate(
+    api_config = ConfigurationAPIResponse.model_validate(
         raw_configuration | {'component_id': component_id}
     )
 

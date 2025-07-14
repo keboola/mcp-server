@@ -31,15 +31,13 @@ from individual tasks:
 ## Legacy Models
 - ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
 """
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.api_models import APIComponentResponse, APIConfigurationResponse
+from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse, ConfigurationAPIResponse
 
 # ============================================================================
 # TYPE DEFINITIONS
@@ -114,19 +112,13 @@ class ComponentCapabilities(BaseModel):
 class ComponentSummary(BaseModel):
     """Lightweight component representation for list operations."""
 
-    component_id: str = Field(
-        description='Component ID',
-    )
-    component_name: str = Field(
-        description='Component name',
-    )
-    component_type: str = Field(
-        description='Component type',
-    )
+    component_id: str = Field(description='Component ID')
+    component_name: str = Field(description='Component name')
+    component_type: str = Field(description='Component type')
     capabilities: ComponentCapabilities = Field(description='Component capabilities')
 
     @classmethod
-    def from_api_response(cls, api_response: APIComponentResponse) -> 'ComponentSummary':
+    def from_api_response(cls, api_response: ComponentAPIResponse) -> 'ComponentSummary':
         """
         Create ComponentSummary from API response.
 
@@ -153,22 +145,16 @@ class Component(BaseModel):
     """
 
     # Core component metadata (shared with ComponentSummary)
-    component_id: str = Field(
-        description='Component ID',
-    )
-    component_name: str = Field(
-        description='Component name',
-    )
-    component_type: str = Field(
-        description='Component type',
-    )
+    component_id: str = Field(description='Component ID')
+    component_name: str = Field(description='Component name')
+    component_type: str = Field(description='Component type')
     component_categories: list[str] = Field(
         default_factory=list,
         description='Component categories',
     )
     capabilities: ComponentCapabilities = Field(description='Component capabilities')
 
-    # Detailed metadata (not in ComponenSummary)
+    # Additional metadata
     documentation_url: str | None = Field(
         default=None,
         description='URL to component documentation',
@@ -186,11 +172,10 @@ class Component(BaseModel):
         description='JSON schema for row configuration validation',
     )
 
-    # MCP-specific metadata
-    links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
+    links: list[Link] = Field(default_factory=list, description='Links for UI navigation')
 
     @classmethod
-    def from_api_response(cls, api_response: APIComponentResponse) -> 'Component':
+    def from_api_response(cls, api_response: ComponentAPIResponse) -> 'Component':
         """
         Create Component from API response.
 
@@ -224,19 +209,13 @@ class ConfigurationRoot(BaseModel):
     credentials, global parameters, and shared storage mappings. For row-based
     components, this contains the common settings that apply to all rows.
     """
-
-    # Core identification
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of this root configuration')
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
-
-    # Versioning and state
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
-
-    # Configuration content
     parameters: dict[str, Any] = Field(
         description='The configuration parameters, adhering to the root configuration schema'
     )
@@ -244,15 +223,13 @@ class ConfigurationRoot(BaseModel):
         default=None,
         description='The table and/or file input/output mapping configuration'
     )
-
-    # Metadata
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list,
         description='Configuration metadata including MCP tracking'
     )
 
     @classmethod
-    def from_api_response(cls, api_config: 'APIConfigurationResponse') -> 'ConfigurationRoot':
+    def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRoot':
         """
         Create ConfigurationRoot from API response.
 
@@ -284,20 +261,14 @@ class ConfigurationRow(BaseModel):
     For row-based components, each row typically handles a specific data source,
     destination, or transformation operation.
     """
-
-    # Core identification
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of the corresponding root configuration')
     row_configuration_id: str = Field(description='The ID of this row configuration')
     name: str = Field(description='The name of the row configuration')
     description: Optional[str] = Field(default=None, description='The description of the row configuration')
-
-    # Versioning and state
     version: int = Field(description='The version of the row configuration')
     is_disabled: bool = Field(default=False, description='Whether the row configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the row configuration is deleted')
-
-    # Configuration content
     parameters: dict[str, Any] = Field(
         description='The row configuration parameters, adhering to the row configuration schema'
     )
@@ -305,8 +276,6 @@ class ConfigurationRow(BaseModel):
         default=None,
         description='The table and/or file input/output mapping configuration'
     )
-
-    # Metadata
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list,
         description='Row configuration metadata'
@@ -347,19 +316,15 @@ class ConfigurationRow(BaseModel):
 
 class ConfigurationRootSummary(BaseModel):
     """Lightweight root configuration for list operations."""
-
-    # Core identification
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of this root configuration')
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
-
-    # State information
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
 
     @classmethod
-    def from_api_response(cls, api_config: 'APIConfigurationResponse') -> 'ConfigurationRootSummary':
+    def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRootSummary':
         """Create lightweight root configuration summary from API response."""
         return cls.model_construct(
             component_id=api_config.component_id,
@@ -373,15 +338,11 @@ class ConfigurationRootSummary(BaseModel):
 
 class ConfigurationRowSummary(BaseModel):
     """Lightweight row configuration for list operations."""
-
-    # Core identification
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of the corresponding root configuration')
     row_configuration_id: str = Field(description='The ID of this row configuration')
     name: str = Field(description='The name of the row configuration')
     description: Optional[str] = Field(default=None, description='The description of the row configuration')
-
-    # State information
     is_disabled: bool = Field(default=False, description='Whether the row configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the row configuration is deleted')
 
@@ -412,8 +373,6 @@ class ConfigurationSummary(BaseModel):
     but with lightweight summary data. Used by list operations where many
     configurations are returned.
     """
-
-    # Configuration structure
     root_configuration: ConfigurationRootSummary = Field(
         description='The root configuration summary'
     )
@@ -423,7 +382,7 @@ class ConfigurationSummary(BaseModel):
     )
 
     @classmethod
-    def from_api_response(cls, api_config: 'APIConfigurationResponse') -> 'ConfigurationSummary':
+    def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationSummary':
         """
         Create ConfigurationSummary from API response.
 
@@ -460,8 +419,6 @@ class Configuration(BaseModel):
     component context and UI links. Used by get operations where detailed
     configuration information is needed.
     """
-
-    # Configuration structure
     root_configuration: ConfigurationRoot = Field(
         description='The complete root configuration'
     )
@@ -469,8 +426,6 @@ class Configuration(BaseModel):
         default=None,
         description='The complete row configurations'
     )
-
-    # Additional context for detailed operations
     component: Optional[ComponentSummary] = Field(
         default=None,
         description='The component this configuration belongs to'
@@ -483,7 +438,7 @@ class Configuration(BaseModel):
     @classmethod
     def from_api_response(
         cls,
-        api_config: 'APIConfigurationResponse',
+        api_config: 'ConfigurationAPIResponse',
         component: Optional[ComponentSummary] = None,
         links: Optional[list[Link]] = None,
     ) -> 'Configuration':

@@ -10,7 +10,7 @@ from typing import Any, Optional
 from pydantic import AliasChoices, BaseModel, Field
 
 
-class APIComponentResponse(BaseModel):
+class ComponentAPIResponse(BaseModel):
     """
     Raw component response that can handle both Storage API and AI Service API responses.
 
@@ -77,7 +77,7 @@ class APIComponentResponse(BaseModel):
     )
 
 
-class APIConfigurationResponse(BaseModel):
+class ConfigurationAPIResponse(BaseModel):
     """
     Raw API response for configuration endpoints.
 

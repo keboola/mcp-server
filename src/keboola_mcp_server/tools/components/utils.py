@@ -28,7 +28,7 @@ from httpx import HTTPStatusError
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.tools.components.api_models import APIComponentResponse, APIConfigurationResponse
+from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     ComponentSummary,
@@ -97,7 +97,7 @@ async def _list_configs_by_types(
         # Process each component and its configurations
         for raw_component in raw_components_with_configurations_by_type:
             raw_configuration_responses = [
-                APIConfigurationResponse.model_validate(
+                ConfigurationAPIResponse.model_validate(
                     raw_configuration | {'component_id': raw_component['id']}
                 )
                 for raw_configuration in cast(list[JsonDict], raw_component.get('configurations', []))
@@ -110,7 +110,7 @@ async def _list_configs_by_types(
             ]
 
             # Process component
-            api_component = APIComponentResponse.model_validate(raw_component)
+            api_component = ComponentAPIResponse.model_validate(raw_component)
             domain_component = ComponentSummary.from_api_response(api_component)
 
             components_with_configurations.append(
@@ -150,12 +150,12 @@ async def _list_configs_by_ids(
         raw_component = await client.storage_client.component_detail(component_id=component_id)
 
         # Process component
-        api_component = APIComponentResponse.model_validate(raw_component)
+        api_component = ComponentAPIResponse.model_validate(raw_component)
         domain_component = ComponentSummary.from_api_response(api_component)
 
         # Process configurations
         raw_configuration_responses = [
-            APIConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
+            ConfigurationAPIResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
             for raw_configuration in raw_configurations
         ]
         configuration_summaries = [
@@ -185,7 +185,7 @@ async def _list_configs_by_ids(
 async def _fetch_component(
     client: KeboolaClient,
     component_id: str,
-) -> APIComponentResponse:
+) -> ComponentAPIResponse:
     """
     Utility function to fetch a component by ID, returning the raw API response.
 
@@ -207,7 +207,7 @@ async def _fetch_component(
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component {component_id} from AI service catalog.')
 
-        return APIComponentResponse.model_validate(raw_component)
+        return ComponentAPIResponse.model_validate(raw_component)
 
     except HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -220,7 +220,7 @@ async def _fetch_component(
             raw_component = await client.storage_client.component_detail(component_id=component_id)
             LOG.info(f'Retrieved component {component_id} from Storage API.')
 
-            return APIComponentResponse.model_validate(raw_component)
+            return ComponentAPIResponse.model_validate(raw_component)
         else:
             # If it's not a 404, re-raise the error
             raise
