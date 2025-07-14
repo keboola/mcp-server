@@ -8,7 +8,7 @@ from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
 from pydantic import Field
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
+from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
@@ -56,7 +56,6 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(FunctionTool.from_function(update_config))
     mcp.add_tool(FunctionTool.from_function(update_config_row))
     mcp.add_tool(FunctionTool.from_function(get_config_examples))
-    mcp.add_tool(FunctionTool.from_function(find_component_id))
     mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
     mcp.add_tool(FunctionTool.from_function(update_sql_transformation))
     mcp.add_tool(FunctionTool.from_function(list_transformations))
@@ -1022,24 +1021,3 @@ async def get_config_examples(
             markdown += f'{i}. Row Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
     return markdown
-
-
-@tool_errors()
-@with_session_state()
-async def find_component_id(
-    ctx: Context,
-    query: Annotated[str, Field(description='Natural language query to find the requested component.')],
-) -> list[SuggestedComponent]:
-    """
-    Returns list of component IDs that match the given query.
-
-    USAGE:
-    - Use when you want to find the component for a specific purpose.
-
-    EXAMPLES:
-    - user_input: `I am looking for a salesforce extractor component`
-        - returns a list of component IDs that match the query, ordered by relevance/best match.
-    """
-    client = KeboolaClient.from_state(ctx.session.state)
-    suggestion_response = await client.ai_service_client.suggest_component(query)
-    return suggestion_response.components
