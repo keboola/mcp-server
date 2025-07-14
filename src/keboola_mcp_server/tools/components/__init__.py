@@ -6,8 +6,6 @@ from keboola_mcp_server.tools.components.model import (
     ComponentWithConfigurations,
 )
 from keboola_mcp_server.tools.components.tools import (
-    _set_cfg_creation_metadata,
-    _set_cfg_update_metadata,
     add_component_tools,
     add_config_row,
     create_config,

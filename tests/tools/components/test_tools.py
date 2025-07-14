@@ -28,7 +28,7 @@ from keboola_mcp_server.tools.components.model import (
     ListConfigsOutput,
     ListTransformationsOutput,
 )
-from keboola_mcp_server.tools.components.utils import TransformationConfiguration, _clean_bucket_name
+from keboola_mcp_server.tools.components.utils import TransformationConfiguration, clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -299,7 +299,7 @@ async def test_create_sql_transformation(
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration['name']
-    bucket_name = _clean_bucket_name(transformation_name)
+    bucket_name = clean_bucket_name(transformation_name)
     description = mock_configuration['description']
     code_blocks = [
         TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=['SELECT * FROM test']),

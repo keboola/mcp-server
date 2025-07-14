@@ -33,7 +33,7 @@ from keboola_mcp_server.tools.components.model import (
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
-    _get_sql_transformation_id_from_sql_dialect,
+    get_sql_transformation_id_from_sql_dialect,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 
@@ -605,7 +605,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         created_table_names=test_created_table_names,
     )
     sql_dialect = await get_sql_dialect(mcp_context)
-    expected_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     project_id = keboola_project.project_id
 
     try:
@@ -724,7 +724,7 @@ async def test_update_sql_transformation(mcp_context: Context, keboola_project: 
 
     project_id = keboola_project.project_id
     sql_dialect = await get_sql_dialect(mcp_context)
-    sql_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    sql_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
 
     try:
         # Now update the transformation
