@@ -4,17 +4,17 @@ Utility functions for Keboola component and configuration management.
 This module contains helper functions and utilities used across the component tools:
 
 ## Component Retrieval
-- _fetch_component: Fetches component details with AI Service/Storage API fallback
-- _handle_component_types: Normalizes component type filtering
+- fetch_component: Fetches component details with AI Service/Storage API fallback
+- handle_component_types: Normalizes component type filtering
 
 ## Configuration Listing
-- _list_configs_by_types: Retrieves components+configs filtered by type
-- _list_configs_by_ids: Retrieves components+configs filtered by ID
+- list_configs_by_types: Retrieves components+configs filtered by type
+- list_configs_by_ids: Retrieves components+configs filtered by ID
 
 ## SQL Transformation Utilities
-- _get_sql_transformation_id_from_sql_dialect: Maps SQL dialect to component ID
-- _get_transformation_configuration: Builds transformation config payloads
-- _clean_bucket_name: Sanitizes bucket names for transformations
+- get_sql_transformation_id_from_sql_dialect: Maps SQL dialect to component ID
+- get_transformation_configuration: Builds transformation config payloads
+- clean_bucket_name: Sanitizes bucket names for transformations
 
 ## Data Models
 - TransformationConfiguration: Pydantic model for SQL transformation structure
@@ -28,7 +28,8 @@ from httpx import HTTPStatusError
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.tools.components.api_models import APIComponentResponse, APIConfigurationResponse
+from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,
     ComponentSummary,
@@ -51,7 +52,7 @@ BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 # COMPONENT TYPE HANDLING
 # ============================================================================
 
-def _handle_component_types(
+def handle_component_types(
     types: Optional[Union[ComponentType, Sequence[ComponentType]]],
 ) -> Sequence[ComponentType]:
     """
@@ -72,7 +73,7 @@ def _handle_component_types(
 # CONFIGURATION LISTING UTILITIES
 # ============================================================================
 
-async def _list_configs_by_types(
+async def list_configs_by_types(
     client: KeboolaClient, component_types: Sequence[AllComponentTypes]
 ) -> list[ComponentWithConfigurations]:
     """
@@ -97,7 +98,7 @@ async def _list_configs_by_types(
         # Process each component and its configurations
         for raw_component in raw_components_with_configurations_by_type:
             raw_configuration_responses = [
-                APIConfigurationResponse.model_validate(
+                ConfigurationAPIResponse.model_validate(
                     raw_configuration | {'component_id': raw_component['id']}
                 )
                 for raw_configuration in cast(list[JsonDict], raw_component.get('configurations', []))
@@ -110,7 +111,7 @@ async def _list_configs_by_types(
             ]
 
             # Process component
-            api_component = APIComponentResponse.model_validate(raw_component)
+            api_component = ComponentAPIResponse.model_validate(raw_component)
             domain_component = ComponentSummary.from_api_response(api_component)
 
             components_with_configurations.append(
@@ -128,7 +129,7 @@ async def _list_configs_by_types(
     return components_with_configurations
 
 
-async def _list_configs_by_ids(
+async def list_configs_by_ids(
     client: KeboolaClient, component_ids: Sequence[str]
 ) -> list[ComponentWithConfigurations]:
     """
@@ -150,12 +151,12 @@ async def _list_configs_by_ids(
         raw_component = await client.storage_client.component_detail(component_id=component_id)
 
         # Process component
-        api_component = APIComponentResponse.model_validate(raw_component)
+        api_component = ComponentAPIResponse.model_validate(raw_component)
         domain_component = ComponentSummary.from_api_response(api_component)
 
         # Process configurations
         raw_configuration_responses = [
-            APIConfigurationResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
+            ConfigurationAPIResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
             for raw_configuration in raw_configurations
         ]
         configuration_summaries = [
@@ -182,10 +183,10 @@ async def _list_configs_by_ids(
 # COMPONENT FETCHING
 # ============================================================================
 
-async def _fetch_component(
+async def fetch_component(
     client: KeboolaClient,
     component_id: str,
-) -> APIComponentResponse:
+) -> ComponentAPIResponse:
     """
     Utility function to fetch a component by ID, returning the raw API response.
 
@@ -207,7 +208,7 @@ async def _fetch_component(
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component {component_id} from AI service catalog.')
 
-        return APIComponentResponse.model_validate(raw_component)
+        return ComponentAPIResponse.model_validate(raw_component)
 
     except HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -220,7 +221,7 @@ async def _fetch_component(
             raw_component = await client.storage_client.component_detail(component_id=component_id)
             LOG.info(f'Retrieved component {component_id} from Storage API.')
 
-            return APIComponentResponse.model_validate(raw_component)
+            return ComponentAPIResponse.model_validate(raw_component)
         else:
             # If it's not a 404, re-raise the error
             raise
@@ -230,7 +231,7 @@ async def _fetch_component(
 # SQL TRANSFORMATION UTILITIES
 # ============================================================================
 
-def _get_sql_transformation_id_from_sql_dialect(
+def get_sql_transformation_id_from_sql_dialect(
     sql_dialect: str,
 ) -> str:
     """
@@ -251,7 +252,7 @@ def _get_sql_transformation_id_from_sql_dialect(
         raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
 
 
-def _clean_bucket_name(bucket_name: str) -> str:
+def clean_bucket_name(bucket_name: str) -> str:
     """
     Utility function to clean the bucket name.
     Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
@@ -331,7 +332,7 @@ class TransformationConfiguration(BaseModel):
     storage: Storage = Field(description='The storage configuration for the transformation')
 
 
-def _get_transformation_configuration(
+def get_transformation_configuration(
     codes: Sequence[TransformationConfiguration.Parameters.Block.Code],
     transformation_name: str,
     output_tables: Sequence[str],
@@ -359,7 +360,7 @@ def _get_transformation_configuration(
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
         # expected output table name format is `out.c-<sql_query_name>.<table_name>`
-        bucket_name = _clean_bucket_name(transformation_name)
+        bucket_name = clean_bucket_name(transformation_name)
         destination = f'out.c-{bucket_name}'
         storage.output.tables = [
             TransformationConfiguration.Storage.Destination.Table(
@@ -372,3 +373,48 @@ def _get_transformation_configuration(
             for out_table in output_tables
         ]
     return TransformationConfiguration(parameters=parameters, storage=storage)
+
+
+async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
+    """
+    Sets configuration metadata to indicate it was created by MCP.
+
+    :param client: KeboolaClient instance
+    :param component_id: ID of the component
+    :param configuration_id: ID of the configuration
+    """
+    try:
+        await client.storage_client.configuration_metadata_update(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            metadata={MetadataField.CREATED_BY_MCP: 'true'},
+        )
+    except HTTPStatusError as e:
+        logging.exception(
+            f'Failed to set "{MetadataField.CREATED_BY_MCP}" metadata for configuration {configuration_id}: {e}'
+        )
+
+
+async def set_cfg_update_metadata(
+    client: KeboolaClient,
+    component_id: str,
+    configuration_id: str,
+    configuration_version: int,
+) -> None:
+    """
+    Sets configuration metadata to indicate it was updated by MCP.
+
+    :param client: KeboolaClient instance
+    :param component_id: ID of the component
+    :param configuration_id: ID of the configuration
+    :param configuration_version: Version of the configuration
+    """
+    updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{configuration_version}'
+    try:
+        await client.storage_client.configuration_metadata_update(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            metadata={updated_by_md_key: 'true'},
+        )
+    except HTTPStatusError as e:
+        logging.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')

@@ -7,7 +7,7 @@ import pytest
 
 from keboola_mcp_server.client import JsonDict
 from keboola_mcp_server.tools import validation
-from keboola_mcp_server.tools.components.api_models import APIComponentResponse
+from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse
 from keboola_mcp_server.tools.components.model import Component
 
 
@@ -378,7 +378,7 @@ def test_validate_storage_configuration_output(
     """testing expected storage output for a given storage input"""
     component_raw = mock_component.copy()
     component_raw['type'] = 'extractor'  # we need extractor to pass the validation for storage necessity
-    api_component = APIComponentResponse.model_validate(component_raw)
+    api_component = ComponentAPIResponse.model_validate(component_raw)
     component = Component.from_api_response(api_component)
     result = validation._validate_storage_configuration(input_storage, component)
     expected = output_storage  # we expect unwrapped structure
@@ -423,7 +423,7 @@ def test_validate_storage_of_row_based_and_root_based_writers(
     component_raw['type'] = 'writer'
     component_raw['component_flags'] = ['genericDockerUI-rows'] if is_writer_row_based else []
 
-    api_component = APIComponentResponse.model_validate(component_raw)
+    api_component = ComponentAPIResponse.model_validate(component_raw)
     component = Component.from_api_response(api_component)
     if error_message is None:
         if not is_writer_row_based and is_storage_row_based:
@@ -465,7 +465,7 @@ def test_validate_storage_of_sql_transformation(mock_component: dict, storage: O
     # we test the validation for both SQL transformations
     for transformation_id in [validation.BIGQUERY_TRANSFORMATION_ID, validation.SNOWFLAKE_TRANSFORMATION_ID]:
         component_raw['id'] = transformation_id
-        api_component = APIComponentResponse.model_validate(component_raw)
+        api_component = ComponentAPIResponse.model_validate(component_raw)
         component = Component.from_api_response(api_component)
         if is_valid:
             validation._validate_storage_configuration(storage=storage, component=component)
@@ -493,7 +493,7 @@ async def test_validate_root_parameters_configuration_output(
     """testing returned format structures  {...}"""
     accepting_schema = {'type': 'object', 'additionalProperties': True}  # accepts any json object
     component_raw = mock_component.copy()
-    api_component = APIComponentResponse.model_validate(component_raw)
+    api_component = ComponentAPIResponse.model_validate(component_raw)
     component = Component.from_api_response(api_component)
     component.configuration_schema = accepting_schema
     result = validation.validate_root_parameters_configuration(input_parameters, component)
@@ -515,7 +515,7 @@ async def test_validate_row_parameters_configuration_output(
     """testing normalized and returned structures {parameters: {...}} vs {...}"""
     accepting_schema = {'type': 'object', 'additionalProperties': True}  # accepts any json object
     component_raw = mock_component.copy()
-    api_component = APIComponentResponse.model_validate(component_raw)
+    api_component = ComponentAPIResponse.model_validate(component_raw)
     component = Component.from_api_response(api_component)
     component.configuration_row_schema = accepting_schema
     result = validation.validate_row_parameters_configuration(input_parameters, component)
@@ -529,7 +529,7 @@ async def test_validate_parameters_configuration_no_schema(mock_component: dict,
     """We expect passing the validation when no schema is provided"""
     input_parameters: JsonDict = {'a': 1}
     component_raw = mock_component.copy()
-    api_component = APIComponentResponse.model_validate(component_raw)
+    api_component = ComponentAPIResponse.model_validate(component_raw)
     component = Component.from_api_response(api_component)
     component.configuration_row_schema = input_schema
     result = validation.validate_row_parameters_configuration(input_parameters, component)
@@ -558,7 +558,7 @@ def test_validate_parameters_root_real_scenario(
         input_schema = json.load(f)
 
     component_raw = mock_component.copy()
-    api_component = APIComponentResponse.model_validate(component_raw)
+    api_component = ComponentAPIResponse.model_validate(component_raw)
     component = Component.from_api_response(api_component)
     component.configuration_schema = input_schema
     modified_input_parameters = {'parameters': input_parameters} if is_parameter_key_present else input_parameters

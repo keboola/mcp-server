@@ -5,14 +5,13 @@ import pytest
 from mcp.server.fastmcp import Context
 
 from integtests.conftest import ConfigDef, ProjectDef
-from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
     create_sql_transformation,
-    find_component_id,
     get_component,
     get_config,
     get_config_examples,
@@ -33,7 +32,7 @@ from keboola_mcp_server.tools.components.model import (
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
-    _get_sql_transformation_id_from_sql_dialect,
+    get_sql_transformation_id_from_sql_dialect,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
 
@@ -57,9 +56,9 @@ async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
         assert configuration.component.component_type is not None
         assert configuration.component.component_name is not None
 
-        assert configuration.root_configuration is not None
-        assert configuration.root_configuration.configuration_id == config.configuration_id
-        assert configuration.root_configuration.component_id == config.component_id
+        assert configuration.configuration_root is not None
+        assert configuration.configuration_root.configuration_id == config.configuration_id
+        assert configuration.configuration_root.component_id == config.component_id
         # Check links field
         assert configuration.links, 'Links list should not be empty.'
         for link in configuration.links:
@@ -86,7 +85,7 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
 
         # Check that configurations belong to this component
         for config in item.configurations:
-            assert config.root_configuration.component_id == item.component.component_id
+            assert config.configuration_root.component_id == item.component.component_id
 
 
 @pytest.mark.asyncio
@@ -605,7 +604,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         created_table_names=test_created_table_names,
     )
     sql_dialect = await get_sql_dialect(mcp_context)
-    expected_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     project_id = keboola_project.project_id
 
     try:
@@ -724,7 +723,7 @@ async def test_update_sql_transformation(mcp_context: Context, keboola_project: 
 
     project_id = keboola_project.project_id
     sql_dialect = await get_sql_dialect(mcp_context)
-    sql_component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    sql_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
 
     try:
         # Now update the transformation
@@ -932,7 +931,7 @@ async def test_list_transformations_by_ids(mcp_context: Context):
         assert component_with_configs.component.component_id == created_transformation.component_id
         assert component_with_configs.component.component_type == 'transformation'
         assert (
-            component_with_configs.configurations[0].root_configuration.configuration_id
+            component_with_configs.configurations[0].configuration_root.configuration_id
             == created_transformation.configuration_id
         )
 
@@ -970,22 +969,6 @@ async def test_get_config_examples(mcp_context: Context, configs: list[ConfigDef
     assert f'# Configuration Examples for `{component_id}`' in result
     assert f'{component_id}`' in result
     assert 'parameters' in result
-
-
-@pytest.mark.asyncio
-async def test_find_component_id(mcp_context: Context):
-    """Tests that `find_component_id` returns relevant component IDs for a query."""
-    query = 'generic extractor'
-    generic_extractor_id = 'ex-generic-v2'
-
-    result = await find_component_id(query=query, ctx=mcp_context)
-
-    assert isinstance(result, list)
-    assert len(result) > 0
-    assert generic_extractor_id in [component.component_id for component in result]
-
-    for component in result:
-        assert isinstance(component, SuggestedComponent)
 
 
 @pytest.mark.asyncio
