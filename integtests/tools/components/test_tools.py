@@ -5,14 +5,13 @@ import pytest
 from mcp.server.fastmcp import Context
 
 from integtests.conftest import ConfigDef, ProjectDef
-from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
     create_sql_transformation,
-    find_component_id,
     get_component,
     get_config,
     get_config_examples,
@@ -970,22 +969,6 @@ async def test_get_config_examples(mcp_context: Context, configs: list[ConfigDef
     assert f'# Configuration Examples for `{component_id}`' in result
     assert f'{component_id}`' in result
     assert 'parameters' in result
-
-
-@pytest.mark.asyncio
-async def test_find_component_id(mcp_context: Context):
-    """Tests that `find_component_id` returns relevant component IDs for a query."""
-    query = 'generic extractor'
-    generic_extractor_id = 'ex-generic-v2'
-
-    result = await find_component_id(query=query, ctx=mcp_context)
-
-    assert isinstance(result, list)
-    assert len(result) > 0
-    assert generic_extractor_id in [component.component_id for component in result]
-
-    for component in result:
-        assert isinstance(component, SuggestedComponent)
 
 
 @pytest.mark.asyncio
