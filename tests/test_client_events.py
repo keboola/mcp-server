@@ -1,5 +1,3 @@
-from unittest.mock import AsyncMock, MagicMock
-
 import httpx
 import pytest
 
@@ -34,8 +32,8 @@ class TestRawKeboolaClientEventLogic:
     async def test_trigger_event_success_payload(self, raw_client_storage_v2: RawKeboolaClient, mocker):
         """Test the payload construction for a successful API call event."""
         # Mock the httpx.AsyncClient context manager to return a mock client
-        mock_client = AsyncMock()
-        mock_client.post.return_value = MagicMock(spec=httpx.Response, status_code=200)
+        mock_client = mocker.AsyncMock()
+        mock_client.post.return_value = mocker.MagicMock(spec=httpx.Response, status_code=200)
         mock_async_client = mocker.patch('keboola_mcp_server.client.httpx.AsyncClient')
         mock_async_client.return_value.__aenter__.return_value = mock_client
 
@@ -77,8 +75,8 @@ class TestRawKeboolaClientEventLogic:
     async def test_trigger_event_error_payload(self, raw_client_storage_v2: RawKeboolaClient, mocker):
         """Test the payload construction for an errored API call event."""
         # Mock the httpx.AsyncClient context manager to return a mock client
-        mock_client = AsyncMock()
-        mock_client.post.return_value = MagicMock(spec=httpx.Response, status_code=200)
+        mock_client = mocker.AsyncMock()
+        mock_client.post.return_value = mocker.MagicMock(spec=httpx.Response, status_code=200)
         mock_async_client = mocker.patch('keboola_mcp_server.client.httpx.AsyncClient')
         mock_async_client.return_value.__aenter__.return_value = mock_client
 
@@ -106,8 +104,8 @@ class TestRawKeboolaClientEventLogic:
         mock_response_content: JsonDict = {'id': 'new_resource', 'status': 'created'}
 
         # Mock the actual HTTP call for the main operation
-        mock_main_post = mocker.patch('httpx.AsyncClient.post', new_callable=AsyncMock)
-        mock_main_post.return_value = MagicMock(spec=httpx.Response, status_code=201)
+        mock_main_post = mocker.patch('httpx.AsyncClient.post', new_callable=mocker.AsyncMock)
+        mock_main_post.return_value = mocker.MagicMock(spec=httpx.Response, status_code=201)
         mock_main_post.return_value.json.return_value = mock_response_content
 
         endpoint = 'some_resource'
@@ -125,9 +123,9 @@ class TestRawKeboolaClientEventLogic:
         """Test that RawKeboolaClient.put does NOT call trigger_event on HTTP error."""
         # Mock the actual HTTP call for the main operation to raise an error
         http_error = httpx.HTTPStatusError(
-            'Test HTTP Error', request=MagicMock(), response=MagicMock(status_code=400)
+            'Test HTTP Error', request=mocker.MagicMock(), response=mocker.MagicMock(status_code=400)
         )
-        mocker.patch('httpx.AsyncClient.put', new_callable=AsyncMock, side_effect=http_error)
+        mocker.patch('httpx.AsyncClient.put', new_callable=mocker.AsyncMock, side_effect=http_error)
 
         endpoint = 'another_resource/id1'
         data = {'field': 'new_value'}
@@ -141,8 +139,8 @@ class TestRawKeboolaClientEventLogic:
         self, raw_client_storage_v2: RawKeboolaClient, mocker
     ):
         """Test that RawKeboolaClient.delete does NOT call trigger_event anymore."""
-        mock_main_delete = mocker.patch('httpx.AsyncClient.delete', new_callable=AsyncMock)
-        mock_main_delete.return_value = MagicMock(spec=httpx.Response, status_code=204, content=b'')
+        mock_main_delete = mocker.patch('httpx.AsyncClient.delete', new_callable=mocker.AsyncMock)
+        mock_main_delete.return_value = mocker.MagicMock(spec=httpx.Response, status_code=204, content=b'')
 
         await raw_client_storage_v2.delete('resource_to_delete')
         # No event should be triggered by HTTP methods anymore
@@ -152,8 +150,8 @@ class TestRawKeboolaClientEventLogic:
         self, raw_client_non_storage: RawKeboolaClient, mocker
     ):
         """Test that RawKeboolaClient.post does NOT call trigger_event for non-storage URLs."""
-        mock_main_post = mocker.patch('httpx.AsyncClient.post', new_callable=AsyncMock)
-        mock_main_post.return_value = MagicMock(spec=httpx.Response, status_code=200)
+        mock_main_post = mocker.patch('httpx.AsyncClient.post', new_callable=mocker.AsyncMock)
+        mock_main_post.return_value = mocker.MagicMock(spec=httpx.Response, status_code=200)
         mock_main_post.return_value.json.return_value = {'jobId': 123}
 
         await raw_client_non_storage.post('jobs', data={})
@@ -164,8 +162,8 @@ class TestRawKeboolaClientEventLogic:
         self, raw_client_storage_v2: RawKeboolaClient, mocker
     ):
         """Test DELETE with 204 No Content works without triggering events (events handled by tool_errors decorator)."""
-        mock_main_delete = mocker.patch('httpx.AsyncClient.delete', new_callable=AsyncMock)
-        mock_main_delete.return_value = MagicMock(
+        mock_main_delete = mocker.patch('httpx.AsyncClient.delete', new_callable=mocker.AsyncMock)
+        mock_main_delete.return_value = mocker.MagicMock(
             spec=httpx.Response, status_code=204, content=b''
         )  # No content
 
@@ -183,8 +181,8 @@ class TestRawKeboolaClientEventLogic:
         text_content = 'Plain text response'
 
         # Mock the main DELETE operation
-        mock_main_client = AsyncMock()
-        mock_response = MagicMock(
+        mock_main_client = mocker.AsyncMock()
+        mock_response = mocker.MagicMock(
             spec=httpx.Response,
             status_code=200,
             content=text_content.encode('utf-8'),
