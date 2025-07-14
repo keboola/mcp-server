@@ -10,7 +10,7 @@ from keboola_mcp_server.tools.search import (
     DEFAULT_GLOBAL_SEARCH_LIMIT,
     GlobalSearchOutput,
     ItemsGroup,
-    global_search,
+    find_ids_by_name,
 )
 
 
@@ -234,6 +234,20 @@ class TestGlobalSearchOutput:
         # Check group counts
         for group in result.groups.values():
             assert group.count == 1
+            if group.type == 'table':
+                assert group.items[0].additional_info['bucket_id'] is not None
+                assert group.items[0].additional_info['bucket_name'] is not None
+            elif group.type == 'configuration':
+                assert group.items[0].additional_info['component_id'] is not None
+                assert group.items[0].additional_info['component_name'] is not None
+            elif group.type == 'configuration-row':
+                assert group.items[0].additional_info['component_id'] is not None
+                assert group.items[0].additional_info['component_name'] is not None
+                assert group.items[0].additional_info['configuration_id'] is not None
+                assert group.items[0].additional_info['configuration_name'] is not None
+            elif group.type == 'flow':
+                assert group.items[0].additional_info['component_id'] is not None
+                assert group.items[0].additional_info['component_name'] is not None
 
     def test_from_api_responses_empty(self):
         """Test creating answer from empty API response."""
@@ -246,11 +260,11 @@ class TestGlobalSearchOutput:
 
 
 class TestGlobalSearchTool:
-    """Test cases for the global_search tool function."""
+    """Test cases for the find_ids_by_name tool function."""
 
     @pytest.mark.asyncio
     async def test_global_search_success(
-        self, mocker: MockerFixture, mcp_context_client: Context, mock_global_search_response
+        self, mocker: MockerFixture, mcp_context_client: Context, mock_global_search_response: dict[str, Any]
     ):
         """Test successful global search."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -259,7 +273,7 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        result = await global_search(
+        result = await find_ids_by_name(
             ctx=mcp_context_client,
             name_prefixes=['test', 'table'],
             item_types=('table', 'configuration'),
@@ -270,6 +284,16 @@ class TestGlobalSearchTool:
         assert isinstance(result, GlobalSearchOutput)
         assert result.counts['table'] == 1
         assert result.counts['configuration'] == 1
+        assert result.counts['configuration-row'] == 1
+        assert result.counts['flow'] == 1
+        assert len(result.groups['table'].items) == 1
+        assert len(result.groups['configuration'].items) == 1
+        assert result.groups['configuration-row'].count == 1
+        assert result.groups['flow'].count == 1
+        assert result.groups['table'].items[0].id == mock_response.items[0].id
+        assert result.groups['configuration'].items[0].id == mock_response.items[1].id
+        assert result.groups['configuration-row'].items[0].id == mock_response.items[2].id
+        assert result.groups['flow'].items[0].id == mock_response.items[3].id
 
         # Verify the storage client was called with correct parameters
         keboola_client.storage_client.global_search.assert_called_once_with(
@@ -287,7 +311,7 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        result = await global_search(ctx=mcp_context_client, name_prefixes=['test'])
+        result = await find_ids_by_name(ctx=mcp_context_client, name_prefixes=['test'])
 
         assert isinstance(result, GlobalSearchOutput)
 
@@ -308,7 +332,7 @@ class TestGlobalSearchTool:
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
         # Test with limit too high
-        await global_search(ctx=mcp_context_client, name_prefixes=['test'], limit=200)
+        await find_ids_by_name(ctx=mcp_context_client, name_prefixes=['test'], limit=200)
 
         # Should use default limit
         keboola_client.storage_client.global_search.assert_called_with(
@@ -317,7 +341,7 @@ class TestGlobalSearchTool:
 
         # Test with limit too low
         keboola_client.storage_client.global_search.reset_mock()
-        await global_search(ctx=mcp_context_client, name_prefixes=['test'], limit=0)
+        await find_ids_by_name(ctx=mcp_context_client, name_prefixes=['test'], limit=0)
 
         # Should use default limit
         keboola_client.storage_client.global_search.assert_called_with(
@@ -335,7 +359,7 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        await global_search(ctx=mcp_context_client, name_prefixes=['test'], offset=-10)
+        await find_ids_by_name(ctx=mcp_context_client, name_prefixes=['test'], offset=-10)
 
         # Should use offset 0
         keboola_client.storage_client.global_search.assert_called_once_with(
@@ -349,7 +373,7 @@ class TestGlobalSearchTool:
         keboola_client.storage_client.is_enabled = mocker.AsyncMock(return_value=False)
 
         with pytest.raises(ValueError, match='Global search is not enabled'):
-            await global_search(ctx=mcp_context_client, name_prefixes=['test'])
+            await find_ids_by_name(ctx=mcp_context_client, name_prefixes=['test'])
 
     @pytest.mark.asyncio
     async def test_global_search_joins_prefixes(
@@ -362,7 +386,7 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        await global_search(ctx=mcp_context_client, name_prefixes=['test', 'table', 'data'])
+        await find_ids_by_name(ctx=mcp_context_client, name_prefixes=['test', 'table', 'data'])
 
         # Should join with spaces
         keboola_client.storage_client.global_search.assert_called_once_with(
@@ -380,7 +404,7 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        await global_search(ctx=mcp_context_client, name_prefixes=['test'], limit=75)
+        await find_ids_by_name(ctx=mcp_context_client, name_prefixes=['test'], limit=75)
 
         # Should use the provided limit
         keboola_client.storage_client.global_search.assert_called_once_with(
