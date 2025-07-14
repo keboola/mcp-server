@@ -1,8 +1,12 @@
 import logging
 
 import pytest
+from fastmcp import Context
+from mcp.shared.context import RequestContext
 
-from keboola_mcp_server.errors import ToolException, tool_errors
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.errors import ToolException, _get_session_id, tool_errors
+from keboola_mcp_server.mcp import ServerState
 
 
 @pytest.fixture
@@ -90,3 +94,16 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error):
     assert caplog.records[0].levelno == logging.ERROR
     assert 'Failed to run tool func' in caplog.records[0].message
     assert 'Simulated ValueError' in caplog.records[0].message
+
+
+def test_get_session_id_http(empty_context: Context, mocker):
+    type(empty_context).session_id = mocker.PropertyMock(return_value='1234')
+    assert _get_session_id(empty_context) == '1234'
+
+
+def test_get_session_id_stdio(empty_context: Context, mocker):
+    type(empty_context).session_id = mocker.PropertyMock(return_value=None)
+    type(empty_context).request_context = mocker.PropertyMock(
+        return_value=(request_object := mocker.MagicMock(RequestContext)))
+    request_object.lifespan_context = ServerState(config=Config(), server_id='4567')
+    assert _get_session_id(empty_context) == '4567'

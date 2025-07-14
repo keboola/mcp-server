@@ -9,6 +9,7 @@ from fastmcp import Context
 from fastmcp.utilities.types import find_kwarg_by_type
 
 from keboola_mcp_server.client import KeboolaClient, TriggerEventRequest
+from keboola_mcp_server.mcp import ServerState
 
 LOG = logging.getLogger(__name__)
 F = TypeVar('F', bound=Callable[..., Any])
@@ -32,15 +33,17 @@ class TriggerEventContext:
     additional_context: dict[str, Any] = field(default_factory=dict)
 
 
-def _extract_session_id_from_context(ctx: Context) -> str:
+def _get_session_id(ctx: Context) -> str:
     """
-    Extract sessionId from the Context object.
-
-    For HTTP-based MCP servers, ctx.session_id should be set.
-    For local/stdio MCP servers, session_id may not be present; in that case, return 'unknown-session'.
+    Gets session ID from the Context object. For the HTTP-based transports this is the HTTP session ID.
+    For other transports, this is the server ID.
     """
-    session_id = getattr(ctx, 'session_id', None)
-    return str(session_id) if session_id else 'unknown-session'
+    if ctx.session_id:
+        return ctx.session_id
+    else:
+        server_state = ctx.request_context.lifespan_context
+        assert isinstance(server_state, ServerState), 'ServerState is not available in the context.'
+        return server_state.server_id
 
 
 def _extract_tool_name_and_args(func: Callable, args: tuple, kwargs: dict) -> tuple[str, dict[str, Any]]:
@@ -141,7 +144,7 @@ def _extract_trigger_event_context(
         bound_args = sig.bind(*args, **kwargs)
         ctx = bound_args.arguments.get(ctx_kwarg)
         if isinstance(ctx, Context):
-            session_id = _extract_session_id_from_context(ctx)
+            session_id = _get_session_id(ctx)
 
     # Build additional_context dict
     additional_context = {}

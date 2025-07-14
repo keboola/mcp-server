@@ -7,6 +7,7 @@ import dataclasses
 import inspect
 import logging
 import textwrap
+import uuid
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any
@@ -33,6 +34,7 @@ LOG = logging.getLogger(__name__)
 @dataclass
 class ServerState:
     config: Config
+    server_id: str = uuid.uuid4().hex
 
     @classmethod
     def from_context(cls, ctx: Context) -> 'ServerState':
