@@ -7,14 +7,14 @@ component-related operations in the MCP server.
 
 ## Tool Categories
 
-### Component Discovery
+### Component/Configuration Discovery
 - `get_component`: Retrieve detailed component information including schemas
 - `find_component_id`: Search for components by natural language query
+- `get_config`: Retrieve detailed configuration with root + row structure
+- `list_configs`: List all component configurations (with filtering)
 - `get_config_examples`: Get sample configuration examples for a component
 
 ### Configuration Management
-- `get_config`: Retrieve detailed configuration with root + row structure
-- `list_configs`: List all component configurations (with filtering)
 - `create_config`: Create new root component configurations
 - `update_config`: Update existing root configurations
 - `add_config_row`: Add new configuration rows to existing configurations
@@ -76,14 +76,14 @@ LOG = logging.getLogger(__name__)
 
 def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
-    # Component discovery tools
+    # Component/Configuration discovery tools
     mcp.add_tool(FunctionTool.from_function(get_component))
     mcp.add_tool(FunctionTool.from_function(find_component_id))
+    mcp.add_tool(FunctionTool.from_function(get_config))
+    mcp.add_tool(FunctionTool.from_function(list_configs, serializer=listing_output_serializer))
     mcp.add_tool(FunctionTool.from_function(get_config_examples))
 
     # Configuration management tools
-    mcp.add_tool(FunctionTool.from_function(get_config))
-    mcp.add_tool(FunctionTool.from_function(list_configs, serializer=listing_output_serializer))
     mcp.add_tool(FunctionTool.from_function(create_config))
     mcp.add_tool(FunctionTool.from_function(update_config))
     mcp.add_tool(FunctionTool.from_function(add_config_row))
