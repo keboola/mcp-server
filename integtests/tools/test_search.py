@@ -4,8 +4,8 @@ import pytest
 from fastmcp import Context
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
-from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.search import GlobalSearchOutput, find_ids_by_name
+from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
+from keboola_mcp_server.tools.search import GlobalSearchOutput, find_component_id, find_ids_by_name
 
 LOG = logging.getLogger(__name__)
 
@@ -70,3 +70,24 @@ async def test_global_search_end_to_end(
     found_config_ids = {item.id for item in config_group.items}
     # At least some test configurations should be found
     assert found_config_ids.intersection(expected_config_ids), 'Should find at least one test configuration'
+
+    config_groups = [group for group in result.groups.values() if group.type == 'configuration']
+    assert len(config_groups) == 1
+    config_group = config_groups[0]
+    found_config_ids = {item.id for item in config_group.items}
+    # At least some test configurations should be found
+    assert found_config_ids.intersection(expected_config_ids), 'Should find at least one test configuration'
+
+
+@pytest.mark.asyncio
+async def test_find_component_id(mcp_context: Context):
+    """Tests that `find_component_id` returns relevant component IDs for a query."""
+    query = 'generic extractor'
+    generic_extractor_id = 'ex-generic-v2'
+
+    result = await find_component_id(query=query, ctx=mcp_context)
+
+    assert isinstance(result, list)
+    assert len(result) > 0
+    assert all(isinstance(component, SuggestedComponent) for component in result)
+    assert generic_extractor_id in [component.component_id for component in result]
