@@ -254,28 +254,21 @@ async def get_config(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    # Get raw API response
     raw_configuration = cast(
         JsonDict,
         await client.storage_client.configuration_detail(component_id=component_id, configuration_id=configuration_id),
     )
 
-    api_config = ConfigurationAPIResponse.model_validate(
-        raw_configuration | {'component_id': component_id}
-    )
-
-    # Get component information and convert to ComponentSummary using factory method
+    api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': component_id})
     api_component = await _fetch_component(client=client, component_id=component_id)
     component_summary = ComponentSummary.from_api_response(api_component)
 
-    # Generate links
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_name=raw_configuration.get('name', ''),
     )
 
-    # Convert to domain model
     configuration = Configuration.from_api_response(
         api_config=api_config,
         component=component_summary,
