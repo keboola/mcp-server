@@ -86,7 +86,7 @@ class GlobalSearchOutput(BaseModel):
     @classmethod
     def from_api_responses(cls, response: GlobalSearchResponse) -> 'GlobalSearchOutput':
         """Creates a GlobalSearchOutput from the API responses."""
-        items_by_type = defaultdict(list)
+        items_by_type: defaultdict[ItemType, list[GlobalSearchResponse.Item]] = defaultdict(list)
         for item in response.items:
             items_by_type[item.type].append(item)
         return cls.model_construct(
