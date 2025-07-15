@@ -41,9 +41,10 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
 
 @tool_errors()
-async def get_flow_schema() -> Annotated[str, Field(description='The configuration schema of Flow.')]:
+@with_session_state()
+async def get_flow_schema(_ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow.')]:
     """Returns the JSON schema that defines the structure of Flow configurations."""
-
+    # The _ctx: Context parameter is there for @tool_errors to be able to emit SAPI events.
     LOG.info('Returning flow configuration schema')
     return get_schema_as_markdown()
 

@@ -1,5 +1,6 @@
 import pytest
 from fastmcp import Context
+from mcp.shared.context import RequestContext
 from mcp.shared.session import BaseSession
 
 from keboola_mcp_server.client import (
@@ -9,6 +10,8 @@ from keboola_mcp_server.client import (
     KeboolaClient,
     RawKeboolaClient,
 )
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -46,6 +49,8 @@ def empty_context(mocker) -> Context:
     ctx.session = (session := mocker.MagicMock(BaseSession))
     type(session).state = (state := mocker.PropertyMock())
     state.return_value = {}
+    ctx.request_context = (request_context := mocker.MagicMock(RequestContext))
+    request_context.lifespan_context = ServerState(Config())
     return ctx
 
 

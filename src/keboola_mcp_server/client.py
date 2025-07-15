@@ -2,6 +2,7 @@
 
 import importlib.metadata
 import logging
+import math
 import os
 from typing import Any, Literal, Mapping, Optional, Union, cast
 
@@ -16,6 +17,7 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 ComponentResource = Literal['configuration', 'rows', 'state']
+StorageEventType = Literal['info', 'success', 'warn', 'error']
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 
@@ -96,8 +98,6 @@ class RawKeboolaClient:
     Implements the basic HTTP methods (GET, POST, PUT, DELETE)
     and can be used to implement high-level functions in clients for individual services.
     """
-
-    _MCP_SERVER_COMPONENT_ID = 'keboola.mcp-server.tool'
 
     def __init__(
         self,
@@ -249,60 +249,6 @@ class RawKeboolaClient:
                 return cast(JsonStruct, response.json())
 
             return None
-
-    async def trigger_event(
-        self,
-        error_obj: Optional[Exception],
-        duration_s: float,
-        event: 'TriggerEventRequest',
-    ) -> None:
-        """Constructs and sends an event to the Keboola Storage API."""
-        event_payload: dict[str, Any] = {
-            'component': self._MCP_SERVER_COMPONENT_ID,
-            'message': f'MCP tool execution: {event.tool_name}',
-            'type': 'error' if error_obj else 'info',
-            'durationSeconds': round(duration_s, 3),
-            'params': {
-                'mcpServerContext': {
-                    'appEnv': os.environ.get('APP_ENV', 'development'),
-                    'version': os.environ.get('APP_VERSION', 'unknown'),
-                    'userAgent': self.headers['User-Agent'],
-                    'sessionId': event.session_id,
-                },
-                'tool': {
-                    'name': event.tool_name,
-                    'arguments': [
-                        {'key': k, 'value': v} for k, v in event.tool_args.items()
-                    ],
-                },
-            },
-        }
-        if event.configuration_id:
-            event_payload['configurationId'] = event.configuration_id
-        if event.job_id:
-            event_payload['runId'] = event.job_id
-
-        if error_obj:
-            event_payload['message'] = str(error_obj)
-
-        try:
-            event_post_url = f'{self.base_api_url}/events'
-            LOG.debug(f'Attempting to send MCP event: {event_payload} to {event_post_url}')
-            async with httpx.AsyncClient(timeout=self.timeout) as event_client:
-                response = await event_client.post(
-                    event_post_url,
-                    headers=self.headers,
-                    json=event_payload,
-                )
-                self._raise_for_status(response)
-                LOG.info('Successfully sent MCP event for POST /v2/storage/events')
-        except httpx.HTTPStatusError as e:
-            LOG.error(
-                f'Error sending MCP event for POST /v2/storage/events: '
-                f'HTTPStatusError {e.response.status_code} - {e.response.text}'
-            )
-        except Exception as e:
-            LOG.error(f'Unexpected error sending MCP event for POST /v2/storage/events: {e}')
 
 
 class KeboolaServiceClient:
@@ -930,6 +876,54 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
 
+    async def trigger_event(
+        self,
+        message: str,
+        component_id: str,
+        configuration_id: str | None = None,
+        event_type: StorageEventType | None = None,
+        params: Mapping[str, Any] | None = None,
+        results: Mapping[str, Any] | None = None,
+        duration: float | None = None,
+        run_id: str | None = None,
+    ) -> JsonDict:
+        """
+        Sends a Storage API event.
+
+        :param message: The event message.
+        :param component_id: The ID of the component triggering the event.
+        :param configuration_id: The ID of the component configuration triggering the event.
+        :param event_type: The type of event.
+        :param params: The component parameters. The structure of the params object must follow the JSON schema
+            registered for the component_id.
+        :param results: The component results. The structure of the results object must follow the JSON schema
+            registered for the component_id.
+        :param duration: The component processing duration in seconds.
+        :param run_id: The ID of the associated component job.
+
+        :return: Dictionary with the new event ID.
+        """
+        payload: dict[str, Any] = {
+            'message': message,
+            'component': component_id,
+        }
+        if configuration_id:
+            payload['configurationId'] = configuration_id
+        if event_type:
+            payload['type'] = event_type
+        if params:
+            payload['params'] = params
+        if results:
+            payload['results'] = results
+        if duration is not None:
+            payload['duration'] = int(math.ceil(duration))  # TODO: The events API ignores floats.
+        if run_id:
+            payload['runId'] = run_id
+
+        LOG.info(f'[trigger_event] payload={payload}')
+
+        return cast(JsonDict, await self.post(endpoint='events', data=payload))
+
     async def workspace_create(
         self,
         login_type: str,
@@ -1127,17 +1121,6 @@ class JobsQueueClient(KeboolaServiceClient):
                 values: asc, desc
         """
         return cast(JsonList, await self.get(endpoint='search/jobs', params=params))
-
-
-class TriggerEventRequest(BaseModel):
-    tool_name: str
-    tool_args: dict[str, Any]
-    session_id: str = Field(..., alias='sessionId')
-    configuration_id: str | None = Field(None, alias='configurationId')
-    job_id: str | None = Field(None, alias='jobId')
-
-    class Config:
-        populate_by_name = True
 
 
 class DocsQuestionResponse(BaseModel):

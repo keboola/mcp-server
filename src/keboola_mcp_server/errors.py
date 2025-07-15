@@ -1,14 +1,15 @@
 import inspect
+import json
 import logging
 import time
-from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Callable, Optional, Type, TypeVar, cast
 
 from fastmcp import Context
 from fastmcp.utilities.types import find_kwarg_by_type
+from pydantic import BaseModel
 
-from keboola_mcp_server.client import KeboolaClient, TriggerEventRequest
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.mcp import ServerState
 
 LOG = logging.getLogger(__name__)
@@ -22,15 +23,12 @@ class ToolException(Exception):
         super().__init__(f'{str(original_exception)} | Recovery: {recovery_instruction}')
 
 
-@dataclass
-class TriggerEventContext:
-    """
-    Holds all context information needed for event logging and error handling.
-    """
-    session_id: str
-    tool_name: str
-    tool_args: dict[str, Any]
-    additional_context: dict[str, Any] = field(default_factory=dict)
+class _JsonWrapper(BaseModel):
+    data: Any
+
+    @classmethod
+    def encode(cls, obj: Any) -> str:
+        return json.dumps(cls(data=obj).model_dump()['data'], ensure_ascii=False)
 
 
 def _get_session_id(ctx: Context) -> str:
@@ -46,130 +44,60 @@ def _get_session_id(ctx: Context) -> str:
         return server_state.server_id
 
 
-def _extract_tool_name_and_args(func: Callable, args: tuple, kwargs: dict) -> tuple[str, dict[str, Any]]:
-    """
-    Extract tool name and arguments from the function call.
-
-    :param func: The decorated function
-    :param args: Positional arguments
-    :param kwargs: Keyword arguments
-    :return: Tuple of (tool_name, tool_args)
-    """
+async def _trigger_event(
+        func: Callable, args: tuple, kwargs: dict, exception: Exception | None, execution_time: float
+) -> None:
+    # TODO: This is not always correct. In general tool functions can be registered
+    #  in the MCP server under different names.
     tool_name = func.__name__
 
-    # Convert args and kwargs to a single arguments dict
     sig = inspect.signature(func)
     bound_args = sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
 
-    # Filter out the Context parameter as it's not part of the tool arguments
-    tool_args = {}
-    for param_name, param_value in bound_args.arguments.items():
-        if param_name != 'ctx' and not isinstance(param_value, Context):
-            tool_args[param_name] = param_value
+    ctx_param_name = find_kwarg_by_type(func, Context)
+    assert ctx_param_name, f'The tool function {tool_name} must have a "Context" parameter.'
 
-    return tool_name, tool_args
+    ctx = bound_args.arguments.get(ctx_param_name)
+    assert isinstance(ctx, Context), (f'The tool function {tool_name} has invalid "{ctx_param_name}" parameter. '
+                                      f'Expecting instance of "Context", got {type(ctx)}.')
 
+    server_state = ServerState.from_context(ctx)
 
-def _extract_configuration_id_from_result(result: Any) -> Optional[str]:
-    """
-    Extract configuration_id from function result if it's a ConfigToolOutput.
+    # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server.tool.json
+    # for the JSON schema describing the 'keboola.mcp-server.tool' component's event params.
+    event_params: dict[str, Any] = {
+        'mcpServerContext': {
+            'appEnv': server_state.app_version,
+            'version': server_state.server_version,
+            'userAgent': '',
+            'sessionId': _get_session_id(ctx),
+        },
+        'tool': {
+            'name': tool_name,
+            'arguments': [
+                {'key': param_name, 'value': _JsonWrapper.encode(param_value)}
+                for param_name, param_value in bound_args.arguments.items()
+                if param_name not in [ctx_param_name, 'self', 'cls']
+            ],
+        },
+    }
+    if exception:
+        message = f'MCP tool "{tool_name}" call failed. {type(exception).__name__}: {exception}'
+        event_type = 'error'
+    else:
+        message = f'MCP tool "{tool_name}" call succeeded.'
+        event_type = 'success'
 
-    :param result: The result from the function execution
-    :return: configuration_id if found, None otherwise
-    """
-    try:
-        # Check if result has configuration_id attribute (ConfigToolOutput)
-        if hasattr(result, 'configuration_id'):
-            return str(result.configuration_id)
-
-        # Check if result is a dict with configuration_id
-        if isinstance(result, dict) and 'configuration_id' in result:
-            return str(result['configuration_id'])
-
-    except Exception:
-        # If any error occurs during extraction, return None
-        pass
-
-    return None
-
-
-def _extract_job_id_from_result(result: Any, tool_name: str) -> Optional[str]:
-    """
-    Extract job_id from function result if it's a JobDetail and tool is run_job.
-
-    :param result: The result from the function execution
-    :param tool_name: The name of the tool that was executed
-    :return: job_id if found and tool is run_job, None otherwise
-    """
-    # Only extract job_id for run_job tool
-    if tool_name != 'run_job':
-        return None
-
-    try:
-        # Check if result has id attribute (JobDetail)
-        if hasattr(result, 'id'):
-            return str(result.id)
-
-        # Check if result is a dict with id
-        if isinstance(result, dict) and 'id' in result:
-            return str(result['id'])
-
-    except Exception:
-        # If any error occurs during extraction, return None
-        pass
-
-    return None
-
-
-def _extract_trigger_event_context(
-    func: Callable,
-    args: tuple,
-    kwargs: dict,
-    result: Any = None,
-) -> TriggerEventContext:
-    """
-    Extracts all relevant context for event logging and error handling in one place.
-    Returns a TriggerEventContext object.
-    """
-    # Extract tool name and arguments
-    tool_name, tool_args = _extract_tool_name_and_args(func, args, kwargs)
-
-    # Try to extract ctx (Context) from args/kwargs
-    ctx_kwarg = find_kwarg_by_type(func, Context)
-    session_id = 'unknown-session'
-    ctx = None
-    if ctx_kwarg:
-        sig = inspect.signature(func)
-        bound_args = sig.bind(*args, **kwargs)
-        ctx = bound_args.arguments.get(ctx_kwarg)
-        if isinstance(ctx, Context):
-            session_id = _get_session_id(ctx)
-
-    # Build additional_context dict
-    additional_context = {}
-    # config_id from tool_args or result
-    config_id = tool_args.get('config_id') or tool_args.get('configuration_id')
-    if not config_id and result is not None:
-        config_id = _extract_configuration_id_from_result(result)
-    if config_id:
-        additional_context['config_id'] = config_id
-    # job_id from tool_args (for get_job) or result (for run_job)
-    if tool_name == 'get_job':
-        job_id = tool_args.get('job_id')
-        if job_id:
-            additional_context['job_id'] = str(job_id)
-    elif tool_name == 'run_job' and result is not None:
-        job_id = _extract_job_id_from_result(result, tool_name)
-        if job_id:
-            additional_context['job_id'] = job_id
-
-    return TriggerEventContext(
-        session_id=session_id,
-        tool_name=tool_name,
-        tool_args=tool_args,
-        additional_context=additional_context,
+    client = KeboolaClient.from_state(ctx.session.state)
+    resp = await client.storage_client.trigger_event(
+        message=message,
+        component_id='keboola.mcp-server.tool',
+        event_type=event_type,
+        params=event_params,
+        duration=execution_time,
     )
+    LOG.debug(f'Tool call SAPI event triggered: {resp}')
 
 
 def tool_errors(
@@ -179,59 +107,24 @@ def tool_errors(
     """
     The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
 
-    This decorator now uses a single context extraction function to gather all relevant event context.
+    :param default_recovery: A fallback recovery instruction to use when no specific instruction
+                             is found for the exception.
+    :param recovery_instructions: A dictionary mapping exception types to recovery instructions.
+    :return: The decorated function with error-handling logic applied.
     """
 
     def decorator(func: Callable):
 
         @wraps(func)
         async def wrapped(*args, **kwargs):
-            start_time = time.monotonic()
-            result = None
+            exception: Exception | None = None
+            start = time.perf_counter()
 
             try:
-                result = await func(*args, **kwargs)
-                return result
+                return await func(*args, **kwargs)
             except Exception as e:
-                duration_s = time.monotonic() - start_time
-                logging.exception(f'Failed to run tool {func.__name__}: {e}')
+                LOG.exception(f'Failed to run tool {func.__name__}: {e}')
 
-                # Extract all event context in one place
-                event_ctx = _extract_trigger_event_context(func, args, kwargs, result)
-
-                # Try to get RawStorageClient for event logging if possible
-                ctx_kwarg = find_kwarg_by_type(func, Context)
-                ctx = None
-                if ctx_kwarg:
-                    sig = inspect.signature(func)
-                    bound_args = sig.bind(*args, **kwargs)
-                    ctx = bound_args.arguments.get(ctx_kwarg)
-
-                if isinstance(ctx, Context):
-                    try:
-                        if hasattr(ctx, 'session') and hasattr(ctx.session, 'state'):
-                            client = KeboolaClient.from_state(ctx.session.state)
-                            raw_client = client.storage_client.raw_client
-
-                            # Construct event for event logging
-                            event = TriggerEventRequest(
-                                tool_name=event_ctx.tool_name,
-                                tool_args=event_ctx.tool_args,
-                                session_id=event_ctx.session_id,
-                                config_id=event_ctx.additional_context.get('config_id'),
-                                job_id=event_ctx.additional_context.get('job_id'),
-                            )
-
-                            # Send error event to Storage API
-                            await raw_client.trigger_event(
-                                error_obj=e,
-                                duration_s=duration_s,
-                                event=event,
-                            )
-                    except Exception as event_error:
-                        LOG.warning(f'Failed to send error event: {event_error}')
-
-                # Handle recovery instructions
                 recovery_msg = default_recovery
                 if recovery_instructions:
                     for exc_type, msg in recovery_instructions.items():
@@ -239,10 +132,17 @@ def tool_errors(
                             recovery_msg = msg
                             break
 
-                if not recovery_msg:
-                    raise e
+                try:
+                    if not recovery_msg:
+                        raise e
 
-                raise ToolException(e, recovery_msg) from e
+                    raise ToolException(e, recovery_msg) from e
+                except Exception as e:
+                    exception = e
+                    raise
+
+            finally:
+                await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start)
 
         return cast(F, wrapped)
 

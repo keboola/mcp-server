@@ -6,10 +6,12 @@ It also provides a decorator that MCP tool functions can use to inject session s
 import dataclasses
 import inspect
 import logging
+import os
 import textwrap
 import uuid
 from dataclasses import dataclass
 from functools import wraps
+from importlib.metadata import distribution
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -31,10 +33,14 @@ from keboola_mcp_server.workspace import WorkspaceManager
 LOG = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ServerState:
     config: Config
     server_id: str = uuid.uuid4().hex
+    app_version = os.getenv('APP_VERSION') or 'DEV'
+    server_version = distribution('keboola_mcp_server').version
+    mcp_library_version = distribution('mcp').version
+    fastmcp_library_version = distribution('fastmcp').version
 
     @classmethod
     def from_context(cls, ctx: Context) -> 'ServerState':

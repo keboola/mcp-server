@@ -1,11 +1,17 @@
 import asyncio
+import json
+import math
 import re
-from unittest.mock import AsyncMock
+import uuid
+from typing import Any, Mapping
 
 import httpx
 import pytest
 from fastmcp import Context
 
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.doc import docs_query
 from keboola_mcp_server.tools.jobs import get_job
 from keboola_mcp_server.tools.sql import query_data
@@ -95,328 +101,61 @@ class TestHttpErrors:
         assert unexpected_errors == []
 
 
-class TestToolErrorsEventTriggering:
-    """Test that the tool_errors decorator properly triggers events when errors occur."""
+class TestStorageEvents:
+    @staticmethod
+    @tool_errors()
+    @with_session_state()
+    async def foo(unique: str, ctx: Context):
+        """A fake MCP tool to test events emitting."""
+        await asyncio.sleep(0.1)
+
+    @staticmethod
+    @tool_errors()
+    @with_session_state()
+    async def bar(unique: str, ctx: Context):
+        """A fake MCP tool that fails by raising an error to test events emitting."""
+        await asyncio.sleep(0.1)
+        raise ValueError('Intentional error in bar tool.')
 
     @pytest.mark.asyncio
-    async def test_storage_api_error_triggers_event(self, mcp_context: Context, mocker):
-        """Test that get_bucket tool triggers an event when a 404 error occurs."""
-        # Mock the trigger_event method to verify it's called
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
+    @pytest.mark.parametrize(('tool_name', 'event_message', 'event_type'), [
+        ('foo', 'MCP tool "foo" call succeeded.', 'success'),
+        ('bar', 'MCP tool "bar" call failed. ValueError: Intentional error in bar tool.', 'error'),
+    ])
+    async def test_event_emitted(self, tool_name: str, event_message: str, event_type: str, mcp_context: Context):
+        unique = uuid.uuid4().hex
+        tool_func = getattr(self, tool_name)
+        try:
+            await tool_func(unique, mcp_context)
+        except ValueError:
+            pass  # ignore
+        await asyncio.sleep(1)  # give SAPI time to digest the event
+
+        client = KeboolaClient.from_state(mcp_context.session.state)
+        events = await client.storage_client.get(
+            endpoint='events',
+            params={
+                'component': 'keboola.mcp-server.tool',
+                'q': f'message:"MCP tool "{tool_name}" call*"',
+                'limit': 10
+            },
         )
+        emitted_event = self._find_event(events, tool_name=tool_name, param_name='unique', param_value=unique)
+        assert emitted_event is not None
+        assert emitted_event['message'] == event_message
+        assert emitted_event['type'] == event_type
+        # SAPI events don't support float durations, so the duration is rounded up to the nearest second.
+        assert math.fabs(emitted_event['performance']['duration'] - 0.1) < 1
 
-        # Trigger a 404 error
-        with pytest.raises(httpx.HTTPStatusError):
-            await get_bucket('non.existent.bucket', mcp_context)
-
-        # Verify trigger_event was called with correct parameters
-        mock_trigger_event.assert_called_once()
-        call_args = mock_trigger_event.call_args
-
-        # Check the error object
-        error_obj = call_args[1]['error_obj']
-        assert isinstance(error_obj, httpx.HTTPStatusError)
-        assert '404 Not Found' in str(error_obj)
-
-        # Check duration is captured
-        duration_s = call_args[1]['duration_s']
-        assert isinstance(duration_s, float)
-        assert duration_s > 0
-
-        # Check mcp_context contains expected fields
-        event_arg = call_args[1]['event']
-        assert event_arg.tool_name == 'get_bucket'
-        assert event_arg.tool_args == {'bucket_id': 'non.existent.bucket'}
-        assert 'session_id' in event_arg.__dict__
-        # Verify ctx parameter is filtered out
-        assert 'ctx' not in event_arg.tool_args
-
-    @pytest.mark.asyncio
-    async def test_jobs_api_error_triggers_event(self, mcp_context: Context, mocker):
-        """Test that get_job tool triggers an event when a 404 error occurs."""
-        # Mock the trigger_event method to verify it's called
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Trigger a 404 error
-        with pytest.raises(httpx.HTTPStatusError):
-            await get_job('999999999', mcp_context)
-
-        # Verify trigger_event was called with correct parameters
-        mock_trigger_event.assert_called_once()
-        call_args = mock_trigger_event.call_args
-
-        # Check the error object
-        error_obj = call_args[1]['error_obj']
-        assert isinstance(error_obj, httpx.HTTPStatusError)
-        assert '404 Not Found' in str(error_obj)
-
-        # Check mcp_context contains expected fields
-        event_arg = call_args[1]['event']
-        assert event_arg.tool_name == 'get_job'
-        assert event_arg.tool_args == {'job_id': '999999999'}
-        assert 'session_id' in event_arg.__dict__
-        # Verify ctx parameter is filtered out
-        assert 'ctx' not in event_arg.tool_args
-
-    @pytest.mark.asyncio
-    async def test_sql_api_error_triggers_event(self, mcp_context: Context, mocker):
-        """Test that query_data tool triggers an event when a SQL error occurs."""
-        # Mock the trigger_event method to verify it's called
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Trigger a SQL error
-        with pytest.raises(ValueError, match='Failed to run SQL query'):
-            await query_data('INVALID SQL SYNTAX HERE', mcp_context)
-
-        # Verify trigger_event was called with correct parameters
-        mock_trigger_event.assert_called_once()
-        call_args = mock_trigger_event.call_args
-
-        # Check the error object
-        error_obj = call_args[1]['error_obj']
-        assert isinstance(error_obj, ValueError)
-        assert 'Failed to run SQL query' in str(error_obj)
-
-        # Check mcp_context contains expected fields
-        event_arg = call_args[1]['event']
-        assert event_arg.tool_name == 'query_data'
-        assert event_arg.tool_args == {'sql_query': 'INVALID SQL SYNTAX HERE'}
-        assert 'session_id' in event_arg.__dict__
-        # Verify ctx parameter is filtered out
-        assert 'ctx' not in event_arg.tool_args
-
-    @pytest.mark.asyncio
-    async def test_concurrent_errors_trigger_multiple_events(self, mcp_context: Context, mocker):
-        """Test that concurrent errors trigger multiple events correctly."""
-        # Mock the trigger_event method to verify it's called multiple times
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Run multiple concurrent operations that will trigger 404 errors
-        tasks = [get_bucket(f'non.existent.bucket.{i}', mcp_context) for i in range(3)]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Verify all operations failed
-        for result in results:
-            assert isinstance(result, httpx.HTTPStatusError)
-
-        # Verify trigger_event was called for each error
-        assert mock_trigger_event.call_count == 3
-
-        # Verify each call had correct parameters
-        # Collect all bucket_ids from the calls to check they match expected values
-        expected_bucket_ids = {f'non.existent.bucket.{i}' for i in range(3)}
-        actual_bucket_ids = set()
-
-        for call in mock_trigger_event.call_args_list:
-            event_arg = call[1]['event']
-            assert event_arg.tool_name == 'get_bucket'
-            assert 'bucket_id' in event_arg.tool_args
-            actual_bucket_ids.add(event_arg.tool_args['bucket_id'])
-            assert 'session_id' in event_arg.__dict__
-            # Verify ctx parameter is filtered out
-            assert 'ctx' not in event_arg.tool_args
-
-        # Verify all expected bucket IDs were present
-        assert actual_bucket_ids == expected_bucket_ids
-
-    @pytest.mark.asyncio
-    async def test_event_triggering_failure_does_not_break_error_handling(self, mcp_context: Context, mocker):
-        """Test that if trigger_event fails, the original error is still raised."""
-        # Mock trigger_event to raise an exception
-        mock_trigger_event = AsyncMock(side_effect=Exception('Event triggering failed'))
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # The original error should still be raised even if event triggering fails
-        with pytest.raises(httpx.HTTPStatusError):
-            await get_bucket('non.existent.bucket', mcp_context)
-
-        # Verify trigger_event was attempted
-        mock_trigger_event.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_tool_args_extraction_includes_all_parameters(self, mcp_context: Context, mocker):
-        """Test that tool arguments are correctly extracted and included in the event."""
-        # Mock the trigger_event method
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Trigger an error with a tool that has multiple parameters
-        with pytest.raises(httpx.HTTPStatusError):
-            await get_bucket('non.existent.bucket', mcp_context)
-
-        # Verify the tool_args contain the expected parameters
-        call_args = mock_trigger_event.call_args
-        event_arg = call_args[1]['event']
-        tool_args = event_arg.tool_args
-
-        # Check that bucket_id is included but ctx is not
-        assert 'bucket_id' in tool_args
-        assert tool_args['bucket_id'] == 'non.existent.bucket'
-        assert 'ctx' not in tool_args  # Context should be filtered out
-
-    @pytest.mark.asyncio
-    async def test_event_contains_all_required_fields(self, mcp_context: Context, mocker):
-        """Test that event contains all required fields with correct structure."""
-        # Mock the trigger_event method
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Trigger an error
-        with pytest.raises(httpx.HTTPStatusError):
-            await get_bucket('test.bucket', mcp_context)
-
-        # Verify event structure
-        call_args = mock_trigger_event.call_args
-        event_arg = call_args[1]['event']
-
-        # Check required fields exist
-        assert hasattr(event_arg, 'tool_name')
-        assert hasattr(event_arg, 'tool_args')
-        assert hasattr(event_arg, 'session_id')
-
-        # Check field types and values
-        assert isinstance(event_arg.tool_name, str)
-        assert event_arg.tool_name == 'get_bucket'
-
-        assert isinstance(event_arg.tool_args, dict)
-        assert event_arg.tool_args == {'bucket_id': 'test.bucket'}
-
-        assert isinstance(event_arg.session_id, str)
-        assert len(event_arg.session_id) > 0
-
-    @pytest.mark.asyncio
-    async def test_tool_args_extraction_with_complex_parameters(self, mcp_context: Context, mocker):
-        """Test that complex tool arguments are correctly extracted and serialized."""
-        # Mock the trigger_event method
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Test with a complex SQL query that might contain special characters
-        complex_query = "SELECT * FROM `my.table` WHERE column = 'test' AND id IN (1, 2, 3)"
-        with pytest.raises(ValueError, match='Failed to run SQL query'):
-            await query_data(complex_query, mcp_context)
-
-        # Verify the tool_args contain the complex parameter correctly
-        call_args = mock_trigger_event.call_args
-        event_arg = call_args[1]['event']
-        tool_args = event_arg.tool_args
-
-        assert 'sql_query' in tool_args
-        assert tool_args['sql_query'] == complex_query
-        assert 'ctx' not in tool_args
-
-    @pytest.mark.asyncio
-    async def test_session_id_extraction_from_context(self, mcp_context: Context, mocker):
-        """Test that session_id is correctly extracted from the Context object."""
-        # Mock the trigger_event method
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Trigger an error
-        with pytest.raises(httpx.HTTPStatusError):
-            await get_job('12345', mcp_context)
-
-        # Verify session_id is extracted and included
-        call_args = mock_trigger_event.call_args
-        event_arg = call_args[1]['event']
-
-        assert 'session_id' in event_arg.__dict__
-        session_id = event_arg.session_id
-        assert isinstance(session_id, str)
-        assert session_id != 'unknown-session'  # Should be a real session ID
-        assert len(session_id) > 0
-
-    @pytest.mark.asyncio
-    async def test_error_duration_calculation(self, mcp_context: Context, mocker):
-        """Test that error duration is correctly calculated and included in the event."""
-        # Mock the trigger_event method
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Trigger an error
-        with pytest.raises(httpx.HTTPStatusError):
-            await get_bucket('test.bucket', mcp_context)
-
-        # Verify duration is captured correctly
-        call_args = mock_trigger_event.call_args
-        duration_s = call_args[1]['duration_s']
-
-        assert isinstance(duration_s, float)
-        assert duration_s > 0
-        assert duration_s < 10  # Should be reasonable for a test
-
-    @pytest.mark.asyncio
-    async def test_tool_name_extraction_accuracy(self, mcp_context: Context, mocker):
-        """Test that tool names are correctly extracted for different tools."""
-        # Mock the trigger_event method
-        mock_trigger_event = AsyncMock()
-        mocker.patch.object(
-            mcp_context.session.state['sapi_client'].storage_client.raw_client,
-            'trigger_event',
-            mock_trigger_event
-        )
-
-        # Test different tools to ensure tool names are extracted correctly
-        tools_to_test = [
-            (get_bucket, 'get_bucket', {'bucket_id': 'test.bucket'}),
-            (get_job, 'get_job', {'job_id': '12345'}),
-            (query_data, 'query_data', {'sql_query': 'SELECT 1'}),
-        ]
-
-        for tool_func, expected_name, expected_args in tools_to_test:
-            mock_trigger_event.reset_mock()
-
-            try:
-                await tool_func(*expected_args.values(), mcp_context)
-            except (httpx.HTTPStatusError, ValueError):
-                pass  # Expected to fail
-
-            # Verify tool name is correct
-            if mock_trigger_event.called:
-                call_args = mock_trigger_event.call_args
-                event_arg = call_args[1]['event']
-                assert event_arg.tool_name == expected_name
-                assert event_arg.tool_args == expected_args
+    @staticmethod
+    def _find_event(
+            events: list[Mapping[str, Any]], *, tool_name: str, param_name: str, param_value: str
+    ) -> Mapping[str, Any] | None:
+        for event in events:
+            event_tool = event['params']['tool']
+            if event_tool['name'] != tool_name:
+                continue
+            for argument in event_tool['arguments']:
+                if argument['key'] == param_name and json.loads(argument['value']) == param_value:
+                    return event
+        return None

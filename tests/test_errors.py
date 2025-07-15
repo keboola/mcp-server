@@ -12,7 +12,7 @@ from keboola_mcp_server.mcp import ServerState
 @pytest.fixture
 def function_with_value_error():
     """A function that raises ValueError for testing general error handling."""
-    async def func():
+    async def func(_ctx: Context):
         raise ValueError('Simulated ValueError')
     return func
 
@@ -62,6 +62,7 @@ async def test_tool_errors(
     expected_recovery_message,
     exception_message,
     request,
+    mcp_context_client: Context,
 ):
     """
     Test that the appropriate recovery message is applied based on the exception type.
@@ -74,21 +75,21 @@ async def test_tool_errors(
 
     if expected_recovery_message is None:
         with pytest.raises(ValueError, match=exception_message) as excinfo:
-            await decorated_func()
+            await decorated_func(mcp_context_client)
     else:
         with pytest.raises(ToolException) as excinfo:
-            await decorated_func()
+            await decorated_func(mcp_context_client)
         assert expected_recovery_message in str(excinfo.value)
     assert exception_message in str(excinfo.value)
 
 
 @pytest.mark.asyncio
-async def test_logging_on_tool_exception(caplog, function_with_value_error):
+async def test_logging_on_tool_exception(caplog, function_with_value_error, mcp_context_client: Context):
     """Test that tool_errors decorator logs exceptions properly."""
     decorated_func = tool_errors()(function_with_value_error)
 
     with pytest.raises(ValueError, match='Simulated ValueError'):
-        await decorated_func()
+        await decorated_func(mcp_context_client)
 
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.ERROR
