@@ -51,7 +51,7 @@ class ServiceInfoApiResp(BaseModel):
 
 
 def create_keboola_lifespan(
-    config: Config | None = None,
+    server_state: ServerState,
 ) -> Callable[[FastMCP[ServerState]], AbstractAsyncContextManager[ServerState]]:
     @asynccontextmanager
     async def keboola_lifespan(server: FastMCP) -> AsyncIterator[ServerState]:
@@ -72,14 +72,7 @@ def create_keboola_lifespan(
         - it could handle OAuth token, client access, Reddis database connection for storing sessions, access
         to the Relational DB, etc.
         """
-        # init server state
-        init_config = config or Config()
-        server_state = ServerState(config=init_config)
-        try:
-
-            yield server_state
-        finally:
-            pass
+        yield server_state
 
     return keboola_lifespan
 
@@ -122,9 +115,10 @@ def create_server(config: Config) -> FastMCP:
 
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
+    server_state = ServerState(config=config)
     mcp = KeboolaMcpServer(
         name='Keboola Explorer',
-        lifespan=create_keboola_lifespan(config),
+        lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
     )
 
@@ -137,13 +131,11 @@ def create_server(config: Config) -> FastMCP:
     @mcp.custom_route('/', methods=['GET'])
     async def get_info(_rq: Request) -> Response:
         """Returns basic information about the service."""
-        state = _rq.state
-        assert isinstance(state, ServerState), f'Expecting ServerState, got {type(state)}'
         resp = ServiceInfoApiResp(
-            app_version=state.app_version,
-            server_version=state.server_version,
-            mcp_library_version=state.mcp_library_version,
-            fastmcp_library_version=state.fastmcp_library_version,
+            app_version=server_state.app_version,
+            server_version=server_state.server_version,
+            mcp_library_version=server_state.mcp_library_version,
+            fastmcp_library_version=server_state.fastmcp_library_version,
         )
         return JSONResponse(resp.model_dump(by_alias=True))
 
