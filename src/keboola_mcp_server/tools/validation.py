@@ -319,7 +319,7 @@ def _validate_storage_configuration(
                 f'transformation "{component.component_id}".'
             )
     # For row-based writers - ROOT must have an empty storage, ROW must have non-empty input in storage
-    if component.component_type == 'writer' and component.is_row_based:
+    if component.component_type == 'writer' and component.capabilities.is_row_based:
         if not is_row_storage and storage_cfg != {}:
             # ROOT storage is not empty but the writer is row-based - this is not allowed
             raise ValueError(
@@ -334,7 +334,7 @@ def _validate_storage_configuration(
                 f'"{component.component_id}".'
             )
     # Only for non-row-based writers - ROOT must have non-empty input in storage
-    if component.component_type == 'writer' and not component.is_row_based:
+    if component.component_type == 'writer' and not component.capabilities.is_row_based:
         if is_row_storage:
             LOG.warning(
                 f'Validating "storage" for row configuration of non-row-based writer {component.component_id} is not '

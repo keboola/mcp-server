@@ -7,11 +7,11 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
-    ComponentWithConfigurations,
     add_config_row,
     create_config,
     create_sql_transformation,
     get_config,
+    get_config_examples,
     list_configs,
     list_transformations,
     update_config,
@@ -19,16 +19,16 @@ from keboola_mcp_server.tools.components import (
     update_sql_transformation,
 )
 from keboola_mcp_server.tools.components.model import (
-    ComponentConfigurationMetadata,
-    ComponentConfigurationOutput,
-    ComponentConfigurationResponseBase,
+    ComponentSummary,
+    ComponentWithConfigurations,
     ConfigToolOutput,
+    Configuration,
+    ConfigurationRootSummary,
+    ConfigurationSummary,
     ListConfigsOutput,
     ListTransformationsOutput,
-    ReducedComponent,
 )
-from keboola_mcp_server.tools.components.tools import get_config_examples
-from keboola_mcp_server.tools.components.utils import TransformationConfiguration, _clean_bucket_name
+from keboola_mcp_server.tools.components.utils import TransformationConfiguration, clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -53,10 +53,10 @@ def assert_retrieve_components() -> Callable[
         assert len(components_with_configurations) == len(components)
         # assert basics
         assert all(isinstance(component, ComponentWithConfigurations) for component in components_with_configurations)
-        assert all(isinstance(component.component, ReducedComponent) for component in components_with_configurations)
+        assert all(isinstance(component.component, ComponentSummary) for component in components_with_configurations)
         assert all(isinstance(component.configurations, list) for component in components_with_configurations)
         assert all(
-            all(isinstance(config, ComponentConfigurationMetadata) for config in component.configurations)
+            all(isinstance(config, ConfigurationSummary) for config in component.configurations)
             for component in components_with_configurations
         )
         # assert component list details
@@ -78,7 +78,7 @@ def assert_retrieve_components() -> Callable[
         assert all(len(component.configurations) == len(configurations) for component in components_with_configurations)
         assert all(
             all(
-                isinstance(config.root_configuration, ComponentConfigurationResponseBase)
+                isinstance(config.configuration_root, ConfigurationRootSummary)
                 for config in component.configurations
             )
             for component in components_with_configurations
@@ -86,14 +86,14 @@ def assert_retrieve_components() -> Callable[
         # use zip to iterate over the result and mock_configurations since we artificially mock the .get method
         assert all(
             all(
-                config.root_configuration.configuration_id == expected['id']
+                config.configuration_root.configuration_id == expected['id']
                 for config, expected in zip(component.configurations, configurations)
             )
             for component in components_with_configurations
         )
         assert all(
             all(
-                config.root_configuration.configuration_name == expected['name']
+                config.configuration_root.name == expected['name']
                 for config, expected in zip(component.configurations, configurations)
             )
             for component in components_with_configurations
@@ -235,9 +235,9 @@ async def test_get_config(
         ctx=context,
     )
 
-    assert isinstance(result, ComponentConfigurationOutput)
-    assert result.root_configuration.configuration_id == mock_configuration['id']
-    assert result.root_configuration.configuration_name == mock_configuration['name']
+    assert isinstance(result, Configuration)
+    assert result.configuration_root.configuration_id == mock_configuration['id']
+    assert result.configuration_root.name == mock_configuration['name']
     assert result.component is not None
     assert result.component.component_id == mock_component['id']
     assert result.component.component_name == mock_component['name']
@@ -299,7 +299,7 @@ async def test_create_sql_transformation(
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration['name']
-    bucket_name = _clean_bucket_name(transformation_name)
+    bucket_name = clean_bucket_name(transformation_name)
     description = mock_configuration['description']
     code_blocks = [
         TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=['SELECT * FROM test']),

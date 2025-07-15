@@ -11,7 +11,7 @@ from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict, Keboo
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools.components.tools import _set_cfg_creation_metadata, _set_cfg_update_metadata
+from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     FlowConfigurationResponse,
     FlowToolResponse,
@@ -102,7 +102,7 @@ async def create_flow(
         name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
     )
 
-    await _set_cfg_creation_metadata(
+    await set_cfg_creation_metadata(
         client,
         component_id=ORCHESTRATOR_COMPONENT_ID,
         configuration_id=str(new_raw_configuration['id']),
@@ -168,7 +168,7 @@ async def update_flow(
         flow_configuration=flow_configuration,  # Direct configuration
     )
 
-    await _set_cfg_update_metadata(
+    await set_cfg_update_metadata(
         client,
         component_id=ORCHESTRATOR_COMPONENT_ID,
         configuration_id=str(updated_raw_configuration['id']),

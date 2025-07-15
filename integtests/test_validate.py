@@ -16,6 +16,7 @@ import jsonschema
 import pytest
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse
 from keboola_mcp_server.tools.components.model import Component
 from keboola_mcp_server.tools.validation import KeboolaParametersValidator
 
@@ -44,7 +45,8 @@ async def test_validate_parameters(keboola_client: KeboolaClient):
     row_counts, root_counts = 0, 0
     invalid_row_schemas, invalid_root_schemas = [], []
     for raw_component in components:
-        component = Component.model_validate(raw_component)  # We could also check pydantic validation here
+        api_component = ComponentAPIResponse.model_validate(raw_component)
+        component = Component.from_api_response(api_component)
         if component.configuration_schema:
             try:
                 root_counts += 1
