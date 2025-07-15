@@ -537,8 +537,8 @@ class ComponentConfigurationResponseBase(BaseModel):
     configuration_id: str = Field(
         description='The ID of the component configuration',
         validation_alias=AliasChoices(
-            'id',
             'configuration_id',
+            'id',
             'configurationId',
             'configuration-id',
         ),
@@ -546,8 +546,8 @@ class ComponentConfigurationResponseBase(BaseModel):
     configuration_name: str = Field(
         description='The name of the component configuration',
         validation_alias=AliasChoices(
-            'name',
             'configuration_name',
+            'name',
             'configurationName',
             'configuration-name',
         ),
@@ -555,8 +555,8 @@ class ComponentConfigurationResponseBase(BaseModel):
     configuration_description: Optional[str] = Field(
         description='The description of the component configuration',
         validation_alias=AliasChoices(
-            'description',
             'configuration_description',
+            'description',
             'configurationDescription',
             'configuration-description',
         ),
@@ -564,11 +564,11 @@ class ComponentConfigurationResponseBase(BaseModel):
     )
     is_disabled: bool = Field(
         description='Whether the component configuration is disabled',
-        validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
+        validation_alias=AliasChoices('is_disabled', 'isDisabled', 'is-disabled'),
         default=False,
     )
     is_deleted: bool = Field(
         description='Whether the component configuration is deleted',
-        validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
+        validation_alias=AliasChoices('is_deleted', 'isDeleted', 'is-deleted'),
         default=False,
     )
