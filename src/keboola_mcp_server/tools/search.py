@@ -21,7 +21,7 @@ def add_search_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     search_tools = [
         find_component_id,
-        find_ids_by_name,
+        search,
     ]
     for tool in search_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -100,7 +100,7 @@ class GlobalSearchOutput(BaseModel):
 
 @tool_errors()
 @with_session_state()
-async def find_ids_by_name(
+async def search(
     ctx: Context,
     name_prefixes: Annotated[list[str], Field(description='Name prefixes to match against item names.')],
     item_types: Annotated[
