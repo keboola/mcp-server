@@ -48,13 +48,13 @@ class JobListItem(BaseModel):
     status: JOB_STATUS = Field(description='The status of the job.')
     component_id: Optional[str] = Field(
         description='The ID of the component that the job is running on.',
-        validation_alias=AliasChoices('component', 'componentId', 'component_id', 'component-id'),
+        validation_alias=AliasChoices('componentId', 'component', 'component_id', 'component-id'),
         serialization_alias='componentId',
         default=None,
     )
     config_id: Optional[str] = Field(
         description='The ID of the component configuration that the job is running on.',
-        validation_alias=AliasChoices('config', 'configId', 'config_id', 'config-id'),
+        validation_alias=AliasChoices('configId', 'config', 'config_id', 'config-id'),
         serialization_alias='configId',
         default=None,
     )
@@ -115,8 +115,6 @@ class JobDetail(JobListItem):
     )
     result: Optional[dict[str, Any]] = Field(
         description='The results of the job.',
-        validation_alias='result',
-        serialization_alias='result',
         default=None,
     )
     links: list[Link] = Field(..., description='The links relevant to the job.')

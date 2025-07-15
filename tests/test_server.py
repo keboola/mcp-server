@@ -3,7 +3,6 @@ from typing import Annotated, Any
 
 import pytest
 from fastmcp import Client, Context
-from fastmcp.client.client import CallToolResult
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
