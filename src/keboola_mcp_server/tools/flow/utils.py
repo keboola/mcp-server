@@ -6,9 +6,8 @@ from importlib import resources
 from typing import Any, Sequence
 
 from keboola_mcp_server.client import (
-    CONDITIONAL_FLOW_COMPONENT_ID,
     FLOW_TYPE,
-    ORCHESTRATOR_COMPONENT_ID,
+    FLOW_TYPES,
     JsonDict,
     KeboolaClient,
 )
@@ -179,7 +178,7 @@ async def _get_flows_by_ids(
 
     for flow_id in flow_ids:
         raw_flow = None
-        for flow_type in (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID):
+        for flow_type in FLOW_TYPES:
             try:
                 raw_flow = await client.storage_client.flow_detail(flow_id, flow_type)
                 break
@@ -207,12 +206,8 @@ async def _get_flows_by_type(
 
 
 async def _get_all_flows(client: KeboolaClient) -> list[FlowSummary]:
-    flow_types: list[FLOW_TYPE] = [CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID]
     all_flows = []
-    for flow_type in flow_types:
-        raw_flows = await client.storage_client.flow_list(flow_type=flow_type)
-        all_flows.extend([
-            FlowSummary.from_api_response(APIFlowResponse.model_validate(raw))
-            for raw in raw_flows
-        ])
+    for flow_type in FLOW_TYPES:
+        flows = await _get_flows_by_type(client=client, flow_type=flow_type)
+        all_flows.extend(flows)
     return all_flows

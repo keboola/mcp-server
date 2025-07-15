@@ -38,6 +38,7 @@ ItemType = Literal[
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 CONDITIONAL_FLOW_COMPONENT_ID = 'keboola.flow'
 FLOW_TYPE = Literal['keboola.flow', 'keboola.orchestrator']
+FLOW_TYPES = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID)
 
 
 class KeboolaClient:

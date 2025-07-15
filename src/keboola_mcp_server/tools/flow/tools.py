@@ -1,14 +1,19 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
 import logging
-from typing import Annotated, Any, Literal, Optional, Sequence, cast
+from typing import Annotated, Any, Optional, Sequence, cast
 
 import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import Field
 
-from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, JsonDict, KeboolaClient
+from keboola_mcp_server.client import (
+    FLOW_TYPES,
+    ORCHESTRATOR_COMPONENT_ID,
+    JsonDict,
+    KeboolaClient,
+)
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
@@ -22,7 +27,6 @@ from keboola_mcp_server.tools.flow.model import (
 from keboola_mcp_server.tools.flow.utils import (
     _get_all_flows,
     _get_flows_by_ids,
-    _get_flows_by_type,
     ensure_phase_ids,
     ensure_task_ids,
     get_schema_as_markdown,
@@ -31,8 +35,6 @@ from keboola_mcp_server.tools.flow.utils import (
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
 LOG = logging.getLogger(__name__)
-
-FLOW_TYPE = Literal['keboola.flow', 'keboola.orchestrator']
 
 
 def add_flow_tools(mcp: FastMCP) -> None:
@@ -194,23 +196,18 @@ async def update_flow(
 async def list_flows(
     ctx: Context,
     flow_ids: Annotated[Optional[Sequence[str]], Field(description='IDs of the flows to retrieve.')] = None,
-    flow_type: Annotated[Optional[FLOW_TYPE], Field(description='Type of flows to retrieve.')] = None,
 ) -> ListFlowsOutput:
-    """Retrieves flow configurations from the project. Optionally filtered by IDs or type."""
+    """Retrieves flow configurations from the project. Optionally filtered by IDs."""
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
     if flow_ids:
         flows = await _get_flows_by_ids(client, flow_ids)
-        LOG.info(f'Retrieved {len(flows)} flows by ID (type={flow_type or "all"}).')
+        LOG.info(f'Retrieved {len(flows)} flows by ID.')
     else:
-        if flow_type:
-            flows = await _get_flows_by_type(client, flow_type)
-            LOG.info(f'Retrieved {len(flows)} flows of type {flow_type}.')
-        else:
-            flows = await _get_all_flows(client)
-            LOG.info(f'Retrieved {len(flows)} flows (all types).')
+        flows = await _get_all_flows(client)
+        LOG.info(f'Retrieved {len(flows)} flows.')
 
     links = [links_manager.get_flows_dashboard_link()]
     return ListFlowsOutput(flows=flows, links=links)
@@ -230,9 +227,7 @@ async def get_flow(
     raw_config = None
     found_type = None
 
-    types_to_check: list[str] = [CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID]
-
-    for type_ in types_to_check:
+    for type_ in FLOW_TYPES:
         try:
             raw_config = await client.storage_client.flow_detail(
                 config_id=configuration_id,
