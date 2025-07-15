@@ -176,17 +176,22 @@ async def _get_flows_by_ids(
     flow_ids: Sequence[str]
 ) -> list[FlowSummary]:
     flows = []
+
     for flow_id in flow_ids:
+        raw_flow = None
         for flow_type in (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID):
             try:
                 raw_flow = await client.storage_client.flow_detail(flow_id, flow_type)
-                api_flow = APIFlowResponse.model_validate(raw_flow)
-                flows.append(FlowSummary.from_api_response(api_flow))
                 break
             except Exception:
                 continue
+
+        if raw_flow:
+            api_flow = APIFlowResponse.model_validate(raw_flow)
+            flows.append(FlowSummary.from_api_response(api_flow))
         else:
             LOG.warning(f'Failed to retrieve flow {flow_id}.')
+
     return flows
 
 

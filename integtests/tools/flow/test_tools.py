@@ -79,7 +79,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         result = await list_flows(mcp_context)
         assert any(f.name == flow_name for f in result.flows)
         found = [f for f in result.flows if f.configuration_id == flow_id][0]
-        flow = await get_flow(mcp_context, flow_type=ORCHESTRATOR_COMPONENT_ID, configuration_id=found.configuration_id)
+        flow = await get_flow(mcp_context, configuration_id=found.configuration_id)
 
         assert isinstance(flow, Flow)
         assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
