@@ -74,5 +74,6 @@ async def get_project_info(
         conditional_flows_enabled=conditional_flows_enabled,
         links=links,
     )
+    print(token_data)
     LOG.info('Returning unified project info.')
     return project_info

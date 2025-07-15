@@ -138,7 +138,6 @@ class TestFlowTools:
         keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
         result = await get_flow(ctx=mcp_context_client,
-                                flow_type=ORCHESTRATOR_COMPONENT_ID,
                                 configuration_id='21703284')
 
         assert isinstance(result, Flow)
@@ -283,7 +282,7 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     )
     assert isinstance(updated, FlowToolResponse)
 
-    detail = await get_flow(ctx=mcp_context_client, flow_type=ORCHESTRATOR_COMPONENT_ID, configuration_id='123456')
+    detail = await get_flow(ctx=mcp_context_client, configuration_id='123456')
     assert isinstance(detail, Flow)
     assert len(detail.configuration.phases) == 1
     assert len(detail.configuration.tasks) == 1

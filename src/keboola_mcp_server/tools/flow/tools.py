@@ -3,11 +3,12 @@
 import logging
 from typing import Annotated, Any, Literal, Optional, Sequence, cast
 
+import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import Field
 
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict, KeboolaClient
+from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
@@ -220,16 +221,38 @@ async def list_flows(
 async def get_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow to retrieve.')],
-    flow_type: Annotated[FLOW_TYPE, Field(description='Type of the flow to retrieve.')]
 ) -> Annotated[Flow, Field(description='Detailed flow configuration.')]:
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    raw_config = await client.storage_client.flow_detail(config_id=configuration_id, flow_type=flow_type)
+    raw_config = None
+    found_type = None
+
+    types_to_check: list[str] = [CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID]
+
+    for type_ in types_to_check:
+        try:
+            raw_config = await client.storage_client.flow_detail(
+                config_id=configuration_id,
+                flow_type=type_,
+            )
+            found_type = type_
+            LOG.info(f'Found flow {configuration_id} under flow type {type_}.')
+            break
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                LOG.info(f'Could not find flow {configuration_id} under flow type {type_}.')
+            else:
+                raise
+
+    if not found_type:
+        raise ValueError(f'Flow configuration "{configuration_id}" not found.')
+
     api_flow = APIFlowResponse.model_validate(raw_config)
     links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name)
     flow = Flow.from_api_response(api_config=api_flow, links=links)
-    LOG.info(f'Retrieved flow details for configuration: {configuration_id}')
+
+    LOG.info(f'Retrieved flow details for configuration: {configuration_id} (type: {found_type})')
     return flow
