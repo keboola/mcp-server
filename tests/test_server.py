@@ -26,7 +26,6 @@ class TestServer:
             'create_sql_transformation',
             'docs_query',
             'find_component_id',
-            'find_ids_by_name',
             'get_bucket',
             'get_component',
             'get_config',
@@ -45,6 +44,7 @@ class TestServer:
             'list_transformations',
             'query_data',
             'run_job',
+            'search',
             'update_bucket_description',
             'update_column_description',
             'update_config',
@@ -135,8 +135,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
         # check if the inputSchema contains the expected param description
         assert expected_param_description in str(tools[-1].inputSchema)
         result = await client.call_tool('assessed-function', {'param': 'value'})
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == 'value'
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text == 'value'
 
 
 @pytest.mark.asyncio
@@ -193,5 +193,5 @@ async def test_keboola_injection_and_lifespan(
 
     async with Client(server) as client:
         result = await client.call_tool('assessed_function', {'param': 'value'})
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == 'value'
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text == 'value'

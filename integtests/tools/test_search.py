@@ -5,7 +5,7 @@ from fastmcp import Context
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
 from keboola_mcp_server.client import KeboolaClient, SuggestedComponent
-from keboola_mcp_server.tools.search import GlobalSearchOutput, find_component_id, find_ids_by_name
+from keboola_mcp_server.tools.search import GlobalSearchOutput, find_component_id, search
 
 LOG = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ async def test_global_search_end_to_end(
         pytest.skip('Global search is not available. Please enable it in the project settings.')
 
     # Search for test items by name prefix 'test' which should match our test data
-    result = await find_ids_by_name(
+    result = await search(
         ctx=mcp_context, name_prefixes=['test'], item_types=tuple(), limit=50, offset=0  # Search all types
     )
 
