@@ -128,12 +128,12 @@ class TestToolErrorsEventTriggering:
         assert duration_s > 0
 
         # Check mcp_context contains expected fields
-        mcp_context_arg = call_args[1]['mcp_context']
-        assert mcp_context_arg['tool_name'] == 'get_bucket'
-        assert mcp_context_arg['tool_args'] == {'bucket_id': 'non.existent.bucket'}
-        assert 'sessionId' in mcp_context_arg
+        event_arg = call_args[1]['event']
+        assert event_arg.tool_name == 'get_bucket'
+        assert event_arg.tool_args == {'bucket_id': 'non.existent.bucket'}
+        assert 'session_id' in event_arg.__dict__
         # Verify ctx parameter is filtered out
-        assert 'ctx' not in mcp_context_arg['tool_args']
+        assert 'ctx' not in event_arg.tool_args
 
     @pytest.mark.asyncio
     async def test_jobs_api_error_triggers_event(self, mcp_context: Context, mocker):
@@ -160,12 +160,12 @@ class TestToolErrorsEventTriggering:
         assert '404 Not Found' in str(error_obj)
 
         # Check mcp_context contains expected fields
-        mcp_context_arg = call_args[1]['mcp_context']
-        assert mcp_context_arg['tool_name'] == 'get_job'
-        assert mcp_context_arg['tool_args'] == {'job_id': '999999999'}
-        assert 'sessionId' in mcp_context_arg
+        event_arg = call_args[1]['event']
+        assert event_arg.tool_name == 'get_job'
+        assert event_arg.tool_args == {'job_id': '999999999'}
+        assert 'session_id' in event_arg.__dict__
         # Verify ctx parameter is filtered out
-        assert 'ctx' not in mcp_context_arg['tool_args']
+        assert 'ctx' not in event_arg.tool_args
 
     @pytest.mark.asyncio
     async def test_sql_api_error_triggers_event(self, mcp_context: Context, mocker):
@@ -192,12 +192,12 @@ class TestToolErrorsEventTriggering:
         assert 'Failed to run SQL query' in str(error_obj)
 
         # Check mcp_context contains expected fields
-        mcp_context_arg = call_args[1]['mcp_context']
-        assert mcp_context_arg['tool_name'] == 'query_data'
-        assert mcp_context_arg['tool_args'] == {'sql_query': 'INVALID SQL SYNTAX HERE'}
-        assert 'sessionId' in mcp_context_arg
+        event_arg = call_args[1]['event']
+        assert event_arg.tool_name == 'query_data'
+        assert event_arg.tool_args == {'sql_query': 'INVALID SQL SYNTAX HERE'}
+        assert 'session_id' in event_arg.__dict__
         # Verify ctx parameter is filtered out
-        assert 'ctx' not in mcp_context_arg['tool_args']
+        assert 'ctx' not in event_arg.tool_args
 
     @pytest.mark.asyncio
     async def test_concurrent_errors_trigger_multiple_events(self, mcp_context: Context, mocker):
@@ -227,13 +227,13 @@ class TestToolErrorsEventTriggering:
         actual_bucket_ids = set()
 
         for call in mock_trigger_event.call_args_list:
-            mcp_context_arg = call[1]['mcp_context']
-            assert mcp_context_arg['tool_name'] == 'get_bucket'
-            assert 'bucket_id' in mcp_context_arg['tool_args']
-            actual_bucket_ids.add(mcp_context_arg['tool_args']['bucket_id'])
-            assert 'sessionId' in mcp_context_arg
+            event_arg = call[1]['event']
+            assert event_arg.tool_name == 'get_bucket'
+            assert 'bucket_id' in event_arg.tool_args
+            actual_bucket_ids.add(event_arg.tool_args['bucket_id'])
+            assert 'session_id' in event_arg.__dict__
             # Verify ctx parameter is filtered out
-            assert 'ctx' not in mcp_context_arg['tool_args']
+            assert 'ctx' not in event_arg.tool_args
 
         # Verify all expected bucket IDs were present
         assert actual_bucket_ids == expected_bucket_ids
@@ -273,8 +273,8 @@ class TestToolErrorsEventTriggering:
 
         # Verify the tool_args contain the expected parameters
         call_args = mock_trigger_event.call_args
-        mcp_context_arg = call_args[1]['mcp_context']
-        tool_args = mcp_context_arg['tool_args']
+        event_arg = call_args[1]['event']
+        tool_args = event_arg.tool_args
 
         # Check that bucket_id is included but ctx is not
         assert 'bucket_id' in tool_args
@@ -282,8 +282,8 @@ class TestToolErrorsEventTriggering:
         assert 'ctx' not in tool_args  # Context should be filtered out
 
     @pytest.mark.asyncio
-    async def test_mcp_context_structure_completeness(self, mcp_context: Context, mocker):
-        """Test that mcp_context contains all required fields with correct structure."""
+    async def test_event_contains_all_required_fields(self, mcp_context: Context, mocker):
+        """Test that event contains all required fields with correct structure."""
         # Mock the trigger_event method
         mock_trigger_event = AsyncMock()
         mocker.patch.object(
@@ -296,24 +296,24 @@ class TestToolErrorsEventTriggering:
         with pytest.raises(httpx.HTTPStatusError):
             await get_bucket('test.bucket', mcp_context)
 
-        # Verify mcp_context structure
+        # Verify event structure
         call_args = mock_trigger_event.call_args
-        mcp_context_arg = call_args[1]['mcp_context']
+        event_arg = call_args[1]['event']
 
         # Check required fields exist
-        assert 'tool_name' in mcp_context_arg
-        assert 'tool_args' in mcp_context_arg
-        assert 'sessionId' in mcp_context_arg
+        assert hasattr(event_arg, 'tool_name')
+        assert hasattr(event_arg, 'tool_args')
+        assert hasattr(event_arg, 'session_id')
 
         # Check field types and values
-        assert isinstance(mcp_context_arg['tool_name'], str)
-        assert mcp_context_arg['tool_name'] == 'get_bucket'
+        assert isinstance(event_arg.tool_name, str)
+        assert event_arg.tool_name == 'get_bucket'
 
-        assert isinstance(mcp_context_arg['tool_args'], dict)
-        assert mcp_context_arg['tool_args'] == {'bucket_id': 'test.bucket'}
+        assert isinstance(event_arg.tool_args, dict)
+        assert event_arg.tool_args == {'bucket_id': 'test.bucket'}
 
-        assert isinstance(mcp_context_arg['sessionId'], str)
-        assert len(mcp_context_arg['sessionId']) > 0
+        assert isinstance(event_arg.session_id, str)
+        assert len(event_arg.session_id) > 0
 
     @pytest.mark.asyncio
     async def test_tool_args_extraction_with_complex_parameters(self, mcp_context: Context, mocker):
@@ -333,8 +333,8 @@ class TestToolErrorsEventTriggering:
 
         # Verify the tool_args contain the complex parameter correctly
         call_args = mock_trigger_event.call_args
-        mcp_context_arg = call_args[1]['mcp_context']
-        tool_args = mcp_context_arg['tool_args']
+        event_arg = call_args[1]['event']
+        tool_args = event_arg.tool_args
 
         assert 'sql_query' in tool_args
         assert tool_args['sql_query'] == complex_query
@@ -342,7 +342,7 @@ class TestToolErrorsEventTriggering:
 
     @pytest.mark.asyncio
     async def test_session_id_extraction_from_context(self, mcp_context: Context, mocker):
-        """Test that sessionId is correctly extracted from the Context object."""
+        """Test that session_id is correctly extracted from the Context object."""
         # Mock the trigger_event method
         mock_trigger_event = AsyncMock()
         mocker.patch.object(
@@ -355,12 +355,12 @@ class TestToolErrorsEventTriggering:
         with pytest.raises(httpx.HTTPStatusError):
             await get_job('12345', mcp_context)
 
-        # Verify sessionId is extracted and included
+        # Verify session_id is extracted and included
         call_args = mock_trigger_event.call_args
-        mcp_context_arg = call_args[1]['mcp_context']
+        event_arg = call_args[1]['event']
 
-        assert 'sessionId' in mcp_context_arg
-        session_id = mcp_context_arg['sessionId']
+        assert 'session_id' in event_arg.__dict__
+        session_id = event_arg.session_id
         assert isinstance(session_id, str)
         assert session_id != 'unknown-session'  # Should be a real session ID
         assert len(session_id) > 0
@@ -417,6 +417,6 @@ class TestToolErrorsEventTriggering:
             # Verify tool name is correct
             if mock_trigger_event.called:
                 call_args = mock_trigger_event.call_args
-                mcp_context_arg = call_args[1]['mcp_context']
-                assert mcp_context_arg['tool_name'] == expected_name
-                assert mcp_context_arg['tool_args'] == expected_args
+                event_arg = call_args[1]['event']
+                assert event_arg.tool_name == expected_name
+                assert event_arg.tool_args == expected_args
