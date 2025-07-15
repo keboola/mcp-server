@@ -27,6 +27,7 @@ class TestServer:
             'create_sql_transformation',
             'docs_query',
             'find_component_id',
+            'find_ids_by_name',
             'get_bucket',
             'get_component',
             'get_config',
