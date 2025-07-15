@@ -3,11 +3,13 @@
 import json
 import logging
 from importlib import resources
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from keboola_mcp_server.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
     FLOW_TYPE,
     FLOW_TYPES,
+    ORCHESTRATOR_COMPONENT_ID,
     JsonDict,
     KeboolaClient,
 )
@@ -17,18 +19,21 @@ from keboola_mcp_server.tools.flow.model import FlowPhase, FlowSummary, FlowTask
 LOG = logging.getLogger(__name__)
 
 RESOURCES = 'keboola_mcp_server.resources'
-FLOW_SCHEMA_RESOURCE = 'flow-schema.json'
+FLOW_SCHEMAS: Mapping[FLOW_TYPE, str] = {
+    CONDITIONAL_FLOW_COMPONENT_ID: 'flow-schema.json',
+    ORCHESTRATOR_COMPONENT_ID: 'conditional-flow-schema.json'
+}
 
 
-def _load_schema() -> JsonDict:
-    """Load the flow schema from the resources."""
-    with resources.open_text(RESOURCES, FLOW_SCHEMA_RESOURCE, encoding='utf-8') as f:
+def _load_schema(flow_type: FLOW_TYPE) -> JsonDict:
+    """Load a schema from the resources folder."""
+    with resources.open_text(RESOURCES, FLOW_SCHEMAS[flow_type], encoding='utf-8') as f:
         return json.load(f)
 
 
-def get_schema_as_markdown() -> str:
+def get_schema_as_markdown(flow_type: FLOW_TYPE) -> str:
     """Return the flow schema as a markdown formatted string."""
-    schema = _load_schema()
+    schema = _load_schema(flow_type=flow_type)
     return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 

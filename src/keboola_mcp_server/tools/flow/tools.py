@@ -9,6 +9,7 @@ from fastmcp.tools import FunctionTool
 from pydantic import Field
 
 from keboola_mcp_server.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
     FLOW_TYPES,
     ORCHESTRATOR_COMPONENT_ID,
     JsonDict,
@@ -32,6 +33,7 @@ from keboola_mcp_server.tools.flow.utils import (
     get_schema_as_markdown,
     validate_flow_structure,
 )
+from keboola_mcp_server.tools.project import get_project_info
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
 LOG = logging.getLogger(__name__)
@@ -49,11 +51,14 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
 
 @tool_errors()
-async def get_flow_schema() -> Annotated[str, Field(description='The configuration schema of Flow.')]:
+async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow.')]:
     """Returns the JSON schema that defines the structure of Flow configurations."""
+    client = KeboolaClient.from_state(ctx.session.state)
+    project_info = await get_project_info(client=client)
 
-    LOG.info('Returning flow configuration schema')
-    return get_schema_as_markdown()
+    flow_type = ORCHESTRATOR_COMPONENT_ID if project_info.conditional_flows_disabled else CONDITIONAL_FLOW_COMPONENT_ID
+    LOG.info(f'Returning flow configuration schema for flow type: {flow_type}')
+    return get_schema_as_markdown(flow_type=flow_type)
 
 
 @tool_errors()
