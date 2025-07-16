@@ -150,7 +150,11 @@ def tool_errors(
                     raise
 
             finally:
-                await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start)
+                try:
+                    await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start)
+                except Exception as e:
+                    LOG.exception(f'Failed to trigger tool event for {func.__name__}: {e}')
+                    raise
 
         return cast(F, wrapped)
 
