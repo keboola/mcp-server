@@ -105,7 +105,7 @@ def _create_session_state(config: Config) -> dict[str, Any]:
     return state
 
 
-def _get_http_request() -> Request | None:
+def get_http_request_or_none() -> Request | None:
     try:
         return get_http_request()
     except RuntimeError:
@@ -180,7 +180,7 @@ def with_session_state() -> AnyFunction:
                 # The Context.request_context.request is the HTTP request received by the 'POST /messages' endpoint
                 # when the tool call was requested by a client.
 
-                if http_rq := _get_http_request():
+                if http_rq := get_http_request_or_none():
                     LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
                     config = config.replace_by(http_rq.headers)
                     if accept_secrets_in_url:

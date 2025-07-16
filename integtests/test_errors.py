@@ -3,11 +3,13 @@ import json
 import math
 import re
 import uuid
+from importlib.metadata import distribution
 from typing import Any, Mapping
 
 import httpx
 import pytest
 from fastmcp import Context
+from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
@@ -123,6 +125,12 @@ class TestStorageEvents:
         ('bar', 'MCP tool "bar" call failed. ValueError: Intentional error in bar tool.', 'error'),
     ])
     async def test_event_emitted(self, tool_name: str, event_message: str, event_type: str, mcp_context: Context):
+        mcp_context.session_id = 'deadbee'
+        mcp_context.session.client_params = InitializeRequestParams(
+            protocolVersion='1',
+            capabilities=ClientCapabilities(),
+            clientInfo=Implementation(name='integtest', version='1.2.3')
+        )
         unique = uuid.uuid4().hex
         tool_func = getattr(self, tool_name)
         try:
@@ -146,6 +154,12 @@ class TestStorageEvents:
         assert emitted_event['type'] == event_type
         # SAPI events don't support float durations, so the duration is rounded up to the nearest second.
         assert math.fabs(emitted_event['performance']['duration'] - 0.1) < 1
+        assert emitted_event['params']['mcpServerContext'] == {
+            'appEnv': 'DEV',
+            'version': distribution('keboola_mcp_server').version,
+            'userAgent': 'integtest/1.2.3',
+            'sessionId': 'deadbee',
+        }
 
     @staticmethod
     def _find_event(

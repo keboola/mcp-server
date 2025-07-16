@@ -10,7 +10,7 @@ from fastmcp.utilities.types import find_kwarg_by_type
 from pydantic import BaseModel
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import ServerState, get_http_request_or_none
 
 LOG = logging.getLogger(__name__)
 F = TypeVar('F', bound=Callable[..., Any])
@@ -63,6 +63,14 @@ async def _trigger_event(
                                       f'Expecting instance of "Context", got {type(ctx)}.')
 
     server_state = ServerState.from_context(ctx)
+    user_agent: str | None = None
+    if client_params := ctx.session.client_params:
+        user_agent = f'{client_params.clientInfo.name}/{client_params.clientInfo.version}'
+    if not user_agent:
+        user_agent = ctx.client_id
+    if not user_agent:
+        if http_rq := get_http_request_or_none():
+            user_agent = http_rq.headers.get('User-Agent')
 
     # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server.tool.json
     # for the JSON schema describing the 'keboola.mcp-server.tool' component's event params.
@@ -70,7 +78,7 @@ async def _trigger_event(
         'mcpServerContext': {
             'appEnv': server_state.app_version,
             'version': server_state.server_version,
-            'userAgent': '',
+            'userAgent': user_agent or '',
             'sessionId': _get_session_id(ctx),
         },
         'tool': {

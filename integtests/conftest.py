@@ -315,7 +315,9 @@ def mcp_context(
         KeboolaClient.STATE_KEY: keboola_client,
         WorkspaceManager.STATE_KEY: workspace_manager,
     }
-    client_context.session_id = '1234'
+    client_context.session.client_params = None
+    client_context.client_id = None
+    client_context.session_id = None
     client_context.request_context = mocker.MagicMock(RequestContext)
     client_context.request_context.lifespan_context = ServerState(mcp_config)
 
