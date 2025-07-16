@@ -1,11 +1,15 @@
 import logging
+import uuid
+from importlib.metadata import distribution
+from unittest.mock import ANY
 
 import pytest
 from fastmcp import Context
 from mcp.shared.context import RequestContext
 
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.errors import ToolException, _get_session_id, tool_errors
+from keboola_mcp_server.errors import ToolException, tool_errors
 from keboola_mcp_server.mcp import ServerState
 
 
@@ -97,14 +101,40 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error, mcp_
     assert 'Simulated ValueError' in caplog.records[0].message
 
 
-def test_get_session_id_http(empty_context: Context, mocker):
-    type(empty_context).session_id = mocker.PropertyMock(return_value='1234')
-    assert _get_session_id(empty_context) == '1234'
+@pytest.mark.asyncio
+@pytest.mark.parametrize('transport', ['http', 'stdio'])
+async def test_get_session_id(transport: str, mcp_context_client: Context, mocker):
+    @tool_errors()
+    async def foo(_ctx: Context):
+        pass
 
+    session_id = uuid.uuid4().hex
+    if transport == 'stdio':
+        mcp_context_client.session_id = None
+        mcp_context_client.request_context = mocker.MagicMock(RequestContext)
+        mcp_context_client.request_context.lifespan_context = ServerState(config=Config(), server_id=session_id)
+    elif transport == 'http':
+        mcp_context_client.session_id = session_id
+    else:
+        pytest.fail(f'Unknown transport: {transport}')
 
-def test_get_session_id_stdio(empty_context: Context, mocker):
-    type(empty_context).session_id = mocker.PropertyMock(return_value=None)
-    type(empty_context).request_context = mocker.PropertyMock(
-        return_value=(request_object := mocker.MagicMock(RequestContext)))
-    request_object.lifespan_context = ServerState(config=Config(), server_id='4567')
-    assert _get_session_id(empty_context) == '4567'
+    await foo(mcp_context_client)
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    client.storage_client.trigger_event.assert_called_once_with(
+        message='MCP tool "foo" call succeeded.',
+        component_id='keboola.mcp-server.tool',
+        event_type='success',
+        params={
+            'mcpServerContext': {
+                'appEnv': 'DEV',
+                'version': distribution('keboola_mcp_server').version,
+                'userAgent': '',
+                'sessionId': session_id,
+            },
+            'tool': {
+                'name': 'foo',
+                'arguments': [],
+            },
+        },
+        duration=ANY,
+    )
