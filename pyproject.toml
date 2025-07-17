@@ -17,6 +17,7 @@ dependencies = [
     "jsonschema ~= 4.23",
     "pyjwt ~= 2.10",
     "json-log-formatter ~= 1.0",
+    "pydantic[email] ~= 2.11.7"
 ]
 [project.optional-dependencies]
 codestyle = [

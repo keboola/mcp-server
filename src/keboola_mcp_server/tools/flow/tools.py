@@ -131,11 +131,11 @@ async def create_flow(
     }
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration))
 
-    LOG.info(f'Creating new flow: {name}')
+    LOG.info(f'Creating new flow: {name} (type: {ORCHESTRATOR_COMPONENT_ID})')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     new_raw_configuration = await client.storage_client.flow_create(
-        name=name, description=description, flow_configuration=flow_configuration  # Direct configuration
+        name=name, description=description, flow_configuration=flow_configuration, flow_type=ORCHESTRATOR_COMPONENT_ID
     )
 
     await set_cfg_creation_metadata(
@@ -149,7 +149,7 @@ async def create_flow(
     flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
-    LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}"')
+    LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}" (type: {ORCHESTRATOR_COMPONENT_ID})')
     return tool_response
 
 
@@ -163,7 +163,24 @@ async def create_conditional_flow(
     tasks: Annotated[list[ConditionalTask], Field(description='List of task definitions.')],
 ) -> Annotated[FlowToolResponse, Field(description='Response object for flow creation.')]:
     """
-    Temporary description
+    Creates a new conditional flow configuration in Keboola.
+
+    Conditional flows are an advanced type of Keboola flow that support:
+    - Dynamic transitions between phases based on conditions
+    - Complex conditional logic with operators like AND, OR, etc.
+    - Notification tasks and variable tasks
+    - Retry configurations for enhanced reliability
+
+    CONSIDERATIONS:
+    - The `phases` and `tasks` parameters must conform to the Keboola Conditional Flow JSON schema.
+    - Each task and phase must include at least: `id` and `name`.
+    - Phases can have conditional transitions using the `next` field with conditions.
+    - Tasks can include job tasks, notification tasks, or variable tasks.
+    - Links contained in the response should ALWAYS be presented to the user
+
+    USAGE:
+    Use this tool to create sophisticated workflows with conditional branching, error handling,
+    and dynamic execution paths based on runtime conditions.
     """
     flow_configuration = {
         'phases': [phase.model_dump(by_alias=True) for phase in phases],
@@ -174,7 +191,9 @@ async def create_conditional_flow(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     new_raw_configuration = await client.storage_client.flow_create(
-        name=name, description=description, flow_configuration=flow_configuration
+        name=name, description=description,
+        flow_configuration=flow_configuration,
+        flow_type=CONDITIONAL_FLOW_COMPONENT_ID
     )
 
     await set_cfg_creation_metadata(

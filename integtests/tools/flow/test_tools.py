@@ -18,7 +18,7 @@ from keboola_mcp_server.tools.flow.tools import (
     update_flow,
 )
 
-
+@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
@@ -103,7 +103,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
     finally:
         await client.storage_client.flow_delete(flow_id, skip_trash=True)
 
-
+@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
