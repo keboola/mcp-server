@@ -146,7 +146,7 @@ async def create_flow(
 
     flow_id = str(new_raw_configuration['id'])
     flow_name = str(new_raw_configuration['name'])
-    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
+    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name, flow_type=ORCHESTRATOR_COMPONENT_ID)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
     LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}" (type: {ORCHESTRATOR_COMPONENT_ID})')
@@ -204,7 +204,9 @@ async def create_conditional_flow(
 
     flow_id = str(new_raw_configuration['id'])
     flow_name = str(new_raw_configuration['name'])
-    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
+    flow_links = links_manager.get_flow_links(flow_id=flow_id,
+                                              flow_name=flow_name,
+                                              flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
 
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
@@ -297,7 +299,11 @@ async def list_flows(
         flows = await _get_all_flows(client)
         LOG.info(f'Retrieved {len(flows)} flows.')
 
-    links = [links_manager.get_flows_dashboard_link()]
+    # For list_flows, we don't know the specific flow types, so we'll use both flow types
+    links = [
+        links_manager.get_flows_dashboard_link(ORCHESTRATOR_COMPONENT_ID),
+        links_manager.get_flows_dashboard_link(CONDITIONAL_FLOW_COMPONENT_ID),
+    ]
     return ListFlowsOutput(flows=flows, links=links)
 
 
@@ -335,7 +341,7 @@ async def get_flow(
         raise ValueError(f'Flow configuration "{configuration_id}" not found.')
 
     api_flow = APIFlowResponse.model_validate(raw_config)
-    links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name)
+    links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name, flow_type=found_type)
     flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
 
     LOG.info(f'Retrieved flow details for configuration: {configuration_id} (type: {found_type})')
