@@ -1003,7 +1003,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         if results:
             payload['results'] = results
         if duration is not None:
-            payload['duration'] = int(math.ceil(duration))  # TODO: The events API ignores floats.
+            # The events API ignores floats, so we round up to the nearest integer.
+            payload['duration'] = int(math.ceil(duration))
         if run_id:
             payload['runId'] = run_id
 
