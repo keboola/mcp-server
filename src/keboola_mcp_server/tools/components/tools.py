@@ -27,7 +27,7 @@ component-related operations in the MCP server.
 """
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context
@@ -367,6 +367,7 @@ async def create_sql_transformation(
     links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Creating new transformation configuration: {name} for component: {component_id}.')
+
     new_raw_transformation_configuration = await client.storage_client.configuration_create(
         component_id=component_id,
         name=name,
@@ -394,7 +395,7 @@ async def create_sql_transformation(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -481,6 +482,7 @@ async def update_sql_transformation(
     }
 
     LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
@@ -512,7 +514,7 @@ async def update_sql_transformation(
         component_id=sql_transformation_id,
         configuration_id=str(configuration_id),
         description=updated_description or updated_raw_configuration.get('description', ''),
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -614,7 +616,7 @@ async def create_config(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -734,7 +736,7 @@ async def add_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -819,16 +821,13 @@ async def update_config(
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    new_raw_configuration = cast(
-        dict[str, Any],
-        await client.storage_client.configuration_update(
-            component_id=component_id,
-            configuration_id=configuration_id,
-            configuration=configuration_payload,
-            change_description=change_description,
-            updated_name=name,
-            updated_description=description,
-        ),
+    updated_raw_configuration = await client.storage_client.configuration_update(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration=configuration_payload,
+        change_description=change_description,
+        updated_name=name,
+        updated_description=description,
     )
 
     LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
@@ -837,7 +836,7 @@ async def update_config(
         client=client,
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_version=new_raw_configuration['version'],
+        configuration_version=updated_raw_configuration['version'],
     )
 
     links = links_manager.get_configuration_links(
@@ -850,7 +849,7 @@ async def update_config(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )
@@ -937,17 +936,14 @@ async def update_config_row(
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    new_raw_configuration = cast(
-        dict[str, Any],
-        await client.storage_client.configuration_row_update(
-            component_id=component_id,
-            config_id=configuration_id,
-            configuration_row_id=configuration_row_id,
-            configuration=configuration_payload,
-            change_description=change_description,
-            updated_name=name,
-            updated_description=description,
-        ),
+    updated_raw_configuration = await client.storage_client.configuration_row_update(
+        component_id=component_id,
+        config_id=configuration_id,
+        configuration_row_id=configuration_row_id,
+        configuration=configuration_payload,
+        change_description=change_description,
+        updated_name=name,
+        updated_description=description,
     )
 
     LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
@@ -956,7 +952,7 @@ async def update_config_row(
         client=client,
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_version=new_raw_configuration['version'],
+        configuration_version=updated_raw_configuration['version'],
     )
 
     links = links_manager.get_configuration_links(
@@ -969,7 +965,7 @@ async def update_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
     )

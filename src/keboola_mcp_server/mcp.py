@@ -6,9 +6,12 @@ It also provides a decorator that MCP tool functions can use to inject session s
 import dataclasses
 import inspect
 import logging
+import os
 import textwrap
+import uuid
 from dataclasses import dataclass
 from functools import wraps
+from importlib.metadata import distribution
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -30,9 +33,14 @@ from keboola_mcp_server.workspace import WorkspaceManager
 LOG = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ServerState:
     config: Config
+    server_id: str = uuid.uuid4().hex
+    app_version = os.getenv('APP_VERSION') or 'DEV'
+    server_version = distribution('keboola_mcp_server').version
+    mcp_library_version = distribution('mcp').version
+    fastmcp_library_version = distribution('fastmcp').version
 
     @classmethod
     def from_context(cls, ctx: Context) -> 'ServerState':
@@ -97,7 +105,7 @@ def _create_session_state(config: Config) -> dict[str, Any]:
     return state
 
 
-def _get_http_request() -> Request | None:
+def get_http_request_or_none() -> Request | None:
     try:
         return get_http_request()
     except RuntimeError:
@@ -172,7 +180,7 @@ def with_session_state() -> AnyFunction:
                 # The Context.request_context.request is the HTTP request received by the 'POST /messages' endpoint
                 # when the tool call was requested by a client.
 
-                if http_rq := _get_http_request():
+                if http_rq := get_http_request_or_none():
                     LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
                     config = config.replace_by(http_rq.headers)
                     if accept_secrets_in_url:

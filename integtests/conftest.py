@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import uuid
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
 from dataclasses import dataclass
 from multiprocessing import Process
@@ -16,8 +17,11 @@ from fastmcp import Client, Context, FastMCP
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.session import ServerSession
+from mcp.shared.context import RequestContext
 
 from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
 
 AsyncContextServerRemoteRunner = Callable[
@@ -112,6 +116,11 @@ def storage_api_token(env_file_loaded: bool) -> str:
     storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
     assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
     return storage_api_token
+
+
+@pytest.fixture(scope='session')
+def mcp_config(storage_api_token: str, storage_api_url: str) -> Config:
+    return Config(storage_api_url=storage_api_url, storage_token=storage_api_token)
 
 
 @pytest.fixture(scope='session')
@@ -281,13 +290,20 @@ def keboola_client(sync_storage_client: SyncStorageClient) -> KeboolaClient:
 
 
 @pytest.fixture
+def unique_id() -> str:
+    """Generates a unique ID string for test resources."""
+    return str(uuid.uuid4())[:8]
+
+
+@pytest.fixture
 def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> WorkspaceManager:
     return WorkspaceManager(keboola_client, workspace_schema)
 
 
 @pytest.fixture
 def mcp_context(
-    mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, keboola_project: ProjectDef
+    mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, keboola_project: ProjectDef,
+    mcp_config: Config
 ) -> Context:
     """
     MCP context containing the Keboola client and workspace manager.
@@ -299,6 +315,12 @@ def mcp_context(
         KeboolaClient.STATE_KEY: keboola_client,
         WorkspaceManager.STATE_KEY: workspace_manager,
     }
+    client_context.session.client_params = None
+    client_context.client_id = None
+    client_context.session_id = None
+    client_context.request_context = mocker.MagicMock(RequestContext)
+    client_context.request_context.lifespan_context = ServerState(mcp_config)
+
     return client_context
 
 
