@@ -20,10 +20,10 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
-from keboola_mcp_server.tools.flow.conditional_flow_model import Phase as ConditionalPhase
-from keboola_mcp_server.tools.flow.conditional_flow_model import Task as ConditionalTask
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.conditional_flow_model import ConditionalFlow
+from keboola_mcp_server.tools.flow.conditional_flow_model import Phase as ConditionalPhase
+from keboola_mcp_server.tools.flow.conditional_flow_model import Task as ConditionalTask
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowToolResponse,
@@ -162,9 +162,9 @@ async def create_conditional_flow(
     phases: Annotated[list[ConditionalPhase], Field(description='List of phase definitions.')],
     tasks: Annotated[list[ConditionalTask], Field(description='List of task definitions.')],
 ) -> Annotated[FlowToolResponse, Field(description='Response object for flow creation.')]:
-    '''
+    """
     Temporary description
-    '''
+    """
     flow_configuration = {
         'phases': [phase.model_dump(by_alias=True) for phase in phases],
         'tasks': [task.model_dump(by_alias=True) for task in tasks],
@@ -314,7 +314,7 @@ async def get_flow(
 
     if not found_type:
         raise ValueError(f'Flow configuration "{configuration_id}" not found.')
-    
+
     api_flow = APIFlowResponse.model_validate(raw_config)
     links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name)
     flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)

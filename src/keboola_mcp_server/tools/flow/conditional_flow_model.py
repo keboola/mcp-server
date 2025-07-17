@@ -11,14 +11,14 @@ class RetryCondition(BaseModel):
 
 
 class RetryStrategyParams(BaseModel):
-    maxRetries: Optional[int] = 3
-    delay: Optional[int] = 10
+    max_retries: Optional[int] = Field(default=3, alias='maxRetries')
+    delay: Optional[int] = Field(default=10, alias='delay')
 
 
 class RetryConfiguration(BaseModel):
-    retryOn: Optional[List[RetryCondition]] = None
-    strategy: Optional[Literal['linear']] = 'linear'
-    strategyParams: Optional[RetryStrategyParams] = None
+    retry_on: Optional[List[RetryCondition]] = Field(default=None, alias='retryOn')
+    strategy: Optional[Literal['linear']] = Field(default='linear', alias='strategy')
+    strategy_params: Optional[RetryStrategyParams] = Field(default=None, alias='strategyParams')
 
 
 # === CONDITION OBJECTS ===
@@ -79,7 +79,6 @@ ConditionObject = Union[
     FunctionCondition,
 ]
 
-
 VariableSourceObject = Union[
     ConstantCondition,
     PhaseCondition,
@@ -93,11 +92,11 @@ VariableSourceObject = Union[
 
 class JobTask(BaseModel):
     type: Literal['job']
-    componentId: str
-    configId: str
+    component_id: str = Field(..., alias='componentId')
+    config_id: str = Field(..., alias='configId')
     mode: Literal['run']
-    delay: Optional[Union[str, float]] = None
-    retry: Optional[RetryConfiguration] = None
+    delay: Optional[Union[str, float]] = Field(default=None, alias='delay')
+    retry: Optional[RetryConfiguration] = Field(default=None, alias='retry')
 
 
 class EmailChannel(BaseModel):
@@ -117,7 +116,7 @@ class NotificationTask(BaseModel):
     type: Literal['notification']
     channel: ChannelType
     title: str
-    message: Optional[str] = None
+    message: Optional[str] = Field(default=None, alias='message')
 
 
 class VariableTaskWithValue(BaseModel):
@@ -144,20 +143,17 @@ TaskObject = Union[
 
 class PhaseTransition(BaseModel):
     id: str
-    name: Optional[str]
-    condition: Optional['ConditionObject']
-    goto: Optional[str]
+    name: Optional[str] = Field(default=None, alias='name')
+    condition: Optional[ConditionObject] = Field(default=None, alias='condition')
+    goto: Optional[str] = Field(default=None, alias='goto')
 
 
 class Phase(BaseModel):
     id: str
     name: str
-    retry: Optional['RetryConfiguration'] = None
+    retry: Optional[RetryConfiguration] = Field(default=None, alias='retry')
     next_transitions: Optional[List[PhaseTransition]] = Field(default=None, alias='next')
-    description: Optional[str] = None
-
-    class Config:
-        populate_by_name = True  # allows using `next_transitions` when creating programmatically
+    description: Optional[str] = Field(default=None, alias='description')
 
 
 # === TASKS ===
@@ -167,8 +163,8 @@ class Task(BaseModel):
     name: str
     phase: str
     task: TaskObject
-    continueOnFailure: Optional[bool] = None
-    enabled: Optional[bool] = None
+    continue_on_failure: Optional[bool] = Field(default=None, alias='continueOnFailure')
+    enabled: Optional[bool] = Field(default=None, alias='enabled')
 
 
 # === ROOT ===
