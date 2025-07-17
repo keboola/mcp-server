@@ -1,6 +1,7 @@
 import pytest
 from fastmcp import Context
-from mcp.shared.session import BaseSession
+from mcp.server.session import ServerSession
+from mcp.shared.context import RequestContext
 
 from keboola_mcp_server.client import (
     AIServiceClient,
@@ -9,6 +10,8 @@ from keboola_mcp_server.client import (
     KeboolaClient,
     RawKeboolaClient,
 )
+from keboola_mcp_server.config import Config
+from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -43,9 +46,13 @@ def workspace_manager(mocker) -> WorkspaceManager:
 def empty_context(mocker) -> Context:
     """Creates the mocked `mcp.server.fastmcp.Context` instance with the `ServerSession` and empty state."""
     ctx = mocker.MagicMock(Context)
-    ctx.session = (session := mocker.MagicMock(BaseSession))
-    type(session).state = (state := mocker.PropertyMock())
-    state.return_value = {}
+    ctx.session = mocker.MagicMock(ServerSession)
+    ctx.session.state = {}
+    ctx.session.client_params = None
+    ctx.session_id = None
+    ctx.client_id = None
+    ctx.request_context = mocker.MagicMock(RequestContext)
+    ctx.request_context.lifespan_context = ServerState(Config())
     return ctx
 
 

@@ -4,7 +4,6 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from importlib.metadata import distribution
 from typing import Callable
 
 from fastmcp import FastMCP
@@ -27,10 +26,6 @@ from keboola_mcp_server.tools.sql import add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
 
 LOG = logging.getLogger(__name__)
-_MCP_VERSION = distribution('mcp').version
-_FASTMCP_VERSION = distribution('fastmcp').version
-_VERSION = distribution('keboola_mcp_server').version
-_DEFAULT_APP_VERSION = 'DEV'
 
 
 class StatusApiResp(BaseModel):
@@ -43,25 +38,21 @@ class ServiceInfoApiResp(BaseModel):
         validation_alias=AliasChoices('appName', 'app_name', 'app-name'),
         serialization_alias='appName')
     app_version: str = Field(
-        default=_DEFAULT_APP_VERSION,
         validation_alias=AliasChoices('appVersion', 'app_version', 'app-version'),
         serialization_alias='appVersion')
     server_version: str = Field(
-        default=_VERSION,
         validation_alias=AliasChoices('serverVersion', 'server_version', 'server-version'),
         serialization_alias='serverVersion')
     mcp_library_version: str = Field(
-        default=_MCP_VERSION,
         validation_alias=AliasChoices('mcpLibraryVersion', 'mcp_library_version', 'mcp-library-version'),
         serialization_alias='mcpLibraryVersion')
     fastmcp_library_version: str = Field(
-        default=_FASTMCP_VERSION,
         validation_alias=AliasChoices('fastmcpLibraryVersion', 'fastmcp_library_version', 'fastmcp-library-version'),
         serialization_alias='fastmcpLibraryVersion')
 
 
 def create_keboola_lifespan(
-    config: Config | None = None,
+    server_state: ServerState,
 ) -> Callable[[FastMCP[ServerState]], AbstractAsyncContextManager[ServerState]]:
     @asynccontextmanager
     async def keboola_lifespan(server: FastMCP) -> AsyncIterator[ServerState]:
@@ -82,14 +73,7 @@ def create_keboola_lifespan(
         - it could handle OAuth token, client access, Reddis database connection for storing sessions, access
         to the Relational DB, etc.
         """
-        # init server state
-        init_config = config or Config()
-        server_state = ServerState(config=init_config)
-        try:
-
-            yield server_state
-        finally:
-            pass
+        yield server_state
 
     return keboola_lifespan
 
@@ -132,9 +116,10 @@ def create_server(config: Config) -> FastMCP:
 
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
+    server_state = ServerState(config=config)
     mcp = KeboolaMcpServer(
         name='Keboola Explorer',
-        lifespan=create_keboola_lifespan(config),
+        lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
     )
 
@@ -147,7 +132,12 @@ def create_server(config: Config) -> FastMCP:
     @mcp.custom_route('/', methods=['GET'])
     async def get_info(_rq: Request) -> Response:
         """Returns basic information about the service."""
-        resp = ServiceInfoApiResp(app_version=os.getenv('APP_VERSION') or _DEFAULT_APP_VERSION)
+        resp = ServiceInfoApiResp(
+            app_version=server_state.app_version,
+            server_version=server_state.server_version,
+            mcp_library_version=server_state.mcp_library_version,
+            fastmcp_library_version=server_state.fastmcp_library_version,
+        )
         return JSONResponse(resp.model_dump(by_alias=True))
 
     @mcp.custom_route('/oauth/callback', methods=['GET'])

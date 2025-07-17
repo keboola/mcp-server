@@ -191,6 +191,7 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
 
 @pytest.mark.asyncio
 async def test_get_flow_schema(mcp_context: Context) -> None:
+async def test_get_flow_schema(mcp_context: Context) -> None:
     """
     Test that get_flow_schema returns the flow configuration JSON schema.
     """

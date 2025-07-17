@@ -45,23 +45,23 @@ from keboola_mcp_server.workspace import (
         ),
     ],
 )
-async def test_query_data(query: str, result: QueryResult, expected: str, empty_context: Context, mocker):
+async def test_query_data(query: str, result: QueryResult, expected: str, mcp_context_client: Context, mocker):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.execute_query.return_value = result
-    empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    result = await query_data(query, empty_context)
+    result = await query_data(query, mcp_context_client)
     assert result == expected
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('dialect', ['snowflake', 'biq-query', 'foo'])
-async def test_get_sql_dialect(dialect: str, empty_context: Context, mocker):
+async def test_get_sql_dialect(dialect: str, mcp_context_client: Context, mocker):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.get_sql_dialect.return_value = dialect
-    empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    result = await get_sql_dialect(empty_context)
+    result = await get_sql_dialect(mcp_context_client)
     assert result == dialect
 
 
