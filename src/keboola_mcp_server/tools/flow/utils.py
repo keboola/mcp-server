@@ -192,7 +192,7 @@ async def _get_flows_by_ids(
 
         if raw_flow:
             api_flow = APIFlowResponse.model_validate(raw_flow)
-            flows.append(FlowSummary.from_api_response(api_flow))
+            flows.append(FlowSummary.from_api_response(api_config=api_flow, flow_component_id=flow_type))
         else:
             LOG.warning(f'Failed to retrieve flow {flow_id}.')
 
@@ -205,7 +205,7 @@ async def _get_flows_by_type(
 ) -> list[FlowSummary]:
     raw_flows = await client.storage_client.flow_list(flow_type=flow_type)
     return [
-        FlowSummary.from_api_response(APIFlowResponse.model_validate(raw))
+        FlowSummary.from_api_response(api_config=APIFlowResponse.model_validate(raw), flow_component_id=flow_type)
         for raw in raw_flows
     ]
 

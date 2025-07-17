@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.client import FLOW_TYPE
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 
@@ -70,7 +70,7 @@ class FlowToolResponse(BaseModel):
 
 class Flow(BaseModel):
     """Complete flow configuration with all data."""
-    component_id: str = Field(description='The ID of the component (orchestrator)')
+    component_id: FLOW_TYPE = Field(description='The ID of the component (keboola.orchestrator/keboola.flow)')
     configuration_id: str = Field(description='The ID of this flow configuration')
     name: str = Field(description='The name of the flow configuration')
     description: Optional[str] = Field(default=None, description='The description of the flow configuration')
@@ -87,22 +87,24 @@ class Flow(BaseModel):
     links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
 
     @classmethod
-    def from_api_response(cls, api_config: APIFlowResponse, links: Optional[list[Link]] = None) -> 'Flow':
+    def from_api_response(cls, api_config: APIFlowResponse,
+                          flow_component_id: FLOW_TYPE,
+                          links: Optional[list[Link]] = None) -> 'Flow':
         """
         Create a Flow domain model from an APIFlowResponse.
 
         :param api_config: The APIFlowResponse instance.
+        :param flow_component_id: The component ID of the flow.
         :param links: Optional list of navigation links.
         :return: Flow domain model.
         """
-        component_id = getattr(api_config, 'component_id', None) or ORCHESTRATOR_COMPONENT_ID
         config = FlowConfiguration(
             phases=[FlowPhase.model_validate(p) for p in api_config.configuration.get('phases', [])],
             tasks=[FlowTask.model_validate(t) for t in api_config.configuration.get('tasks', [])],
         )
         links = links if links else []
         return cls.model_construct(
-            component_id=component_id,
+            component_id=flow_component_id,
             configuration_id=api_config.configuration_id,
             name=api_config.name,
             description=api_config.description,
@@ -120,7 +122,7 @@ class Flow(BaseModel):
 
 class FlowSummary(BaseModel):
     """Lightweight flow configuration for list operations."""
-    component_id: str = Field(description='The ID of the component (orchestrator)')
+    component_id: FLOW_TYPE = Field(description='The ID of the component (keboola.orchestrator/keboola.flow)')
     configuration_id: str = Field(description='The ID of this flow configuration')
     name: str = Field(description='The name of the flow configuration')
     description: Optional[str] = Field(default=None, description='The description of the flow configuration')
@@ -133,17 +135,17 @@ class FlowSummary(BaseModel):
     updated: Optional[str] = Field(None, description='Last update timestamp')
 
     @classmethod
-    def from_api_response(cls, api_config: APIFlowResponse) -> 'FlowSummary':
+    def from_api_response(cls, api_config: APIFlowResponse, flow_component_id: FLOW_TYPE) -> 'FlowSummary':
         """
         Create a FlowSummary domain model from an APIFlowResponse.
 
         :param api_config: The APIFlowResponse instance.
+        :param flow_component_id: The component ID of the flow.
         :return: FlowSummary domain model.
         """
-        component_id = getattr(api_config, 'component_id', None) or ORCHESTRATOR_COMPONENT_ID
         config = getattr(api_config, 'configuration', {}) or {}
         return cls.model_construct(
-            component_id=component_id,
+            component_id=flow_component_id,
             configuration_id=api_config.configuration_id,
             name=api_config.name,
             description=api_config.description,

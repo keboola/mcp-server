@@ -1,7 +1,7 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
 import logging
-from typing import Annotated, Any, Optional, Sequence, cast
+from typing import Annotated, Any, Sequence, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -10,6 +10,7 @@ from pydantic import Field
 
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
+    FLOW_TYPE,
     FLOW_TYPES,
     ORCHESTRATOR_COMPONENT_ID,
     JsonDict,
@@ -51,14 +52,33 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
 
 @tool_errors()
-async def get_flow_schema(ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow.')]:
-    """Returns the JSON schema that defines the structure of Flow configurations."""
-    client = KeboolaClient.from_state(ctx.session.state)
-    project_info = await get_project_info(client=client)
+@with_session_state()
+async def get_flow_schema(
+    ctx: Context,
+    flow_type: Annotated[FLOW_TYPE, Field(description='The type of flow for which to fetch.')],
+) -> Annotated[str, Field(description='The configuration schema of the specified flow type, formatted as markdown.')]:
+    """
+    Returns the JSON schema for the given flow type in markdown format.
+    `keboola.flow` = conditional flows
+    `keboola.orchestrator` = legacy flows
 
-    flow_type = ORCHESTRATOR_COMPONENT_ID if project_info.conditional_flows_disabled else CONDITIONAL_FLOW_COMPONENT_ID
-    LOG.info(f'Returning flow configuration schema for flow type: {flow_type}')
-    return get_schema_as_markdown(flow_type=flow_type)
+    CONSIDERATIONS:
+    - If the project has `conditional_flows_disabled` set to True, the orchestrator schema is returned regardless
+    of requested type.
+    - Otherwise, the schema matches the requested flow type.
+
+    Usage:
+        Use this tool to inspect the required structure for `create_flow` or `update_flow`.
+    """
+    project_info = await get_project_info(ctx)
+
+    if project_info.conditional_flows_disabled or flow_type == ORCHESTRATOR_COMPONENT_ID:
+        effective_type = ORCHESTRATOR_COMPONENT_ID
+    else:
+        effective_type = CONDITIONAL_FLOW_COMPONENT_ID
+
+    LOG.info(f'Returning flow configuration schema for flow type: {effective_type}')
+    return get_schema_as_markdown(flow_type=effective_type)
 
 
 @tool_errors()
@@ -200,7 +220,7 @@ async def update_flow(
 @with_session_state()
 async def list_flows(
     ctx: Context,
-    flow_ids: Annotated[Optional[Sequence[str]], Field(description='IDs of the flows to retrieve.')] = None,
+    flow_ids: Annotated[Sequence[str], Field(description='IDs of the flows to retrieve.')] = tuple(),
 ) -> ListFlowsOutput:
     """Retrieves flow configurations from the project. Optionally filtered by IDs."""
 
@@ -230,7 +250,7 @@ async def get_flow(
     links_manager = await ProjectLinksManager.from_client(client)
 
     raw_config = None
-    found_type = None
+    found_type: FLOW_TYPE | None = None
 
     for type_ in FLOW_TYPES:
         try:
@@ -252,7 +272,7 @@ async def get_flow(
 
     api_flow = APIFlowResponse.model_validate(raw_config)
     links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name)
-    flow = Flow.from_api_response(api_config=api_flow, links=links)
+    flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
 
     LOG.info(f'Retrieved flow details for configuration: {configuration_id} (type: {found_type})')
     return flow

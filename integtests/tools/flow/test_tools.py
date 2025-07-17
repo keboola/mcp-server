@@ -188,11 +188,11 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_flow_schema() -> None:
+async def test_get_flow_schema(mcp_context: Context) -> None:
     """
     Test that get_flow_schema returns the flow configuration JSON schema.
     """
-    schema_result = await get_flow_schema()
+    schema_result = await get_flow_schema(mcp_context, ORCHESTRATOR_COMPONENT_ID)
 
     assert isinstance(schema_result, str)
     assert schema_result.startswith('```json\n')

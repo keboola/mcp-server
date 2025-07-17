@@ -20,7 +20,7 @@ class TestFlowModels:
         """Test Flow.from_api_response from a typical raw API response."""
         assert 'component_id' not in mock_raw_flow_config
         api_model = APIFlowResponse.model_validate(mock_raw_flow_config)
-        flow = Flow.from_api_response(api_model)
+        flow = Flow.from_api_response(api_config=api_model, flow_component_id=ORCHESTRATOR_COMPONENT_ID)
         assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
         assert flow.configuration_id == '21703284'
         assert flow.name == 'Test Flow'
@@ -53,7 +53,7 @@ class TestFlowModels:
         assert 'tasks_count' not in mock_raw_flow_config
         assert 'phases_count' not in mock_raw_flow_config
         api_model = APIFlowResponse.model_validate(mock_raw_flow_config)
-        flow_summary = FlowSummary.from_api_response(api_model)
+        flow_summary = FlowSummary.from_api_response(api_config=api_model, flow_component_id=ORCHESTRATOR_COMPONENT_ID)
         assert flow_summary.component_id == ORCHESTRATOR_COMPONENT_ID
         assert flow_summary.configuration_id == '21703284'
         assert flow_summary.name == 'Test Flow'
@@ -70,8 +70,8 @@ class TestFlowModels:
         assert 'tasks_count' not in mock_empty_flow_config
         assert 'phases_count' not in mock_empty_flow_config
         api_model = APIFlowResponse.model_validate(mock_empty_flow_config)
-        flow = Flow.from_api_response(api_model)
-        flow_summary = FlowSummary.from_api_response(api_model)
+        flow = Flow.from_api_response(api_config=api_model, flow_component_id=ORCHESTRATOR_COMPONENT_ID)
+        flow_summary = FlowSummary.from_api_response(api_config=api_model, flow_component_id=ORCHESTRATOR_COMPONENT_ID)
         assert len(flow.configuration.phases) == 0
         assert len(flow.configuration.tasks) == 0
         assert flow_summary.phases_count == 0

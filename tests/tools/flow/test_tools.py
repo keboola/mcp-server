@@ -141,7 +141,7 @@ class TestFlowTools:
                                 configuration_id='21703284')
 
         assert isinstance(result, Flow)
-        assert result.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert result.component_id == CONDITIONAL_FLOW_COMPONENT_ID
         assert result.configuration_id == '21703284'
         assert result.name == 'Test Flow'
         assert len(result.configuration.phases) == 2
