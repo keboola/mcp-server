@@ -34,15 +34,6 @@ class _JsonWrapper(BaseModel):
 
     @classmethod
     def encode(cls, obj: Any) -> str:
-        # Cannot use json.dumps(obj) directly because it only supports basic JSON types
-        # (str, int, float, bool, None, list, dict) and would fail on:
-        # - Pydantic models
-        # - Dataclasses  
-        # - Custom objects (Context, KeboolaClient, etc.)
-        # - datetime objects, enums, sets, etc.
-        #
-        # Instead, wrap the object in a Pydantic model and use model_dump() 
-        # which handles complex serialization, then extract the serialized data
         return json.dumps(cls(data=obj).model_dump()['data'], ensure_ascii=False)
 
 
