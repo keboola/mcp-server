@@ -26,7 +26,7 @@ class ToolException(Exception):
 class _JsonWrapper(BaseModel):
     """
     Utility class for safely encoding arbitrary Python objects to JSON strings.
-    
+
     Uses Pydantic's serialization to handle complex objects. Primary use case is
     serializing tool function parameters for Keboola Storage API events.
     """
