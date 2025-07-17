@@ -32,8 +32,8 @@ class FlowTask(BaseModel):
     id: int | str = Field(description='Unique identifier of the task')
     name: str = Field(description='Name of the task')
     phase: int | str = Field(description='ID of the phase this task belongs to')
-    enabled: bool = Field(default=True, description='Whether the task is enabled')
-    continue_on_failure: bool = Field(
+    enabled: Optional[bool] = Field(default=True, description='Whether the task is enabled')
+    continue_on_failure: Optional[bool] = Field(
         default=False,
         description='Whether to continue if task fails',
         validation_alias=AliasChoices('continueOnFailure', 'continue_on_failure', 'continue-on-failure'),
