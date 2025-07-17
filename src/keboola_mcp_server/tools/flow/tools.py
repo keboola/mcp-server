@@ -1,7 +1,7 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
 import logging
-from typing import Annotated, Any, Sequence, Union, cast
+from typing import Annotated, Any, Sequence, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -21,9 +21,6 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
-from keboola_mcp_server.tools.flow.conditional_flow_model import ConditionalFlow
-from keboola_mcp_server.tools.flow.conditional_flow_model import Phase as ConditionalPhase
-from keboola_mcp_server.tools.flow.conditional_flow_model import Task as ConditionalTask
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowToolResponse,
@@ -45,7 +42,7 @@ LOG = logging.getLogger(__name__)
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    flow_tools = [create_flow, create_conditional_flow, list_flows, update_flow, get_flow, get_flow_schema]
+    flow_tools = [create_flow, list_flows, update_flow, get_flow, get_flow_schema]
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -155,67 +152,6 @@ async def create_flow(
 
 @tool_errors()
 @with_session_state()
-async def create_conditional_flow(
-    ctx: Context,
-    name: Annotated[str, Field(description='A short, descriptive name for the conditional flow.')],
-    description: Annotated[str, Field(description='Detailed description of the conditional flow.')],
-    phases: Annotated[list[ConditionalPhase], Field(description='List of phase definitions.')],
-    tasks: Annotated[list[ConditionalTask], Field(description='List of task definitions.')],
-) -> Annotated[FlowToolResponse, Field(description='Response object for flow creation.')]:
-    """
-    Creates a new conditional flow configuration in Keboola.
-
-    Conditional flows are an advanced type of Keboola flow that support:
-    - Dynamic transitions between phases based on conditions
-    - Complex conditional logic with operators like AND, OR, etc.
-    - Notification tasks and variable tasks
-    - Retry configurations for enhanced reliability
-
-    CONSIDERATIONS:
-    - The `phases` and `tasks` parameters must conform to the Keboola Conditional Flow JSON schema.
-    - Each task and phase must include at least: `id` and `name`.
-    - Phases can have conditional transitions using the `next` field with conditions.
-    - Tasks can include job tasks, notification tasks, or variable tasks.
-    - Links contained in the response should ALWAYS be presented to the user
-
-    USAGE:
-    Use this tool to create sophisticated workflows with conditional branching, error handling,
-    and dynamic execution paths based on runtime conditions.
-    """
-    flow_configuration = {
-        'phases': [phase.model_dump(by_alias=True) for phase in phases],
-        'tasks': [task.model_dump(by_alias=True) for task in tasks],
-    }
-
-    LOG.info(f'Creating new conditional flow: {name}')
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-    new_raw_configuration = await client.storage_client.flow_create(
-        name=name, description=description,
-        flow_configuration=flow_configuration,
-        flow_type=CONDITIONAL_FLOW_COMPONENT_ID
-    )
-
-    await set_cfg_creation_metadata(
-        client,
-        component_id=CONDITIONAL_FLOW_COMPONENT_ID,
-        configuration_id=str(new_raw_configuration['id']),
-    )
-
-    flow_id = str(new_raw_configuration['id'])
-    flow_name = str(new_raw_configuration['name'])
-    flow_links = links_manager.get_flow_links(flow_id=flow_id,
-                                              flow_name=flow_name,
-                                              flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-
-    tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
-
-    LOG.info(f'Created conditional flow "{name}" with configuration ID "{flow_id}"')
-    return tool_response
-
-
-@tool_errors()
-@with_session_state()
 async def update_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
@@ -312,7 +248,7 @@ async def list_flows(
 async def get_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow to retrieve.')],
-) -> Annotated[Union[Flow, ConditionalFlow], Field(description='Detailed flow configuration.')]:
+) -> Annotated[Flow, Field(description='Detailed flow configuration.')]:
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)
