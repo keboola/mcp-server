@@ -74,7 +74,7 @@ class TestHttpErrors:
             re.IGNORECASE
         )
         with pytest.raises(ValueError, match=match):
-            await query_data('INVALID SQL SYNTAX HERE', mcp_context)
+            await query_data('INVALID SQL SYNTAX HERE', 'Invalid SQL query.', mcp_context)
 
     @pytest.mark.asyncio
     async def test_concurrent_error_handling(self, mcp_context: Context):
