@@ -6,7 +6,7 @@ from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.sql import get_sql_dialect, query_data
+from keboola_mcp_server.tools.sql import QueryDataOutput, get_sql_dialect, query_data
 from keboola_mcp_server.workspace import (
     QueryResult,
     SqlSelectData,
@@ -17,15 +17,17 @@ from keboola_mcp_server.workspace import (
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('query', 'result', 'expected'),
+    ('query', 'query_name', 'result', 'expected_csv'),
     [
         (
             'select 1;',
+            'Simple Count Query',
             QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}])),
             'a\r\n1\r\n',  # CSV
         ),
         (
             'select id, name, email from user;',
+            'User Details List',
             QueryResult(
                 status='ok',
                 data=SqlSelectData(
@@ -40,18 +42,23 @@ from keboola_mcp_server.workspace import (
         ),
         (
             'create table foo (id integer, name varchar);',
+            'Create Table Operation',
             QueryResult(status='ok', message='1 table created'),
             'message\r\n1 table created\r\n',  # CSV
         ),
     ],
 )
-async def test_query_data(query: str, result: QueryResult, expected: str, mcp_context_client: Context, mocker):
+async def test_query_data(
+    query: str, query_name: str, result: QueryResult, expected_csv: str, mcp_context_client: Context, mocker
+):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.execute_query.return_value = result
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    result = await query_data(query, mcp_context_client)
-    assert result == expected
+    result = await query_data(query, query_name, mcp_context_client)
+    assert isinstance(result, QueryDataOutput)
+    assert result.query_name == query_name
+    assert result.csv_data == expected_csv
 
 
 @pytest.mark.asyncio
