@@ -1,5 +1,7 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
+import importlib.resources as pkg_resources
+import json
 import logging
 from typing import Annotated, Any, Sequence, cast
 
@@ -8,6 +10,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import Field
 
+from keboola_mcp_server import resources
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     FLOW_TYPE,
@@ -42,7 +45,7 @@ LOG = logging.getLogger(__name__)
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    flow_tools = [create_flow, list_flows, update_flow, get_flow, get_flow_schema]
+    flow_tools = [create_flow, list_flows, update_flow, get_flow, get_flow_examples, get_flow_schema]
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -282,3 +285,32 @@ async def get_flow(
 
     LOG.info(f'Retrieved flow details for configuration: {configuration_id} (type: {found_type})')
     return flow
+
+
+@tool_errors()
+@with_session_state()
+async def get_flow_examples(
+    ctx: Context,
+    flow_type: Annotated[FLOW_TYPE, Field(description='The type of the flow to retrieve examples for.')],
+) -> Annotated[str, Field(description='Examples of the flow configurations.')]:
+    """
+    Retrieves examples of valid flow configurations.
+
+    Projects have conditional flows enabled by default (check the `conditional_flows_disabled` flag in
+    get_project_info()) and should therefore fetch examples for type `keboola.flow`.
+    Projects that have conditional flows disabled should fetch examples for type `keboola.orchestrator`.
+    """
+    filename = (
+        'conditional_flow_examples.jsonl' if flow_type == CONDITIONAL_FLOW_COMPONENT_ID
+        else 'legacy_flow_examples.jsonl'
+    )
+    file_path = pkg_resources.files(resources) / 'flow_examples' / filename
+
+    markdown = f'# Flow Configuration Examples for `{flow_type}`\n\n'
+
+    with file_path.open('r', encoding='utf-8') as f:
+        for i, line in enumerate(f, 1):
+            data = json.loads(line)
+            markdown += f'{i}. Flow Configuration:\n```json\n{json.dumps(data, indent=2)}\n```\n\n'
+
+    return markdown
