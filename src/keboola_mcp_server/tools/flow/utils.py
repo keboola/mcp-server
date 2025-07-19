@@ -3,26 +3,37 @@
 import json
 import logging
 from importlib import resources
-from typing import Any
+from typing import Any, Mapping, Sequence
 
-from keboola_mcp_server.client import JsonDict
-from keboola_mcp_server.tools.flow.model import FlowPhase, FlowTask
+from keboola_mcp_server.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    FLOW_TYPE,
+    FLOW_TYPES,
+    ORCHESTRATOR_COMPONENT_ID,
+    JsonDict,
+    KeboolaClient,
+)
+from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
+from keboola_mcp_server.tools.flow.model import FlowPhase, FlowSummary, FlowTask
 
 LOG = logging.getLogger(__name__)
 
 RESOURCES = 'keboola_mcp_server.resources'
-FLOW_SCHEMA_RESOURCE = 'flow-schema.json'
+FLOW_SCHEMAS: Mapping[FLOW_TYPE, str] = {
+    CONDITIONAL_FLOW_COMPONENT_ID: 'conditional-flow-schema.json',
+    ORCHESTRATOR_COMPONENT_ID: 'flow-schema.json'
+}
 
 
-def _load_schema() -> JsonDict:
-    """Load the flow schema from the resources."""
-    with resources.open_text(RESOURCES, FLOW_SCHEMA_RESOURCE, encoding='utf-8') as f:
+def _load_schema(flow_type: FLOW_TYPE) -> JsonDict:
+    """Load a schema from the resources folder."""
+    with resources.open_text(RESOURCES, FLOW_SCHEMAS[flow_type], encoding='utf-8') as f:
         return json.load(f)
 
 
-def get_schema_as_markdown() -> str:
+def get_schema_as_markdown(flow_type: FLOW_TYPE) -> str:
     """Return the flow schema as a markdown formatted string."""
-    schema = _load_schema()
+    schema = _load_schema(flow_type=flow_type)
     return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 
@@ -162,3 +173,46 @@ def _check_circular_dependencies(phases: list[FlowPhase]) -> None:
             if cycle_path is not None:
                 cycle_str = ' -> '.join(str(pid) for pid in cycle_path)
                 raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
+
+
+async def _get_flows_by_ids(
+    client: KeboolaClient,
+    flow_ids: Sequence[str]
+) -> list[FlowSummary]:
+    flows = []
+
+    for flow_id in flow_ids:
+        raw_flow = None
+        for flow_type in FLOW_TYPES:
+            try:
+                raw_flow = await client.storage_client.flow_detail(flow_id, flow_type)
+                break
+            except Exception:
+                continue
+
+        if raw_flow:
+            api_flow = APIFlowResponse.model_validate(raw_flow)
+            flows.append(FlowSummary.from_api_response(api_config=api_flow, flow_component_id=flow_type))
+        else:
+            LOG.warning(f'Failed to retrieve flow {flow_id}.')
+
+    return flows
+
+
+async def _get_flows_by_type(
+    client: KeboolaClient,
+    flow_type: FLOW_TYPE
+) -> list[FlowSummary]:
+    raw_flows = await client.storage_client.flow_list(flow_type=flow_type)
+    return [
+        FlowSummary.from_api_response(api_config=APIFlowResponse.model_validate(raw), flow_component_id=flow_type)
+        for raw in raw_flows
+    ]
+
+
+async def _get_all_flows(client: KeboolaClient) -> list[FlowSummary]:
+    all_flows = []
+    for flow_type in FLOW_TYPES:
+        flows = await _get_flows_by_type(client=client, flow_type=flow_type)
+        all_flows.extend(flows)
+    return all_flows

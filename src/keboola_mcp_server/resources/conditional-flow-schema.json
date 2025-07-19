@@ -1,0 +1,402 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "type": "object",
+    "required": ["phases", "tasks"],
+    "properties": {
+      "phases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "name"],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "retry": {
+              "$ref": "#/definitions/retryConfiguration",
+              "description": "Retry configuration that will be applied to all job tasks in this phase that don't have their own retry configuration. Only applies to job tasks, not notification or variable tasks."
+            },
+            "next": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "goto"],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Optional descriptive name for the transition - useful for debugging and monitoring"
+                  },
+                  "condition": {
+                    "$ref": "#/definitions/operatorCondition"
+                  },
+                  "goto": {
+                    "type": ["string", "null"],
+                    "description": "Target phase ID to transition to, or null to end the flow. When using conditional transitions, always include a default transition (without a condition) as the last item to prevent flow execution errors."
+                  }
+                }
+              },
+              "description": "Array of transitions to other phases. Conditions and transitions are evaluated only after all tasks in the phase have completed execution."
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "tasks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "name", "task", "phase"],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "phase": {
+              "type": "string"
+            },
+            "task": {
+              "type": "object",
+              "oneOf": [
+                {
+                  "required": ["type", "componentId", "configId", "mode"],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["job"]
+                    },
+                    "componentId": {
+                      "type": "string"
+                    },
+                    "configId": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": ["run"]
+                    },
+                    "delay": {
+                      "type": ["string", "number"],
+                      "description": "Initial delay in seconds before starting the job"
+                    },
+                    "retry": {
+                      "$ref": "#/definitions/retryConfiguration"
+                    }
+                  }
+                },
+                {
+                  "required": ["type", "channel", "title"],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["notification"]
+                    },
+                    "channel": {
+                      "type": "object",
+                      "required": ["type", "recipients"],
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": ["email"]
+                            },
+                            "recipients": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "format": "email"
+                              },
+                              "minItems": 1
+                            }
+                          }
+                        },
+                        {
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": ["webhook"]
+                            },
+                            "recipients": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "format": "uri"
+                              },
+                              "minItems": 1
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "required": ["type", "name"],
+                  "oneOf": [
+                    {
+                      "required": ["value"],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": ["variable"]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "required": ["source"],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": ["variable"]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "$ref": "#/definitions/variableSourceObject"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "continueOnFailure": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "definitions": {
+      "conditionObject": {
+        "type": "object",
+        "oneOf": [
+          { "$ref": "#/definitions/constantCondition" },
+          { "$ref": "#/definitions/phaseCondition" },
+          { "$ref": "#/definitions/taskCondition" },
+          { "$ref": "#/definitions/variableCondition" },
+          { "$ref": "#/definitions/operatorCondition" },
+          { "$ref": "#/definitions/functionCondition" }
+        ]
+      },
+      "constantCondition": {
+        "type": "object",
+        "required": ["type", "value"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["const", "constant"]
+          },
+          "value": {
+            "type": ["string", "number", "boolean", "array"]
+          }
+        }
+      },
+      "phaseCondition": {
+        "type": "object",
+        "required": ["type", "phase", "value"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["phase"]
+          },
+          "phase": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "taskCondition": {
+        "type": "object",
+        "required": ["type", "task", "value"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["task"]
+          },
+          "task": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "variableCondition": {
+        "type": "object",
+        "required": ["type", "value"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["variable"]
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "operatorCondition": {
+        "type": "object",
+        "required": ["type", "operator"],
+        "oneOf": [
+          {
+            "required": ["operator", "operands"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["operator"]
+              },
+              "operator": {
+                "type": "string",
+                "enum": ["AND", "OR", "EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "INCLUDES", "CONTAINS"]
+              },
+              "operands": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/conditionObject"
+                }
+              }
+            }
+          },
+          {
+            "required": ["operator", "phase", "operands"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["operator"]
+              },
+              "operator": {
+                "type": "string",
+                "enum": ["ALL_TASKS_IN_PHASE", "ANY_TASKS_IN_PHASE"]
+              },
+              "phase": {
+                "type": "string"
+              },
+              "operands": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/conditionObject"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "functionCondition": {
+        "type": "object",
+        "required": ["type", "function", "operands"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["function"]
+          },
+          "function": {
+            "type": "string",
+            "enum": ["COUNT", "DATE"]
+          },
+          "operands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/conditionObject"
+            }
+          }
+        }
+      },
+      "variableSourceObject": {
+        "type": "object",
+        "oneOf": [
+          { "$ref": "#/definitions/constantCondition" },
+          { "$ref": "#/definitions/phaseCondition" },
+          { "$ref": "#/definitions/taskCondition" },
+          { "$ref": "#/definitions/functionCondition" },
+          { "$ref": "#/definitions/arrayCondition" }
+        ]
+      },
+      "arrayCondition": {
+        "type": "object",
+        "required": ["type", "operands"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["array"]
+          },
+          "operands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/conditionObject"
+            }
+          }
+        }
+      },
+      "retryConfiguration": {
+        "type": "object",
+        "properties": {
+          "retryOn": {
+            "type": "array",
+            "description": "Array of conditions that trigger a retry. Multiple conditions work as OR logic - at least one condition must be met to trigger a retry. If empty or missing, jobs will retry by default for any error.",
+            "items": {
+              "type": "object",
+              "required": ["type", "value"],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["errorMessageContains", "errorMessageExact"]
+                },
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "strategy": {
+            "type": "string",
+            "enum": ["linear"],
+            "default": "linear"
+          },
+          "strategyParams": {
+            "type": "object",
+            "properties": {
+              "maxRetries": {
+                "type": "integer",
+                "default": 3,
+                "description": "Maximum number of retry attempts (default: 3). This is the number of retries after the initial attempt. Set to 0 to disable retry while preserving retry configuration."
+              },
+              "delay": {
+                "type": "integer",
+                "default": 10,
+                "description": "Delay in seconds between retry attempts"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
