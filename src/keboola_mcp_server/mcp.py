@@ -14,9 +14,12 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.dependencies import get_http_request
+from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.tools import Tool
+from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel
 from starlette.requests import Request
@@ -184,6 +187,81 @@ class SessionStateMiddleware(fmw.Middleware):
             raise
 
         return state
+
+
+class ToolsFilteringMiddleware(fmw.Middleware):
+    """
+    This middleware filters out tools that are not available in the current project. The filtering is based on the
+    project features.
+
+    The middleware intercepts the `on_list_tools()` call and removes the unavailable tools
+    from the list. The AI assistants should not even see the tools that are not available in the current project.
+
+    The middleware also intercepts the `on_call_tool()` call and raises an exception if a call is attempted to a tool
+    that is not available in the current project.
+    """
+    @staticmethod
+    async def get_project_features(ctx: Context) -> set[str]:
+        assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
+        client = KeboolaClient.from_state(ctx.session.state)
+        token_info = await client.storage_client.verify_token()
+        return set(filter(None, token_info.get('owner', {}).get('features', [])))
+
+    async def on_list_tools(
+            self,
+            context: MiddlewareContext[mt.ListToolsRequest],
+            call_next: CallNext[mt.ListToolsRequest, list[Tool]]
+    ) -> list[Tool]:
+        tools = await call_next(context)
+        features = await self.get_project_features(context.fastmcp_context)
+
+        if 'global-search' not in features:
+            tools = [t for t in tools if t.name != 'search']
+
+        # TODO: uncomment and adjust when WAII tools are implemented
+        # if 'waii-integration' not in features:
+        #     tools = [t for t in tools if t.name != 'text_to_sql']
+
+        # TODO: uncomment and adjust when the conditional flows support is added
+        # if 'conditional-flows-disabled' in features:
+        #     tools = [t for t in tools if t.name != 'create_conditional_flow']
+        # else:
+        #     tools = [t for t in tools if t.name != 'create_flow']
+
+        return tools
+
+    async def on_call_tool(
+            self,
+            context: MiddlewareContext[mt.CallToolRequestParams],
+            call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult]
+    ) -> mt.CallToolResult:
+        tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+        features = await self.get_project_features(context.fastmcp_context)
+
+        if 'global-search' not in features:
+            if tool.name == 'search':
+                raise ToolError('The "search" tool is not available in this project. '
+                                'Please ask Keboola support to enable "Global Search" feature.')
+
+        # TODO: uncomment and adjust when WAII tools are implemented
+        # if 'waii-integration' not in features:
+        #     if tool.name == 'text_to_sql':
+        #         raise ToolError('The "text_to_sql" tool is not available in this project. '
+        #                         'Please ask Keboola support to enable "WAII Integration" feature.')
+
+        # TODO: uncomment and adjust when the conditional flows support is added
+        # if 'conditional-flows-disabled' in features:
+        #     if tool.name == 'create_conditional_flow':
+        #         raise ToolError('The "create_conditional_flow" tool is not available in this project. '
+        #                         'Please ask Keboola support to enable "Conditional Flows" feature '
+        #                         'or use "create_flow" tool instead.')
+        # else:
+        #     if tool.name == 'create_flow':
+        #         raise ToolError('The "create_flow" tool is not available in this project. '
+        #                         'This project uses "Conditional Flows", '
+        #                         'please use"create_conditional_flow" tool instead.')
+
+        return await call_next(context)
 
 
 def listing_output_serializer(data: BaseModel) -> str:

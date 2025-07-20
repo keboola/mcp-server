@@ -13,7 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware
+from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
@@ -121,7 +121,7 @@ def create_server(config: Config) -> FastMCP:
         name='Keboola Explorer',
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
-        middleware=[SessionStateMiddleware()],
+        middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware()],
     )
 
     @mcp.custom_route('/health-check', methods=['GET'])
