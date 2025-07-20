@@ -9,7 +9,7 @@ from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import ServerState, with_session_state
+from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -100,7 +100,6 @@ class TestServer:
 async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     expected_param_description = 'Parameter 1 description'
 
-    @with_session_state()
     async def assessed_function(
         ctx: Context, param: Annotated[str, Field(description=expected_param_description)]
     ) -> str:
@@ -172,7 +171,6 @@ async def test_keboola_injection_and_lifespan(
 
     server = create_server(config)
 
-    @with_session_state()
     async def assessed_function(ctx: Context, param: str) -> str:
         assert hasattr(ctx.session, 'state')
         client = KeboolaClient.from_state(ctx.session.state)

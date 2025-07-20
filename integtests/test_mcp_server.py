@@ -8,7 +8,6 @@ from mcp.types import TextContent
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import Configuration
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -164,7 +163,6 @@ async def test_http_multiple_clients_with_different_headers(
         'client_2': {'storage_token': 'client_2_storage_token', 'workspace_schema': 'client_2_workspace_schema'},
     }
 
-    @with_session_state()
     async def assessed_function(ctx: Context, which_client: str) -> str:
         storage_token = KeboolaClient.from_state(ctx.session.state).token
         workspace_schema = WorkspaceManager.from_state(ctx.session.state)._workspace_schema

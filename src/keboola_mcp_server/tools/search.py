@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import GlobalSearchResponse, ItemType, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import with_session_state
 
 LOG = logging.getLogger(__name__)
 
@@ -99,7 +98,6 @@ class GlobalSearchOutput(BaseModel):
 
 
 @tool_errors()
-@with_session_state()
 async def search(
     ctx: Context,
     name_prefixes: Annotated[list[str], Field(description='Name prefixes to match against item names.')],
@@ -150,7 +148,6 @@ async def search(
 
 
 @tool_errors()
-@with_session_state()
 async def find_component_id(
     ctx: Context,
     query: Annotated[str, Field(description='Natural language query to find the requested component.')],
