@@ -21,74 +21,67 @@ def mock_token_response() -> Mapping[str, Any]:
 
 @pytest.mark.asyncio
 async def test_create_oauth_url_success(
-    mocker: MockerFixture, 
-    mcp_context_client: Context, 
-    mock_token_response: Mapping[str, Any]
+    mocker: MockerFixture, mcp_context_client: Context, mock_token_response: Mapping[str, Any]
 ) -> None:
     """Test successful OAuth URL creation."""
     # Mock the storage client's post method to return the token response
     mcp_context_client.session.state['sapi_client'].storage_client.post.return_value = mock_token_response
     mcp_context_client.session.state['sapi_client'].storage_client.base_api_url = 'https://connection.test.keboola.com'
-    
+
     component_id = 'keboola.ex-google-analytics-v4'
     config_id = 'config-123'
-    
-    result = await create_oauth_url(
-        component_id=component_id,
-        config_id=config_id,
-        ctx=mcp_context_client
-    )
-    
+
+    result = await create_oauth_url(component_id=component_id, config_id=config_id, ctx=mcp_context_client)
+
     # Verify the storage client was called with correct parameters
     mcp_context_client.session.state['sapi_client'].storage_client.post.assert_called_once_with(
-        endpoint="tokens",
+        endpoint='tokens',
         data={
-            "description": f"Short-lived token for OAuth URL - {component_id}/{config_id}",
-            "componentAccess": [component_id],
-            "expiresIn": 3600,
-        }
+            'description': f'Short-lived token for OAuth URL - {component_id}/{config_id}',
+            'componentAccess': [component_id],
+            'expiresIn': 3600,
+        },
     )
-    
+
     # Verify the response is the URL string
     assert isinstance(result, str)
-    
+
     expected_url = (
-        f"https://external.keboola.com/oauth/index.html"
-        f"?token=KBC_TOKEN_12345"
-        f"&sapiUrl=https://connection.test.keboola.com"
-        f"#/{component_id}/{config_id}"
+        f'https://external.keboola.com/oauth/index.html'
+        f'?token=KBC_TOKEN_12345'
+        f'&sapiUrl=https://connection.test.keboola.com'
+        f'#/{component_id}/{config_id}'
     )
     assert result == expected_url
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('component_id,config_id', [
-    ('keboola.ex-google-analytics-v4', 'my-config-123'),
-    ('keboola.ex-gmail', 'gmail-config-456'),
-    ('other.component', 'test-config'),
-])
+@pytest.mark.parametrize(
+    ('component_id', 'config_id'),
+    [
+        ('keboola.ex-google-analytics-v4', 'my-config-123'),
+        ('keboola.ex-gmail', 'gmail-config-456'),
+        ('other.component', 'test-config'),
+    ],
+)
 async def test_create_oauth_url_different_components(
     mocker: MockerFixture,
     mcp_context_client: Context,
     mock_token_response: Mapping[str, Any],
     component_id: str,
-    config_id: str
+    config_id: str,
 ) -> None:
     """Test OAuth URL creation for different components."""
     # Mock the storage client
     mcp_context_client.session.state['sapi_client'].storage_client.post.return_value = mock_token_response
     mcp_context_client.session.state['sapi_client'].storage_client.base_api_url = 'https://connection.test.keboola.com'
-    
-    result = await create_oauth_url(
-        component_id=component_id,
-        config_id=config_id,
-        ctx=mcp_context_client
-    )
-    
+
+    result = await create_oauth_url(component_id=component_id, config_id=config_id, ctx=mcp_context_client)
+
     # Verify component-specific parameters were used
     assert isinstance(result, str)
-    assert f"#/{component_id}/{config_id}" in result
-    
+    assert f'#/{component_id}/{config_id}' in result
+
     # Verify the API call included the correct component access
     call_args = mcp_context_client.session.state['sapi_client'].storage_client.post.call_args
     assert call_args[1]['data']['componentAccess'] == [component_id]
@@ -97,27 +90,19 @@ async def test_create_oauth_url_different_components(
 
 
 @pytest.mark.asyncio
-async def test_create_oauth_url_token_creation_failure(
-    mocker: MockerFixture,
-    mcp_context_client: Context
-) -> None:
+async def test_create_oauth_url_token_creation_failure(mocker: MockerFixture, mcp_context_client: Context) -> None:
     """Test OAuth URL creation when token creation fails."""
     # Mock the storage client to raise an exception
-    mcp_context_client.session.state['sapi_client'].storage_client.post.side_effect = Exception("Token creation failed")
-    
-    with pytest.raises(Exception, match="Token creation failed"):
+    mcp_context_client.session.state['sapi_client'].storage_client.post.side_effect = Exception('Token creation failed')
+
+    with pytest.raises(Exception, match='Token creation failed'):
         await create_oauth_url(
-            component_id='keboola.ex-google-analytics-v4',
-            config_id='config-123',
-            ctx=mcp_context_client
+            component_id='keboola.ex-google-analytics-v4', config_id='config-123', ctx=mcp_context_client
         )
 
 
 @pytest.mark.asyncio
-async def test_create_oauth_url_missing_token_in_response(
-    mocker: MockerFixture,
-    mcp_context_client: Context
-) -> None:
+async def test_create_oauth_url_missing_token_in_response(mocker: MockerFixture, mcp_context_client: Context) -> None:
     """Test OAuth URL creation when token is missing from response."""
     # Mock response without token field
     invalid_response = {
@@ -125,10 +110,8 @@ async def test_create_oauth_url_missing_token_in_response(
         'expiresIn': 3600,
     }
     mcp_context_client.session.state['sapi_client'].storage_client.post.return_value = invalid_response
-    
+
     with pytest.raises(KeyError):
         await create_oauth_url(
-            component_id='keboola.ex-google-analytics-v4',
-            config_id='config-123',
-            ctx=mcp_context_client
+            component_id='keboola.ex-google-analytics-v4', config_id='config-123', ctx=mcp_context_client
         )
