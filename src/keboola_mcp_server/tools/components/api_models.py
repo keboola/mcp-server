@@ -4,7 +4,7 @@ Raw API Models - Pure data transfer objects that mirror API responses exactly.
 These models represent the raw data returned by Keboola APIs.
 They contain no business logic and use the exact field names and structures from the APIs.
 """
-
+from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import AliasChoices, BaseModel, Field
@@ -23,7 +23,7 @@ class ComponentAPIResponse(BaseModel):
     # Core fields present in both APIs (SAPI and AI service)
     component_id: str = Field(
         description='The ID of the component',
-        validation_alias=AliasChoices('id', 'component_id', 'componentId', 'component-id'),
+        validation_alias=AliasChoices('component_id', 'id', 'componentId', 'component-id'),
     )
     component_name: str = Field(
         description='The name of the component',
@@ -94,7 +94,7 @@ class ConfigurationAPIResponse(BaseModel):
     )
     configuration_id: str = Field(
         description='The ID of the configuration',
-        validation_alias=AliasChoices('id', 'configuration_id', 'configurationId', 'configuration-id'),
+        validation_alias=AliasChoices('configuration_id', 'id', 'configurationId', 'configuration-id'),
     )
     name: str = Field(description='The name of the configuration')
     description: Optional[str] = Field(default=None, description='The description of the configuration')
@@ -125,4 +125,26 @@ class ConfigurationAPIResponse(BaseModel):
         default_factory=list,
         description='Configuration metadata',
         validation_alias=AliasChoices('metadata', 'configuration_metadata', 'configurationMetadata'),
+    )
+
+class CreateConfigurationAPIResponse(BaseModel):
+    id: str = Field(description='Unique identifier of the newly created configuration.')
+    name: str = Field(description='Human-readable name of the configuration.')
+    description: Optional[str] = Field(default='', description='Optional description of the configuration.')
+    created: datetime = Field(description='Timestamp when the configuration was created (ISO 8601).')
+    creatorToken: dict[str, Any] = Field(description='Metadata about the token that created the configuration.')
+    version: int = Field(description='Version number of the configuration.')
+    changeDescription: Optional[str] = Field(
+        description='Optional description of the change that introduced this configuration version.'
+    )
+    isDisabled: bool = Field(description='Indicates whether the configuration is currently disabled.')
+    isDeleted: bool = Field(description='Indicates whether the configuration has been marked as deleted.')
+    configuration: Optional[dict[str, Any]] = Field(
+        description='User-defined configuration payload (key-value structure).'
+    )
+    state: Optional[dict[str, Any]] = Field(
+        description='Internal runtime state data associated with the configuration.'
+    )
+    currentVersion: Optional[dict[str, Any]] = Field(
+        description='Metadata about the currently deployed version of the configuration.'
     )

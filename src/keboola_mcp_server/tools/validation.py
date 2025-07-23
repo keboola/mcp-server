@@ -11,7 +11,7 @@ from typing import Callable, Optional, cast
 import jsonschema
 import jsonschema.validators
 
-from keboola_mcp_server.client import JsonDict, JsonPrimitive, JsonStruct
+from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, FLOW_TYPE, JsonDict, JsonPrimitive, JsonStruct, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.components.model import Component
 from keboola_mcp_server.tools.components.utils import BIGQUERY_TRANSFORMATION_ID, SNOWFLAKE_TRANSFORMATION_ID
 
@@ -24,7 +24,8 @@ RESOURCES = 'keboola_mcp_server.resources'
 
 class ConfigurationSchemaResources(str, Enum):
     STORAGE = 'storage-schema.json'
-    FLOW = 'flow-schema.json'
+    LEGACY_FLOW = 'flow-schema.json'
+    FLOW = 'conditional-flow-schema.json'
 
 
 class RecoverableValidationError(jsonschema.ValidationError):
@@ -207,14 +208,19 @@ def _validate_parameters_configuration_against_schema(
     return parameters
 
 
-def validate_flow_configuration_against_schema(flow: JsonDict, initial_message: Optional[str] = None) -> JsonDict:
+def validate_flow_configuration_against_schema(flow: JsonDict, flow_type: FLOW_TYPE, initial_message: Optional[str] = None) -> JsonDict:
     """
     Validate the flow configuration using jsonschema.
     :flow: json data to validate
+    :flow_type: the type of flow schema to validate against (legacy flow or conditional flow)
     :initial_message: initial message to include in the error message
     :returns: The validated flow configuration
     """
-    schema = _load_schema(ConfigurationSchemaResources.FLOW)
+    schema_type = (
+        ConfigurationSchemaResources.LEGACY_FLOW if flow_type == ORCHESTRATOR_COMPONENT_ID
+        else ConfigurationSchemaResources.FLOW
+    )
+    schema = _load_schema(schema_type)
     _validate_json_against_schema(
         json_data=flow,
         schema=schema,

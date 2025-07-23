@@ -6,6 +6,7 @@ import logging
 from typing import Annotated, Any, Sequence, cast
 
 import httpx
+from datetime import datetime, timezone
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import Field
@@ -22,9 +23,12 @@ from keboola_mcp_server.client import (
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
+from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse, CreateConfigurationAPIResponse
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
+    ConditionalFlowPhase,
+    ConditionalFlowTask,
     Flow,
     FlowToolResponse,
     ListFlowsOutput,
@@ -45,7 +49,8 @@ LOG = logging.getLogger(__name__)
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    flow_tools = [create_flow, list_flows, update_flow, get_flow, get_flow_examples, get_flow_schema]
+    flow_tools = [create_flow, create_conditional_flow, list_flows,
+                  update_flow, get_flow, get_flow_examples, get_flow_schema]
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
@@ -121,7 +126,7 @@ async def create_flow(
         - determine dependencies between the JIRA extractors
         - fill `phases` parameter by grouping tasks into phases
     """
-
+    flow_type = ORCHESTRATOR_COMPONENT_ID
     processed_phases = ensure_phase_ids(phases)
     processed_tasks = ensure_task_ids(tasks)
     validate_flow_structure(processed_phases, processed_tasks)
@@ -129,27 +134,99 @@ async def create_flow(
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
     }
-    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration))
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
     LOG.info(f'Creating new flow: {name} (type: {ORCHESTRATOR_COMPONENT_ID})')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     new_raw_configuration = await client.storage_client.flow_create(
-        name=name, description=description, flow_configuration=flow_configuration, flow_type=ORCHESTRATOR_COMPONENT_ID
+        name=name, description=description, flow_configuration=flow_configuration, flow_type=flow_type
     )
-
+    api_config = ConfigurationAPIResponse.model_validate(new_raw_configuration)
     await set_cfg_creation_metadata(
         client,
-        component_id=ORCHESTRATOR_COMPONENT_ID,
+        component_id=flow_type,
         configuration_id=str(new_raw_configuration['id']),
     )
 
     flow_id = str(new_raw_configuration['id'])
     flow_name = str(new_raw_configuration['name'])
-    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name, flow_type=ORCHESTRATOR_COMPONENT_ID)
+    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name, flow_type=flow_type)
     tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
 
-    LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}" (type: {ORCHESTRATOR_COMPONENT_ID})')
+    LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}" (type: {flow_type})')
+    return tool_response
+
+
+@tool_errors()
+@with_session_state()
+async def create_conditional_flow(
+    ctx: Context,
+    name: Annotated[str, Field(description='A short, descriptive name for the flow.')],
+    description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
+    phases: Annotated[list[dict[str, Any]], Field(description='List of enhanced phase definitions with structured conditions and retry configurations.')],
+    tasks: Annotated[list[dict[str, Any]], Field(description='List of enhanced task definitions with structured configurations.')],
+) -> Annotated[FlowToolResponse, Field(description='Response object for enhanced flow creation.')]:
+    """
+    Creates a new **enhanced conditional flow** configuration in Keboola using structured Pydantic models.
+
+    This enhanced version provides:
+    - **Structured conditions**: Type-safe condition objects with proper validation
+    - **Structured retry configurations**: Properly typed retry parameters and conditions
+    - **Structured task configurations**: Type-safe job, notification, and variable task configurations
+    - **Better validation**: Compile-time validation of flow structure and relationships
+    - **Enhanced error messages**: More descriptive errors when validation fails
+
+    WHAT ARE ENHANCED CONDITIONAL FLOWS?
+
+    Enhanced conditional flows use structured models for:
+    - **Conditions**: TaskCondition, PhaseCondition, OperatorCondition, etc.
+    - **Retry configurations**: RetryConfiguration with RetryStrategyParams and RetryOnCondition
+    - **Task configurations**: JobTaskConfiguration, NotificationTaskConfiguration, VariableTaskConfiguration
+
+    CONSIDERATIONS:
+    - All IDs must be unique and clearly defined.
+    - This tool automatically validates the structure before creation.
+    - The enhanced models provide better type safety and validation.
+    - Backward compatible with existing flow configurations.
+
+    USE CASES:
+    - user_input: Create a flow with complex conditional logic and retry mechanisms.
+    - user_input: Build a data pipeline with sophisticated error handling and notifications.
+    """
+    flow_type = CONDITIONAL_FLOW_COMPONENT_ID
+    processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
+    processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks]
+    flow_configuration = {
+        'phases': [phase.model_dump(exclude_unset=True) for phase in processed_phases],
+        'tasks': [task.model_dump(exclude_unset=True) for task in processed_tasks],
+    }
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
+
+    LOG.info(f'Creating new enhanced conditional flow: {name} (type: {flow_type})')
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+    new_raw_configuration = await client.storage_client.flow_create(
+        name=name, description=description, flow_configuration=flow_configuration, flow_type=flow_type
+    )
+    api_config = CreateConfigurationAPIResponse.model_validate(new_raw_configuration)
+
+    await set_cfg_creation_metadata(
+        client,
+        component_id=flow_type,
+        configuration_id=str(new_raw_configuration['id']),
+    )
+
+    flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
+    tool_response = FlowToolResponse(
+        id=api_config.id,
+        description=api_config.description,
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=flow_links
+    )
+
+    LOG.info(f'Created enhanced flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
     return tool_response
 
 
@@ -184,17 +261,44 @@ async def update_flow(
     Use this tool to update an existing flow.
     """
 
-    processed_phases = ensure_phase_ids(phases)
-    processed_tasks = ensure_task_ids(tasks)
-    validate_flow_structure(processed_phases, processed_tasks)
-    flow_configuration = {
-        'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
-        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
-    }
-    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration))
-
-    LOG.info(f'Updating flow configuration: {configuration_id}')
     client = KeboolaClient.from_state(ctx.session.state)
+    
+    # Get existing flow to determine type - try both flow types
+    existing_flow = None
+    existing_flow_type: FLOW_TYPE | None = None
+    
+    flow_types: list[FLOW_TYPE] = [CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID]
+    for flow_type in flow_types:
+        try:
+            existing_flow = await client.storage_client.flow_detail(configuration_id, flow_type=flow_type)
+            existing_flow_type = flow_type
+            break
+        except Exception:
+            continue
+    
+    if not existing_flow or not existing_flow_type:
+        raise ValueError(f'Flow configuration "{configuration_id}" not found.')
+    
+    # Use flow-type aware utilities
+    processed_phases = ensure_phase_ids(phases, flow_type=existing_flow_type)
+    processed_tasks = ensure_task_ids(tasks, flow_type=existing_flow_type)
+    validate_flow_structure(processed_phases, processed_tasks)
+    
+    # Serialize based on flow type
+    if existing_flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
+        flow_configuration = {
+            'phases': [phase.model_dump(exclude_unset=True) for phase in processed_phases],
+            'tasks': [task.model_dump(exclude_unset=True) for task in processed_tasks],
+        }
+    else:
+        flow_configuration = {
+            'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
+            'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
+        }
+    
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=existing_flow_type)
+
+    LOG.info(f'Updating flow configuration: {configuration_id} (type: {existing_flow_type})')
     links_manager = await ProjectLinksManager.from_client(client)
     updated_raw_configuration = await client.storage_client.flow_update(
         config_id=configuration_id,
@@ -206,7 +310,7 @@ async def update_flow(
 
     await set_cfg_update_metadata(
         client,
-        component_id=ORCHESTRATOR_COMPONENT_ID,
+        component_id=existing_flow_type,
         configuration_id=str(updated_raw_configuration['id']),
         configuration_version=cast(int, updated_raw_configuration['version']),
     )
