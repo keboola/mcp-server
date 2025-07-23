@@ -42,15 +42,12 @@ async def create_oauth_url(
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
-    # Create short-lived SAPI token
-    token_data = {
-        'description': f'Short-lived token for OAuth URL - {component_id}/{config_id}',
-        'componentAccess': [component_id],
-        'expiresIn': 3600,  # 1 hour expiration
-    }
-
     # Create the token using the storage client
-    token_response = await client.storage_client.post(endpoint='tokens', data=token_data)
+    token_response = await client.storage_client.token_create(
+        description=f'Short-lived token for OAuth URL - {component_id}/{config_id}',
+        component_access=[component_id],
+        expires_in=3600,  # 1 hour expiration
+    )
 
     # Extract the token from response
     sapi_token = token_response['token']
