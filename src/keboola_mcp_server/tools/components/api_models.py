@@ -127,24 +127,36 @@ class ConfigurationAPIResponse(BaseModel):
         validation_alias=AliasChoices('metadata', 'configuration_metadata', 'configurationMetadata'),
     )
 
+
 class CreateConfigurationAPIResponse(BaseModel):
     id: str = Field(description='Unique identifier of the newly created configuration.')
     name: str = Field(description='Human-readable name of the configuration.')
     description: Optional[str] = Field(default='', description='Optional description of the configuration.')
     created: datetime = Field(description='Timestamp when the configuration was created (ISO 8601).')
-    creatorToken: dict[str, Any] = Field(description='Metadata about the token that created the configuration.')
-    version: int = Field(description='Version number of the configuration.')
-    changeDescription: Optional[str] = Field(
-        description='Optional description of the change that introduced this configuration version.'
+    creator_token: dict[str, Any] = Field(
+        description='Metadata about the token that created the configuration.',
+        alias='creatorToken'
     )
-    isDisabled: bool = Field(description='Indicates whether the configuration is currently disabled.')
-    isDeleted: bool = Field(description='Indicates whether the configuration has been marked as deleted.')
+    version: int = Field(description='Version number of the configuration.')
+    change_description: Optional[str] = Field(
+        description='Optional description of the change that introduced this configuration version.',
+        alias='changeDescription'
+    )
+    is_disabled: bool = Field(
+        description='Indicates whether the configuration is currently disabled.',
+        alias='isDisabled'
+    )
+    is_deleted: bool = Field(
+        description='Indicates whether the configuration has been marked as deleted.',
+        alias='isDeleted'
+    )
     configuration: Optional[dict[str, Any]] = Field(
         description='User-defined configuration payload (key-value structure).'
     )
     state: Optional[dict[str, Any]] = Field(
         description='Internal runtime state data associated with the configuration.'
     )
-    currentVersion: Optional[dict[str, Any]] = Field(
-        description='Metadata about the currently deployed version of the configuration.'
+    current_version: Optional[dict[str, Any]] = Field(
+        description='Metadata about the currently deployed version of the configuration.',
+        alias='currentVersion'
     )

@@ -11,7 +11,13 @@ from typing import Callable, Optional, cast
 import jsonschema
 import jsonschema.validators
 
-from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, FLOW_TYPE, JsonDict, JsonPrimitive, JsonStruct, ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.client import (
+    FLOW_TYPE,
+    ORCHESTRATOR_COMPONENT_ID,
+    JsonDict,
+    JsonPrimitive,
+    JsonStruct,
+)
 from keboola_mcp_server.tools.components.model import Component
 from keboola_mcp_server.tools.components.utils import BIGQUERY_TRANSFORMATION_ID, SNOWFLAKE_TRANSFORMATION_ID
 
@@ -208,7 +214,8 @@ def _validate_parameters_configuration_against_schema(
     return parameters
 
 
-def validate_flow_configuration_against_schema(flow: JsonDict, flow_type: FLOW_TYPE, initial_message: Optional[str] = None) -> JsonDict:
+def validate_flow_configuration_against_schema(flow: JsonDict, flow_type: FLOW_TYPE,
+                                               initial_message: Optional[str] = None) -> JsonDict:
     """
     Validate the flow configuration using jsonschema.
     :flow: json data to validate

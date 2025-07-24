@@ -3,7 +3,7 @@ Flow models for Keboola MCP server.
 """
 
 from datetime import datetime
-from typing import Any, Optional, Literal, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -11,10 +11,10 @@ from keboola_mcp_server.client import FLOW_TYPE
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 
-
 # =============================================================================
 # RESPONSE MODELS
 # =============================================================================
+
 
 class ListFlowsOutput(BaseModel):
     """Output of list_flows tool."""
@@ -83,7 +83,7 @@ class FlowConfiguration(BaseModel):
 
 class RetryStrategyParams(BaseModel):
     """Retry strategy parameters configuration."""
-    maxRetries: int = Field(default=3, description='Maximum number of retry attempts')
+    max_retries: int = Field(default=3, description='Maximum number of retry attempts', alias='maxRetries')
     delay: int = Field(default=10, description='Delay in seconds between retry attempts')
 
 
@@ -96,8 +96,16 @@ class RetryOnCondition(BaseModel):
 class RetryConfiguration(BaseModel):
     """Retry configuration for tasks and phases."""
     strategy: Literal['linear'] = Field(default='linear', description='Retry strategy')
-    strategyParams: RetryStrategyParams = Field(default_factory=RetryStrategyParams, description='Strategy parameters')
-    retryOn: Optional[list[RetryOnCondition]] = Field(default=None, description='Conditions that trigger retry')
+    strategy_params: RetryStrategyParams = Field(
+        default_factory=RetryStrategyParams,
+        description='Strategy parameters',
+        alias='strategyParams'
+    )
+    retry_on: Optional[list[RetryOnCondition]] = Field(
+        default=None,
+        description='Conditions that trigger retry',
+        alias='retryOn'
+    )
 
 
 # =============================================================================
@@ -133,7 +141,9 @@ class VariableCondition(BaseModel):
 class OperatorCondition(BaseModel):
     """Operator-based condition with operands."""
     type: Literal['operator'] = Field(description='Condition type')
-    operator: Literal['AND', 'OR', 'EQUALS', 'NOT_EQUALS', 'GREATER_THAN', 'LESS_THAN', 'INCLUDES', 'CONTAINS'] = Field(description='Operator type')
+    operator: Literal[
+        'AND', 'OR', 'EQUALS', 'NOT_EQUALS', 'GREATER_THAN', 'LESS_THAN', 'INCLUDES', 'CONTAINS'
+    ] = Field(description='Operator type')
     operands: list['ConditionObject'] = Field(description='List of operand conditions')
 
 
@@ -160,12 +170,12 @@ class ArrayCondition(BaseModel):
 
 # Union type for all condition types
 ConditionObject = Union[
-    TaskCondition, 
-    PhaseCondition, 
-    ConstantCondition, 
-    VariableCondition, 
-    OperatorCondition, 
-    PhaseOperatorCondition, 
+    TaskCondition,
+    PhaseCondition,
+    ConstantCondition,
+    VariableCondition,
+    OperatorCondition,
+    PhaseOperatorCondition,
     FunctionCondition,
     ArrayCondition
 ]
@@ -178,8 +188,8 @@ ConditionObject = Union[
 class JobTaskConfiguration(BaseModel):
     """Job task configuration."""
     type: Literal['job'] = Field(description='Task type')
-    componentId: str = Field(description='Component ID')
-    configId: str = Field(description='Configuration ID')
+    component_id: str = Field(description='Component ID', alias='componentId')
+    config_id: str = Field(description='Configuration ID', alias='configId')
     mode: Literal['run'] = Field(description='Execution mode')
     delay: Optional[Union[str, int]] = Field(default=None, description='Initial delay in seconds')
     retry: Optional[RetryConfiguration] = Field(default=None, description='Retry configuration')
@@ -236,11 +246,15 @@ class ConditionalFlowPhase(BaseModel):
     id: str = Field(description='Unique identifier of the phase (must be string)')
     name: str = Field(description='Name of the phase', min_length=1)
     description: Optional[str] = Field(default=None, description='Description of the phase')
-    retry: Optional[RetryConfiguration] = Field(default=None, description='Retry configuration for all tasks in this phase')
+    retry: Optional[RetryConfiguration] = Field(
+        default=None,
+        description='Retry configuration for all tasks in this phase'
+    )
     next: Optional[list[ConditionalFlowTransition]] = Field(
-        default_factory=list, 
+        default_factory=list,
         description='Array of transitions to other phases'
     )
+
 
 class ConditionalFlowConfiguration(BaseModel):
     """Represents a complete legacy flow configuration."""
@@ -261,7 +275,9 @@ class Flow(BaseModel):
     version: int = Field(description='The version of the flow configuration')
     is_disabled: bool = Field(default=False, description='Whether the flow configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the flow configuration is deleted')
-    configuration: FlowConfiguration | ConditionalFlowConfiguration= Field(description='The flow configuration containing phases and tasks')
+    configuration: FlowConfiguration | ConditionalFlowConfiguration = Field(
+        description='The flow configuration containing phases and tasks'
+    )
     change_description: Optional[str] = Field(default=None, description='The description of the latest changes')
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list,

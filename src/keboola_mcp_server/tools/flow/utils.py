@@ -3,7 +3,7 @@
 import json
 import logging
 from importlib import resources
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, Union
 
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
@@ -14,7 +14,13 @@ from keboola_mcp_server.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
-from keboola_mcp_server.tools.flow.model import ConditionalFlowPhase, ConditionalFlowTask, FlowPhase, FlowSummary, FlowTask
+from keboola_mcp_server.tools.flow.model import (
+    ConditionalFlowPhase,
+    ConditionalFlowTask,
+    FlowPhase,
+    FlowSummary,
+    FlowTask,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -37,7 +43,10 @@ def get_schema_as_markdown(flow_type: FLOW_TYPE) -> str:
     return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 
-def ensure_phase_ids(phases: list[dict[str, Any]], flow_type: str = ORCHESTRATOR_COMPONENT_ID) -> list[FlowPhase] | list[ConditionalFlowPhase]:
+def ensure_phase_ids(
+    phases: list[dict[str, Any]], 
+    flow_type: str = ORCHESTRATOR_COMPONENT_ID
+) -> list[FlowPhase] | list[ConditionalFlowPhase]:
     """Ensure all phases have unique IDs and proper structure using Pydantic validation"""
     if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
         return ensure_conditional_phase_ids(phases)
@@ -81,14 +90,14 @@ def ensure_conditional_phase_ids(phases: list[dict[str, Any]]) -> list[Condition
         phase_data = phase.copy()
 
         if 'id' not in phase_data or not phase_data['id']:
-            phase_id = f"phase_{i + 1}"
+            phase_id = f'phase_{i + 1}'
             while phase_id in used_ids:
                 i += 1
-                phase_id = f"phase_{i + 1}"
+                phase_id = f'phase_{i + 1}'
             phase_data['id'] = phase_id
 
         if 'name' not in phase_data:
-            phase_data['name'] = f"Phase {phase_data['id']}"
+            phase_data['name'] = f'Phase {phase_data["id"]}'
 
         try:
             validated_phase = ConditionalFlowPhase.model_validate(phase_data)
@@ -100,7 +109,10 @@ def ensure_conditional_phase_ids(phases: list[dict[str, Any]]) -> list[Condition
     return processed_phases
 
 
-def ensure_task_ids(tasks: list[dict[str, Any]], flow_type: str = ORCHESTRATOR_COMPONENT_ID) -> list[FlowTask] | list[ConditionalFlowTask]:
+def ensure_task_ids(
+    tasks: list[dict[str, Any]],
+    flow_type: str = ORCHESTRATOR_COMPONENT_ID
+) -> list[Union[FlowTask, ConditionalFlowTask]]:
     """Ensure all tasks have unique IDs and proper structure using Pydantic validation"""
     if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
         return ensure_conditional_task_ids(tasks)
@@ -166,17 +178,17 @@ def ensure_conditional_task_ids(tasks: list[dict[str, Any]]) -> list[Conditional
         task_data = task.copy()
 
         if 'id' not in task_data or not task_data['id']:
-            task_id = f"task_{i + 1}"
+            task_id = f'task_{i + 1}'
             while task_id in used_ids:
                 i += 1
-                task_id = f"task_{i + 1}"
+                task_id = f'task_{i + 1}'
             task_data['id'] = task_id
 
         if 'name' not in task_data:
             task_data['name'] = f"Task {task_data['id']}"
 
         if 'task' not in task_data:
-            raise ValueError(f"Task {task_data['id']} missing 'task' configuration")
+            raise ValueError(f'Task {task_data["id"]} missing "task" configuration')
 
         try:
             validated_task = ConditionalFlowTask.model_validate(task_data)
@@ -188,8 +200,10 @@ def ensure_conditional_task_ids(tasks: list[dict[str, Any]]) -> list[Conditional
     return processed_tasks
 
 
-def validate_flow_structure(phases: list[FlowPhase] | list[ConditionalFlowPhase], 
-                          tasks: list[FlowTask] | list[ConditionalFlowTask]) -> None:
+def validate_flow_structure(
+    phases: list[FlowPhase | ConditionalFlowPhase],
+    tasks: list[FlowTask | ConditionalFlowTask],
+) -> None:
     """Validate that the flow structure is valid - now using Pydantic models"""
     phase_ids = {phase.id for phase in phases}
 

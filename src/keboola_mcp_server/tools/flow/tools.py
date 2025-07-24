@@ -3,10 +3,10 @@
 import importlib.resources as pkg_resources
 import json
 import logging
-from typing import Annotated, Any, Literal, Sequence, cast
+from datetime import datetime, timezone
+from typing import Annotated, Any, Sequence, cast
 
 import httpx
-from datetime import datetime, timezone
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import Field
@@ -23,7 +23,7 @@ from keboola_mcp_server.client import (
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
-from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse, CreateConfigurationAPIResponse
+from keboola_mcp_server.tools.components.api_models import CreateConfigurationAPIResponse
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
@@ -168,8 +168,14 @@ async def create_conditional_flow(
     ctx: Context,
     name: Annotated[str, Field(description='A short, descriptive name for the flow.')],
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
-    phases: Annotated[list[dict[str, Any]], Field(description='List of enhanced phase definitions with structured conditions and retry configurations.')],
-    tasks: Annotated[list[dict[str, Any]], Field(description='List of enhanced task definitions with structured configurations.')],
+    phases: Annotated[
+        list[dict[str, Any]],
+        Field(description='List of phase definitions for conditional flows.')
+    ],
+    tasks: Annotated[
+        list[dict[str, Any]],
+        Field(description='List of task definitions for conditional flows.')
+    ],
 ) -> Annotated[FlowToolResponse, Field(description='Response object for enhanced flow creation.')]:
     """
     Creates a new **enhanced conditional flow** configuration in Keboola using structured Pydantic models.
@@ -239,7 +245,15 @@ async def create_conditional_flow(
 async def update_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
-    flow_type: Annotated[Literal['keboola.flow', 'keboola.orchestrator'], Field(description='The type of flow to update. Use "keboola.flow" for conditional flows or "keboola.orchestrator" for legacy flows.')],
+    flow_type: Annotated[
+        FLOW_TYPE,
+        Field(
+            description=(
+                'The type of flow to update. Use "keboola.flow" for conditional flows or '
+                '"keboola.orchestrator" for legacy flows.'
+            )
+        )
+    ],
     name: Annotated[str, Field(description='Updated flow name.')],
     description: Annotated[str, Field(description='Updated flow description.')],
     phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')],
@@ -270,12 +284,12 @@ async def update_flow(
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
-    
+
     # Use flow-type aware utilities
     processed_phases = ensure_phase_ids(phases, flow_type=flow_type)
     processed_tasks = ensure_task_ids(tasks, flow_type=flow_type)
     validate_flow_structure(processed_phases, processed_tasks)
-    
+
     # Serialize based on flow type
     if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
         flow_configuration = {
@@ -287,7 +301,7 @@ async def update_flow(
             'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
             'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
         }
-    
+
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
     LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
