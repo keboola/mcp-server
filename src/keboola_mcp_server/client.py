@@ -38,6 +38,9 @@ ItemType = Literal[
 ]
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
+CONDITIONAL_FLOW_COMPONENT_ID = 'keboola.flow'
+FLOW_TYPE = Literal['keboola.flow', 'keboola.orchestrator']
+FLOW_TYPES: Sequence[FLOW_TYPE] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID)
 
 
 class KeboolaClient:
@@ -800,9 +803,10 @@ class AsyncStorageClient(KeboolaServiceClient):
         name: str,
         description: str,
         flow_configuration: dict[str, Any],
+        flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID,
     ) -> JsonDict:
         """
-        Creates a new flow (orchestrator) configuration.
+        Creates a new flow configuration.
 
         Note: Flow configurations are special - they store phases/tasks directly
         under 'configuration', not under 'configuration.parameters' like other components.
@@ -810,42 +814,47 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param name: The name of the flow
         :param description: The description of the flow
         :param flow_configuration: The flow configuration containing phases and tasks directly
+        :param flow_type: The type of flow to create (orchestrator or conditional)
         :return: The SAPI call response - created flow configuration or raise an error
         """
         return await self.configuration_create(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
+            component_id=flow_type,
             name=name,
             description=description,
             configuration=flow_configuration,
         )
 
-    async def flow_delete(self, configuration_id: str, skip_trash: bool = False) -> None:
+    async def flow_delete(self, configuration_id: str,
+                          flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID,
+                          skip_trash: bool = False) -> None:
         """
         Deletes a flow configuration.
 
         :param configuration_id: The id of the flow configuration.
+        :param flow_type: The type of flow to delete (orchestrator or conditional)
         :param skip_trash: If True, the configuration is deleted without moving to the trash.
             (Technically it means the API endpoint is called twice.)
         :raises httpx.HTTPStatusError: If the configuration_id is not found.
         """
-        await self.configuration_delete(ORCHESTRATOR_COMPONENT_ID, configuration_id, skip_trash)
+        await self.configuration_delete(flow_type, configuration_id, skip_trash)
 
-    async def flow_detail(self, config_id: str) -> JsonDict:
+    async def flow_detail(self, config_id: str, flow_type: FLOW_TYPE) -> JsonDict:
         """
-        Retrieves a specific flow (orchestrator) configuration.
+        Retrieves a specific flow configuration (orchestrator or conditional).
 
         :param config_id: The ID of the flow configuration to retrieve
+        :param flow_type: The component ID (orchestrator or keboola.flow)
         :return: Flow configuration details
         """
-        return await self.configuration_detail(component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=config_id)
+        return await self.configuration_detail(component_id=flow_type, configuration_id=config_id)
 
-    async def flow_list(self) -> list[JsonDict]:
+    async def flow_list(self, flow_type: FLOW_TYPE) -> list[JsonDict]:
         """
         Lists all flow (orchestrator) configurations in the project.
 
         :return: List of flow configurations
         """
-        return await self.configuration_list(component_id=ORCHESTRATOR_COMPONENT_ID)
+        return await self.configuration_list(component_id=flow_type)
 
     async def flow_update(
         self,
@@ -854,9 +863,10 @@ class AsyncStorageClient(KeboolaServiceClient):
         description: str,
         change_description: str,
         flow_configuration: dict[str, Any],
+        flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID,
     ) -> JsonDict:
         """
-        Updates an existing flow (orchestrator) configuration.
+        Updates an existing flow configuration.
 
         Note: Flow configurations store phases/tasks directly under 'configuration'.
 
@@ -865,10 +875,11 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param description: The updated description of the flow
         :param change_description: Description of the changes made
         :param flow_configuration: The updated flow configuration containing phases and tasks directly
+        :param flow_type: The type of flow to update (orchestrator or conditional)
         :return: The SAPI call response - updated flow configuration or raise an error
         """
         return await self.configuration_update(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
+            component_id=flow_type,
             configuration_id=config_id,
             configuration=flow_configuration,
             change_description=change_description,
