@@ -5,6 +5,7 @@ from typing import Any, Mapping
 import pytest
 from mcp.server.fastmcp import Context
 
+from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.tools.oauth import create_oauth_url
 
 
@@ -24,8 +25,9 @@ async def test_create_oauth_url_success(
 ) -> None:
     """Test successful OAuth URL creation."""
     # Mock the storage client's token_create method to return the token response
-    mcp_context_client.session.state['sapi_client'].storage_client.token_create.return_value = mock_token_response
-    mcp_context_client.session.state['sapi_client'].storage_client.base_api_url = 'https://connection.test.keboola.com'
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.token_create.return_value = mock_token_response
+    keboola_client.storage_client.base_api_url = 'https://connection.test.keboola.com'
 
     component_id = 'keboola.ex-google-analytics-v4'
     config_id = 'config-123'
@@ -33,7 +35,7 @@ async def test_create_oauth_url_success(
     result = await create_oauth_url(component_id=component_id, config_id=config_id, ctx=mcp_context_client)
 
     # Verify the storage client was called with correct parameters
-    mcp_context_client.session.state['sapi_client'].storage_client.token_create.assert_called_once_with(
+    keboola_client.storage_client.token_create.assert_called_once_with(
         description=f'Short-lived token for OAuth URL - {component_id}/{config_id}',
         component_access=[component_id],
         expires_in=3600,
@@ -68,8 +70,9 @@ async def test_create_oauth_url_different_components(
 ) -> None:
     """Test OAuth URL creation for different components."""
     # Mock the storage client
-    mcp_context_client.session.state['sapi_client'].storage_client.token_create.return_value = mock_token_response
-    mcp_context_client.session.state['sapi_client'].storage_client.base_api_url = 'https://connection.test.keboola.com'
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.token_create.return_value = mock_token_response
+    keboola_client.storage_client.base_api_url = 'https://connection.test.keboola.com'
 
     result = await create_oauth_url(component_id=component_id, config_id=config_id, ctx=mcp_context_client)
 
@@ -78,7 +81,7 @@ async def test_create_oauth_url_different_components(
     assert f'#/{component_id}/{config_id}' in result
 
     # Verify the API call included the correct component access
-    call_args = mcp_context_client.session.state['sapi_client'].storage_client.token_create.call_args
+    call_args = keboola_client.storage_client.token_create.call_args
     assert call_args[1]['component_access'] == [component_id]
     assert component_id in call_args[1]['description']
     assert config_id in call_args[1]['description']
@@ -90,7 +93,8 @@ async def test_create_oauth_url_token_creation_failure(
 ) -> None:
     """Test OAuth URL creation when token creation fails."""
     # Mock the storage client to raise an exception
-    mcp_context_client.session.state['sapi_client'].storage_client.token_create.side_effect = Exception(
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.token_create.side_effect = Exception(
         'Token creation failed'
     )
 
@@ -108,7 +112,8 @@ async def test_create_oauth_url_missing_token_in_response(mcp_context_client: Co
         'description': 'Short-lived token for OAuth URL',
         'expiresIn': 3600,
     }
-    mcp_context_client.session.state['sapi_client'].storage_client.token_create.return_value = invalid_response
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.token_create.return_value = invalid_response
 
     with pytest.raises(KeyError):
         await create_oauth_url(
