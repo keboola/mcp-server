@@ -39,7 +39,6 @@ async def create_oauth_url(
 
     Note that this tool should be called specifically for the OAuth-requiring components after their
     configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmail.
-    configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmail.
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
