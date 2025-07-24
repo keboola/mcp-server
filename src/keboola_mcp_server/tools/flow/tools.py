@@ -3,7 +3,7 @@
 import importlib.resources as pkg_resources
 import json
 import logging
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Literal, Sequence, cast
 
 import httpx
 from datetime import datetime, timezone
@@ -142,19 +142,23 @@ async def create_flow(
     new_raw_configuration = await client.storage_client.flow_create(
         name=name, description=description, flow_configuration=flow_configuration, flow_type=flow_type
     )
-    api_config = ConfigurationAPIResponse.model_validate(new_raw_configuration)
+    api_config = CreateConfigurationAPIResponse.model_validate(new_raw_configuration)
     await set_cfg_creation_metadata(
         client,
         component_id=flow_type,
         configuration_id=str(new_raw_configuration['id']),
     )
 
-    flow_id = str(new_raw_configuration['id'])
-    flow_name = str(new_raw_configuration['name'])
-    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name, flow_type=flow_type)
-    tool_response = FlowToolResponse.model_validate(new_raw_configuration | {'links': flow_links})
+    flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
+    tool_response = FlowToolResponse(
+        id=api_config.id,
+        description=api_config.description,
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=flow_links
+    )
 
-    LOG.info(f'Created flow "{name}" with configuration ID "{flow_id}" (type: {flow_type})')
+    LOG.info(f'Created legacy flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
     return tool_response
 
 
@@ -226,7 +230,7 @@ async def create_conditional_flow(
         links=flow_links
     )
 
-    LOG.info(f'Created enhanced flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
+    LOG.info(f'Created conditional flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
     return tool_response
 
 
@@ -235,6 +239,7 @@ async def create_conditional_flow(
 async def update_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
+    flow_type: Annotated[Literal['keboola.flow', 'keboola.orchestrator'], Field(description='The type of flow to update. Use "keboola.flow" for conditional flows or "keboola.orchestrator" for legacy flows.')],
     name: Annotated[str, Field(description='Updated flow name.')],
     description: Annotated[str, Field(description='Updated flow description.')],
     phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')],
@@ -255,37 +260,24 @@ async def update_flow(
     - Each task must reference an existing component configuration in the project.
     - Items in the `dependsOn` phase field reference ids of other phases.
     - The flow specified by `configuration_id` must already exist in the project.
+    - The `flow_type` parameter must match the actual type of the flow being updated.
     - Links contained in the response should ALWAYS be presented to the user
 
     USAGE:
-    Use this tool to update an existing flow.
+    Use this tool to update an existing flow. You must specify the correct flow_type:
+    - Use "keboola.flow" for conditional flows (advanced flows with conditional logic)
+    - Use "keboola.orchestrator" for legacy flows (basic orchestration flows)
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
     
-    # Get existing flow to determine type - try both flow types
-    existing_flow = None
-    existing_flow_type: FLOW_TYPE | None = None
-    
-    flow_types: list[FLOW_TYPE] = [CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID]
-    for flow_type in flow_types:
-        try:
-            existing_flow = await client.storage_client.flow_detail(configuration_id, flow_type=flow_type)
-            existing_flow_type = flow_type
-            break
-        except Exception:
-            continue
-    
-    if not existing_flow or not existing_flow_type:
-        raise ValueError(f'Flow configuration "{configuration_id}" not found.')
-    
     # Use flow-type aware utilities
-    processed_phases = ensure_phase_ids(phases, flow_type=existing_flow_type)
-    processed_tasks = ensure_task_ids(tasks, flow_type=existing_flow_type)
+    processed_phases = ensure_phase_ids(phases, flow_type=flow_type)
+    processed_tasks = ensure_task_ids(tasks, flow_type=flow_type)
     validate_flow_structure(processed_phases, processed_tasks)
     
     # Serialize based on flow type
-    if existing_flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
+    if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
         flow_configuration = {
             'phases': [phase.model_dump(exclude_unset=True) for phase in processed_phases],
             'tasks': [task.model_dump(exclude_unset=True) for task in processed_tasks],
@@ -296,9 +288,9 @@ async def update_flow(
             'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
         }
     
-    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=existing_flow_type)
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
-    LOG.info(f'Updating flow configuration: {configuration_id} (type: {existing_flow_type})')
+    LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
     links_manager = await ProjectLinksManager.from_client(client)
     updated_raw_configuration = await client.storage_client.flow_update(
         config_id=configuration_id,
@@ -306,21 +298,26 @@ async def update_flow(
         description=description,
         change_description=change_description,
         flow_configuration=flow_configuration,  # Direct configuration
+        flow_type=flow_type,
     )
+    api_config = CreateConfigurationAPIResponse.model_validate(updated_raw_configuration)
 
     await set_cfg_update_metadata(
         client,
-        component_id=existing_flow_type,
+        component_id=flow_type,
         configuration_id=str(updated_raw_configuration['id']),
         configuration_version=cast(int, updated_raw_configuration['version']),
     )
 
-    flow_id = str(updated_raw_configuration['id'])
-    flow_name = str(updated_raw_configuration['name'])
-    flow_links = links_manager.get_flow_links(flow_id=flow_id, flow_name=flow_name)
-    tool_response = FlowToolResponse.model_validate(updated_raw_configuration | {'links': flow_links})
-
-    LOG.info(f'Updated flow configuration: {flow_id}')
+    flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
+    tool_response = FlowToolResponse(
+        id=api_config.id,
+        description=api_config.description,
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=flow_links
+    )
+    LOG.info(f'Updated flow configuration: {api_config.id}')
     return tool_response
 
 
