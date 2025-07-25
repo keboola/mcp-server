@@ -23,6 +23,7 @@ class TestServer:
             'add_config_row',
             'create_config',
             'create_flow',
+            'create_oauth_url',
             'create_sql_transformation',
             'docs_query',
             'find_component_id',

@@ -206,3 +206,82 @@ class TestAsyncStorageClient:
                     if value
                 }
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('description', 'component_access', 'expires_in', 'expected_data'),
+        [
+            # Basic token creation with just description
+            ('Test token', None, None, {'description': 'Test token'}),
+            # Token with component access
+            (
+                'OAuth token',
+                ['keboola.ex-google-analytics-v4'],
+                None,
+                {'description': 'OAuth token', 'componentAccess': ['keboola.ex-google-analytics-v4']}
+            ),
+            # Token with expiration
+            (
+                'Short-lived token',
+                None,
+                3600,
+                {'description': 'Short-lived token', 'expiresIn': 3600}
+            ),
+            # Token with all parameters
+            (
+                'Full token',
+                ['keboola.ex-gmail', 'keboola.ex-google-analytics-v4'],
+                7200,
+                {
+                    'description': 'Full token',
+                    'componentAccess': ['keboola.ex-gmail', 'keboola.ex-google-analytics-v4'],
+                    'expiresIn': 7200
+                }
+            ),
+        ]
+    )
+    async def test_token_create(
+        self,
+        description: str,
+        component_access: list[str] | None,
+        expires_in: int | None,
+        expected_data: dict[str, Any],
+        keboola_client: KeboolaClient
+    ):
+        """Test token creation with various parameter combinations."""
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
+            mock_client.post.return_value = (response := Mock(spec=httpx.Response))
+            response.status_code = 201
+            response.json.return_value = {
+                'id': '12345',
+                'token': 'KBC_TOKEN_TEST_12345',
+                'description': description,
+                'created': '2023-01-01T00:00:00+00:00',
+                'expiresIn': expires_in,
+                'componentAccess': component_access or []
+            }
+
+            result = await keboola_client.storage_client.token_create(
+                description=description,
+                component_access=component_access,
+                expires_in=expires_in
+            )
+
+            # Verify the response
+            assert result['token'] == 'KBC_TOKEN_TEST_12345'
+            assert result['description'] == description
+
+            # Verify the API call was made with correct parameters
+            version = importlib.metadata.version('keboola-mcp-server')
+            mock_client.post.assert_called_once_with(
+                'https://connection.nowhere/v2/storage/tokens',
+                params=None,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept-encoding': 'gzip',
+                    'X-StorageAPI-Token': 'test-token',
+                    'User-Agent': f'Keboola MCP Server/{version} app_env=local'
+                },
+                json=expected_data
+            )

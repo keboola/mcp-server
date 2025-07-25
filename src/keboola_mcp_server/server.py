@@ -20,6 +20,7 @@ from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
 from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
+from keboola_mcp_server.tools.oauth import add_oauth_tools
 from keboola_mcp_server.tools.project import add_project_tools
 from keboola_mcp_server.tools.search import add_search_tools
 from keboola_mcp_server.tools.sql import add_sql_tools
@@ -163,6 +164,7 @@ def create_server(config: Config) -> FastMCP:
     add_doc_tools(mcp)
     add_flow_tools(mcp)
     add_job_tools(mcp)
+    add_oauth_tools(mcp)
     add_project_tools(mcp)
     add_search_tools(mcp)
     add_sql_tools(mcp)
