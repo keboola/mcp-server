@@ -13,7 +13,6 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.doc import docs_query
 from keboola_mcp_server.tools.jobs import get_job
 from keboola_mcp_server.tools.sql import query_data
@@ -106,14 +105,12 @@ class TestHttpErrors:
 class TestStorageEvents:
     @staticmethod
     @tool_errors()
-    @with_session_state()
     async def foo(unique: str, ctx: Context):
         """A fake MCP tool to test events emitting."""
         await asyncio.sleep(0.1)
 
     @staticmethod
     @tool_errors()
-    @with_session_state()
     async def bar(unique: str, ctx: Context):
         """A fake MCP tool that fails by raising an error to test events emitting."""
         await asyncio.sleep(0.1)

@@ -38,7 +38,7 @@ from pydantic import Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer
 from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse
 from keboola_mcp_server.tools.components.model import (
     Component,
@@ -103,7 +103,6 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
 
 
 @tool_errors()
-@with_session_state()
 async def list_configs(
     ctx: Context,
     component_types: Annotated[
@@ -155,7 +154,6 @@ async def list_configs(
 
 
 @tool_errors()
-@with_session_state()
 async def list_transformations(
     ctx: Context,
     transformation_ids: Annotated[
@@ -203,7 +201,6 @@ async def list_transformations(
 # ============================================================================
 
 @tool_errors()
-@with_session_state()
 async def get_component(
     ctx: Context,
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
@@ -228,7 +225,6 @@ async def get_component(
 
 
 @tool_errors()
-@with_session_state()
 async def get_config(
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
     configuration_id: Annotated[
@@ -284,7 +280,6 @@ async def get_config(
 
 
 @tool_errors()
-@with_session_state()
 async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
@@ -402,7 +397,6 @@ async def create_sql_transformation(
 
 
 @tool_errors()
-@with_session_state()
 async def update_sql_transformation(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the transformation configuration to update')],
@@ -521,7 +515,6 @@ async def update_sql_transformation(
 
 
 @tool_errors()
-@with_session_state()
 async def create_config(
     ctx: Context,
     name: Annotated[
@@ -623,7 +616,6 @@ async def create_config(
 
 
 @tool_errors()
-@with_session_state()
 async def add_config_row(
     ctx: Context,
     name: Annotated[
@@ -743,7 +735,6 @@ async def add_config_row(
 
 
 @tool_errors()
-@with_session_state()
 async def update_config(
     ctx: Context,
     name: Annotated[
@@ -856,7 +847,6 @@ async def update_config(
 
 
 @tool_errors()
-@with_session_state()
 async def update_config_row(
     ctx: Context,
     name: Annotated[
@@ -972,7 +962,6 @@ async def update_config_row(
 
 
 @tool_errors()
-@with_session_state()
 async def get_config_examples(
     ctx: Context,
     component_id: Annotated[str, Field(description='The ID of the component to get configuration examples for.')],
