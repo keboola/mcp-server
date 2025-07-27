@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import FLOW_TYPE
+from keboola_mcp_server.client import FLOW_TYPE, ORCHESTRATOR_COMPONENT_ID, CONDITIONAL_FLOW_COMPONENT_ID
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 
@@ -287,9 +287,12 @@ class Flow(BaseModel):
     links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
 
     @classmethod
-    def from_api_response(cls, api_config: APIFlowResponse,
-                          flow_component_id: FLOW_TYPE,
-                          links: Optional[list[Link]] = None) -> 'Flow':
+    def from_api_response(
+        cls,
+        api_config: APIFlowResponse,
+        flow_component_id: FLOW_TYPE,
+        links: Optional[list[Link]] = None
+    ) -> 'Flow':
         """
         Create a Flow domain model from an APIFlowResponse.
 
@@ -298,11 +301,17 @@ class Flow(BaseModel):
         :param links: Optional list of navigation links.
         :return: Flow domain model.
         """
-        config = FlowConfiguration(
-            phases=[FlowPhase.model_validate(p) for p in api_config.configuration.get('phases', [])],
-            tasks=[FlowTask.model_validate(t) for t in api_config.configuration.get('tasks', [])],
-        )
-        links = links if links else []
+        is_legacy = flow_component_id == ORCHESTRATOR_COMPONENT_ID
+
+        if is_legacy:
+            phases = [FlowPhase.model_validate(p) for p in api_config.configuration.get('phases', [])]
+            tasks = [FlowTask.model_validate(t) for t in api_config.configuration.get('tasks', [])]
+            config = FlowConfiguration(phases=phases, tasks=tasks)
+        else:
+            phases = [ConditionalFlowPhase.model_validate(p) for p in api_config.configuration.get('phases', [])]
+            tasks = [ConditionalFlowTask.model_validate(p) for p in api_config.configuration.get('tasks', [])]
+            config = ConditionalFlowConfiguration(phases=phases, tasks=tasks)
+
         return cls.model_construct(
             component_id=flow_component_id,
             configuration_id=api_config.configuration_id,
@@ -316,9 +325,8 @@ class Flow(BaseModel):
             configuration_metadata=api_config.metadata,
             created=api_config.created,
             updated=api_config.updated,
-            links=links
+            links=links or []
         )
-
 
 class FlowSummary(BaseModel):
     """Lightweight flow configuration for list operations."""

@@ -44,7 +44,7 @@ def get_schema_as_markdown(flow_type: FLOW_TYPE) -> str:
 
 
 def ensure_phase_ids(
-    phases: list[dict[str, Any]], 
+    phases: list[dict[str, Any]],
     flow_type: str = ORCHESTRATOR_COMPONENT_ID
 ) -> list[FlowPhase] | list[ConditionalFlowPhase]:
     """Ensure all phases have unique IDs and proper structure using Pydantic validation"""
