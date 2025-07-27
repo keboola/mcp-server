@@ -1111,6 +1111,30 @@ class AsyncStorageClient(KeboolaServiceClient):
         project_features = cast(list[str], project_data.get('features', []))
         return all(feature in project_features for feature in features)
 
+    async def token_create(
+        self,
+        description: str,
+        component_access: list[str] | None = None,
+        expires_in: int | None = None,
+    ) -> JsonDict:
+        """
+        Creates a new Storage API token.
+
+        :param description: Description of the token
+        :param component_access: List of component IDs the token should have access to
+        :param expires_in: Token expiration time in seconds
+        :return: Token creation response containing the token and its details
+        """
+        token_data: dict[str, Any] = {'description': description}
+
+        if component_access:
+            token_data['componentAccess'] = component_access
+
+        if expires_in:
+            token_data['expiresIn'] = expires_in
+
+        return cast(JsonDict, await self.post(endpoint='tokens', data=token_data))
+
 
 class JobsQueueClient(KeboolaServiceClient):
     """
