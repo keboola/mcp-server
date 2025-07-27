@@ -266,7 +266,7 @@ class TestCreateFlowTool:
     ):
         """Should create a new legacy (orchestrator) flow with valid phases/tasks."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        mocker.patch.object(keboola_client.storage_client, 'flow_create', return_value=mock_legacy_flow_create_update)
+        keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
 
         result = await create_flow(
             ctx=mcp_context_client,
@@ -416,7 +416,8 @@ class TestGetFlowTool:
         async def mock_flow_detail(config_id: str, flow_type: str) -> dict[str, Any]:
             if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
                 response = mocker.Mock(status_code=404)
-                raise httpx.HTTPStatusError('404 Not Found', request=None, response=response)
+                mock_request = mocker.Mock()
+                raise httpx.HTTPStatusError('404 Not Found', request=mock_request, response=response)
             if flow_type == ORCHESTRATOR_COMPONENT_ID:
                 return mock_legacy_flow
             raise ValueError(f'Unexpected flow type: {flow_type}')
@@ -438,8 +439,14 @@ class TestGetFlowTool:
         assert result.version == mock_legacy_flow['version']
         assert result.is_disabled == mock_legacy_flow['isDisabled']
         assert result.is_deleted == mock_legacy_flow['isDeleted']
-        assert result.configuration.phases == [FlowPhase.model_validate(phase) for phase in mock_legacy_flow['configuration']['phases']]
-        assert result.configuration.tasks == [FlowTask.model_validate(task) for task in mock_legacy_flow['configuration']['tasks']]
+        assert result.configuration.phases == [
+            FlowPhase.model_validate(phase)
+            for phase in mock_legacy_flow['configuration']['phases']
+        ]
+        assert result.configuration.tasks == [
+            FlowTask.model_validate(task)
+            for task in mock_legacy_flow['configuration']['tasks']
+        ]
         assert len(result.links) == 3
 
     @pytest.mark.asyncio
@@ -468,8 +475,14 @@ class TestGetFlowTool:
         assert result.version == mock_conditional_flow['version']
         assert result.is_disabled == mock_conditional_flow['isDisabled']
         assert result.is_deleted == mock_conditional_flow['isDeleted']
-        assert result.configuration.phases == [ConditionalFlowPhase.model_validate(phase) for phase in mock_conditional_flow['configuration']['phases']]
-        assert result.configuration.tasks == [ConditionalFlowTask.model_validate(task) for task in mock_conditional_flow['configuration']['tasks']]
+        assert result.configuration.phases == [
+            ConditionalFlowPhase.model_validate(phase)
+            for phase in mock_conditional_flow['configuration']['phases']
+        ]
+        assert result.configuration.tasks == [
+            ConditionalFlowTask.model_validate(task)
+            for task in mock_conditional_flow['configuration']['tasks']
+        ]
         assert len(result.links) == 3
 
 
@@ -628,7 +641,7 @@ class TestGetFlowSchemaTool:
         mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
 
         result = await get_flow_schema(ctx=mcp_context_client, flow_type=ORCHESTRATOR_COMPONENT_ID)
-        
+
         assert isinstance(result, str)
         assert '```json' in result
         assert 'dependsOn' in result
@@ -645,7 +658,7 @@ class TestGetFlowSchemaTool:
         mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
 
         result = await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-        
+
         assert isinstance(result, str)
         assert '```json' in result
         assert 'keboola.flow' in result or 'conditional' in result.lower()
@@ -669,20 +682,31 @@ class TestGetFlowExamplesTool:
         """Test getting examples for legacy flow type."""
         # Mock the file path and content properly - using actual structure from the real file
         mock_file_content = [
-            '{"tasks":[{"id":1,"name":"keboola.wr-google-bigquery-v2-28356142","task":{"mode":"run","configId":"28356142","componentId":"keboola.wr-google-bigquery-v2"},"phase":1,"continueOnFailure":false,"enabled":true}],"phases":[{"id":1,"name":"Scheduledconfiguration","dependsOn":[]}]}',
-            '{"phases":[{"id":59812,"name":"Extraction","dependsOn":[],"description":"ExtractdatafromWhenIworkandPaychex"}],"tasks":[{"id":36614,"name":"ex-generic-v2-34446855","phase":59812,"task":{"componentId":"ex-generic-v2","configId":"34446855","mode":"run"},"continueOnFailure":false,"enabled":false}]}'
+            (
+                '{"tasks":[{"id":1,"name":"keboola.wr-google-bigquery-v2-28356142",'
+                '"task":{"mode":"run","configId":"28356142","componentId":"keboola.wr-google-bigquery-v2"},'
+                '"phase":1,"continueOnFailure":false,"enabled":true}],'
+                '"phases":[{"id":1,"name":"Scheduledconfiguration","dependsOn":[]}]}'
+            ),
+            (
+                '{"phases":[{"id":59812,"name":"Extraction","dependsOn":[],'
+                '"description":"ExtractdatafromWhenIworkandPaychex"}],'
+                '"tasks":[{"id":36614,"name":"ex-generic-v2-34446855","phase":59812,'
+                '"task":{"componentId":"ex-generic-v2","configId":"34446855","mode":"run"},'
+                '"continueOnFailure":false,"enabled":false}]}'
+            )
         ]
-        
+
         # Mock the file path resolution
         mock_path = mocker.Mock()
         mock_path.__truediv__ = mocker.Mock(return_value=mock_path)
         mock_path.open = mocker.mock_open(read_data='\n'.join(mock_file_content))
-        
+
         # Mock the importlib.resources.files function
         mocker.patch('importlib.resources.files', return_value=mock_path)
 
         result = await get_flow_examples(ctx=mcp_context_client, flow_type=ORCHESTRATOR_COMPONENT_ID)
-        
+
         assert isinstance(result, str)
         assert 'Flow Configuration Examples for `keboola.orchestrator`' in result
         assert 'keboola.wr-google-bigquery-v2-28356142' in result
@@ -699,20 +723,41 @@ class TestGetFlowExamplesTool:
         """Test getting examples for conditional flow type."""
         # Mock the file path and content properly - using actual structure from the real file
         mock_file_content = [
-            '{"tasks":[{"id":"40fef978-7092-4d79-a5b4-ea3fb2e38d03","name":"keboola.wr-azure-event-hub-92021091","phase":"6afbf55b-782c-47d7-bf70-f0ef1be6505b","task":{"type":"job","mode":"run","componentId":"keboola.wr-azure-event-hub","configId":"92021091"},"enabled":true}],"phases":[{"id":"7dd992b0-9ac5-495b-b277-d8bc0b7e15d5","name":"Phase1","next":[{"id":"a25a4e4a-3042-49a2-81d8-fb1103957ebe","goto":"6afbf55b-782c-47d7-bf70-f0ef1be6505b"}]}]}',
-            '{"tasks":[{"id":"6bcc72d8-d9a5-4708-b0bd-53c4f6e839f7","name":"keboola.python-transformation-v2-16550","phase":"78c07164-0d1c-41d6-ba48-b821e781d830","task":{"type":"job","mode":"run","componentId":"keboola.python-transformation-v2","configId":"16550"},"enabled":true}],"phases":[{"id":"78c07164-0d1c-41d6-ba48-b821e781d830","name":"Phase1","next":[{"id":"e5dc7c43-d311-4e90-a2ca-6cac8d2eb5f5","goto":"92649482-45d6-475d-aace-33466f37e381"}]}]}'
+            (
+                '{"tasks":[{"id":"40fef978-7092-4d79-a5b4-ea3fb2e38d03",'
+                '"name":"keboola.wr-azure-event-hub-92021091",'
+                '"phase":"6afbf55b-782c-47d7-bf70-f0ef1be6505b",'
+                '"task":{"type":"job","mode":"run","componentId":"keboola.wr-azure-event-hub","configId":"92021091"},'
+                '"enabled":true}],'
+                '"phases":[{"id":"7dd992b0-9ac5-495b-b277-d8bc0b7e15d5",'
+                '"name":"Phase1",'
+                '"next":[{"id":"a25a4e4a-3042-49a2-81d8-fb1103957ebe",'
+                '"goto":"6afbf55b-782c-47d7-bf70-f0ef1be6505b"}]}]}'
+            ),
+            (
+                '{"tasks":[{"id":"6bcc72d8-d9a5-4708-b0bd-53c4f6e839f7",'
+                '"name":"keboola.python-transformation-v2-16550",'
+                '"phase":"78c07164-0d1c-41d6-ba48-b821e781d830",'
+                '"task":{"type":"job","mode":"run",'
+                '"componentId":"keboola.python-transformation-v2","configId":"16550"},'
+                '"enabled":true}],'
+                '"phases":[{"id":"78c07164-0d1c-41d6-ba48-b821e781d830",'
+                '"name":"Phase1",'
+                '"next":[{"id":"e5dc7c43-d311-4e90-a2ca-6cac8d2eb5f5",'
+                '"goto":"92649482-45d6-475d-aace-33466f37e381"}]}]}'
+            )
         ]
-        
+
         # Mock the file path resolution
         mock_path = mocker.Mock()
         mock_path.__truediv__ = mocker.Mock(return_value=mock_path)
         mock_path.open = mocker.mock_open(read_data='\n'.join(mock_file_content))
-        
+
         # Mock the importlib.resources.files function
         mocker.patch('importlib.resources.files', return_value=mock_path)
 
         result = await get_flow_examples(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-        
+
         assert isinstance(result, str)
         assert 'Flow Configuration Examples for `keboola.flow`' in result
         assert 'keboola.wr-azure-event-hub-92021091' in result

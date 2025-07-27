@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import FLOW_TYPE, ORCHESTRATOR_COMPONENT_ID, CONDITIONAL_FLOW_COMPONENT_ID
+from keboola_mcp_server.client import FLOW_TYPE, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 
@@ -327,6 +327,7 @@ class Flow(BaseModel):
             updated=api_config.updated,
             links=links or []
         )
+
 
 class FlowSummary(BaseModel):
     """Lightweight flow configuration for list operations."""
