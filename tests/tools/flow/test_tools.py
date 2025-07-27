@@ -11,6 +11,7 @@ from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATO
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowPhase,
+    FlowSummary,
     FlowTask,
     ListFlowsOutput,
 )
@@ -473,18 +474,18 @@ class TestMixedFlowTypeTools:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        mock_legacy_flow_create_update: Dict[str, Any],
-        mock_conditional_flow_create_update: Dict[str, Any],
+        mock_legacy_flow: Dict[str, Any],
+        mock_conditional_flow: Dict[str, Any],
     ):
-        """Test listing flows of both types."""
+        """Test listing flows of both types with comprehensive validation."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
         # Mock different responses for different flow types
         def mock_flow_list(flow_type):
             if flow_type == ORCHESTRATOR_COMPONENT_ID:
-                return [mock_legacy_flow_create_update]
+                return [mock_legacy_flow]
             elif flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
-                return [mock_conditional_flow_create_update]
+                return [mock_conditional_flow]
             return []
 
         keboola_client.storage_client.flow_list = mocker.AsyncMock(side_effect=mock_flow_list)
@@ -499,12 +500,35 @@ class TestMixedFlowTypeTools:
         assert ORCHESTRATOR_COMPONENT_ID in flow_types
         assert CONDITIONAL_FLOW_COMPONENT_ID in flow_types
 
-        # Verify flow summaries have correct structure
+        # Extract and validate individual flows
         legacy_flow = next(f for f in result.flows if f.component_id == ORCHESTRATOR_COMPONENT_ID)
         conditional_flow = next(f for f in result.flows if f.component_id == CONDITIONAL_FLOW_COMPONENT_ID)
 
-        assert legacy_flow.configuration_id == 'legacy_flow_123'
-        assert conditional_flow.configuration_id == 'conditional_flow_456'
+        # Validate legacy flow structure
+        assert isinstance(legacy_flow, FlowSummary)
+        assert legacy_flow.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert legacy_flow.configuration_id == mock_legacy_flow['configuration_id']
+        assert legacy_flow.name == mock_legacy_flow['name']
+        assert legacy_flow.description == mock_legacy_flow['description']
+        assert legacy_flow.created == mock_legacy_flow['created']
+        assert legacy_flow.updated == mock_legacy_flow['updated']
+        assert legacy_flow.version == mock_legacy_flow['version']
+        assert legacy_flow.is_disabled == mock_legacy_flow['isDisabled']
+        assert legacy_flow.is_deleted == mock_legacy_flow['isDeleted']
+
+        # Validate conditional flow structure
+        assert isinstance(conditional_flow, FlowSummary)
+        assert conditional_flow.component_id == CONDITIONAL_FLOW_COMPONENT_ID
+        assert conditional_flow.configuration_id == mock_conditional_flow['configuration_id']
+        assert conditional_flow.name == mock_conditional_flow['name']
+        assert conditional_flow.description == mock_conditional_flow['description']
+        assert conditional_flow.created == mock_conditional_flow['created']
+        assert conditional_flow.updated == mock_conditional_flow['updated']
+        assert conditional_flow.version == mock_conditional_flow['version']
+        assert conditional_flow.is_disabled == mock_conditional_flow['isDisabled']
+        assert conditional_flow.is_deleted == mock_conditional_flow['isDeleted']
+
+        assert keboola_client.storage_client.flow_list.call_count == 2
 
     @pytest.mark.asyncio
     async def test_list_flows_specific_ids_mixed_types(
