@@ -21,6 +21,7 @@ class TestServer:
         tools = await server.get_tools()
         assert sorted(tool.name for tool in tools.values()) == [
             'add_config_row',
+            'create_conditional_flow',
             'create_config',
             'create_flow',
             'create_sql_transformation',

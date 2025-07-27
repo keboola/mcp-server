@@ -5,7 +5,7 @@ from typing import Optional
 import jsonschema
 import pytest
 
-from keboola_mcp_server.client import JsonDict
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict
 from keboola_mcp_server.tools import validation
 from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse
 from keboola_mcp_server.tools.components.model import Component
@@ -125,7 +125,9 @@ def test_validate_parameters_output_format(input_parameters, output_parameters):
 def test_validate_flow_valid(valid_flow_path: str):
     with open(valid_flow_path, 'r') as f:
         valid_flow = json.load(f)
-    assert validation.validate_flow_configuration_against_schema(valid_flow) == valid_flow
+    assert validation.validate_flow_configuration_against_schema(
+        valid_flow,
+        flow_type=ORCHESTRATOR_COMPONENT_ID) == valid_flow
 
 
 @pytest.mark.parametrize(
@@ -143,7 +145,7 @@ def test_validate_flow_invalid(invalid_flow_path: str):
     with open(invalid_flow_path, 'r') as f:
         invalid_flow = json.load(f)
     with pytest.raises(validation.RecoverableValidationError):
-        validation.validate_flow_configuration_against_schema(invalid_flow)
+        validation.validate_flow_configuration_against_schema(invalid_flow, flow_type=ORCHESTRATOR_COMPONENT_ID)
 
 
 def test_validate_json_against_schema_invalid_schema(caplog):
