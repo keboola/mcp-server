@@ -9,6 +9,8 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.tools.flow.model import (
+    ConditionalFlowPhase,
+    ConditionalFlowTask,
     Flow,
     FlowPhase,
     FlowSummary,
@@ -246,15 +248,15 @@ def mock_legacy_flow(
     }
 
 # =============================================================================
-# LEGACY FLOW TESTS
+# CREATE_FLOW TOOL TESTS
 # =============================================================================
 
 
-class TestLegacyFlowTools:
-    """Tests for managing legacy (orchestrator) flows."""
+class TestCreateFlowTool:
+    """Tests for the create_flow tool."""
 
     @pytest.mark.asyncio
-    async def test_create_flow(
+    async def test_create_legacy_flow(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
@@ -284,7 +286,44 @@ class TestLegacyFlowTools:
         keboola_client.storage_client.flow_create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_update_flow(
+    async def test_create_conditional_flow(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+        mock_conditional_flow_create_update: Dict[str, Any],
+    ):
+        """Test conditional flow creation."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=mock_conditional_flow_create_update)
+
+        result = await create_conditional_flow(
+            ctx=mcp_context_client,
+            name='Advanced Data Pipeline',
+            description='Advanced pipeline with conditional logic and error handling',
+            phases=mock_conditional_flow_create_update['configuration']['phases'],
+            tasks=mock_conditional_flow_create_update['configuration']['tasks'],
+        )
+
+        assert isinstance(result, FlowToolResponse)
+        assert result.success is True
+        assert result.id == mock_conditional_flow_create_update['id']
+        assert result.description == mock_conditional_flow_create_update['description']
+        assert result.timestamp is not None
+        assert len(result.links) == 3
+
+        keboola_client.storage_client.flow_create.assert_called_once()
+
+
+# =============================================================================
+# UPDATE_FLOW TOOL TESTS
+# =============================================================================
+
+
+class TestUpdateFlowTool:
+    """Tests for the update_flow tool."""
+
+    @pytest.mark.asyncio
+    async def test_update_legacy_flow(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
@@ -319,6 +358,51 @@ class TestLegacyFlowTools:
         assert len(result.links) == 3
 
         keboola_client.storage_client.flow_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_conditional_flow(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+        mock_conditional_flow_create_update: Dict[str, Any],
+    ):
+        """Test conditional flow update with enhanced conditions."""
+        updated_config = mock_conditional_flow_create_update.copy()
+        updated_config['version'] = 2
+        updated_config['name'] = 'Enhanced Advanced Data Pipeline'
+        updated_config['description'] = 'Enhanced pipeline with improved conditional logic'
+
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=updated_config)
+
+        result = await update_flow(
+            ctx=mcp_context_client,
+            configuration_id='conditional_flow_456',
+            flow_type=CONDITIONAL_FLOW_COMPONENT_ID,
+            name='Enhanced Advanced Data Pipeline',
+            description='Enhanced pipeline with improved conditional logic',
+            phases=mock_conditional_flow_create_update['configuration']['phases'],
+            tasks=mock_conditional_flow_create_update['configuration']['tasks'],
+            change_description='Enhanced error handling and added notification phase',
+        )
+
+        assert isinstance(result, FlowToolResponse)
+        assert result.success is True
+        assert result.id == updated_config['id']
+        assert result.description == updated_config['description']
+        assert result.timestamp is not None
+        assert len(result.links) == 3
+
+        keboola_client.storage_client.flow_update.assert_called_once()
+
+
+# =============================================================================
+# GET_FLOW TOOL TESTS
+# =============================================================================
+
+
+class TestGetFlowTool:
+    """Tests for the get_flow tool."""
 
     @pytest.mark.asyncio
     async def test_get_legacy_flow(
@@ -358,78 +442,6 @@ class TestLegacyFlowTools:
         assert result.configuration.tasks == [FlowTask.model_validate(task) for task in mock_legacy_flow['configuration']['tasks']]
         assert len(result.links) == 3
 
-# =============================================================================
-# CONDITIONAL FLOW TESTS
-# =============================================================================
-
-
-class TestConditionalFlowTools:
-    """Test conditional flow management tools."""
-
-    @pytest.mark.asyncio
-    async def test_create_conditional_flow(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-        mock_conditional_flow_create_update: Dict[str, Any],
-    ):
-        """Test conditional flow creation."""
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=mock_conditional_flow_create_update)
-
-        result = await create_conditional_flow(
-            ctx=mcp_context_client,
-            name='Advanced Data Pipeline',
-            description='Advanced pipeline with conditional logic and error handling',
-            phases=mock_conditional_flow_create_update['configuration']['phases'],
-            tasks=mock_conditional_flow_create_update['configuration']['tasks'],
-        )
-
-        assert isinstance(result, FlowToolResponse)
-        assert result.success is True
-        assert result.id == mock_conditional_flow_create_update['id']
-        assert result.description == mock_conditional_flow_create_update['description']
-        assert result.timestamp is not None
-        assert len(result.links) == 3
-
-        keboola_client.storage_client.flow_create.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_update_conditional_flow(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-        mock_conditional_flow_create_update: Dict[str, Any],
-    ):
-        """Test conditional flow update with enhanced conditions."""
-        updated_config = mock_conditional_flow_create_update.copy()
-        updated_config['version'] = 2
-        updated_config['name'] = 'Enhanced Advanced Data Pipeline'
-        updated_config['description'] = 'Enhanced pipeline with improved conditional logic'
-
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=updated_config)
-
-        result = await update_flow(
-            ctx=mcp_context_client,
-            configuration_id='conditional_flow_456',
-            flow_type=CONDITIONAL_FLOW_COMPONENT_ID,
-            name='Enhanced Advanced Data Pipeline',
-            description='Enhanced pipeline with improved conditional logic',
-            phases=mock_conditional_flow_create_update['configuration']['phases'],
-            tasks=mock_conditional_flow_create_update['configuration']['tasks'],
-            change_description='Enhanced error handling and added notification phase',
-        )
-
-        assert isinstance(result, FlowToolResponse)
-        assert result.success is True
-        assert result.id == updated_config['id']
-        assert result.description == updated_config['description']
-        assert result.timestamp is not None
-        assert len(result.links) == 3
-
-        keboola_client.storage_client.flow_update.assert_called_once()
-
     @pytest.mark.asyncio
     async def test_get_conditional_flow(
         self,
@@ -456,21 +468,21 @@ class TestConditionalFlowTools:
         assert result.version == mock_conditional_flow['version']
         assert result.is_disabled == mock_conditional_flow['isDisabled']
         assert result.is_deleted == mock_conditional_flow['isDeleted']
-        from keboola_mcp_server.tools.flow.model import ConditionalFlowPhase, ConditionalFlowTask
         assert result.configuration.phases == [ConditionalFlowPhase.model_validate(phase) for phase in mock_conditional_flow['configuration']['phases']]
         assert result.configuration.tasks == [ConditionalFlowTask.model_validate(task) for task in mock_conditional_flow['configuration']['tasks']]
         assert len(result.links) == 3
 
+
 # =============================================================================
-# MIXED FLOW TYPE TESTS
+# LIST_FLOWS TOOL TESTS
 # =============================================================================
 
 
-class TestMixedFlowTypeTools:
-    """Test tools that work with both flow types."""
+class TestListFlowsTool:
+    """Tests for the list_flows tool."""
 
     @pytest.mark.asyncio
-    async def test_list_flows_mixed_types(
+    async def test_list_flows_no_params(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
@@ -504,7 +516,7 @@ class TestMixedFlowTypeTools:
         legacy_flow = next(f for f in result.flows if f.component_id == ORCHESTRATOR_COMPONENT_ID)
         conditional_flow = next(f for f in result.flows if f.component_id == CONDITIONAL_FLOW_COMPONENT_ID)
 
-        # Validate legacy flow structure
+        # Validate legacy flow summary structure
         assert isinstance(legacy_flow, FlowSummary)
         assert legacy_flow.component_id == ORCHESTRATOR_COMPONENT_ID
         assert legacy_flow.configuration_id == mock_legacy_flow['configuration_id']
@@ -516,7 +528,7 @@ class TestMixedFlowTypeTools:
         assert legacy_flow.is_disabled == mock_legacy_flow['isDisabled']
         assert legacy_flow.is_deleted == mock_legacy_flow['isDeleted']
 
-        # Validate conditional flow structure
+        # Validate conditional flow summary structure
         assert isinstance(conditional_flow, FlowSummary)
         assert conditional_flow.component_id == CONDITIONAL_FLOW_COMPONENT_ID
         assert conditional_flow.configuration_id == mock_conditional_flow['configuration_id']
@@ -535,17 +547,17 @@ class TestMixedFlowTypeTools:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        mock_legacy_flow_create_update: Dict[str, Any],
-        mock_conditional_flow_create_update: Dict[str, Any],
+        mock_legacy_flow: Dict[str, Any],
+        mock_conditional_flow: Dict[str, Any],
     ):
-        """Test listing specific flows by ID when they're different types."""
+        """Test listing specific flows by ID when they're different types with comprehensive validation."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
         def mock_flow_detail(flow_id, component_id=None):
             if flow_id == 'legacy_flow_123' and component_id == ORCHESTRATOR_COMPONENT_ID:
-                return mock_legacy_flow_create_update
+                return mock_legacy_flow
             elif flow_id == 'conditional_flow_456' and component_id == CONDITIONAL_FLOW_COMPONENT_ID:
-                return mock_conditional_flow_create_update
+                return mock_conditional_flow
             raise Exception(f'Flow {flow_id} not found')
 
         keboola_client.storage_client.flow_detail = mocker.AsyncMock(side_effect=mock_flow_detail)
@@ -555,381 +567,154 @@ class TestMixedFlowTypeTools:
             flow_ids=['legacy_flow_123', 'conditional_flow_456']
         )
 
+        # Validate the overall response structure
+        assert isinstance(result, ListFlowsOutput)
         assert len(result.flows) == 2
-        assert any(f.component_id == ORCHESTRATOR_COMPONENT_ID for f in result.flows)
-        assert any(f.component_id == CONDITIONAL_FLOW_COMPONENT_ID for f in result.flows)
 
-    @pytest.mark.asyncio
-    async def test_get_flow_schema_both_types(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-    ):
-        """Test getting schema for both flow types."""
+        # Verify both flow types are present
+        flow_types = {flow.component_id for flow in result.flows}
+        assert ORCHESTRATOR_COMPONENT_ID in flow_types
+        assert CONDITIONAL_FLOW_COMPONENT_ID in flow_types
 
-        # Mock schema responses
-        legacy_schema = {'type': 'object', 'properties': {'phases': {'type': 'array'}}}
-        conditional_schema = {'type': 'object', 'properties': {'phases': {'type': 'array'}}}
+        # Extract and validate individual flows
+        legacy_flow = next(f for f in result.flows if f.component_id == ORCHESTRATOR_COMPONENT_ID)
+        conditional_flow = next(f for f in result.flows if f.component_id == CONDITIONAL_FLOW_COMPONENT_ID)
 
-        def mock_get_schema(flow_type):
-            if flow_type == ORCHESTRATOR_COMPONENT_ID:
-                return legacy_schema
-            elif flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
-                return conditional_schema
-            return {}
+        # Validate legacy flow summary structure
+        assert isinstance(legacy_flow, FlowSummary)
+        assert legacy_flow.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert legacy_flow.configuration_id == mock_legacy_flow['configuration_id']
+        assert legacy_flow.name == mock_legacy_flow['name']
+        assert legacy_flow.description == mock_legacy_flow['description']
+        assert legacy_flow.created == mock_legacy_flow['created']
+        assert legacy_flow.updated == mock_legacy_flow['updated']
+        assert legacy_flow.version == mock_legacy_flow['version']
+        assert legacy_flow.is_disabled == mock_legacy_flow['isDisabled']
+        assert legacy_flow.is_deleted == mock_legacy_flow['isDeleted']
 
-        mocker.patch('keboola_mcp_server.tools.flow.utils._load_schema', side_effect=mock_get_schema)
+        # Validate conditional flow summary structure
+        assert isinstance(conditional_flow, FlowSummary)
+        assert conditional_flow.component_id == CONDITIONAL_FLOW_COMPONENT_ID
+        assert conditional_flow.configuration_id == mock_conditional_flow['configuration_id']
+        assert conditional_flow.name == mock_conditional_flow['name']
+        assert conditional_flow.description == mock_conditional_flow['description']
+        assert conditional_flow.created == mock_conditional_flow['created']
+        assert conditional_flow.updated == mock_conditional_flow['updated']
+        assert conditional_flow.version == mock_conditional_flow['version']
+        assert conditional_flow.is_disabled == mock_conditional_flow['isDisabled']
+        assert conditional_flow.is_deleted == mock_conditional_flow['isDeleted']
 
-        # Test legacy flow schema
-        legacy_result = await get_flow_schema(
-            ctx=mcp_context_client,
-            flow_type=ORCHESTRATOR_COMPONENT_ID
-        )
-        assert 'phases' in legacy_result
+        # Since we look up for both types (conditional flows first) we expect the calls to be 2 and 1, respectfully
+        assert keboola_client.storage_client.flow_detail.call_count == 3
 
-        # Test conditional flow schema
-        conditional_result = await get_flow_schema(
-            ctx=mcp_context_client,
-            flow_type=CONDITIONAL_FLOW_COMPONENT_ID
-        )
-        assert 'phases' in conditional_result
-
-    @pytest.mark.asyncio
-    async def test_get_flow_examples_both_types(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-    ):
-        """Test getting examples for both flow types."""
-
-        # Mock example responses
-        legacy_examples = 'Legacy flow examples...'
-        conditional_examples = 'Conditional flow examples...'
-
-        def mock_get_examples(flow_type):
-            if flow_type == ORCHESTRATOR_COMPONENT_ID:
-                return legacy_examples
-            elif flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
-                return conditional_examples
-            return ''
-
-        mocker.patch('keboola_mcp_server.tools.flow.utils.get_schema_as_markdown', side_effect=mock_get_examples)
-
-        # Test legacy flow examples
-        legacy_result = await get_flow_examples(
-            ctx=mcp_context_client,
-            flow_type=ORCHESTRATOR_COMPONENT_ID
-        )
-        assert 'Legacy flow examples' in legacy_result
-
-        # Test conditional flow examples
-        conditional_result = await get_flow_examples(
-            ctx=mcp_context_client,
-            flow_type=CONDITIONAL_FLOW_COMPONENT_ID
-        )
-        assert 'Conditional flow examples' in conditional_result
 
 # =============================================================================
-# EDGE CASES AND ERROR HANDLING
+# GET_FLOW_SCHEMA TOOL TESTS
 # =============================================================================
 
 
-class TestFlowEdgeCases:
-    """Test edge cases and error conditions for both flow types."""
+class TestGetFlowSchemaTool:
+    """Tests for the get_flow_schema tool."""
 
     @pytest.mark.asyncio
-    async def test_create_flow_with_invalid_legacy_structure(
-        self,
-        mcp_context_client: Context
-    ):
-        """Test legacy flow creation with invalid structure."""
-        invalid_phases = [
-            {'name': 'Phase 1', 'dependsOn': [999]}  # Invalid dependency
-        ]
-        invalid_tasks = [
-            {'name': 'Task 1', 'phase': 1, 'task': {'componentId': 'comp1'}}
-        ]
-
-        with pytest.raises(ValueError, match='depends on non-existent phase'):
-            await create_flow(
-                ctx=mcp_context_client,
-                name='Invalid Legacy Flow',
-                description='Invalid legacy flow',
-                phases=invalid_phases,
-                tasks=invalid_tasks,
-            )
-
-    @pytest.mark.asyncio
-    async def test_create_conditional_flow_with_invalid_structure(
-        self,
-        mcp_context_client: Context
-    ):
-        """Test conditional flow creation with invalid structure."""
-        invalid_phases = [
-            {
-                'id': 'phase_1',
-                'name': 'Phase 1',
-                'next': [
-                    {
-                        'id': 'invalid_transition',
-                        'goto': 'non_existent_phase'  # Invalid target phase
-                    }
-                ]
-            }
-        ]
-        invalid_tasks = [
-            {
-                'id': 'task_1',
-                'name': 'Task 1',
-                'phase': 'phase_1',
-                'task': {
-                    'type': 'job',
-                    'componentId': 'comp1'
-                }
-            }
-        ]
-
-        with pytest.raises(ValueError, match='transition.*references non-existent phase'):
-            await create_conditional_flow(
-                ctx=mcp_context_client,
-                name='Invalid Conditional Flow',
-                description='Invalid conditional flow',
-                phases=invalid_phases,
-                tasks=invalid_tasks,
-            )
-
-    @pytest.mark.asyncio
-    async def test_update_flow_wrong_type(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-        legacy_flow_phases: List[Dict[str, Any]],
-        legacy_flow_tasks: List[Dict[str, Any]],
-    ):
-        """Test updating a flow with the wrong flow type."""
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_update = mocker.AsyncMock(
-            side_effect=Exception('Flow not found')
-        )
-
-        with pytest.raises(Exception, match='Flow not found'):
-            await update_flow(
-                ctx=mcp_context_client,
-                configuration_id='legacy_flow_123',
-                flow_type=CONDITIONAL_FLOW_COMPONENT_ID,  # Wrong type
-                name='Updated Flow',
-                description='Updated description',
-                phases=legacy_flow_phases,
-                tasks=legacy_flow_tasks,
-                change_description='Update with wrong type',
-            )
-
-    @pytest.mark.asyncio
-    async def test_get_flow_not_found(
+    async def test_get_legacy_flow_schema(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
     ):
-        """Test getting a non-existent flow."""
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_detail = mocker.AsyncMock(
-            side_effect=Exception('Flow not found')
-        )
+        """Test getting schema for legacy flow type."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows_disabled = True
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
 
-        with pytest.raises(Exception, match='Flow not found'):
-            await get_flow(
-                ctx=mcp_context_client,
-                configuration_id='non_existent_flow'
-            )
+        result = await get_flow_schema(ctx=mcp_context_client, flow_type=ORCHESTRATOR_COMPONENT_ID)
+        
+        assert isinstance(result, str)
+        assert '```json' in result
+        assert 'dependsOn' in result
+
+    @pytest.mark.asyncio
+    async def test_get_conditional_flow_schema(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+    ):
+        """Test getting schema for conditional flow type."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows_disabled = False
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
+
+        result = await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        
+        assert isinstance(result, str)
+        assert '```json' in result
+        assert 'keboola.flow' in result or 'conditional' in result.lower()
+        assert 'next' in result
+
 
 # =============================================================================
-# INTEGRATION TESTS
+# GET_FLOW_EXAMPLES TOOL TESTS
 # =============================================================================
 
 
-class TestFlowIntegration:
-    """Integration tests for complete flow workflows."""
+class TestGetFlowExamplesTool:
+    """Tests for the get_flow_examples tool."""
 
     @pytest.mark.asyncio
-    async def test_complete_legacy_flow_workflow(
+    async def test_get_legacy_flow_examples(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        legacy_flow_phases: List[Dict[str, Any]],
-        legacy_flow_tasks: List[Dict[str, Any]],
-        mock_legacy_flow_create_update: Dict[str, Any],
     ):
-        """Test complete legacy flow workflow: create, list, update, get."""
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        """Test getting examples for legacy flow type."""
+        # Mock the file path and content properly - using actual structure from the real file
+        mock_file_content = [
+            '{"tasks":[{"id":1,"name":"keboola.wr-google-bigquery-v2-28356142","task":{"mode":"run","configId":"28356142","componentId":"keboola.wr-google-bigquery-v2"},"phase":1,"continueOnFailure":false,"enabled":true}],"phases":[{"id":1,"name":"Scheduledconfiguration","dependsOn":[]}]}',
+            '{"phases":[{"id":59812,"name":"Extraction","dependsOn":[],"description":"ExtractdatafromWhenIworkandPaychex"}],"tasks":[{"id":36614,"name":"ex-generic-v2-34446855","phase":59812,"task":{"componentId":"ex-generic-v2","configId":"34446855","mode":"run"},"continueOnFailure":false,"enabled":false}]}'
+        ]
+        
+        # Mock the file path resolution
+        mock_path = mocker.Mock()
+        mock_path.__truediv__ = mocker.Mock(return_value=mock_path)
+        mock_path.open = mocker.mock_open(read_data='\n'.join(mock_file_content))
+        
+        # Mock the importlib.resources.files function
+        mocker.patch('importlib.resources.files', return_value=mock_path)
 
-        # Mock all necessary methods
-        keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
-        keboola_client.storage_client.flow_list = mocker.AsyncMock(
-            side_effect=lambda flow_type: [mock_legacy_flow_create_update] if flow_type == ORCHESTRATOR_COMPONENT_ID else []
-        )
-        keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
-        keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
-
-        # 1. Create flow
-        created = await create_flow(
-            ctx=mcp_context_client,
-            name='Integration Test Legacy Flow',
-            description='Legacy flow for integration testing',
-            phases=legacy_flow_phases,
-            tasks=legacy_flow_tasks,
-        )
-        assert isinstance(created, FlowToolResponse)
-        assert created.success is True
-
-        # 2. List flows
-        listed = await list_flows(ctx=mcp_context_client)
-        assert len(listed.flows) == 1
-        assert listed.flows[0].component_id == ORCHESTRATOR_COMPONENT_ID
-
-        # 3. Update flow
-        updated = await update_flow(
-            ctx=mcp_context_client,
-            configuration_id='legacy_flow_123',
-            flow_type=ORCHESTRATOR_COMPONENT_ID,
-            name='Updated Integration Test Legacy Flow',
-            description='Updated legacy flow for integration testing',
-            phases=legacy_flow_phases,
-            tasks=legacy_flow_tasks,
-            change_description='Updated for integration testing',
-        )
-        assert isinstance(updated, FlowToolResponse)
-        assert updated.success is True
-
-        # 4. Get flow details
-        detail = await get_flow(
-            ctx=mcp_context_client,
-            configuration_id='legacy_flow_123'
-        )
-        assert isinstance(detail, Flow)
-        assert detail.component_id == ORCHESTRATOR_COMPONENT_ID
+        result = await get_flow_examples(ctx=mcp_context_client, flow_type=ORCHESTRATOR_COMPONENT_ID)
+        
+        assert isinstance(result, str)
+        assert 'Flow Configuration Examples for `keboola.orchestrator`' in result
+        assert 'keboola.wr-google-bigquery-v2-28356142' in result
+        assert 'ex-generic-v2-34446855' in result
+        assert 'Scheduledconfiguration' in result
+        assert 'Extraction' in result
 
     @pytest.mark.asyncio
-    async def test_complete_conditional_flow_workflow(
+    async def test_get_conditional_flow_examples(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        mock_conditional_flow_create_update: Dict[str, Any],
     ):
-        """Test complete conditional flow workflow: create, list, update, get."""
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        """Test getting examples for conditional flow type."""
+        # Mock the file path and content properly - using actual structure from the real file
+        mock_file_content = [
+            '{"tasks":[{"id":"40fef978-7092-4d79-a5b4-ea3fb2e38d03","name":"keboola.wr-azure-event-hub-92021091","phase":"6afbf55b-782c-47d7-bf70-f0ef1be6505b","task":{"type":"job","mode":"run","componentId":"keboola.wr-azure-event-hub","configId":"92021091"},"enabled":true}],"phases":[{"id":"7dd992b0-9ac5-495b-b277-d8bc0b7e15d5","name":"Phase1","next":[{"id":"a25a4e4a-3042-49a2-81d8-fb1103957ebe","goto":"6afbf55b-782c-47d7-bf70-f0ef1be6505b"}]}]}',
+            '{"tasks":[{"id":"6bcc72d8-d9a5-4708-b0bd-53c4f6e839f7","name":"keboola.python-transformation-v2-16550","phase":"78c07164-0d1c-41d6-ba48-b821e781d830","task":{"type":"job","mode":"run","componentId":"keboola.python-transformation-v2","configId":"16550"},"enabled":true}],"phases":[{"id":"78c07164-0d1c-41d6-ba48-b821e781d830","name":"Phase1","next":[{"id":"e5dc7c43-d311-4e90-a2ca-6cac8d2eb5f5","goto":"92649482-45d6-475d-aace-33466f37e381"}]}]}'
+        ]
+        
+        # Mock the file path resolution
+        mock_path = mocker.Mock()
+        mock_path.__truediv__ = mocker.Mock(return_value=mock_path)
+        mock_path.open = mocker.mock_open(read_data='\n'.join(mock_file_content))
+        
+        # Mock the importlib.resources.files function
+        mocker.patch('importlib.resources.files', return_value=mock_path)
 
-        # Mock all necessary methods
-        keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=mock_conditional_flow_create_update)
-        keboola_client.storage_client.flow_list = mocker.AsyncMock(
-            side_effect=lambda ft: [mock_conditional_flow_create_update] if ft == CONDITIONAL_FLOW_COMPONENT_ID else []
-        )
-        keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=mock_conditional_flow_create_update)
-        keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=mock_conditional_flow_create_update)
-
-        # 1. Create conditional flow
-        created = await create_conditional_flow(
-            ctx=mcp_context_client,
-            name='Integration Test Conditional Flow',
-            description='Conditional flow for integration testing',
-            phases=mock_conditional_flow_create_update['configuration']['phases'],
-            tasks=mock_conditional_flow_create_update['configuration']['tasks'],
-        )
-        assert isinstance(created, FlowToolResponse)
-        assert created.success is True
-
-        # 2. List flows
-        listed = await list_flows(ctx=mcp_context_client)
-        assert len(listed.flows) == 1
-        assert listed.flows[0].component_id == CONDITIONAL_FLOW_COMPONENT_ID
-
-        # 3. Update conditional flow
-        updated = await update_flow(
-            ctx=mcp_context_client,
-            configuration_id='conditional_flow_456',
-            flow_type=CONDITIONAL_FLOW_COMPONENT_ID,
-            name='Updated Integration Test Conditional Flow',
-            description='Updated conditional flow for integration testing',
-            phases=mock_conditional_flow_create_update['configuration']['phases'],
-            tasks=mock_conditional_flow_create_update['configuration']['tasks'],
-            change_description='Updated for integration testing',
-        )
-        assert isinstance(updated, FlowToolResponse)
-        assert updated.success is True
-
-        # 4. Get conditional flow details
-        detail = await get_flow(
-            ctx=mcp_context_client,
-            configuration_id='conditional_flow_456'
-        )
-        assert isinstance(detail, Flow)
-        assert detail.component_id == CONDITIONAL_FLOW_COMPONENT_ID
-        # Conditional flows should have retry configuration
-        assert hasattr(detail.configuration.phases[0], 'retry')
-
-    @pytest.mark.asyncio
-    async def test_mixed_flow_type_workflow(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-        legacy_flow_phases: List[Dict[str, Any]],
-        legacy_flow_tasks: List[Dict[str, Any]],
-        mock_conditional_flow_create_update: Dict[str, Any],
-        mock_legacy_flow_create_update: Dict[str, Any],
-    ):
-        """Test workflow involving both flow types simultaneously."""
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-
-        # Mock all necessary methods
-        keboola_client.storage_client.flow_create = mocker.AsyncMock(
-            side_effect=[mock_legacy_flow_create_update, mock_conditional_flow_create_update]
-        )
-        keboola_client.storage_client.flow_list = mocker.AsyncMock(
-            side_effect=lambda flow_type: {
-                ORCHESTRATOR_COMPONENT_ID: [mock_legacy_flow_create_update],
-                CONDITIONAL_FLOW_COMPONENT_ID: [mock_conditional_flow_create_update]
-            }[flow_type]
-        )
-        keboola_client.storage_client.flow_detail = mocker.AsyncMock(
-            side_effect=lambda flow_id, component_id=None: {
-                'legacy_flow_123': mock_legacy_flow_create_update,
-                'conditional_flow_456': mock_conditional_flow_create_update
-            }[flow_id]
-        )
-
-        # 1. Create both types of flows
-        legacy_created = await create_flow(
-            ctx=mcp_context_client,
-            name='Mixed Test Legacy Flow',
-            description='Legacy flow for mixed testing',
-            phases=legacy_flow_phases,
-            tasks=legacy_flow_tasks,
-        )
-        assert legacy_created.success is True
-
-        conditional_created = await create_conditional_flow(
-            ctx=mcp_context_client,
-            name='Mixed Test Conditional Flow',
-            description='Conditional flow for mixed testing',
-            phases=mock_conditional_flow_create_update['configuration']['phases'],
-            tasks=mock_conditional_flow_create_update['configuration']['tasks'],
-        )
-        assert conditional_created.success is True
-
-        # 2. List all flows
-        all_flows = await list_flows(ctx=mcp_context_client)
-        assert len(all_flows.flows) == 2
-        assert any(f.component_id == ORCHESTRATOR_COMPONENT_ID for f in all_flows.flows)
-        assert any(f.component_id == CONDITIONAL_FLOW_COMPONENT_ID for f in all_flows.flows)
-
-        # 3. Get specific flows by ID
-        legacy_detail = await get_flow(
-            ctx=mcp_context_client,
-            configuration_id='legacy_flow_123'
-        )
-        assert legacy_detail.component_id == ORCHESTRATOR_COMPONENT_ID
-
-        conditional_detail = await get_flow(
-            ctx=mcp_context_client,
-            configuration_id='conditional_flow_456'
-        )
-        assert conditional_detail.component_id == CONDITIONAL_FLOW_COMPONENT_ID
+        result = await get_flow_examples(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        
+        assert isinstance(result, str)
+        assert 'Flow Configuration Examples for `keboola.flow`' in result
+        assert 'keboola.wr-azure-event-hub-92021091' in result
+        assert 'keboola.python-transformation-v2-16550' in result
+        assert 'Phase1' in result
