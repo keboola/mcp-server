@@ -266,7 +266,7 @@ class TestCreateFlowTool:
     ):
         """Should create a new legacy (orchestrator) flow with valid phases/tasks."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
+        mocker.patch.object(keboola_client.storage_client, 'flow_create', return_value=mock_legacy_flow_create_update)
 
         result = await create_flow(
             ctx=mcp_context_client,
@@ -416,8 +416,7 @@ class TestGetFlowTool:
         async def mock_flow_detail(config_id: str, flow_type: str) -> dict[str, Any]:
             if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
                 response = mocker.Mock(status_code=404)
-                mock_request = mocker.Mock()
-                raise httpx.HTTPStatusError('404 Not Found', request=mock_request, response=response)
+                raise httpx.HTTPStatusError('404 Not Found', request=None, response=response)
             if flow_type == ORCHESTRATOR_COMPONENT_ID:
                 return mock_legacy_flow
             raise ValueError(f'Unexpected flow type: {flow_type}')
