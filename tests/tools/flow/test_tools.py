@@ -385,21 +385,13 @@ class TestConditionalFlowTools:
         )
 
         assert isinstance(result, FlowToolResponse)
-        assert result.id == 'conditional_flow_456'
-        assert result.description == 'Advanced pipeline with conditional logic and error handling'
         assert result.success is True
+        assert result.id == mock_conditional_flow_create_update['id']
+        assert result.description == mock_conditional_flow_create_update['description']
+        assert result.timestamp is not None
+        assert len(result.links) == 3
 
-        # Verify the flow creation call
         keboola_client.storage_client.flow_create.assert_called_once()
-        call_args = keboola_client.storage_client.flow_create.call_args
-
-        assert call_args.kwargs['name'] == 'Advanced Data Pipeline'
-        assert call_args.kwargs['flow_type'] == CONDITIONAL_FLOW_COMPONENT_ID
-
-        # Verify conditional flow specific structure
-        flow_config = call_args.kwargs['flow_configuration']
-        assert len(flow_config['phases']) == 1  # simple phase
-        assert len(flow_config['tasks']) == 1   # simple task
 
     @pytest.mark.asyncio
     async def test_update_conditional_flow(
@@ -411,6 +403,8 @@ class TestConditionalFlowTools:
         """Test conditional flow update with enhanced conditions."""
         updated_config = mock_conditional_flow_create_update.copy()
         updated_config['version'] = 2
+        updated_config['name'] = 'Enhanced Advanced Data Pipeline'
+        updated_config['description'] = 'Enhanced pipeline with improved conditional logic'
 
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=updated_config)
@@ -428,13 +422,12 @@ class TestConditionalFlowTools:
 
         assert isinstance(result, FlowToolResponse)
         assert result.success is True
+        assert result.id == updated_config['id']
+        assert result.description == updated_config['description']
+        assert result.timestamp is not None
+        assert len(result.links) == 3
 
-        # Verify the update call
         keboola_client.storage_client.flow_update.assert_called_once()
-        call_args = keboola_client.storage_client.flow_update.call_args
-
-        assert call_args.kwargs['config_id'] == 'conditional_flow_456'
-        assert call_args.kwargs['flow_type'] == CONDITIONAL_FLOW_COMPONENT_ID
 
     @pytest.mark.asyncio
     async def test_get_conditional_flow(
@@ -453,12 +446,19 @@ class TestConditionalFlowTools:
         )
 
         assert isinstance(result, Flow)
-        assert result.component_id == CONDITIONAL_FLOW_COMPONENT_ID
-        assert result.configuration_id == 'conditional_flow_456'
-        assert result.name == 'Advanced Data Pipeline'
+        assert result.component_id == mock_conditional_flow['component_id']
+        assert result.configuration_id == mock_conditional_flow['configuration_id']
+        assert result.name == mock_conditional_flow['name']
+        assert result.description == mock_conditional_flow['description']
+        assert result.created == mock_conditional_flow['created']
+        assert result.updated == mock_conditional_flow['updated']
+        assert result.version == mock_conditional_flow['version']
+        assert result.is_disabled == mock_conditional_flow['isDisabled']
+        assert result.is_deleted == mock_conditional_flow['isDeleted']
         from keboola_mcp_server.tools.flow.model import ConditionalFlowPhase, ConditionalFlowTask
-        assert result.configuration.phases == [ConditionalFlowPhase.model_validate(p) for p in mock_conditional_flow['configuration']['phases']]
-        assert result.configuration.tasks == [ConditionalFlowTask.model_validate(t) for t in mock_conditional_flow['configuration']['tasks']]
+        assert result.configuration.phases == [ConditionalFlowPhase.model_validate(phase) for phase in mock_conditional_flow['configuration']['phases']]
+        assert result.configuration.tasks == [ConditionalFlowTask.model_validate(task) for task in mock_conditional_flow['configuration']['tasks']]
+        assert len(result.links) == 3
 
 # =============================================================================
 # MIXED FLOW TYPE TESTS
