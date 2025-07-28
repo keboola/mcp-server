@@ -74,7 +74,7 @@ async def test_list_jobs_with_component_and_config_filter(mcp_context: Context, 
 
     # Wait for the job to appear in the list (handles race condition)
     result = await _wait_for_job_in_list(
-        mcp_justification=mcp_context,
+        mcp_context=mcp_context,
         job_id=job.id,
         component_id=component_id,
         config_id=configuration_id,
