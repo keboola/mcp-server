@@ -3,7 +3,7 @@
 import json
 import logging
 from importlib import resources
-from typing import Any, Mapping, Sequence, Union
+from typing import Any, Mapping, Sequence
 
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
@@ -15,8 +15,6 @@ from keboola_mcp_server.client import (
 )
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
-    ConditionalFlowPhase,
-    ConditionalFlowTask,
     FlowPhase,
     FlowSummary,
     FlowTask,
@@ -43,19 +41,62 @@ def get_schema_as_markdown(flow_type: FLOW_TYPE) -> str:
     return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 
-def ensure_phase_ids(
-    phases: list[dict[str, Any]],
-    flow_type: str = ORCHESTRATOR_COMPONENT_ID
-) -> list[FlowPhase] | list[ConditionalFlowPhase]:
-    """Ensure all phases have unique IDs and proper structure using Pydantic validation"""
-    if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
-        return ensure_conditional_phase_ids(phases)
-    else:
-        return ensure_legacy_phase_ids(phases)
+def validate_legacy_flow_structure(
+    phases: list[FlowPhase],
+    tasks: list[FlowTask],
+) -> None:
+    """Validate that the legacy flow structure is valid (phases exist and graph is not circular)"""
+    phase_ids = {phase.id for phase in phases}
+
+    for phase in phases:
+        for dep_id in phase.depends_on:
+            if dep_id not in phase_ids:
+                raise ValueError(f'Phase {phase.id} depends on non-existent phase {dep_id}')
+
+    for task in tasks:
+        if task.phase not in phase_ids:
+            raise ValueError(f'Task {task.id} references non-existent phase {task.phase}')
+
+    _check_legacy_circular_dependencies(phases)
+
+
+def _check_legacy_circular_dependencies(phases: list[FlowPhase]) -> None:
+    """
+    Check for circular dependencies in legacy flows using depends_on relationships.
+    Uses optimized O(n) lookup.
+    """
+    # Build dependency graph
+    graph = {phase.id: phase.depends_on for phase in phases}
+
+    # Use DFS to detect cycles
+    visited = set()
+    rec_stack = set()
+
+    def has_cycle(node: str | int) -> bool:
+        if node in rec_stack:
+            return True
+        if node in visited:
+            return False
+
+        visited.add(node)
+        rec_stack.add(node)
+
+        for neighbor in graph.get(node, []):
+            if has_cycle(neighbor):
+                return True
+
+        rec_stack.remove(node)
+        return False
+
+    # Check each phase for cycles
+    for phase_id in graph:
+        if phase_id not in visited:
+            if has_cycle(phase_id):
+                raise ValueError(f'Circular dependency detected involving phase {phase_id}')
 
 
 def ensure_legacy_phase_ids(phases: list[dict[str, Any]]) -> list[FlowPhase]:
-    """Ensure all phases have unique IDs and proper structure using Pydantic validation for legacy flows"""
+    """Ensure all phases have unique IDs and proper structure for legacy flows"""
     processed_phases = []
     used_ids = set()
 
@@ -79,45 +120,6 @@ def ensure_legacy_phase_ids(phases: list[dict[str, Any]]) -> list[FlowPhase]:
             raise ValueError(f'Invalid phase configuration: {e}')
 
     return processed_phases
-
-
-def ensure_conditional_phase_ids(phases: list[dict[str, Any]]) -> list[ConditionalFlowPhase]:
-    """Ensure all phases have unique IDs and proper structure using Pydantic validation for conditional flows"""
-    processed_phases = []
-    used_ids = set()
-
-    for i, phase in enumerate(phases):
-        phase_data = phase.copy()
-
-        if 'id' not in phase_data or not phase_data['id']:
-            phase_id = f'phase_{i + 1}'
-            while phase_id in used_ids:
-                i += 1
-                phase_id = f'phase_{i + 1}'
-            phase_data['id'] = phase_id
-
-        if 'name' not in phase_data:
-            phase_data['name'] = f'Phase {phase_data["id"]}'
-
-        try:
-            validated_phase = ConditionalFlowPhase.model_validate(phase_data)
-            used_ids.add(validated_phase.id)
-            processed_phases.append(validated_phase)
-        except Exception as e:
-            raise ValueError(f'Invalid phase configuration: {e}')
-
-    return processed_phases
-
-
-def ensure_task_ids(
-    tasks: list[dict[str, Any]],
-    flow_type: str = ORCHESTRATOR_COMPONENT_ID
-) -> list[Union[FlowTask, ConditionalFlowTask]]:
-    """Ensure all tasks have unique IDs and proper structure using Pydantic validation"""
-    if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
-        return ensure_conditional_task_ids(tasks)
-    else:
-        return ensure_legacy_task_ids(tasks)
 
 
 def ensure_legacy_task_ids(tasks: list[dict[str, Any]]) -> list[FlowTask]:
@@ -167,113 +169,6 @@ def ensure_legacy_task_ids(tasks: list[dict[str, Any]]) -> list[FlowTask]:
             raise ValueError(f'Invalid task configuration: {e}')
 
     return processed_tasks
-
-
-def ensure_conditional_task_ids(tasks: list[dict[str, Any]]) -> list[ConditionalFlowTask]:
-    """Ensure all tasks have unique IDs and proper structure using Pydantic validation for conditional flows"""
-    processed_tasks = []
-    used_ids = set()
-
-    for i, task in enumerate(tasks):
-        task_data = task.copy()
-
-        if 'id' not in task_data or not task_data['id']:
-            task_id = f'task_{i + 1}'
-            while task_id in used_ids:
-                i += 1
-                task_id = f'task_{i + 1}'
-            task_data['id'] = task_id
-
-        if 'name' not in task_data:
-            task_data['name'] = f"Task {task_data['id']}"
-
-        if 'task' not in task_data:
-            raise ValueError(f'Task {task_data["id"]} missing "task" configuration')
-
-        try:
-            validated_task = ConditionalFlowTask.model_validate(task_data)
-            used_ids.add(validated_task.id)
-            processed_tasks.append(validated_task)
-        except Exception as e:
-            raise ValueError(f'Invalid task configuration: {e}')
-
-    return processed_tasks
-
-
-def validate_flow_structure(
-    phases: list[FlowPhase | ConditionalFlowPhase],
-    tasks: list[FlowTask | ConditionalFlowTask],
-) -> None:
-    """Validate that the flow structure is valid - now using Pydantic models"""
-    phase_ids = {phase.id for phase in phases}
-
-    for phase in phases:
-        # Handle both legacy and conditional flow phase structures
-        if isinstance(phase, FlowPhase):
-            # Legacy flow phase
-            for dep_id in phase.depends_on:
-                if dep_id not in phase_ids:
-                    raise ValueError(f'Phase {phase.id} depends on non-existent phase {dep_id}')
-        # Conditional flow phases don't have depends_on, they use 'next' transitions
-
-    for task in tasks:
-        if task.phase not in phase_ids:
-            raise ValueError(f'Task {task.id} references non-existent phase {task.phase}')
-
-    _check_circular_dependencies(phases)
-
-
-def _check_circular_dependencies(phases: list[FlowPhase] | list[ConditionalFlowPhase]) -> None:
-    """
-    Optimized circular dependency check that:
-    1. Uses O(n) dict lookup instead of O(n²) list search
-    2. Returns detailed cycle path information for better debugging
-    """
-
-    # Build efficient lookup graph once - O(n) optimization
-    graph = {}
-    for phase in phases:
-        if isinstance(phase, FlowPhase):
-            # Legacy flow phase
-            graph[phase.id] = phase.depends_on
-        else:
-            # Conditional flow phase - no depends_on, uses 'next' transitions
-            graph[phase.id] = []
-
-    def _has_cycle(phase_id: Any, _visited: set, rec_stack: set, path: list[Any]) -> list[Any] | None:
-        """
-        Returns None if no cycle found, or List[phase_ids] representing the cycle path.
-        """
-        _visited.add(phase_id)
-        rec_stack.add(phase_id)
-        path.append(phase_id)
-
-        dependencies = graph.get(phase_id, [])
-
-        for dep_id in dependencies:
-            if dep_id not in _visited:
-                cycle = _has_cycle(dep_id, _visited, rec_stack, path)
-                if cycle is not None:
-                    return cycle
-
-            elif dep_id in rec_stack:
-                try:
-                    cycle_start_index = path.index(dep_id)
-                    return path[cycle_start_index:] + [dep_id]
-                except ValueError:
-                    return [phase_id, dep_id]
-
-        path.pop()
-        rec_stack.remove(phase_id)
-        return None
-
-    visited = set()
-    for phase in phases:
-        if phase.id not in visited:
-            cycle_path = _has_cycle(phase.id, visited, set(), [])
-            if cycle_path is not None:
-                cycle_str = ' -> '.join(str(pid) for pid in cycle_path)
-                raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
 
 
 async def _get_flows_by_ids(

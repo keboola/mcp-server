@@ -36,10 +36,10 @@ from keboola_mcp_server.tools.flow.model import (
 from keboola_mcp_server.tools.flow.utils import (
     _get_all_flows,
     _get_flows_by_ids,
-    ensure_phase_ids,
-    ensure_task_ids,
+    ensure_legacy_phase_ids,
+    ensure_legacy_task_ids,
     get_schema_as_markdown,
-    validate_flow_structure,
+    validate_legacy_flow_structure,
 )
 from keboola_mcp_server.tools.project import get_project_info
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
@@ -127,9 +127,9 @@ async def create_flow(
         - fill `phases` parameter by grouping tasks into phases
     """
     flow_type = ORCHESTRATOR_COMPONENT_ID
-    processed_phases = ensure_phase_ids(phases)
-    processed_tasks = ensure_task_ids(tasks)
-    validate_flow_structure(processed_phases, processed_tasks)
+    processed_phases = ensure_legacy_phase_ids(phases)
+    processed_tasks = ensure_legacy_task_ids(tasks)
+    validate_legacy_flow_structure(processed_phases, processed_tasks)
     flow_configuration = {
         'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
         'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
@@ -178,7 +178,11 @@ async def create_conditional_flow(
     ],
 ) -> Annotated[FlowToolResponse, Field(description='Response object for enhanced flow creation.')]:
     """
-    Creates a new **enhanced conditional flow** configuration in Keboola using structured Pydantic models.
+    Creates a new **conditional flow** configuration in Keboola.
+    Use this to create a flow always when the project has conditional flows enabled (in project_info tool)
+
+    If you haven't already called it, always use the `get_flow_schema` tool using `keboola.flow` flow type
+    to see the latest schema for conditional flows and also look at the examples under `get_flow_examples` tool.
 
     This enhanced version provides:
     - **Structured conditions**: Type-safe condition objects with proper validation
@@ -187,20 +191,22 @@ async def create_conditional_flow(
     - **Better validation**: Compile-time validation of flow structure and relationships
     - **Enhanced error messages**: More descriptive errors when validation fails
 
-    WHAT ARE ENHANCED CONDITIONAL FLOWS?
-
     Enhanced conditional flows use structured models for:
     - **Conditions**: TaskCondition, PhaseCondition, OperatorCondition, etc.
     - **Retry configurations**: RetryConfiguration with RetryStrategyParams and RetryOnCondition
     - **Task configurations**: JobTaskConfiguration, NotificationTaskConfiguration, VariableTaskConfiguration
 
     CONSIDERATIONS:
+    - Do not create conditions, unless user asks for them explicitly
     - All IDs must be unique and clearly defined.
+    - The `phases` and `tasks` parameters must conform to the keboola.flow JSON schema.
+    - The phases cannot be empty.
     - This tool automatically validates the structure before creation.
     - The enhanced models provide better type safety and validation.
-    - Backward compatible with existing flow configurations.
+    - Conditional flows are the default and recommended flow type in Keboola.
 
     USE CASES:
+    - user_input: Create a flow.
     - user_input: Create a flow with complex conditional logic and retry mechanisms.
     - user_input: Build a data pipeline with sophisticated error handling and notifications.
     """
@@ -285,22 +291,22 @@ async def update_flow(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    # Use flow-type aware utilities
-    processed_phases = ensure_phase_ids(phases, flow_type=flow_type)
-    processed_tasks = ensure_task_ids(tasks, flow_type=flow_type)
-    validate_flow_structure(processed_phases, processed_tasks)
-
-    # Serialize based on flow type
-    if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
-        flow_configuration = {
-            'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
-            'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
-            }
-    else:
+    # Use flow-type specific utilities
+    if flow_type == ORCHESTRATOR_COMPONENT_ID:
+        processed_phases = ensure_legacy_phase_ids(phases)
+        processed_tasks = ensure_legacy_task_ids(tasks)
+        validate_legacy_flow_structure(processed_phases, processed_tasks)
         flow_configuration = {
             'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
             'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
         }
+    else:
+        processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
+        processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks]
+        flow_configuration = {
+            'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
+            'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
+            }
 
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
