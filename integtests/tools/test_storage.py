@@ -28,7 +28,7 @@ LOG = logging.getLogger(__name__)
 @pytest.mark.asyncio
 async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that `list_buckets` returns a list of `BucketDetail` instances."""
-    result = await list_buckets(mcp_context)
+    result = await list_buckets(mcp_context, 'Integration test list buckets')
 
     assert isinstance(result, ListBucketsOutput)
     for item in result.buckets:
@@ -41,7 +41,7 @@ async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
 async def test_get_bucket(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that for each test bucket, `get_bucket` returns a `BucketDetail` instance."""
     for bucket in buckets:
-        result = await get_bucket(bucket.bucket_id, mcp_context)
+        result = await get_bucket(mcp_context, 'Integration test get bucket', bucket.bucket_id)
         assert isinstance(result, BucketDetail)
         assert result.id == bucket.bucket_id
 
@@ -55,7 +55,7 @@ async def test_get_table(mcp_context: Context, tables: list[TableDef]):
             reader = csv.reader(f)
             columns = frozenset(next(reader))
 
-        result = await get_table(table.table_id, mcp_context)
+        result = await get_table(mcp_context, 'Integration test get table', table.table_id)
         assert isinstance(result, TableDetail)
         assert result.id == table.table_id
         assert result.name == table.table_name
@@ -74,7 +74,7 @@ async def test_list_tables(mcp_context: Context, tables: list[TableDef], buckets
         tables_by_bucket[table.bucket_id].append(table)
 
     for bucket in buckets:
-        result = await list_tables(bucket.bucket_id, mcp_context)
+        result = await list_tables(mcp_context, 'Integration test list tables', bucket.bucket_id)
 
         assert isinstance(result, ListTablesOutput)
         for item in result.tables:
@@ -97,7 +97,9 @@ async def test_update_bucket_description(mcp_context: Context, buckets: list[Buc
     md_id: str | None = None
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
-        result = await update_bucket_description(bucket.bucket_id, 'New Description', mcp_context)
+        result = await update_bucket_description(
+            mcp_context, 'Integration test update bucket description', bucket.bucket_id, 'New Description'
+        )
         assert isinstance(result, UpdateDescriptionOutput)
         assert result.description == 'New Description'
 
@@ -118,7 +120,9 @@ async def test_update_table_description(mcp_context: Context, tables: list[Table
     md_id: str | None = None
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
-        result = await update_table_description(table.table_id, 'New Description', mcp_context)
+        result = await update_table_description(
+            mcp_context, 'Integration test update table description', table.table_id, 'New Description'
+        )
         assert isinstance(result, UpdateDescriptionOutput)
         assert result.description == 'New Description'
 
@@ -146,7 +150,9 @@ async def test_update_column_description(mcp_context: Context, tables: list[Tabl
     test_description = 'New Column Description'
 
     # Test the update_column_description function
-    result = await update_column_description(table.table_id, column_name, test_description, mcp_context)
+    result = await update_column_description(
+        mcp_context, 'Integration test update column description', table.table_id, column_name, test_description
+    )
     LOG.error(result)
 
     # Verify the function returns expected result

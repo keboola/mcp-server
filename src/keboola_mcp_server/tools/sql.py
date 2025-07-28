@@ -32,6 +32,9 @@ def add_sql_tools(mcp: FastMCP) -> None:
 @with_session_state()
 async def get_sql_dialect(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
 ) -> Annotated[str, Field(description='The SQL dialect of the project database')]:
     """Gets the name of the SQL dialect used by Keboola project's underlying database."""
     return await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
@@ -40,6 +43,10 @@ async def get_sql_dialect(
 @tool_errors()
 @with_session_state()
 async def query_data(
+    ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
     query_name: Annotated[
         str,
@@ -51,10 +58,10 @@ async def query_data(
             )
         ),
     ],
-    ctx: Context,
 ) -> Annotated[QueryDataOutput, Field(description='The query results with name and CSV data.')]:
     """
     Executes an SQL SELECT query to get the data from the underlying database.
+
     * When constructing the SQL SELECT query make sure to check the SQL dialect
       used by the Keboola project's underlying database.
     * When referring to tables always use fully qualified table names that include the database name,

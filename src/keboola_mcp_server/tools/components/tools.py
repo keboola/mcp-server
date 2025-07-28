@@ -106,6 +106,9 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
 @with_session_state()
 async def list_configs(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     component_types: Annotated[
         Sequence[ComponentType],
         Field(description='List of component types to filter by. If none, return all components.'),
@@ -158,6 +161,9 @@ async def list_configs(
 @with_session_state()
 async def list_transformations(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     transformation_ids: Annotated[
         Sequence[str],
         Field(description='List of transformation component IDs to retrieve configurations for.'),
@@ -206,6 +212,9 @@ async def list_transformations(
 @with_session_state()
 async def get_component(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
 ) -> Annotated[Component, Field(description='The component.')]:
     """
@@ -230,6 +239,10 @@ async def get_component(
 @tool_errors()
 @with_session_state()
 async def get_config(
+    ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
     configuration_id: Annotated[
         str,
@@ -237,7 +250,6 @@ async def get_config(
             description='ID of the component/transformation configuration',
         ),
     ],
-    ctx: Context,
 ) -> Annotated[Configuration, Field(description='The component/transformation and its configuration.')]:
     """
     Gets information about a specific component/transformation configuration.
@@ -287,6 +299,9 @@ async def get_config(
 @with_session_state()
 async def create_sql_transformation(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     name: Annotated[
         str,
         Field(
@@ -353,7 +368,7 @@ async def create_sql_transformation(
 
     # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
-    sql_dialect = await get_sql_dialect(ctx)
+    sql_dialect = await get_sql_dialect(ctx, 'Getting SQL dialect for transformation creation')
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
@@ -405,6 +420,9 @@ async def create_sql_transformation(
 @with_session_state()
 async def update_sql_transformation(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     configuration_id: Annotated[str, Field(description='ID of the transformation configuration to update')],
     change_description: Annotated[
         str,
@@ -464,7 +482,9 @@ async def update_sql_transformation(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
+    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(
+        await get_sql_dialect(ctx, 'Getting SQL dialect for transformation update')
+    )
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
@@ -524,6 +544,9 @@ async def update_sql_transformation(
 @with_session_state()
 async def create_config(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     name: Annotated[
         str,
         Field(
@@ -626,6 +649,9 @@ async def create_config(
 @with_session_state()
 async def add_config_row(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     name: Annotated[
         str,
         Field(
@@ -746,6 +772,9 @@ async def add_config_row(
 @with_session_state()
 async def update_config(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     name: Annotated[
         str,
         Field(
@@ -859,6 +888,9 @@ async def update_config(
 @with_session_state()
 async def update_config_row(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     name: Annotated[
         str,
         Field(description='A short, descriptive name summarizing the purpose of the component configuration.'),
@@ -975,6 +1007,9 @@ async def update_config_row(
 @with_session_state()
 async def get_config_examples(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     component_id: Annotated[str, Field(description='The ID of the component to get configuration examples for.')],
 ) -> Annotated[
     str,

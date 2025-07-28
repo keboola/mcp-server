@@ -27,7 +27,7 @@ async def test_docs_query(
     keboola_client.ai_service_client.docs_question = mocker.AsyncMock(return_value=mock_docs_response)
 
     query = 'How do I create a transformation?'
-    result = await docs_query(context, query)
+    result = await docs_query(context, 'Test documentation query', query)
 
     assert isinstance(result, DocsAnswer)
     assert result.text == mock_docs_response.text

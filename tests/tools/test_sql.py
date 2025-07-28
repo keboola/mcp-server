@@ -55,7 +55,7 @@ async def test_query_data(
     workspace_manager.execute_query.return_value = result
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    result = await query_data(query, query_name, mcp_context_client)
+    result = await query_data(mcp_context_client, 'Test SQL query execution', query, query_name)
     assert isinstance(result, QueryDataOutput)
     assert result.query_name == query_name
     assert result.csv_data == expected_csv
@@ -68,7 +68,7 @@ async def test_get_sql_dialect(dialect: str, mcp_context_client: Context, mocker
     workspace_manager.get_sql_dialect.return_value = dialect
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    result = await get_sql_dialect(mcp_context_client)
+    result = await get_sql_dialect(mcp_context_client, 'Test getting SQL dialect')
     assert result == dialect
 
 

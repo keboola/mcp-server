@@ -7,7 +7,7 @@ from keboola_mcp_server.tools.project import ProjectInfo, get_project_info
 
 @pytest.mark.asyncio
 async def test_get_project_info(mcp_context: Context, keboola_project) -> None:
-    result = await get_project_info(mcp_context)
+    result = await get_project_info(mcp_context, 'Integration test project info')
 
     assert isinstance(result, ProjectInfo)
     assert str(result.project_id) == str(keboola_project.project_id)

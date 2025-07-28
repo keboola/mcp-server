@@ -275,6 +275,7 @@ class TestGlobalSearchTool:
 
         result = await search(
             ctx=mcp_context_client,
+            justification='Test global search with parameters',
             name_prefixes=['test', 'table'],
             item_types=('table', 'configuration'),
             limit=20,
@@ -311,7 +312,9 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        result = await search(ctx=mcp_context_client, name_prefixes=['test'])
+        result = await search(
+            ctx=mcp_context_client, justification='Test default search parameters', name_prefixes=['test']
+        )
 
         assert isinstance(result, GlobalSearchOutput)
 
@@ -332,7 +335,9 @@ class TestGlobalSearchTool:
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
         # Test with limit too high
-        await search(ctx=mcp_context_client, name_prefixes=['test'], limit=200)
+        await search(
+            ctx=mcp_context_client, justification='Test search limit out of range', name_prefixes=['test'], limit=200
+        )
 
         # Should use default limit
         keboola_client.storage_client.global_search.assert_called_with(
@@ -341,7 +346,9 @@ class TestGlobalSearchTool:
 
         # Test with limit too low
         keboola_client.storage_client.global_search.reset_mock()
-        await search(ctx=mcp_context_client, name_prefixes=['test'], limit=0)
+        await search(
+            ctx=mcp_context_client, justification='Test search with invalid limit', name_prefixes=['test'], limit=0
+        )
 
         # Should use default limit
         keboola_client.storage_client.global_search.assert_called_with(
@@ -359,7 +366,12 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        await search(ctx=mcp_context_client, name_prefixes=['test'], offset=-10)
+        await search(
+            ctx=mcp_context_client,
+            justification='Test search with negative offset',
+            name_prefixes=['test'],
+            offset=-10,
+        )
 
         # Should use offset 0
         keboola_client.storage_client.global_search.assert_called_once_with(
@@ -373,7 +385,9 @@ class TestGlobalSearchTool:
         keboola_client.storage_client.is_enabled = mocker.AsyncMock(return_value=False)
 
         with pytest.raises(ValueError, match='Global search is not enabled'):
-            await search(ctx=mcp_context_client, name_prefixes=['test'])
+            await search(
+                ctx=mcp_context_client, justification='Test search feature not enabled', name_prefixes=['test']
+            )
 
     @pytest.mark.asyncio
     async def test_global_search_joins_prefixes(
@@ -386,7 +400,9 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        await search(ctx=mcp_context_client, name_prefixes=['test', 'table', 'data'])
+        await search(
+            ctx=mcp_context_client, justification='Test search joins prefixes', name_prefixes=['test', 'table', 'data']
+        )
 
         # Should join with spaces
         keboola_client.storage_client.global_search.assert_called_once_with(
@@ -404,7 +420,9 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        await search(ctx=mcp_context_client, name_prefixes=['test'], limit=75)
+        await search(
+            ctx=mcp_context_client, justification='Test search with valid limit', name_prefixes=['test'], limit=75
+        )
 
         # Should use the provided limit
         keboola_client.storage_client.global_search.assert_called_once_with(

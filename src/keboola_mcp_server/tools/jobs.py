@@ -156,6 +156,9 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 @with_session_state()
 async def list_jobs(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     status: Annotated[
         JOB_STATUS,
         Field(
@@ -237,11 +240,14 @@ async def list_jobs(
 @tool_errors()
 @with_session_state()
 async def get_job(
+    ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     job_id: Annotated[
         str,
         Field(description='The unique identifier of the job whose details should be retrieved.'),
     ],
-    ctx: Context,
 ) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
     """
     Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
@@ -263,6 +269,9 @@ async def get_job(
 @with_session_state()
 async def run_job(
     ctx: Context,
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     component_id: Annotated[
         str,
         Field(description='The ID of the component or transformation for which to start a job.'),
