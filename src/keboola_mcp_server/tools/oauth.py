@@ -26,7 +26,7 @@ def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
 @with_session_state()
 async def create_oauth_url(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     component_id: Annotated[
         str, Field(description='The component ID to grant access to (e.g., "keboola.ex-google-analytics-v4").')
     ],

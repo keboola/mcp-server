@@ -156,7 +156,7 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 @with_session_state()
 async def list_jobs(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     status: Annotated[
         JOB_STATUS,
         Field(
@@ -239,7 +239,7 @@ async def list_jobs(
 @with_session_state()
 async def get_job(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     job_id: Annotated[
         str,
         Field(description='The unique identifier of the job whose details should be retrieved.'),
@@ -265,7 +265,7 @@ async def get_job(
 @with_session_state()
 async def run_job(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     component_id: Annotated[
         str,
         Field(description='The ID of the component or transformation for which to start a job.'),

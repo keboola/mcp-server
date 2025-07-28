@@ -106,7 +106,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
 @with_session_state()
 async def list_configs(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     component_types: Annotated[
         Sequence[ComponentType],
         Field(description='List of component types to filter by. If none, return all components.'),
@@ -159,7 +159,7 @@ async def list_configs(
 @with_session_state()
 async def list_transformations(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     transformation_ids: Annotated[
         Sequence[str],
         Field(description='List of transformation component IDs to retrieve configurations for.'),
@@ -208,7 +208,7 @@ async def list_transformations(
 @with_session_state()
 async def get_component(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
 ) -> Annotated[Component, Field(description='The component.')]:
     """
@@ -234,7 +234,7 @@ async def get_component(
 @with_session_state()
 async def get_config(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
     configuration_id: Annotated[
         str,
@@ -291,7 +291,7 @@ async def get_config(
 @with_session_state()
 async def create_sql_transformation(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     name: Annotated[
         str,
         Field(
@@ -410,7 +410,7 @@ async def create_sql_transformation(
 @with_session_state()
 async def update_sql_transformation(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     configuration_id: Annotated[str, Field(description='ID of the transformation configuration to update')],
     change_description: Annotated[
         str,
@@ -532,7 +532,7 @@ async def update_sql_transformation(
 @with_session_state()
 async def create_config(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     name: Annotated[
         str,
         Field(
@@ -635,7 +635,7 @@ async def create_config(
 @with_session_state()
 async def add_config_row(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     name: Annotated[
         str,
         Field(
@@ -756,7 +756,7 @@ async def add_config_row(
 @with_session_state()
 async def update_config(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     name: Annotated[
         str,
         Field(
@@ -870,7 +870,7 @@ async def update_config(
 @with_session_state()
 async def update_config_row(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     name: Annotated[
         str,
         Field(description='A short, descriptive name summarizing the purpose of the component configuration.'),
@@ -987,7 +987,7 @@ async def update_config_row(
 @with_session_state()
 async def get_config_examples(
     ctx: Context,
-    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     component_id: Annotated[str, Field(description='The ID of the component to get configuration examples for.')],
 ) -> Annotated[
     str,
