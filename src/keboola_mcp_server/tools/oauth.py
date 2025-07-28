@@ -2,6 +2,7 @@
 
 import logging
 from typing import Annotated
+from urllib.parse import urlencode, urlunsplit
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -56,9 +57,18 @@ async def create_oauth_url(
     storage_api_url = client.storage_client.base_api_url
 
     # Generate OAuth URL
-    oauth_url = (
-        f'https://external.keboola.com/oauth/index.html?token={sapi_token}'
-        f'&sapiUrl={storage_api_url}#/{component_id}/{config_id}'
-    )
+    query_params = urlencode({
+        'token': sapi_token,
+        'sapiUrl': storage_api_url
+    })
+    fragment = f'/{component_id}/{config_id}'
+
+    oauth_url = urlunsplit((
+        'https',  # scheme
+        'external.keboola.com',  # netloc
+        '/oauth/index.html',  # path
+        query_params,  # query
+        fragment  # fragment
+    ))
 
     return oauth_url

@@ -47,7 +47,7 @@ async def test_create_oauth_url_success(
     expected_url = (
         f'https://external.keboola.com/oauth/index.html'
         f'?token=KBC_TOKEN_12345'
-        f'&sapiUrl=https://connection.test.keboola.com'
+        f'&sapiUrl=https%3A%2F%2Fconnection.test.keboola.com'
         f'#/{component_id}/{config_id}'
     )
     assert result == expected_url
