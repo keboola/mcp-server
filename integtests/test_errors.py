@@ -81,8 +81,8 @@ class TestHttpErrors:
             await query_data(
                 ctx=mcp_context,
                 context='Integration test SQL invalid query error handling',
-                query='INVALID SQL SYNTAX HERE',
-                description='Invalid SQL query.'
+                sql_query='INVALID SQL SYNTAX HERE',
+                query_name='Invalid SQL query'
             )
 
     @pytest.mark.asyncio
