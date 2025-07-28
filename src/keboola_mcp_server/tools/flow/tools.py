@@ -44,7 +44,9 @@ def add_flow_tools(mcp: FastMCP) -> None:
 @with_session_state()
 async def get_flow_schema(
     _ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
 ) -> Annotated[str, Field(description='The configuration schema of Flow.')]:
     """Returns the JSON schema that defines the structure of Flow configurations."""
     # The _ctx: Context parameter is there for @tool_errors to be able to emit SAPI events.
@@ -56,7 +58,9 @@ async def get_flow_schema(
 @with_session_state()
 async def create_flow(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     name: Annotated[str, Field(description='A short, descriptive name for the flow.')],
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
@@ -125,7 +129,9 @@ async def create_flow(
 @with_session_state()
 async def update_flow(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
     name: Annotated[str, Field(description='Updated flow name.')],
     description: Annotated[str, Field(description='Updated flow description.')],
@@ -193,7 +199,9 @@ async def update_flow(
 @with_session_state()
 async def list_flows(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     flow_ids: Annotated[
         Sequence[str], Field(default_factory=tuple, description='The configuration IDs of the flows to retrieve.')
     ] = tuple(),
@@ -226,7 +234,9 @@ async def list_flows(
 @with_session_state()
 async def get_flow(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve.')],
 ) -> Annotated[FlowConfigurationResponse, Field(description='Detailed flow configuration.')]:
     """Gets detailed information about a specific flow configuration."""

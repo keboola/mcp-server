@@ -102,7 +102,9 @@ class GlobalSearchOutput(BaseModel):
 @with_session_state()
 async def search(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     name_prefixes: Annotated[list[str], Field(description='Name prefixes to match against item names.')],
     item_types: Annotated[
         Sequence[ItemType], Field(description='Optional list of keboola item types to filter by.')
@@ -154,7 +156,9 @@ async def search(
 @with_session_state()
 async def find_component_id(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     query: Annotated[str, Field(description='Natural language query to find the requested component.')],
 ) -> list[SuggestedComponent]:
     """

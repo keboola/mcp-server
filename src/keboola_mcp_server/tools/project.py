@@ -54,7 +54,9 @@ class ProjectInfo(BaseModel):
 @with_session_state()
 async def get_project_info(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
 ) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
     """Return structured project information pulled from multiple endpoints."""
     client = KeboolaClient.from_state(ctx.session.state)

@@ -35,7 +35,9 @@ class DocsAnswer(BaseModel):
 @with_session_state()
 async def docs_query(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     query: Annotated[str, Field(description='Natural language query to search for in the documentation.')],
 ) -> Annotated[DocsAnswer, Field(description='The retrieved documentation.')]:
     """

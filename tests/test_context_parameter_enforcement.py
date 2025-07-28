@@ -148,7 +148,8 @@ class TestJustificationParameterEnforcement:
                     break
 
         assert field_found, (
-            f'Tool function {module_name}.{func_name} justification parameter must have Field annotation with description'
+            f'Tool function {module_name}.{func_name} justification parameter must have Field '
+            f'annotation with description'
         )
 
         # Check that Field has description

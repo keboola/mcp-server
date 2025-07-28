@@ -168,7 +168,9 @@ class UpdateDescriptionOutput(BaseModel):
 @with_session_state()
 async def get_bucket(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')],
 ) -> BucketDetail:
     """Gets detailed information about a specific bucket."""
@@ -186,7 +188,9 @@ async def get_bucket(
 @with_session_state()
 async def list_buckets(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
 ) -> ListBucketsOutput:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
@@ -209,7 +213,9 @@ async def list_buckets(
 @with_session_state()
 async def get_table(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     table_id: Annotated[str, Field(description='Unique ID of the table.')],
 ) -> TableDetail:
     """Gets detailed information about a specific table including its DB identifier and column information."""
@@ -236,7 +242,9 @@ async def get_table(
 @with_session_state()
 async def list_tables(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')],
 ) -> ListTablesOutput:
     """Retrieves all tables in a specific bucket with their basic information."""
@@ -257,7 +265,9 @@ async def list_tables(
 @with_session_state()
 async def update_bucket_description(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     bucket_id: Annotated[str, Field(description='The ID of the bucket to update.')],
     description: Annotated[str, Field(description='The new description for the bucket.')],
 ) -> Annotated[
@@ -283,7 +293,9 @@ async def update_bucket_description(
 @with_session_state()
 async def update_table_description(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     table_id: Annotated[str, Field(description='The ID of the table to update.')],
     description: Annotated[str, Field(description='The new description for the table.')],
 ) -> Annotated[
@@ -307,7 +319,9 @@ async def update_table_description(
 @with_session_state()
 async def update_column_description(
     ctx: Context,
-    justification: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
+    justification: Annotated[
+        str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')
+    ],
     table_id: Annotated[str, Field(description='The ID of the table that contains the column.')],
     column_name: Annotated[str, Field(description='The name of the column to update.')],
     description: Annotated[str, Field(description='The new description for the column.')],
