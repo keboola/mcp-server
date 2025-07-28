@@ -312,7 +312,9 @@ class TestGlobalSearchTool:
         mock_response = GlobalSearchResponse.model_validate(mock_global_search_response)
         keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=mock_response)
 
-        result = await search(ctx=mcp_context_client, justification='Test default search parameters', name_prefixes=['test'])
+        result = await search(
+            ctx=mcp_context_client, justification='Test default search parameters', name_prefixes=['test']
+        )
 
         assert isinstance(result, GlobalSearchOutput)
 
@@ -383,7 +385,9 @@ class TestGlobalSearchTool:
         keboola_client.storage_client.is_enabled = mocker.AsyncMock(return_value=False)
 
         with pytest.raises(ValueError, match='Global search is not enabled'):
-            await search(ctx=mcp_context_client, justification='Test search feature not enabled', name_prefixes=['test'])
+            await search(
+                ctx=mcp_context_client, justification='Test search feature not enabled', name_prefixes=['test']
+            )
 
     @pytest.mark.asyncio
     async def test_global_search_joins_prefixes(
