@@ -55,7 +55,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
 
     created = await create_flow(
         ctx=mcp_context,
-        context='Integration test create and retrieve flow',
+        justification='Integration test create and retrieve flow',
         name=flow_name,
         description=flow_description,
         phases=phases,
@@ -134,7 +134,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
     flow_description = 'Initial description.'
     created = await create_flow(
         ctx=mcp_context,
-        context='Integration test create flow for update',
+        justification='Integration test create flow for update',
         name=flow_name,
         description=flow_description,
         phases=phases,
@@ -153,7 +153,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         ]
         updated = await update_flow(
             ctx=mcp_context,
-            context='Integration test update flow',
+            justification='Integration test update flow',
             configuration_id=created.flow_id,
             name=new_name,
             description=new_description,
@@ -241,7 +241,7 @@ async def test_create_flow_invalid_structure(mcp_context: Context, configs: list
     with pytest.raises(ValueError, match='depends on non-existent phase'):
         await create_flow(
             ctx=mcp_context,
-            context='Integration test create invalid flow',
+            justification='Integration test create invalid flow',
             name='Invalid Flow',
             description='Should fail',
             phases=phases,

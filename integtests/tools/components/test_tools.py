@@ -48,7 +48,7 @@ async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
 
         configuration = await get_config(
             ctx=mcp_context,
-            context='Integration test get config',
+            justification='Integration test get config',
             component_id=config.component_id,
             configuration_id=config.configuration_id,
         )
@@ -77,7 +77,7 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
     assert len(component_ids) > 0
 
     result = await list_configs(
-        ctx=mcp_context, context='Integration test list configs by IDs', component_ids=component_ids
+        ctx=mcp_context, justification='Integration test list configs by IDs', component_ids=component_ids
     )
 
     # Verify result structure and content
@@ -104,7 +104,7 @@ async def test_list_configs_by_types(mcp_context: Context, configs: list[ConfigD
     component_types: list[ComponentType] = ['extractor']
 
     result = await list_configs(
-        ctx=mcp_context, context='Integration test list configs by types', component_types=component_types
+        ctx=mcp_context, justification='Integration test list configs by types', component_types=component_types
     )
 
     assert isinstance(result, ListConfigsOutput)
@@ -137,7 +137,7 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
     # Create the configuration
     created_config = await create_config(
         ctx=mcp_context,
-        context='Integration test create config',
+        justification='Integration test create config',
         name=test_name,
         description=test_description,
         component_id=component_id,
@@ -233,7 +233,7 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef], keb
     # Create the initial configuration
     created_config = await create_config(
         ctx=mcp_context,
-        context='Integration test create config for update',
+        justification='Integration test create config for update',
         name=initial_name,
         description=initial_description,
         component_id=component_id,
@@ -246,7 +246,7 @@ async def test_update_config(mcp_context: Context, configs: list[ConfigDef], keb
         # Update the configuration
         updated_config = await update_config(
             ctx=mcp_context,
-            context='Integration test update config',
+            justification='Integration test update config',
             name=updated_name,
             description=updated_description,
             change_description=change_description,
@@ -348,7 +348,7 @@ async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], ke
     # First create a root configuration to add row to
     root_config = await create_config(
         ctx=mcp_context,
-        context='Integration test create root config for row',
+        justification='Integration test create root config for row',
         name=root_config_name,
         description=root_config_description,
         component_id=component_id,
@@ -361,7 +361,7 @@ async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], ke
         # Create the row configuration
         created_row_config = await add_config_row(
             ctx=mcp_context,
-            context='Integration test add config row',
+            justification='Integration test add config row',
             name=row_name,
             description=row_description,
             component_id=component_id,
@@ -475,7 +475,7 @@ async def test_update_config_row(mcp_context: Context, configs: list[ConfigDef],
     # First create a root configuration
     root_config = await create_config(
         ctx=mcp_context,
-        context='Integration test create root config for row update',
+        justification='Integration test create root config for row update',
         name=root_config_name,
         description=root_config_description,
         component_id=component_id,
@@ -490,7 +490,7 @@ async def test_update_config_row(mcp_context: Context, configs: list[ConfigDef],
         # Create a row configuration
         initial_row_config = await add_config_row(
             ctx=mcp_context,
-            context='Integration test add initial config row for update',
+            justification='Integration test add initial config row for update',
             name=initial_row_name,
             description=initial_row_description,
             component_id=component_id,
@@ -511,7 +511,7 @@ async def test_update_config_row(mcp_context: Context, configs: list[ConfigDef],
         # Update the row configuration
         updated_row_config = await update_config_row(
             ctx=mcp_context,
-            context='Integration test update config row',
+            justification='Integration test update config row',
             name=updated_row_name,
             description=updated_row_description,
             change_description=change_description,
@@ -613,7 +613,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
     # Create the SQL transformation
     created_transformation = await create_sql_transformation(
         ctx=mcp_context,
-        context='Integration test create SQL transformation',
+        justification='Integration test create SQL transformation',
         name=test_name,
         description=test_description,
         sql_code_blocks=test_sql_code_blocks,
@@ -731,7 +731,7 @@ async def test_update_sql_transformation(mcp_context: Context, keboola_project: 
     # Create the initial transformation
     created_transformation = await create_sql_transformation(
         ctx=mcp_context,
-        context='Integration test create initial SQL transformation for update',
+        justification='Integration test create initial SQL transformation for update',
         name=initial_name,
         description=initial_description,
         sql_code_blocks=initial_sql_code_blocks,
@@ -779,7 +779,7 @@ async def test_update_sql_transformation(mcp_context: Context, keboola_project: 
         # Update the transformation
         updated_transformation = await update_sql_transformation(
             ctx=mcp_context,
-            context='Integration test update SQL transformation',
+            justification='Integration test update SQL transformation',
             configuration_id=created_transformation.configuration_id,
             change_description=change_description,
             parameters=updated_parameters,
@@ -902,7 +902,7 @@ async def test_update_sql_transformation(mcp_context: Context, keboola_project: 
 @pytest.mark.asyncio
 async def test_list_transformations(mcp_context: Context):
     """Tests that `list_transformations` returns transformation configurations."""
-    result = await list_transformations(ctx=mcp_context, context='Integration test list transformations')
+    result = await list_transformations(ctx=mcp_context, justification='Integration test list transformations')
 
     assert isinstance(result, ListTransformationsOutput)
     for item in result.components_with_configurations:
@@ -930,7 +930,7 @@ async def test_list_transformations_by_ids(mcp_context: Context):
     # Create the transformation
     created_transformation = await create_sql_transformation(
         ctx=mcp_context,
-        context='Integration test create transformation for list by IDs',
+        justification='Integration test create transformation for list by IDs',
         name=transformation_name,
         description=transformation_description,
         sql_code_blocks=sql_code_blocks,
@@ -941,7 +941,7 @@ async def test_list_transformations_by_ids(mcp_context: Context):
         transformation_ids = [created_transformation.component_id]
         result = await list_transformations(
             ctx=mcp_context,
-            context='Integration test list transformations by IDs',
+            justification='Integration test list transformations by IDs',
             transformation_ids=transformation_ids,
         )
 
@@ -973,7 +973,7 @@ async def test_get_component(mcp_context: Context, configs: list[ConfigDef]):
     test_config = configs[0]
     component_id = test_config.component_id
 
-    result = await get_component(ctx=mcp_context, context='Integration test get component', component_id=component_id)
+    result = await get_component(ctx=mcp_context, justification='Integration test get component', component_id=component_id)
 
     assert isinstance(result, Component)
     assert result.component_id == test_config.component_id
@@ -986,7 +986,7 @@ async def test_get_config_examples(mcp_context: Context, configs: list[ConfigDef
     component_id = test_config.component_id
 
     result = await get_config_examples(
-        ctx=mcp_context, context='Integration test get config examples', component_id=component_id
+        ctx=mcp_context, justification='Integration test get config examples', component_id=component_id
     )
 
     # Verify the result is a markdown formatted string
@@ -1002,7 +1002,7 @@ async def test_get_config_examples_with_invalid_component(mcp_context: Context):
 
     result = await get_config_examples(
         ctx=mcp_context,
-        context='Integration test get config examples invalid',
+        justification='Integration test get config examples invalid',
         component_id='completely-non-existent-component-12345',
     )
 
