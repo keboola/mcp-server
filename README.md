@@ -27,10 +27,10 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 
 ### Supported Clients
 
-- **Cursor**: Use the "Install In Cursor" button in your project's MCP Server settings
-- **Claude Desktop**: Add the integration via Settings → Integrations
-- **Windsurf**: Configure with the remote server URL
-- **Make**: Configure with the remote server URL
+- **[Cursor](https://cursor.com)**: Use the "Install In Cursor" button in your project's MCP Server settings
+- **[Claude Desktop](https://claude.ai)**: Add the integration via Settings → Integrations
+- **[Windsurf](https://windsurf.ai)**: Configure with the remote server URL
+- **[Make](https://make.com)**: Configure with the remote server URL
 - **Other MCP clients**: Configure with the remote server URL
 
 For detailed setup instructions and region-specific URLs, see our [Remote Server Setup documentation](https://help.keboola.com/ai/mcp-server/#remote-server-setup).
