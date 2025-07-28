@@ -9,7 +9,7 @@ from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import KeboolaMcpServer, with_session_state
+from keboola_mcp_server.mcp import KeboolaMcpServer
 
 LOG = logging.getLogger(__name__)
 
@@ -23,7 +23,6 @@ def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
 
 
 @tool_errors()
-@with_session_state()
 async def create_oauth_url(
     component_id: Annotated[
         str, Field(description='The component ID to grant access to (e.g., "keboola.ex-google-analytics-v4").')
