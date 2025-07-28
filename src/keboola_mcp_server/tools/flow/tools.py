@@ -218,7 +218,6 @@ async def create_conditional_flow(
         'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
     }
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
-
     LOG.info(f'Creating new enhanced conditional flow: {name} (type: {flow_type})')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
