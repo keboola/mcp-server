@@ -208,8 +208,8 @@ async def create_conditional_flow(
     processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
     processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks]
     flow_configuration = {
-        'phases': [phase.model_dump(exclude_unset=True) for phase in processed_phases],
-        'tasks': [task.model_dump(exclude_unset=True) for task in processed_tasks],
+        'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
+        'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
     }
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
@@ -293,9 +293,9 @@ async def update_flow(
     # Serialize based on flow type
     if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
         flow_configuration = {
-            'phases': [phase.model_dump(exclude_unset=True) for phase in processed_phases],
-            'tasks': [task.model_dump(exclude_unset=True) for task in processed_tasks],
-        }
+            'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
+            'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
+            }
     else:
         flow_configuration = {
             'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
