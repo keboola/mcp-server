@@ -1,10 +1,15 @@
 import json
+import logging
 
 import pytest
 from fastmcp import Context
 
 from integtests.conftest import ConfigDef
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.client import (
+    ORCHESTRATOR_COMPONENT_ID,
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    KeboolaClient,
+)
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.tools.flow.model import Flow
@@ -12,12 +17,15 @@ from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
     ListFlowsOutput,
     create_flow,
+    create_conditional_flow,
     get_flow,
     get_flow_schema,
     list_flows,
     update_flow,
 )
+from keboola_mcp_server.tools.project import get_project_info
 
+LOG = logging.getLogger(__name__)
 
 @pytest.mark.skip
 @pytest.mark.asyncio
@@ -61,7 +69,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         phases=phases,
         tasks=tasks,
     )
-    flow_id = created.flow_id
+    flow_id = created.id
     client = KeboolaClient.from_state(mcp_context.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     expected_links = [
@@ -242,3 +250,188 @@ async def test_create_flow_invalid_structure(mcp_context: Context, configs: list
             phases=phases,
             tasks=tasks,
         )
+
+
+@pytest.mark.asyncio
+async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    Test complete flow lifecycle for both legacy and conditional flows.
+    Creates flows, retrieves them individually, and lists all flows.
+    Tests project-aware behavior based on conditional flows setting.
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+    
+    project_info = await get_project_info(mcp_context)
+    
+    # Test data for legacy flow
+    legacy_phases = [
+        {
+            'id': 1,
+            'name': 'Extract',
+            'description': 'Extract data from source',
+            'dependsOn': []
+        },
+        {
+            'id': 2,
+            'name': 'Load',
+            'description': 'Load data to destination',
+            'dependsOn': [1]
+        }
+    ]
+    
+    legacy_tasks = [
+        {
+            'id': 20001,
+            'name': 'Extract from API',
+            'phase': 1,
+            'enabled': True,
+            'continueOnFailure': False,
+            'task': {
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            }
+        },
+        {
+            'id': 20002,
+            'name': 'Load to Warehouse',
+            'phase': 2,
+            'enabled': True,
+            'continueOnFailure': False,
+            'task': {
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            }
+        }
+    ]
+    
+    # Test data for conditional flow
+    conditional_phases = [
+        {
+            'id': 'phase-1',
+            'name': 'Extract',
+            'description': 'Extract data from source',
+            'next': [
+                {
+                    'id': 'transition-1',
+                    'goto': 'phase-2'
+                }
+            ]
+        },
+        {
+            'id': 'phase-2',
+            'name': 'Load',
+            'description': 'Load data to destination',
+            'next': []
+        }
+    ]
+    
+    conditional_tasks = [
+        {
+            'id': 'task-1',
+            'name': 'Extract from API',
+            'phase': 'phase-1',
+            'enabled': True,
+            'task': {
+                'type': 'job',
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            }
+        },
+        {
+            'id': 'task-2',
+            'name': 'Load to Warehouse',
+            'phase': 'phase-2',
+            'enabled': True,
+            'task': {
+                'type': 'job',
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            }
+        }
+    ]
+    
+    created_flows = []
+    
+    # Step 1: Create orchestrator flow (should always work)
+    orchestrator_flow_name = 'Integration Test Orchestrator Flow'
+    orchestrator_flow_description = 'Orchestrator flow created by integration test'
+    
+    orchestrator_result = await create_flow(
+        ctx=mcp_context,
+        name=orchestrator_flow_name,
+        description=orchestrator_flow_description,
+        phases=legacy_phases,
+        tasks=legacy_tasks,
+    )
+    
+    assert isinstance(orchestrator_result, FlowToolResponse)
+    assert orchestrator_result.success is True
+    assert orchestrator_result.description == orchestrator_flow_description
+    created_flows.append((ORCHESTRATOR_COMPONENT_ID, orchestrator_result.id))
+    
+    # Step 2: Try to create conditional flow (only if project allows it)
+    conditional_flow_name = 'Integration Test Conditional Flow'
+    conditional_flow_description = 'Conditional flow created by integration test'
+    
+    if not project_info.conditional_flows_disabled:
+        conditional_result = await create_conditional_flow(
+            ctx=mcp_context,
+            name=conditional_flow_name,
+            description=conditional_flow_description,
+            phases=conditional_phases,
+            tasks=conditional_tasks,
+        )
+        
+        assert isinstance(conditional_result, FlowToolResponse)
+        assert conditional_result.success is True
+        assert conditional_result.description == conditional_flow_description
+        created_flows.append((CONDITIONAL_FLOW_COMPONENT_ID, conditional_result.id))
+    else:
+        LOG.info("Conditional flows are disabled in this project, skipping conditional flow creation")
+    
+    # Step 3: Get individual flows
+    for flow_type, flow_id in created_flows:
+        flow = await get_flow(mcp_context, configuration_id=flow_id)
+        
+        assert isinstance(flow, Flow)
+        assert flow.configuration_id == flow_id
+        
+        if flow_type == ORCHESTRATOR_COMPONENT_ID:
+            assert flow.name == orchestrator_flow_name
+            assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
+            assert len(flow.configuration.phases) == 2
+            assert len(flow.configuration.tasks) == 2
+            assert flow.configuration.phases[0].name == 'Extract'
+            assert flow.configuration.phases[1].name == 'Load'
+        else:
+            assert flow.name == conditional_flow_name
+            assert flow.component_id == CONDITIONAL_FLOW_COMPONENT_ID
+            assert len(flow.configuration.phases) == 2
+            assert len(flow.configuration.tasks) == 2
+            assert flow.configuration.phases[0].name == 'Extract'
+            assert flow.configuration.phases[1].name == 'Load'
+    
+    # Step 4: List all flows and verify our created flows are there
+    flows_list = await list_flows(mcp_context)
+    
+    assert isinstance(flows_list, ListFlowsOutput)
+    assert len(flows_list.flows) >= len(created_flows)
+    
+    # Verify our created flows are in the list
+    flow_ids = [flow.configuration_id for flow in flows_list.flows]
+    for flow_type, flow_id in created_flows:
+        assert flow_id in flow_ids, f"Created {flow_type} flow {flow_id} not found in flows list"
+    
+    # Step 5: Clean up - delete all created flows
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    for flow_type, flow_id in created_flows:
+        try:
+            await client.storage_client.flow_delete(flow_id, flow_type=flow_type, skip_trash=True)
+            LOG.info(f"Successfully deleted {flow_type} flow {flow_id}")
+        except Exception as e:
+            LOG.warning(f"Failed to delete {flow_type} flow {flow_id}: {e}")
