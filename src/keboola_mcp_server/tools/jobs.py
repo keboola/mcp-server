@@ -156,6 +156,7 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 @with_session_state()
 async def list_jobs(
     ctx: Context,
+    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     status: Annotated[
         JOB_STATUS,
         Field(
@@ -201,6 +202,12 @@ async def list_jobs(
     Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
     filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
 
+    'context' parameter provides reasoning for why the call is being made. Examples:
+    - "Monitoring recent job execution status for data pipeline"
+    - "Checking failed jobs to troubleshoot extraction issues"
+    - "Reviewing transformation job history for audit purposes"
+    - "Finding jobs for specific component configuration analysis"
+
     USAGE:
     - Use when you want to list jobs for a given component_id and optionally for given config_id.
     - Use when you want to list all jobs in the project or filter them by status.
@@ -237,15 +244,22 @@ async def list_jobs(
 @tool_errors()
 @with_session_state()
 async def get_job(
+    ctx: Context,
+    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     job_id: Annotated[
         str,
         Field(description='The unique identifier of the job whose details should be retrieved.'),
     ],
-    ctx: Context,
 ) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
     """
     Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.
+
+    'context' parameter provides reasoning for why the call is being made. Examples:
+    - "Investigating failed transformation job to identify root cause"
+    - "Getting detailed results from successful data extraction job"
+    - "Reviewing job parameters to understand configuration settings"
+    - "Checking job execution logs for troubleshooting purposes"
 
     EXAMPLES:
     - If job_id = "123", then the details of the job with id "123" will be retrieved.
@@ -263,6 +277,7 @@ async def get_job(
 @with_session_state()
 async def run_job(
     ctx: Context,
+    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     component_id: Annotated[
         str,
         Field(description='The ID of the component or transformation for which to start a job.'),
@@ -271,6 +286,12 @@ async def run_job(
 ) -> Annotated[JobDetail, Field(description='The newly started job details.')]:
     """
     Starts a new job for a given component or transformation.
+
+    'context' parameter provides reasoning for why the call is being made. Examples:
+    - "Executing data extraction job for updated source system"
+    - "Running transformation to process new customer data batch"
+    - "Starting orchestration workflow for scheduled data pipeline"
+    - "Triggering component job after configuration changes made"
     """
     client = KeboolaClient.from_state(ctx.session.state)
 

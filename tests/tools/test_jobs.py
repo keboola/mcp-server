@@ -86,7 +86,7 @@ async def test_list_jobs(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
-    result = await list_jobs(context)
+    result = await list_jobs(context, 'Test listing jobs')
 
     assert isinstance(result, ListJobsOutput)
     assert len(result.jobs) == 2
@@ -134,7 +134,7 @@ async def test_get_job(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.get_job_detail = mocker.AsyncMock(return_value=mock_job)
 
-    result = await get_job(ctx=context, job_id='123')
+    result = await get_job(ctx=context, context='Test getting job details', job_id='123')
 
     assert isinstance(result, JobDetail)
     assert result.id == mock_job['id']
@@ -170,7 +170,12 @@ async def test_list_jobs_with_component_and_config_id(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
-    result = await list_jobs(ctx=context, component_id='keboola.ex-aws-s3', config_id='config-123')
+    result = await list_jobs(
+        ctx=context,
+        context='Test listing jobs with component and config',
+        component_id='keboola.ex-aws-s3',
+        config_id='config-123',
+    )
 
     assert len(result.jobs) == 2
     assert all(isinstance(job, JobListItem) for job in result.jobs)
@@ -198,7 +203,9 @@ async def test_list_jobs_with_component_id_without_config_id(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
-    result = await list_jobs(ctx=context, component_id='keboola.ex-aws-s3')
+    result = await list_jobs(
+        ctx=context, context='Test listing jobs with component only', component_id='keboola.ex-aws-s3'
+    )
 
     assert len(result.jobs) == 2
     assert all(isinstance(job, JobListItem) for job in result.jobs)
@@ -234,7 +241,9 @@ async def test_run_job(
 
     component_id = mock_job['component']
     configuration_id = mock_job['config']
-    job_detail = await run_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
+    job_detail = await run_job(
+        ctx=context, context='Test running job', component_id=component_id, configuration_id=configuration_id
+    )
 
     assert isinstance(job_detail, JobDetail)
     assert job_detail.result == {}
@@ -265,7 +274,12 @@ async def test_run_job_fail(mocker: MockerFixture, mcp_context_client: Context, 
     configuration_id = mock_job['config']
 
     with pytest.raises(HTTPError):
-        await run_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
+        await run_job(
+            ctx=context,
+            context='Test running job failure',
+            component_id=component_id,
+            configuration_id=configuration_id,
+        )
 
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,

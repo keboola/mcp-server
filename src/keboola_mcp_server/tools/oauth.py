@@ -25,14 +25,21 @@ def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
 @tool_errors()
 @with_session_state()
 async def create_oauth_url(
+    ctx: Context,
+    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     component_id: Annotated[
         str, Field(description='The component ID to grant access to (e.g., "keboola.ex-google-analytics-v4").')
     ],
     config_id: Annotated[str, Field(description='The configuration ID for the component.')],
-    ctx: Context,
 ) -> str:
     """
     Generates an OAuth authorization URL for a Keboola component configuration.
+
+    'context' parameter provides reasoning for why the call is being made. Examples:
+    - "Setting up OAuth authorization for Google Analytics data extraction"
+    - "Generating authorization link for Gmail extractor configuration"
+    - "Creating OAuth URL for Salesforce component authentication setup"
+    - "Establishing OAuth connection for third-party API data source"
 
     When using this tool, be very concise in your response. Just guide the user to click the
     authorization link.

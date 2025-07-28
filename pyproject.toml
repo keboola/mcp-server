@@ -17,6 +17,7 @@ dependencies = [
     "jsonschema ~= 4.23",
     "pyjwt ~= 2.10",
     "json-log-formatter ~= 1.0",
+    "kbcstorage>=0.9.2",
 ]
 [project.optional-dependencies]
 codestyle = [

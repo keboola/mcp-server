@@ -36,6 +36,7 @@ async def _wait_for_job_in_list(
     for attempt in range(max_retries):
         result = await list_jobs(
             ctx=mcp_context,
+            context='Integration test job listing',
             component_id=component_id,
             config_id=config_id,
             limit=10,
@@ -64,7 +65,12 @@ async def test_list_jobs_with_component_and_config_filter(mcp_context: Context, 
     component_id = test_config.component_id
     configuration_id = test_config.configuration_id
 
-    job = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
+    job = await run_job(
+        ctx=mcp_context,
+        context='Integration test job run',
+        component_id=component_id,
+        configuration_id=configuration_id,
+    )
 
     # Wait for the job to appear in the list (handles race condition)
     result = await _wait_for_job_in_list(
@@ -96,7 +102,12 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
     component_id = test_config.component_id
     configuration_id = test_config.configuration_id
 
-    started_job = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
+    started_job = await run_job(
+        ctx=mcp_context,
+        context='Integration test job run and get',
+        component_id=component_id,
+        configuration_id=configuration_id,
+    )
 
     # Verify the started job response
     assert isinstance(started_job, JobDetail)
@@ -119,7 +130,7 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
         ]
     )
 
-    job_detail = await get_job(job_id=started_job.id, ctx=mcp_context)
+    job_detail = await get_job(ctx=mcp_context, context='Integration test get job details', job_id=started_job.id)
 
     # Verify the job detail response
     assert isinstance(job_detail, JobDetail)
@@ -156,10 +167,15 @@ async def test_get_job(mcp_context: Context, configs: list[ConfigDef], keboola_p
     configuration_id = test_config.configuration_id
 
     # Create a specific job to test get_job with
-    created_job = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
+    created_job = await run_job(
+        ctx=mcp_context,
+        context='Integration test get job',
+        component_id=component_id,
+        configuration_id=configuration_id,
+    )
 
     # Now test get_job on the job we just created
-    job_detail = await get_job(job_id=created_job.id, ctx=mcp_context)
+    job_detail = await get_job(ctx=mcp_context, context='Integration test get job by ID', job_id=created_job.id)
 
     # Verify all expected fields are present
     assert isinstance(job_detail, JobDetail)
@@ -197,6 +213,7 @@ async def test_run_job_with_newly_created_config(
     # Create a new configuration for testing
     new_config = await create_config(
         ctx=mcp_context,
+        context='Integration test config creation for job run',
         name='Test Config for Job Run',
         description='Test configuration created for job run test',
         component_id=component_id,
@@ -207,7 +224,10 @@ async def test_run_job_with_newly_created_config(
     try:
         # Run a job on the new configuration
         started_job = await run_job(
-            ctx=mcp_context, component_id=component_id, configuration_id=new_config.configuration_id
+            ctx=mcp_context,
+            context='Integration test job run with new config',
+            component_id=component_id,
+            configuration_id=new_config.configuration_id,
         )
 
         # Verify the job was started successfully
@@ -232,7 +252,9 @@ async def test_run_job_with_newly_created_config(
         )
 
         # Verify job can be retrieved
-        job_detail = await get_job(job_id=started_job.id, ctx=mcp_context)
+        job_detail = await get_job(
+            ctx=mcp_context, context='Integration test get job for new config', job_id=started_job.id
+        )
         assert isinstance(job_detail, JobDetail)
         assert job_detail.id == started_job.id
         assert job_detail.component_id == component_id

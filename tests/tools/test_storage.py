@@ -181,7 +181,7 @@ async def test_get_bucket(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(return_value=expected_bucket)
 
-    result = await get_bucket(bucket_id, mcp_context_client)
+    result = await get_bucket(mcp_context_client, 'Test getting bucket', bucket_id)
 
     assert isinstance(result, BucketDetail)
     assert result.id == expected_bucket['id']
@@ -222,7 +222,7 @@ async def test_list_buckets(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=mock_buckets)
 
-    result = await list_buckets(mcp_context_client)
+    result = await list_buckets(mcp_context_client, 'Test listing buckets')
 
     assert isinstance(result, ListBucketsOutput)
     assert len(result.buckets) == len(mock_buckets)
@@ -259,7 +259,7 @@ async def test_get_table(
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_fqn = mocker.AsyncMock(return_value=mock_table_data['additional_data']['table_fqn'])
     workspace_manager.get_quoted_name.side_effect = lambda name: f'#{name}#'
-    result = await get_table(mock_table_data['raw_table_data']['id'], mcp_context_client)
+    result = await get_table(mcp_context_client, 'Test getting table', mock_table_data['raw_table_data']['id'])
 
     assert isinstance(result, TableDetail)
     assert result.id == mock_table_data['raw_table_data']['id']
@@ -322,7 +322,7 @@ async def test_list_tables(
     """Test list_tables tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=sapi_response)
-    result = await list_tables('bucket-id', mcp_context_client)
+    result = await list_tables(mcp_context_client, 'Test listing tables', 'bucket-id')
     assert isinstance(result, ListTablesOutput)
     assert result.tables == expected
     keboola_client.storage_client.bucket_table_list.assert_called_once_with('bucket-id', include=['metadata'])
@@ -340,9 +340,10 @@ async def test_update_bucket_description_success(
     )
 
     result = await update_bucket_description(
+        ctx=mcp_context_client,
+        context='Test updating bucket description',
         bucket_id='in.c-test.bucket-id',
         description='Updated bucket description',
-        ctx=mcp_context_client,
     )
 
     assert isinstance(result, UpdateDescriptionOutput)
@@ -368,9 +369,10 @@ async def test_update_table_description_success(
     )
 
     result = await update_table_description(
+        ctx=mcp_context_client,
+        context='Test updating table description',
         table_id='in.c-test.test-table',
         description='Updated table description',
-        ctx=mcp_context_client,
     )
 
     assert isinstance(result, UpdateDescriptionOutput)
@@ -396,10 +398,11 @@ async def test_update_column_description_success(
     )
 
     result = await update_column_description(
+        ctx=mcp_context_client,
+        context='Test updating column description',
         table_id='in.c-test.test-table',
         column_name='text',
         description='Updated column description',
-        ctx=mcp_context_client,
     )
 
     assert isinstance(result, UpdateDescriptionOutput)

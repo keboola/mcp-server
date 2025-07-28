@@ -55,6 +55,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
 
     created = await create_flow(
         ctx=mcp_context,
+        context='Integration test create and retrieve flow',
         name=flow_name,
         description=flow_description,
         phases=phases,
@@ -76,10 +77,10 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert set(created.links) == set(expected_links)
 
         # Verify the flow is listed in the list_flows tool
-        result = await list_flows(mcp_context)
+        result = await list_flows(mcp_context, 'Integration test list flows')
         assert any(f.name == flow_name for f in result.flows)
         found = [f for f in result.flows if f.id == flow_id][0]
-        detail = await get_flow(mcp_context, configuration_id=found.id)
+        detail = await get_flow(mcp_context, 'Integration test get flow', configuration_id=found.id)
 
         assert isinstance(detail, FlowConfigurationResponse)
         assert detail.component_id == ORCHESTRATOR_COMPONENT_ID
@@ -133,6 +134,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
     flow_description = 'Initial description.'
     created = await create_flow(
         ctx=mcp_context,
+        context='Integration test create flow for update',
         name=flow_name,
         description=flow_description,
         phases=phases,
@@ -151,6 +153,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         ]
         updated = await update_flow(
             ctx=mcp_context,
+            context='Integration test update flow',
             configuration_id=created.flow_id,
             name=new_name,
             description=new_description,
@@ -186,7 +189,7 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
     Retrieve flows when none exist (should not error, may return empty list).
     :param mcp_context: The test context fixture.
     """
-    flows = await list_flows(mcp_context)
+    flows = await list_flows(mcp_context, 'Integration test list flows empty')
     assert isinstance(flows, ListFlowsOutput)
 
 
@@ -195,7 +198,7 @@ async def test_get_flow_schema(mcp_context: Context) -> None:
     """
     Test that get_flow_schema returns the flow configuration JSON schema.
     """
-    schema_result = await get_flow_schema(mcp_context)
+    schema_result = await get_flow_schema(mcp_context, 'Integration test get flow schema')
 
     assert isinstance(schema_result, str)
     assert schema_result.startswith('```json\n')
@@ -238,6 +241,7 @@ async def test_create_flow_invalid_structure(mcp_context: Context, configs: list
     with pytest.raises(ValueError, match='depends on non-existent phase'):
         await create_flow(
             ctx=mcp_context,
+            context='Integration test create invalid flow',
             name='Invalid Flow',
             description='Should fail',
             phases=phases,

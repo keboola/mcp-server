@@ -43,7 +43,7 @@ async def test_get_project_info(mocker: MockerFixture, mcp_context_client: Conte
     )
 
     # Call the tool
-    result = await get_project_info(mcp_context_client)
+    result = await get_project_info(mcp_context_client, 'Test getting project info')
     assert isinstance(result, ProjectInfo)
     assert result.project_id == 'proj-123'
     assert result.project_name == 'Test Project'

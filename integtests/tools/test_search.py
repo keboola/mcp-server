@@ -30,7 +30,12 @@ async def test_global_search_end_to_end(
 
     # Search for test items by name prefix 'test' which should match our test data
     result = await search(
-        ctx=mcp_context, name_prefixes=['test'], item_types=tuple(), limit=50, offset=0  # Search all types
+        ctx=mcp_context,
+        context='Integration test global search',
+        name_prefixes=['test'],
+        item_types=tuple(),
+        limit=50,
+        offset=0,  # Search all types
     )
 
     # Verify the result structure
@@ -85,7 +90,7 @@ async def test_find_component_id(mcp_context: Context):
     query = 'generic extractor'
     generic_extractor_id = 'ex-generic-v2'
 
-    result = await find_component_id(query=query, ctx=mcp_context)
+    result = await find_component_id(ctx=mcp_context, context='Integration test find component ID', query=query)
 
     assert isinstance(result, list)
     assert len(result) > 0

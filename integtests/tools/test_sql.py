@@ -15,18 +15,24 @@ LOG = logging.getLogger(__name__)
 async def test_query_data(mcp_context: Context):
     """Tests basic functionality of SQL tools: get_sql_dialect and query_data."""
 
-    dialect = await get_sql_dialect(ctx=mcp_context)
+    dialect = await get_sql_dialect(ctx=mcp_context, context='Integration test SQL dialect')
     assert dialect in ['Snowflake', 'Bigquery']
 
-    buckets_listing = await list_buckets(ctx=mcp_context)
+    buckets_listing = await list_buckets(ctx=mcp_context, context='Integration test list buckets for SQL')
 
-    tables_listing = await list_tables(bucket_id=buckets_listing.buckets[0].id, ctx=mcp_context)
-    table = await get_table(table_id=tables_listing.tables[0].id, ctx=mcp_context)
+    tables_listing = await list_tables(
+        ctx=mcp_context, context='Integration test list tables for SQL', bucket_id=buckets_listing.buckets[0].id
+    )
+    table = await get_table(
+        ctx=mcp_context, context='Integration test get table for SQL', table_id=tables_listing.tables[0].id
+    )
 
     assert table.fully_qualified_name is not None, 'Table should have fully qualified name'
 
     sql_query = f'SELECT COUNT(*) as row_count FROM {table.fully_qualified_name}'
-    result = await query_data(sql_query=sql_query, query_name='Row Count Query', ctx=mcp_context)
+    result = await query_data(
+        ctx=mcp_context, context='Integration test SQL query', sql_query=sql_query, query_name='Row Count Query'
+    )
 
     # Verify result is structured output
     assert isinstance(result, QueryDataOutput)
@@ -54,4 +60,9 @@ async def test_query_data_invalid_query(mcp_context: Context):
     invalid_sql = 'INVALID SQL SYNTAX SELECT * FROM'
 
     with pytest.raises(ValueError, match='Failed to run SQL query'):
-        await query_data(sql_query=invalid_sql, query_name='Invalid Query Test', ctx=mcp_context)
+        await query_data(
+            ctx=mcp_context,
+            context='Integration test invalid SQL query',
+            sql_query=invalid_sql,
+            query_name='Invalid Query Test',
+        )

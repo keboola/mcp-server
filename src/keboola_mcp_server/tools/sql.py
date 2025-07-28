@@ -32,14 +32,24 @@ def add_sql_tools(mcp: FastMCP) -> None:
 @with_session_state()
 async def get_sql_dialect(
     ctx: Context,
+    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
 ) -> Annotated[str, Field(description='The SQL dialect of the project database')]:
-    """Gets the name of the SQL dialect used by Keboola project's underlying database."""
+    """Gets the name of the SQL dialect used by Keboola project's underlying database.
+
+    'context' parameter provides reasoning for why the call is being made. Examples:
+    - "Determining correct SQL syntax for database query construction"
+    - "Checking dialect compatibility for transformation development"
+    - "Understanding database type for query optimization purposes"
+    - "Verifying SQL dialect before writing data analysis queries"
+    """
     return await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
 
 
 @tool_errors()
 @with_session_state()
 async def query_data(
+    ctx: Context,
+    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
     query_name: Annotated[
         str,
@@ -51,10 +61,16 @@ async def query_data(
             )
         ),
     ],
-    ctx: Context,
 ) -> Annotated[QueryDataOutput, Field(description='The query results with name and CSV data.')]:
     """
     Executes an SQL SELECT query to get the data from the underlying database.
+
+    'context' parameter provides reasoning for why the call is being made. Examples:
+    - "Analyzing customer data to identify purchasing patterns and trends"
+    - "Extracting sales metrics for quarterly business performance review"
+    - "Querying product data to support inventory management decisions"
+    - "Retrieving user activity data for behavioral analysis report"
+
     * When constructing the SQL SELECT query make sure to check the SQL dialect
       used by the Keboola project's underlying database.
     * When referring to tables always use fully qualified table names that include the database name,

@@ -9,7 +9,7 @@ async def test_docs_query(mcp_context: Context) -> None:
     """Tests that `docs_query` returns a valid `DocsAnswer` with text and source URLs."""
     query = 'What is Keboola Connection?'
 
-    result = await docs_query(ctx=mcp_context, query=query)
+    result = await docs_query(ctx=mcp_context, context='Integration test documentation query', query=query)
 
     assert isinstance(result, DocsAnswer)
     assert len(result.text) > 0, 'Answer text should not be empty'

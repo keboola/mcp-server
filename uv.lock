@@ -909,6 +909,7 @@ dependencies = [
     { name = "httpx" },
     { name = "json-log-formatter" },
     { name = "jsonschema" },
+    { name = "kbcstorage" },
     { name = "mcp" },
     { name = "pyjwt" },
 ]
@@ -959,6 +960,7 @@ requires-dist = [
     { name = "isort", marker = "extra == 'codestyle'", specifier = "~=6.0" },
     { name = "json-log-formatter", specifier = "~=1.0" },
     { name = "jsonschema", specifier = "~=4.23" },
+    { name = "kbcstorage", specifier = ">=0.9.2" },
     { name = "kbcstorage", marker = "extra == 'integtests'", specifier = "~=0.9" },
     { name = "mcp", specifier = "==1.11.0" },
     { name = "pep8-naming", marker = "extra == 'codestyle'", specifier = "~=0.14" },

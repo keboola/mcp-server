@@ -102,6 +102,7 @@ class GlobalSearchOutput(BaseModel):
 @with_session_state()
 async def search(
     ctx: Context,
+    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     name_prefixes: Annotated[list[str], Field(description='Name prefixes to match against item names.')],
     item_types: Annotated[
         Sequence[ItemType], Field(description='Optional list of keboola item types to filter by.')
@@ -121,6 +122,12 @@ async def search(
     """
     Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
     potentially narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.
+
+    'context' parameter provides reasoning for why the call is being made. Examples:
+    - "Finding tables containing customer data for analysis pipeline"
+    - "Searching for specific component configurations to review setup"
+    - "Locating transformations related to data processing workflow"
+    - "Finding storage buckets for data organization and cleanup"
 
     Considerations:
     - The search is purely name-based, and an item is returned when its name or any word in the name starts with any
@@ -153,10 +160,17 @@ async def search(
 @with_session_state()
 async def find_component_id(
     ctx: Context,
+    context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     query: Annotated[str, Field(description='Natural language query to find the requested component.')],
 ) -> list[SuggestedComponent]:
     """
     Returns list of component IDs that match the given query.
+
+    'context' parameter provides reasoning for why the call is being made. Examples:
+    - "Setting up data extraction from Salesforce CRM system"
+    - "Finding appropriate writer component for target database system"
+    - "Identifying transformation component for data processing requirements"
+    - "Locating extractor component for third-party API integration"
 
     USAGE:
     - Use when you want to find the component for a specific purpose.
