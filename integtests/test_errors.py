@@ -35,7 +35,11 @@ class TestHttpErrors:
             re.IGNORECASE
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
-            await get_bucket('non.existent.bucket', mcp_context)
+            await get_bucket(
+                ctx=mcp_context,
+                context='Integration test 404 error handling',
+                bucket_id='non.existent.bucket'
+            )
 
     @pytest.mark.asyncio
     async def test_jobs_api_404_error_(self, mcp_context: Context):
@@ -49,7 +53,7 @@ class TestHttpErrors:
             re.IGNORECASE
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
-            await get_job('999999999', mcp_context)
+            await get_job(ctx=mcp_context, context='Integration test job 404 error handling', job_id='999999999')
 
     @pytest.mark.asyncio
     async def test_docs_api_empty_query_error(self, mcp_context: Context):
@@ -64,7 +68,7 @@ class TestHttpErrors:
             re.IGNORECASE
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
-            await docs_query(ctx=mcp_context, query='')
+            await docs_query(ctx=mcp_context, context='Integration test docs empty query error handling', query='')
 
     @pytest.mark.asyncio
     async def test_sql_api_invalid_query_error(self, mcp_context: Context):
@@ -74,12 +78,23 @@ class TestHttpErrors:
             re.IGNORECASE
         )
         with pytest.raises(ValueError, match=match):
-            await query_data('INVALID SQL SYNTAX HERE', 'Invalid SQL query.', mcp_context)
+            await query_data(
+                ctx=mcp_context,
+                context='Integration test SQL invalid query error handling',
+                query='INVALID SQL SYNTAX HERE',
+                description='Invalid SQL query.'
+            )
 
     @pytest.mark.asyncio
     async def test_concurrent_error_handling(self, mcp_context: Context):
         # Run multiple concurrent operations that will trigger 404 errors
-        tasks = [get_bucket(f'non.existent.bucket.{i}', mcp_context) for i in range(5)]
+        tasks = [
+            get_bucket(
+                ctx=mcp_context,
+                context=f'Integration test concurrent error handling {i}',
+                bucket_id=f'non.existent.bucket.{i}'
+            ) for i in range(5)
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Verify all errors are handled consistently

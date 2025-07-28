@@ -250,7 +250,11 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
 
     tool_result = await client.call_tool(
         'get_config',
-        {'configuration_id': config.configuration_id, 'component_id': config.component_id},
+        {
+            'context': 'Integration test get component details tool call',
+            'configuration_id': config.configuration_id,
+            'component_id': config.component_id
+        },
     )
 
     assert tool_result is not None
