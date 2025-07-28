@@ -171,14 +171,7 @@ async def get_bucket(
     context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')],
 ) -> BucketDetail:
-    """Gets detailed information about a specific bucket.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Reviewing bucket configuration for data storage optimization"
-    - "Getting bucket details to understand data organization structure"
-    - "Checking bucket metadata for data governance compliance"
-    - "Retrieving bucket information for data pipeline setup"
-    """
+    """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     assert isinstance(client, KeboolaClient)
@@ -195,14 +188,7 @@ async def list_buckets(
     ctx: Context,
     context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
 ) -> ListBucketsOutput:
-    """Retrieves information about all buckets in the project.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Getting overview of all storage buckets for data inventory"
-    - "Listing buckets to understand current data organization structure"
-    - "Reviewing bucket configuration for data governance audit"
-    - "Checking available buckets for data pipeline planning"
-    """
+    """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
@@ -226,14 +212,7 @@ async def get_table(
     context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     table_id: Annotated[str, Field(description='Unique ID of the table.')],
 ) -> TableDetail:
-    """Gets detailed information about a specific table including its DB identifier and column information.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Getting table schema information for SQL query construction"
-    - "Reviewing table structure for data analysis planning"
-    - "Checking table metadata for data quality assessment"
-    - "Retrieving column details for transformation development"
-    """
+    """Gets detailed information about a specific table including its DB identifier and column information."""
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -260,14 +239,7 @@ async def list_tables(
     context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')],
 ) -> ListTablesOutput:
-    """Retrieves all tables in a specific bucket with their basic information.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Listing tables in bucket to understand available data sources"
-    - "Getting table inventory for data pipeline development planning"
-    - "Reviewing table structure for data analysis project setup"
-    - "Checking available tables for transformation input selection"
-    """
+    """Retrieves all tables in a specific bucket with their basic information."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     # TODO: requesting "metadata" to get the table description;
@@ -292,14 +264,7 @@ async def update_bucket_description(
     UpdateDescriptionOutput,
     Field(description='The response object of the Bucket description update.'),
 ]:
-    """Updates the description for a given Keboola bucket.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Adding documentation to bucket for better data organization"
-    - "Updating bucket description to reflect current data content"
-    - "Setting descriptive metadata for data governance compliance"
-    - "Documenting bucket purpose for team collaboration"
-    """
+    """Updates the description for a given Keboola bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manger = await ProjectLinksManager.from_client(client)
 
@@ -325,14 +290,7 @@ async def update_table_description(
     UpdateDescriptionOutput,
     Field(description='The response object of the Table description update.'),
 ]:
-    """Updates the description for a given Keboola table.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Adding documentation to table for data dictionary maintenance"
-    - "Updating table description to clarify data content and usage"
-    - "Setting table metadata for data catalog and discovery"
-    - "Documenting table structure for team knowledge sharing"
-    """
+    """Updates the description for a given Keboola table."""
     client = KeboolaClient.from_state(ctx.session.state)
     response = await client.storage_client.table_metadata_update(
         table_id=table_id,
@@ -357,14 +315,7 @@ async def update_column_description(
     UpdateDescriptionOutput,
     Field(description='The response object of the column description update.'),
 ]:
-    """Updates the description for a given column in a Keboola table.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Adding column documentation for data dictionary completion"
-    - "Updating column description to clarify data field meaning"
-    - "Setting column metadata for data lineage and documentation"
-    - "Documenting column purpose for analytical team understanding"
-    """
+    """Updates the description for a given column in a Keboola table."""
     client = KeboolaClient.from_state(ctx.session.state)
 
     response = await client.storage_client.table_metadata_update(

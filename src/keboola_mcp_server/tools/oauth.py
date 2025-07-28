@@ -35,12 +35,6 @@ async def create_oauth_url(
     """
     Generates an OAuth authorization URL for a Keboola component configuration.
 
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Setting up OAuth authorization for Google Analytics data extraction"
-    - "Generating authorization link for Gmail extractor configuration"
-    - "Creating OAuth URL for Salesforce component authentication setup"
-    - "Establishing OAuth connection for third-party API data source"
-
     When using this tool, be very concise in your response. Just guide the user to click the
     authorization link.
 

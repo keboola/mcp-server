@@ -123,12 +123,6 @@ async def search(
     Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
     potentially narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.
 
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Finding tables containing customer data for analysis pipeline"
-    - "Searching for specific component configurations to review setup"
-    - "Locating transformations related to data processing workflow"
-    - "Finding storage buckets for data organization and cleanup"
-
     Considerations:
     - The search is purely name-based, and an item is returned when its name or any word in the name starts with any
       of the "name_prefixes" parameter.
@@ -165,12 +159,6 @@ async def find_component_id(
 ) -> list[SuggestedComponent]:
     """
     Returns list of component IDs that match the given query.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Setting up data extraction from Salesforce CRM system"
-    - "Finding appropriate writer component for target database system"
-    - "Identifying transformation component for data processing requirements"
-    - "Locating extractor component for third-party API integration"
 
     USAGE:
     - Use when you want to find the component for a specific purpose.

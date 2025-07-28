@@ -40,11 +40,6 @@ async def docs_query(
 ) -> Annotated[DocsAnswer, Field(description='The retrieved documentation.')]:
     """
     Answers a question using the Keboola documentation as a source.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - 'Understanding OAuth setup process for Google Analytics extractor'
-    - 'Finding documentation on Storage API bucket permissions'
-    - 'Learning about transformation development best practices'
     - 'Researching configuration options for specific component'
     """
     client = KeboolaClient.from_state(ctx.session.state)

@@ -56,14 +56,7 @@ async def get_project_info(
     ctx: Context,
     context: Annotated[str, Field(description='Brief explanation of why this tool call is being made (8-15 words)')],
 ) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
-    """Return structured project information pulled from multiple endpoints.
-
-    'context' parameter provides reasoning for why the call is being made. Examples:
-    - "Getting project details for initial setup and configuration"
-    - "Retrieving project info to understand workspace and organization context"
-    - "Checking project metadata for compliance and audit requirements"
-    - "Obtaining project details for documentation and reporting purposes"
-    """
+    """Return structured project information pulled from multiple endpoints."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     storage = client.storage_client
