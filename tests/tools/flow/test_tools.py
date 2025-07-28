@@ -44,7 +44,7 @@ class TestFlowTools:
 
         result = await create_flow(
             ctx=mcp_context_client,
-            context='Test flow creation',
+            justification='Test flow creation',
             name='Test Flow',
             description='Test flow description',
             phases=sample_phases,
@@ -84,7 +84,7 @@ class TestFlowTools:
             return_value=[mock_raw_flow_config, mock_empty_flow_config]
         )
 
-        result = await list_flows(ctx=mcp_context_client, context='Test listing all flows')
+        result = await list_flows(ctx=mcp_context_client, justification='Test listing all flows')
 
         assert isinstance(result, ListFlowsOutput)
         assert len(result.flows) == 2
@@ -103,7 +103,7 @@ class TestFlowTools:
         keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
         result = await list_flows(
-            ctx=mcp_context_client, context='Test listing specific flows', flow_ids=['21703284']
+            ctx=mcp_context_client, justification='Test listing specific flows', flow_ids=['21703284']
         )
 
         assert len(result.flows) == 1
@@ -127,7 +127,7 @@ class TestFlowTools:
 
         result = await list_flows(
             ctx=mcp_context_client,
-            context='Test listing flows with missing ID',
+            justification='Test listing flows with missing ID',
             flow_ids=['21703284', 'nonexistent'],
         )
 
@@ -143,7 +143,7 @@ class TestFlowTools:
         keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=mock_raw_flow_config)
 
         result = await get_flow(
-            ctx=mcp_context_client, context='Test getting flow details', configuration_id='21703284'
+            ctx=mcp_context_client, justification='Test getting flow details', configuration_id='21703284'
         )
 
         assert isinstance(result, FlowConfigurationResponse)
@@ -173,7 +173,7 @@ class TestFlowTools:
 
         result = await update_flow(
             ctx=mcp_context_client,
-            context='Test flow update',
+            justification='Test flow update',
             configuration_id='21703284',
             name='Updated Flow',
             description='Updated description',
@@ -216,7 +216,7 @@ class TestFlowEdgeCases:
         with pytest.raises(ValueError, match='depends on non-existent phase'):
             await create_flow(
                 ctx=mcp_context_client,
-                context='Test create flow with invalid structure',
+                justification='Test create flow with invalid structure',
                 name='Invalid Flow',
                 description='Invalid flow',
                 phases=invalid_phases,
@@ -266,7 +266,7 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
 
     created = await create_flow(
         ctx=mcp_context_client,
-        context='Test complete flow workflow creation',
+        justification='Test complete flow workflow creation',
         name='Integration Test Flow',
         description='Flow for integration testing',
         phases=[],
@@ -274,13 +274,13 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
     )
     assert isinstance(created, FlowToolResponse)
 
-    result = await list_flows(ctx=mcp_context_client, context='Test complete flow workflow listing')
+    result = await list_flows(ctx=mcp_context_client, justification='Test complete flow workflow listing')
     assert len(result.flows) == 1
     assert result.flows[0].name == 'Integration Test Flow'
 
     updated = await update_flow(
         ctx=mcp_context_client,
-        context='Test complete flow workflow update',
+        justification='Test complete flow workflow update',
         configuration_id='123456',
         name='Integration Test Flow',
         description='Updated flow for integration testing',
@@ -292,7 +292,7 @@ async def test_complete_flow_workflow(mocker: MockerFixture, mcp_context_client:
 
     detail = await get_flow(
         ctx=mcp_context_client,
-        context='Test complete flow workflow get details',
+        justification='Test complete flow workflow get details',
         configuration_id='123456',
     )
     assert isinstance(detail, FlowConfigurationResponse)

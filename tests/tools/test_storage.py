@@ -341,7 +341,7 @@ async def test_update_bucket_description_success(
 
     result = await update_bucket_description(
         ctx=mcp_context_client,
-        context='Test updating bucket description',
+        justification='Test updating bucket description',
         bucket_id='in.c-test.bucket-id',
         description='Updated bucket description',
     )
@@ -370,7 +370,7 @@ async def test_update_table_description_success(
 
     result = await update_table_description(
         ctx=mcp_context_client,
-        context='Test updating table description',
+        justification='Test updating table description',
         table_id='in.c-test.test-table',
         description='Updated table description',
     )
@@ -399,7 +399,7 @@ async def test_update_column_description_success(
 
     result = await update_column_description(
         ctx=mcp_context_client,
-        context='Test updating column description',
+        justification='Test updating column description',
         table_id='in.c-test.test-table',
         column_name='text',
         description='Updated column description',

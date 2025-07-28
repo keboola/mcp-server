@@ -33,7 +33,7 @@ async def test_create_oauth_url_success(
     config_id = 'config-123'
 
     result = await create_oauth_url(
-        ctx=mcp_context_client, context='Test OAuth URL creation', component_id=component_id, config_id=config_id
+        ctx=mcp_context_client, justification='Test OAuth URL creation', component_id=component_id, config_id=config_id
     )
 
     # Verify the storage client was called with correct parameters
@@ -78,7 +78,7 @@ async def test_create_oauth_url_different_components(
 
     result = await create_oauth_url(
         ctx=mcp_context_client,
-        context='Test OAuth URL for different components',
+        justification='Test OAuth URL for different components',
         component_id=component_id,
         config_id=config_id,
     )
@@ -108,7 +108,7 @@ async def test_create_oauth_url_token_creation_failure(
     with pytest.raises(Exception, match='Token creation failed'):
         await create_oauth_url(
             ctx=mcp_context_client,
-            context='Test OAuth URL token creation failure',
+            justification='Test OAuth URL token creation failure',
             component_id='keboola.ex-google-analytics-v4',
             config_id='config-123',
         )
@@ -128,7 +128,7 @@ async def test_create_oauth_url_missing_token_in_response(mcp_context_client: Co
     with pytest.raises(KeyError):
         await create_oauth_url(
             ctx=mcp_context_client,
-            context='Test OAuth URL missing token response',
+            justification='Test OAuth URL missing token response',
             component_id='keboola.ex-google-analytics-v4',
             config_id='config-123',
         )

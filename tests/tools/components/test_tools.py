@@ -119,7 +119,7 @@ async def test_list_configs_by_types(
         side_effect=[[{**component, 'configurations': mock_configurations}] for component in mock_components]
     )
 
-    result = await list_configs(ctx=context, context='Test listing configs by types', component_types=[])
+    result = await list_configs(ctx=context, justification='Test listing configs by types', component_types=[])
 
     assert_retrieve_components(result, mock_components, mock_configurations)
 
@@ -233,7 +233,7 @@ async def test_get_config(
 
     result = await get_config(
         ctx=context,
-        context='Test getting config',
+        justification='Test getting config',
         component_id=mock_component['id'],
         configuration_id=mock_configuration['id'],
     )
@@ -313,7 +313,7 @@ async def test_create_sql_transformation(
     # Test the create_sql_transformation tool
     new_transformation_configuration = await create_sql_transformation(
         ctx=context,
-        context='Test creating SQL transformation',
+        justification='Test creating SQL transformation',
         name=transformation_name,
         description=description,
         sql_code_blocks=code_blocks,
@@ -368,7 +368,7 @@ async def test_create_sql_transformation_fail(
     with pytest.raises(ValueError, match='Unsupported SQL dialect'):
         _ = await create_sql_transformation(
             ctx=context,
-            context='Test creating SQL transformation failure',
+            justification='Test creating SQL transformation failure',
             name='test_name',
             description='test_description',
             sql_code_blocks=[
@@ -448,7 +448,7 @@ async def test_get_config_examples(
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
     text = await get_config_examples(
-        ctx=context, context='Test getting config examples', component_id='keboola.ex-aws-s3'
+        ctx=context, justification='Test getting config examples', component_id='keboola.ex-aws-s3'
     )
     assert (
         text
@@ -505,7 +505,7 @@ async def test_create_config(
     # Test the create_component_root_configuration tool
     result = await create_config(
         ctx=context,
-        context='Test creating config',
+        justification='Test creating config',
         name=name,
         description=description,
         component_id=component_id,
@@ -558,7 +558,7 @@ async def test_add_config_row(
     # Test the create_component_row_configuration tool
     result = await add_config_row(
         ctx=context,
-        context='Test adding config row',
+        justification='Test adding config row',
         name=name,
         description=description,
         component_id=component_id,
@@ -615,7 +615,7 @@ async def test_update_config(
     # Test the update_component_root_configuration tool
     result = await update_config(
         ctx=context,
-        context='Test updating config',
+        justification='Test updating config',
         name=name,
         description=description,
         change_description=change_description,
@@ -673,7 +673,7 @@ async def test_update_config_row(
     # Test the update_component_row_configuration tool
     result = await update_config_row(
         ctx=context,
-        context='Test updating config row',
+        justification='Test updating config row',
         name=name,
         description=description,
         change_description=change_description,
