@@ -234,8 +234,8 @@ async def _assert_basic_setup(server: FastMCP, client: Client):
     assert len(server_tools) > 0
     assert len(server_prompts) > 0
 
-    client_tool_names = sorted(t.name for t in client_tools)
     # ignore 'search' tool which may or may not be exposed based on the testing project's features
+    client_tool_names = sorted(t.name for t in client_tools if t not in ['search'])
     server_tool_names = sorted(t for t in server_tools.keys() if t not in ['search'])
 
     assert client_tool_names == server_tool_names
