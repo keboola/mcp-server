@@ -68,7 +68,9 @@ class TestHttpErrors:
             re.IGNORECASE
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
-            await docs_query(ctx=mcp_context, justification='Integration test docs empty query error handling', query='')
+            await docs_query(
+                ctx=mcp_context, justification='Integration test docs empty query error handling', query=''
+            )
 
     @pytest.mark.asyncio
     async def test_sql_api_invalid_query_error(self, mcp_context: Context):

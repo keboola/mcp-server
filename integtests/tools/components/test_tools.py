@@ -973,7 +973,9 @@ async def test_get_component(mcp_context: Context, configs: list[ConfigDef]):
     test_config = configs[0]
     component_id = test_config.component_id
 
-    result = await get_component(ctx=mcp_context, justification='Integration test get component', component_id=component_id)
+    result = await get_component(
+        ctx=mcp_context, justification='Integration test get component', component_id=component_id
+    )
 
     assert isinstance(result, Component)
     assert result.component_id == test_config.component_id
