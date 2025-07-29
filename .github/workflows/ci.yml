@@ -151,11 +151,28 @@ jobs:
             
             echo "Checking environment: $ENV_NAME"
             
-            # Check if this environment is currently running
-            RUNNING_JOBS=$(gh api repos/${{ github.repository }}/actions/runs --jq ".workflow_runs[] | select(.status == \"in_progress\" and .name == \"CI\" and .id != ${{ github.run_id }} and .jobs[].steps[] | select(.name == \"Find available test environment\") | .conclusion == null) | .id" 2>/dev/null || echo "")
+            # Try to claim this environment by creating a temporary file
+            # This acts as a simple lock mechanism
+            LOCK_FILE="/tmp/env_lock_${ENV_NAME}"
             
-            # Check if any job is using this specific environment
-            ENV_IN_USE=$(echo "$RUNNING_JOBS" | grep -c "$ENV_NAME" || echo "0")
+            # Try to create the lock file atomically
+            if (set -C; echo "${{ github.run_id }}" > "$LOCK_FILE") 2>/dev/null; then
+              # Successfully created lock file - we can use this environment
+              ENV_IN_USE="0"
+              echo "🔒 Successfully claimed environment: $ENV_NAME"
+            else
+              # Lock file exists - check if it's our own run
+              LOCK_OWNER=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+              if [ "$LOCK_OWNER" = "${{ github.run_id }}" ]; then
+                # We already own this lock - we can use this environment
+                ENV_IN_USE="0"
+                echo "🔒 We already own the lock for environment: $ENV_NAME"
+              else
+                # Another run owns this lock
+                ENV_IN_USE="1"
+                echo "🔒 Environment $ENV_NAME is locked by run: $LOCK_OWNER"
+              fi
+            fi
             
             if [ "$ENV_IN_USE" = "0" ]; then
               echo "✅ Found available environment: $ENV_NAME"
@@ -211,6 +228,24 @@ jobs:
           name: Integration test results (${{ matrix.python-version }})
           path: ./integtest-results.xml
           reporter: 'java-junit'
+
+      - name: Cleanup environment lock
+        if: always() && steps.find_environment.outputs.environment_found == 'true'
+        run: |
+          # Clean up the lock file for the environment we used
+          ENV_NAME="${{ steps.find_environment.outputs.environment_name }}"
+          LOCK_FILE="/tmp/env_lock_${ENV_NAME}"
+          
+          # Only remove the lock if we own it
+          if [ -f "$LOCK_FILE" ]; then
+            LOCK_OWNER=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+            if [ "$LOCK_OWNER" = "${{ github.run_id }}" ]; then
+              echo "🧹 Cleaning up lock file for environment: $ENV_NAME"
+              rm -f "$LOCK_FILE"
+            else
+              echo "⚠️  Not removing lock file - we don't own it. Owner: $LOCK_OWNER"
+            fi
+          fi
 
   deploy_to_pypi:
     needs:
