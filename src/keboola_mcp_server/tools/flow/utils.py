@@ -62,37 +62,48 @@ def validate_legacy_flow_structure(
 
 def _check_legacy_circular_dependencies(phases: list[FlowPhase]) -> None:
     """
-    Check for circular dependencies in legacy flows using depends_on relationships.
-    Uses optimized O(n) lookup.
+    Optimized circular dependency check that:
+    1. Uses O(n) dict lookup instead of O(n²) list search
+    2. Returns detailed cycle path information for better debugging
     """
-    # Build dependency graph
+
+    # Build efficient lookup graph once - O(n) optimization
     graph = {phase.id: phase.depends_on for phase in phases}
 
-    # Use DFS to detect cycles
+    def _has_cycle(phase_id: Any, _visited: set, rec_stack: set, path: list[Any]) -> list[Any] | None:
+        """
+        Returns None if no cycle found, or List[phase_ids] representing the cycle path.
+        """
+        _visited.add(phase_id)
+        rec_stack.add(phase_id)
+        path.append(phase_id)
+
+        dependencies = graph.get(phase_id, [])
+
+        for dep_id in dependencies:
+            if dep_id not in _visited:
+                cycle = _has_cycle(dep_id, _visited, rec_stack, path)
+                if cycle is not None:
+                    return cycle
+
+            elif dep_id in rec_stack:
+                try:
+                    cycle_start_index = path.index(dep_id)
+                    return path[cycle_start_index:] + [dep_id]
+                except ValueError:
+                    return [phase_id, dep_id]
+
+        path.pop()
+        rec_stack.remove(phase_id)
+        return None
+
     visited = set()
-    rec_stack = set()
-
-    def has_cycle(node: str | int) -> bool:
-        if node in rec_stack:
-            return True
-        if node in visited:
-            return False
-
-        visited.add(node)
-        rec_stack.add(node)
-
-        for neighbor in graph.get(node, []):
-            if has_cycle(neighbor):
-                return True
-
-        rec_stack.remove(node)
-        return False
-
-    # Check each phase for cycles
-    for phase_id in graph:
-        if phase_id not in visited:
-            if has_cycle(phase_id):
-                raise ValueError(f'Circular dependency detected involving phase {phase_id}')
+    for phase in phases:
+        if phase.id not in visited:
+            cycle_path = _has_cycle(phase.id, visited, set(), [])
+            if cycle_path is not None:
+                cycle_str = ' -> '.join(str(pid) for pid in cycle_path)
+                raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
 
 
 def ensure_legacy_phase_ids(phases: list[dict[str, Any]]) -> list[FlowPhase]:
