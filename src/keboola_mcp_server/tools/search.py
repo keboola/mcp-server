@@ -12,6 +12,7 @@ from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)
 
+SEARCH_TOOL_NAME = 'search'
 MAX_GLOBAL_SEARCH_LIMIT = 100
 DEFAULT_GLOBAL_SEARCH_LIMIT = 50
 
@@ -19,12 +20,12 @@ DEFAULT_GLOBAL_SEARCH_LIMIT = 50
 def add_search_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     search_tools = [
-        find_component_id,
-        search,
+        (find_component_id, None),
+        (search, SEARCH_TOOL_NAME),
     ]
-    for tool in search_tools:
-        LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(FunctionTool.from_function(tool))
+    for tool_fn, tool_name in search_tools:
+        LOG.info(f'Adding tool {tool_fn.__name__} to the MCP server.')
+        mcp.add_tool(FunctionTool.from_function(tool_fn, name=tool_name))
 
     LOG.info('Search tools initialized.')
 

@@ -215,8 +215,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tools = await call_next(context)
         features = await self.get_project_features(context.fastmcp_context)
 
+        from keboola_mcp_server.tools import search
+
         if 'global-search' not in features:
-            tools = [t for t in tools if t.name != 'search']
+            tools = [t for t in tools if t.name != search.SEARCH_TOOL_NAME]
 
         # TODO: uncomment and adjust when WAII tools are implemented
         # if 'waii-integration' not in features:
