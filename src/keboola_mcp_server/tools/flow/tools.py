@@ -71,12 +71,12 @@ async def get_flow_schema(
     `keboola.orchestrator` = legacy flows
 
     CONSIDERATIONS:
-    - If the project has `conditional_flows_disabled` set to True, the orchestrator schema is returned regardless
+    - If the project_info has conditional flows disabled, the legacy flow schema (orchestrator) is returned regardless
     of requested type.
-    - Otherwise, the schema matches the requested flow type.
+    - Otherwise, the returned schema matches the requested flow type.
 
     Usage:
-        Use this tool to inspect the required structure for `create_flow` or `update_flow`.
+        Use this tool to inspect the required structure of phases and tasks for `create_flow` or `update_flow`.
     """
     project_info = await get_project_info(ctx)
 
