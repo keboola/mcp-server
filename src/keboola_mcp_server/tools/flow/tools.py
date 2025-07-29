@@ -107,6 +107,9 @@ async def create_flow(
     - Tasks: individual component configurations (e.g., extractors, writers, transformations).
     - Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
 
+    If you haven't already called it, always use the `get_flow_schema` tool using `keboola.orchestrator` flow type
+    to see the latest schema for flows and also look at the examples under `get_flow_examples` tool.
+
     CONSIDERATIONS:
     - The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
     - Each task and phase must include at least: `id` and `name`.
