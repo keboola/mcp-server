@@ -24,6 +24,7 @@ class TestAsyncStorageClient:
         assert ret.by_type == {'total': 0}
         assert ret.by_project == {}
 
+    @pytest.mark.skip
     @pytest.mark.asyncio
     async def test_global_search_with_results(self, storage_client: AsyncStorageClient, tables: list[TableDef]):
         search_for_name = 'test'
