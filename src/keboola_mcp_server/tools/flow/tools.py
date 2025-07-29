@@ -194,11 +194,6 @@ async def create_conditional_flow(
     - **Better validation**: Compile-time validation of flow structure and relationships
     - **Enhanced error messages**: More descriptive errors when validation fails
 
-    Enhanced conditional flows use structured models for:
-    - **Conditions**: TaskCondition, PhaseCondition, OperatorCondition, etc.
-    - **Retry configurations**: RetryConfiguration with RetryStrategyParams and RetryOnCondition
-    - **Task configurations**: JobTaskConfiguration, NotificationTaskConfiguration, VariableTaskConfiguration
-
     CONSIDERATIONS:
     - Do not create conditions, unless user asks for them explicitly
     - All IDs must be unique and clearly defined.
