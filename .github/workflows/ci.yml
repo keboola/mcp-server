@@ -13,6 +13,7 @@ concurrency: ci-${{ github.ref }}
 permissions:
   contents: read
   checks: write
+  actions: read
 
 jobs:
   build:
@@ -104,8 +105,6 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-      # This ensures tests run sequentially, not in parallel
-      max-parallel: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -120,14 +119,81 @@ jobs:
           pip install uv
           uv sync --frozen --no-editable --extra dev
 
-      - name: Integration tests
-        # run actual tests only for pushes to the same repository (not forks)
-        if: github.repository == github.event.repository.full_name
-        env:
-          INTEGTEST_STORAGE_TOKEN: ${{ secrets.INTEGTEST_STORAGE_TOKEN }}
-          INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
-          INTEGTEST_WORKSPACE_SCHEMA: ${{ vars.INTEGTEST_WORKSPACE_SCHEMA }}
+      - name: Find available test environment
+        id: find_environment
         run: |
+          echo "🔍 Finding available test environment for Python ${{ matrix.python-version }}..."
+          
+          # Define environments for this Python version
+          if [ "${{ matrix.python-version }}" = "3.10" ]; then
+            ENVIRONMENTS=("env-1" "env-4" "env-7")
+            TOKENS=("INTEGTEST_STORAGE_TOKEN_1" "INTEGTEST_STORAGE_TOKEN_4" "INTEGTEST_STORAGE_TOKEN_7")
+            API_URLS=("INTEGTEST_STORAGE_API_URL_1" "INTEGTEST_STORAGE_API_URL_4" "INTEGTEST_STORAGE_API_URL_7")
+            SCHEMAS=("INTEGTEST_WORKSPACE_SCHEMA_1" "INTEGTEST_WORKSPACE_SCHEMA_4" "INTEGTEST_WORKSPACE_SCHEMA_7")
+          elif [ "${{ matrix.python-version }}" = "3.11" ]; then
+            ENVIRONMENTS=("env-2" "env-5" "env-8")
+            TOKENS=("INTEGTEST_STORAGE_TOKEN_2" "INTEGTEST_STORAGE_TOKEN_5" "INTEGTEST_STORAGE_TOKEN_8")
+            API_URLS=("INTEGTEST_STORAGE_API_URL_2" "INTEGTEST_STORAGE_API_URL_5" "INTEGTEST_STORAGE_API_URL_8")
+            SCHEMAS=("INTEGTEST_WORKSPACE_SCHEMA_2" "INTEGTEST_WORKSPACE_SCHEMA_5" "INTEGTEST_WORKSPACE_SCHEMA_8")
+          else  # 3.12
+            ENVIRONMENTS=("env-3" "env-6" "env-9")
+            TOKENS=("INTEGTEST_STORAGE_TOKEN_3" "INTEGTEST_STORAGE_TOKEN_6" "INTEGTEST_STORAGE_TOKEN_9")
+            API_URLS=("INTEGTEST_STORAGE_API_URL_3" "INTEGTEST_STORAGE_API_URL_6" "INTEGTEST_STORAGE_API_URL_9")
+            SCHEMAS=("INTEGTEST_WORKSPACE_SCHEMA_3" "INTEGTEST_WORKSPACE_SCHEMA_6" "INTEGTEST_WORKSPACE_SCHEMA_9")
+          fi
+          
+          # Try to find an available environment
+          for i in "${!ENVIRONMENTS[@]}"; do
+            ENV_NAME="${ENVIRONMENTS[$i]}"
+            TOKEN_SECRET="${TOKENS[$i]}"
+            API_URL_VAR="${API_URLS[$i]}"
+            SCHEMA_VAR="${SCHEMAS[$i]}"
+            
+            echo "Checking environment: $ENV_NAME"
+            
+            # Check if this environment is currently running
+            RUNNING_JOBS=$(gh api repos/${{ github.repository }}/actions/runs --jq ".workflow_runs[] | select(.status == \"in_progress\" and .name == \"CI\" and .id != ${{ github.run_id }} and .jobs[].steps[] | select(.name == \"Find available test environment\") | .conclusion == null) | .id" 2>/dev/null || echo "")
+            
+            # Check if any job is using this specific environment
+            ENV_IN_USE=$(echo "$RUNNING_JOBS" | grep -c "$ENV_NAME" || echo "0")
+            
+            if [ "$ENV_IN_USE" = "0" ]; then
+              echo "✅ Found available environment: $ENV_NAME"
+              echo "environment_name=$ENV_NAME" >> $GITHUB_OUTPUT
+              echo "storage_token_secret=$TOKEN_SECRET" >> $GITHUB_OUTPUT
+              echo "storage_api_url_var=$API_URL_VAR" >> $GITHUB_OUTPUT
+              echo "workspace_schema_var=$SCHEMA_VAR" >> $GITHUB_OUTPUT
+              echo "environment_found=true" >> $GITHUB_OUTPUT
+              break
+            else
+              echo "❌ Environment $ENV_NAME is currently in use"
+            fi
+          done
+          
+          # If no environment found, mark as skipped
+          if [ -z "$(cat $GITHUB_OUTPUT | grep 'environment_found=true' || echo '')" ]; then
+            echo "❌ No available environments found for Python ${{ matrix.python-version }}"
+            echo "environment_found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip integration tests - no environment available
+        if: steps.find_environment.outputs.environment_found == 'false'
+        run: |
+          echo "⏭️  Skipping integration tests for Python ${{ matrix.python-version }}"
+          echo "All test environments for this Python version are currently in use"
+          echo "This is normal when multiple PRs are running simultaneously"
+
+      - name: Integration tests
+        if: steps.find_environment.outputs.environment_found == 'true' && github.repository == github.event.repository.full_name
+        env:
+          INTEGTEST_STORAGE_TOKEN: ${{ secrets[steps.find_environment.outputs.storage_token_secret] }}
+          INTEGTEST_STORAGE_API_URL: ${{ vars[steps.find_environment.outputs.storage_api_url_var] }}
+          INTEGTEST_WORKSPACE_SCHEMA: ${{ vars[steps.find_environment.outputs.workspace_schema_var] }}
+        run: |
+          echo "🚀 Running integration tests for environment: ${{ steps.find_environment.outputs.environment_name }}"
+          echo "Using Python version: ${{ matrix.python-version }}"
+          echo "Storage API URL: ${{ vars[steps.find_environment.outputs.storage_api_url_var] }}"
+          echo "Workspace schema: ${{ vars[steps.find_environment.outputs.workspace_schema_var] }}"
           uv run tox -e integtests
 
       - name: Skip integration tests for forks
