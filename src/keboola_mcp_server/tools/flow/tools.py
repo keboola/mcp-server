@@ -201,8 +201,6 @@ async def create_conditional_flow(
     - All IDs must be unique and clearly defined.
     - The `phases` and `tasks` parameters must conform to the keboola.flow JSON schema.
     - The phases cannot be empty.
-    - This tool automatically validates the structure before creation.
-    - The enhanced models provide better type safety and validation.
     - Conditional flows are the default and recommended flow type in Keboola.
 
     USE CASES:
