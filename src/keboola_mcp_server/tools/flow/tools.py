@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any, Sequence, cast
 
-import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import Field
@@ -15,7 +14,6 @@ from keboola_mcp_server import resources
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     FLOW_TYPE,
-    FLOW_TYPES,
     ORCHESTRATOR_COMPONENT_ID,
     JsonDict,
     KeboolaClient,
@@ -25,7 +23,6 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.api_models import CreateConfigurationAPIResponse
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
-from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
     ConditionalFlowTask,
@@ -34,8 +31,10 @@ from keboola_mcp_server.tools.flow.model import (
     ListFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.utils import (
+    FlowResolutionError,
     _get_all_flows,
     _get_flows_by_ids,
+    _resolve_flow_by_id,
     ensure_legacy_phase_ids,
     ensure_legacy_task_ids,
     get_schema_as_markdown,
@@ -373,29 +372,12 @@ async def get_flow(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    raw_config = None
-    found_type: FLOW_TYPE | None = None
+    try:
+        api_flow, found_type = await _resolve_flow_by_id(client, configuration_id)
+        LOG.info(f'Found flow {configuration_id} under flow type {found_type}.')
+    except FlowResolutionError as e:
+        raise ValueError(f'Flow configuration "{configuration_id}" not found: {e}')
 
-    for type_ in FLOW_TYPES:
-        try:
-            raw_config = await client.storage_client.flow_detail(
-                config_id=configuration_id,
-                flow_type=type_,
-            )
-            found_type = type_
-
-            LOG.info(f'Found flow {configuration_id} under flow type {type_}.')
-            break
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                LOG.info(f'Could not find flow {configuration_id} under flow type {type_}.')
-            else:
-                raise
-
-    if not found_type:
-        raise ValueError(f'Flow configuration "{configuration_id}" not found.')
-
-    api_flow = APIFlowResponse.model_validate(raw_config)
     links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name, flow_type=found_type)
     flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
 

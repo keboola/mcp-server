@@ -186,14 +186,22 @@ class FlowResolutionError(Exception):
     pass
 
 
-async def _resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> FlowSummary:
+async def _resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFlowResponse, FLOW_TYPE]:
+    """
+    Resolve a flow by ID across all flow types.
+
+    :param client: Keboola client instance.
+    :param flow_id: The flow configuration ID to resolve.
+    :return: Tuple of (APIFlowResponse, flow_type) if found.
+    :raises FlowResolutionError: If flow cannot be resolved in any flow type.
+    """
     errors = []
 
     for flow_type in FLOW_TYPES:
         try:
             raw_flow = await client.storage_client.flow_detail(flow_id, flow_type)
             api_flow = APIFlowResponse.model_validate(raw_flow)
-            return FlowSummary.from_api_response(api_config=api_flow, flow_component_id=flow_type)
+            return api_flow, flow_type
         except Exception as e:
             errors.append(f'{flow_type}: {type(e).__name__} - {str(e)}')
 
@@ -211,7 +219,8 @@ async def _get_flows_by_ids(
 
     for flow_id in flow_ids:
         try:
-            flow_summary = await _resolve_flow_by_id(client, flow_id)
+            api_flow, flow_type = await _resolve_flow_by_id(client, flow_id)
+            flow_summary = FlowSummary.from_api_response(api_config=api_flow, flow_component_id=flow_type)
             flows.append(flow_summary)
         except FlowResolutionError as e:
             LOG.warning(str(e))
