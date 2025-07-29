@@ -26,7 +26,7 @@ class TestAsyncStorageClient:
 
     @pytest.mark.asyncio
     async def test_global_search_with_results(self, storage_client: AsyncStorageClient, tables: list[TableDef]):
-        search_for_name = 'test'
+        search_for_name = 'test_table_01'
         is_global_search_enabled = await storage_client.is_enabled('global-search')
         if not is_global_search_enabled:
             LOG.warning('Global search is not enabled in the project. Skipping test. Please enable it in the project.')
