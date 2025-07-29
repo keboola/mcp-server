@@ -182,28 +182,40 @@ def ensure_legacy_task_ids(tasks: list[dict[str, Any]]) -> list[FlowTask]:
     return processed_tasks
 
 
+class FlowResolutionError(Exception):
+    pass
+
+
+async def _resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> FlowSummary:
+    errors = []
+
+    for flow_type in FLOW_TYPES:
+        try:
+            raw_flow = await client.storage_client.flow_detail(flow_id, flow_type)
+            api_flow = APIFlowResponse.model_validate(raw_flow)
+            return FlowSummary.from_api_response(api_config=api_flow, flow_component_id=flow_type)
+        except Exception as e:
+            errors.append(f'{flow_type}: {type(e).__name__} - {str(e)}')
+
+    raise FlowResolutionError(
+        f'Unable to resolve flow {flow_id}. Tried flow types: {", ".join(FLOW_TYPES)}. '
+        f'Errors: {" | ".join(errors)}'
+    )
+
+
 async def _get_flows_by_ids(
     client: KeboolaClient,
     flow_ids: Sequence[str]
 ) -> list[FlowSummary]:
-    flows = []
+    flows: list[FlowSummary] = []
 
     for flow_id in flow_ids:
-        raw_flow = None
-        found_flow_type = None
-        for flow_type in FLOW_TYPES:
-            try:
-                raw_flow = await client.storage_client.flow_detail(flow_id, flow_type)
-                found_flow_type = flow_type
-                break
-            except Exception:
-                continue
-
-        if raw_flow and found_flow_type:
-            api_flow = APIFlowResponse.model_validate(raw_flow)
-            flows.append(FlowSummary.from_api_response(api_config=api_flow, flow_component_id=found_flow_type))
-        else:
-            LOG.warning(f'Failed to retrieve flow {flow_id}.')
+        try:
+            flow_summary = await _resolve_flow_by_id(client, flow_id)
+            flows.append(flow_summary)
+        except FlowResolutionError as e:
+            LOG.warning(str(e))
+            continue
 
     return flows
 
