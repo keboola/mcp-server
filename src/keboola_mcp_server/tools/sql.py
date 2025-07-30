@@ -60,6 +60,8 @@ async def query_data(
       about tables. The fully qualified table name can be found in the response from that tool.
     * Always use quoted column names when referring to table columns. The quoted column names can also be found
       in the response from the table information tool.
+    * When querying columns with categorical values, use the `query_data` tool to inspect distinct values
+      beforehand and ensure valid filtering.
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     result = await workspace_manager.execute_query(sql_query)
