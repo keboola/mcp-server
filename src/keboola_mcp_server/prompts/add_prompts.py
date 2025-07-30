@@ -1,4 +1,5 @@
 """Module to add prompts to the Keboola MCP server."""
+from fastmcp.prompts import Prompt
 
 from keboola_mcp_server.mcp import KeboolaMcpServer
 
@@ -21,19 +22,19 @@ def add_keboola_prompts(mcp: KeboolaMcpServer) -> None:
 
     # ONE-CLICK PROMPTS (no required parameters)
     # Add project analysis prompt
-    mcp.add_prompt(analyze_project_structure)
+    mcp.add_prompt(Prompt.from_function(analyze_project_structure))
 
     # Add project health check prompt
-    mcp.add_prompt(project_health_check)
+    mcp.add_prompt(Prompt.from_function(project_health_check))
 
     # Add data quality assessment prompt
-    mcp.add_prompt(data_quality_assessment)
+    mcp.add_prompt(Prompt.from_function(data_quality_assessment))
 
     # Add component usage summary prompt
-    mcp.add_prompt(component_usage_summary)
+    mcp.add_prompt(Prompt.from_function(component_usage_summary))
 
     # Add error analysis report prompt
-    mcp.add_prompt(error_analysis_report)
+    mcp.add_prompt(Prompt.from_function(error_analysis_report))
 
     # Add documentation generator prompt
-    mcp.add_prompt(create_project_documentation)
+    mcp.add_prompt(Prompt.from_function(create_project_documentation))

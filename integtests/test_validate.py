@@ -16,8 +16,9 @@ import jsonschema
 import pytest
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient
-from keboola_mcp_server.tools._validate import KeboolaParametersValidator
+from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse
 from keboola_mcp_server.tools.components.model import Component
+from keboola_mcp_server.tools.validation import KeboolaParametersValidator
 
 LOG = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def _check_schema(schema: JsonDict, dummy_parameters: JsonDict) -> None:
         KeboolaParametersValidator.validate(dummy_parameters, schema)
     except jsonschema.ValidationError:
         # We care only about schema errors, ignore validation errors since we are using dummy parameters.
-        # The schema itself is checked just before we validate json object against it. Hence, we can ingore
+        # The schema itself is checked just before we validate JSON object against it. Hence, we can ignore
         # ValidationError because the schema is valid which is our objective, but our dummy_parameters violates
         # the schema - we are not interested in the dummy parameters.
         pass
@@ -44,7 +45,8 @@ async def test_validate_parameters(keboola_client: KeboolaClient):
     row_counts, root_counts = 0, 0
     invalid_row_schemas, invalid_root_schemas = [], []
     for raw_component in components:
-        component = Component.model_validate(raw_component)  # We could also check pydantic validation here
+        api_component = ComponentAPIResponse.model_validate(raw_component)
+        component = Component.from_api_response(api_component)
         if component.configuration_schema:
             try:
                 root_counts += 1

@@ -1,6 +1,13 @@
 name: CI
 
-on: [ push ]
+# How the CI Pipeline Works
+# - The CI workflow runs on all push events and pull requests.
+# - For pull requests from forks (coming from a different repository), we skip jobs/actions that need secrets (e.g.,
+#   publishing results, integration tests) to avoid exposing them. Only safe checks like local tests and flake8 are run.
+# - For pull requests from branches in this repository, the workflow is skipped to avoid running it twice (once for the
+#   push and once for the PR).
+# - The full workflow (including jobs requiring secrets) runs only on pushes events to branches in this repository
+on: [ push, pull_request ]
 concurrency: ci-${{ github.ref }}
 
 permissions:
@@ -10,6 +17,8 @@ permissions:
 jobs:
   build:
     name: Build, test and package
+    # run this job only for push (avoiding pull requests from the same repo) or for pull requests from different repo
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -42,13 +51,16 @@ jobs:
 
       - name: Publish test results
         uses: dorny/test-reporter@v1
-        if: success() || failure() # run this step even if a previous step failed
+        # run this step even if a previous step failed, but only for push events or pull requests from the same repo
+        if: (success() || failure()) && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: Test results (${{ matrix.python-version }})
           path: ./test-results.xml
           reporter: 'java-junit'
 
       - name: Upload coverage to Codecov
+        # run this step only for push events or pull requests from the same repo
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
@@ -73,7 +85,8 @@ jobs:
 
       - name: Upload wheel package
         id: wheel_artifact_upload
-        if: matrix.python-version == '3.10'
+        # run this step only for push events or pull requests from the same repo
+        if: matrix.python-version == '3.10' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: actions/upload-artifact@v4
         with:
           name: keboola_mcp_server-${{ steps.get_package_version.outputs.version }}-py3-none-any.whl
@@ -85,6 +98,8 @@ jobs:
   integration_tests:
     name: Integration Tests
     needs: build
+    # run this job only for push events (not pull requests)
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -106,6 +121,8 @@ jobs:
           uv sync --frozen --no-editable --extra dev
 
       - name: Integration tests
+        # run actual tests only for pushes to the same repository (not forks)
+        if: github.repository == github.event.repository.full_name
         env:
           INTEGTEST_STORAGE_TOKEN: ${{ secrets.INTEGTEST_STORAGE_TOKEN }}
           INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
@@ -113,9 +130,17 @@ jobs:
         run: |
           uv run tox -e integtests
 
+      - name: Skip integration tests for forks
+        # show a message when tests are skipped for forks
+        if: github.repository != github.event.repository.full_name
+        run: |
+          echo "Integration tests skipped for fork repository"
+          echo "Dependencies installed successfully - setup is working correctly"
+
       - name: Publish integration test results
         uses: dorny/test-reporter@v1
-        if: success() || failure() # run this step even if a previous step failed
+        # publish results only when actual tests were run (same repository)
+        if: (always()) && github.repository == github.event.repository.full_name
         with:
           name: Integration test results (${{ matrix.python-version }})
           path: ./integtest-results.xml

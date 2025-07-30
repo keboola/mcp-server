@@ -1,81 +1,109 @@
+"""
+Keboola Component Management Tools for MCP Server.
+
+This module provides the core tools for managing Keboola components and their configurations
+through the Model Context Protocol (MCP) interface. It serves as the main entry point for
+component-related operations in the MCP server.
+
+## Tool Categories
+
+### Component/Configuration Discovery
+- `get_component`: Retrieve detailed component information including schemas
+- `find_component_id`: Search for components by natural language query
+- `get_config`: Retrieve detailed configuration with root + row structure
+- `list_configs`: List all component configurations (with filtering)
+- `get_config_examples`: Get sample configuration examples for a component
+
+### Configuration Management
+- `create_config`: Create new root component configurations
+- `update_config`: Update existing root configurations
+- `add_config_row`: Add new configuration rows to existing configurations
+- `update_config_row`: Update existing configuration rows
+
+### SQL Transformations
+- `list_transformations`: List transformation configurations
+- `create_sql_transformation`: Create new SQL transformations with code blocks
+- `update_sql_transformation`: Update existing SQL transformation configurations
+"""
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Annotated, Any, Sequence, cast
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
+from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
 from pydantic import Field
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient, SuggestedComponent
-from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import with_session_state
+from keboola_mcp_server.links import ProjectLinksManager
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer
+from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse
 from keboola_mcp_server.tools.components.model import (
     Component,
-    ComponentConfigurationOutput,
-    ComponentConfigurationResponse,
-    ComponentRootConfiguration,
-    ComponentRowConfiguration,
+    ComponentSummary,
     ComponentType,
-    ComponentWithConfigurations,
+    ConfigToolOutput,
+    Configuration,
+    ListConfigsOutput,
+    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
-    _get_component,
-    _get_sql_transformation_id_from_sql_dialect,
-    _get_transformation_configuration,
-    _handle_component_types,
-    _retrieve_components_configurations_by_ids,
-    _retrieve_components_configurations_by_types,
-    validate_root_parameters_configuration,
-    validate_row_parameters_configuration,
-    validate_storage_configuration,
+    fetch_component,
+    get_sql_transformation_id_from_sql_dialect,
+    get_transformation_configuration,
+    handle_component_types,
+    list_configs_by_ids,
+    list_configs_by_types,
+    set_cfg_creation_metadata,
+    set_cfg_update_metadata,
 )
 from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.tools.validation import (
+    validate_root_parameters_configuration,
+    validate_root_storage_configuration,
+    validate_row_parameters_configuration,
+    validate_row_storage_configuration,
+)
 
 LOG = logging.getLogger(__name__)
 
-# Add component tools to the MCP server #########################################
 
-RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME: str = 'retrieve_transformations'
+# ============================================================================
+# TOOL REGISTRATION
+# ============================================================================
 
-
-def add_component_tools(mcp: FastMCP) -> None:
+def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
+    # Component/Configuration discovery tools
+    mcp.add_tool(FunctionTool.from_function(get_component))
+    mcp.add_tool(FunctionTool.from_function(get_config))
+    mcp.add_tool(FunctionTool.from_function(list_configs, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(get_config_examples))
 
-    mcp.add_tool(
-        retrieve_transformations_configurations,
-        name=RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
-    )
-    LOG.info(f'Added tool: {RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME}.')
+    # Configuration management tools
+    mcp.add_tool(FunctionTool.from_function(create_config))
+    mcp.add_tool(FunctionTool.from_function(update_config))
+    mcp.add_tool(FunctionTool.from_function(add_config_row))
+    mcp.add_tool(FunctionTool.from_function(update_config_row))
 
-    tools = [
-        get_component_configuration,
-        retrieve_components_configurations,
-        create_sql_transformation,
-        update_sql_transformation_configuration,
-        get_component,
-        create_component_root_configuration,
-        create_component_row_configuration,
-        update_component_root_configuration,
-        update_component_row_configuration,
-        get_component_configuration_examples,
-        find_component_id,
-    ]
+    # SQL transformation tools
+    mcp.add_tool(FunctionTool.from_function(list_transformations, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
+    mcp.add_tool(FunctionTool.from_function(update_sql_transformation))
 
-    for tool in tools:
-        mcp.add_tool(tool)
-        LOG.info(f'Added tool: {tool.__name__}.')
-
-    LOG.info('Component tools initialized.')
+    LOG.info('Component tools added to the MCP server.')
 
 
-# tools #########################################
+# ============================================================================
+# Configuration LISTING TOOLS
+# ============================================================================
 
 
 @tool_errors()
-@with_session_state()
-async def retrieve_components_configurations(
+async def list_configs(
     ctx: Context,
     component_types: Annotated[
         Sequence[ComponentType],
@@ -85,10 +113,7 @@ async def retrieve_components_configurations(
         Sequence[str],
         Field(description='List of component IDs to retrieve configurations for. If none, return all components.'),
     ] = tuple(),
-) -> Annotated[
-    list[ComponentWithConfigurations],
-    Field(description='List of objects, each containing a component and its associated configurations.'),
-]:
+) -> ListConfigsOutput:
     """
     Retrieves configurations of components present in the project,
     optionally filtered by component types or specific component IDs.
@@ -113,30 +138,29 @@ async def retrieve_components_configurations(
         - returns the configurations of the component with ID 'specified-id'
     """
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     if not component_ids:
-        client = KeboolaClient.from_state(ctx.session.state)
-        component_types = _handle_component_types(component_types)  # if none, return all types
-        return await _retrieve_components_configurations_by_types(client, component_types)
+        component_types = handle_component_types(component_types)  # if none, return all types
+        components_with_configurations = await list_configs_by_types(client, component_types)
     # If component IDs are provided, retrieve component configurations by IDs
     else:
-        client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_ids(client, component_ids)
+        components_with_configurations = await list_configs_by_ids(client, component_ids)
+    links = [links_manager.get_used_components_link()]
+
+    return ListConfigsOutput(
+        components_with_configurations=components_with_configurations, links=links
+    )
 
 
 @tool_errors()
-@with_session_state()
-async def retrieve_transformations_configurations(
+async def list_transformations(
     ctx: Context,
     transformation_ids: Annotated[
         Sequence[str],
         Field(description='List of transformation component IDs to retrieve configurations for.'),
     ] = tuple(),
-) -> Annotated[
-    list[ComponentWithConfigurations],
-    Field(
-        description='List of objects, each containing a transformation component and its associated configurations.',
-    ),
-]:
+) -> ListTransformationsOutput:
     """
     Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
 
@@ -156,17 +180,27 @@ async def retrieve_transformations_configurations(
         - returns the transformation configurations with ID 'specified-id'
     """
     # If no transformation IDs are provided, retrieve transformation configurations by transformation type
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+
     if not transformation_ids:
-        client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_types(client, ['transformation'])
+        components_with_configurations = await list_configs_by_types(client, ['transformation'])
     # If transformation IDs are provided, retrieve transformation configurations by IDs
     else:
-        client = KeboolaClient.from_state(ctx.session.state)
-        return await _retrieve_components_configurations_by_ids(client, transformation_ids)
+        components_with_configurations = await list_configs_by_ids(client, transformation_ids)
 
+    links = [links_manager.get_transformations_dashboard_link()]
+
+    return ListTransformationsOutput(
+        components_with_configurations=components_with_configurations, links=links
+    )
+
+
+# ============================================================================
+# COMPONENT DISCOVERY TOOLS
+# ============================================================================
 
 @tool_errors()
-@with_session_state()
 async def get_component(
     ctx: Context,
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
@@ -186,16 +220,21 @@ async def get_component(
         - returns the component
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    return await _get_component(component_id=component_id, client=client)
+    api_component = await fetch_component(client=client, component_id=component_id)
+    return Component.from_api_response(api_component)
 
 
 @tool_errors()
-@with_session_state()
-async def get_component_configuration(
+async def get_config(
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-    configuration_id: Annotated[str, Field(description='ID of the component/transformation configuration',)],
+    configuration_id: Annotated[
+        str,
+        Field(
+            description='ID of the component/transformation configuration',
+        ),
+    ],
     ctx: Context,
-) -> Annotated[ComponentConfigurationOutput, Field(description='The component/transformation and its configuration.')]:
+) -> Annotated[Configuration, Field(description='The component/transformation and its configuration.')]:
     """
     Gets information about a specific component/transformation configuration.
 
@@ -209,91 +248,45 @@ async def get_component_configuration(
         - returns the component/transformation configuration pair
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    component = await _get_component(client=client, component_id=component_id)
+    links_manager = await ProjectLinksManager.from_client(client)
+
     raw_configuration = cast(
         JsonDict,
-        await client.storage_client.get(
-            endpoint=f'branch/{client.storage_client.branch_id}/components/{component_id}/configs/{configuration_id}'
-        ),
-    )
-    configuration_response = ComponentConfigurationResponse.model_validate(
-        raw_configuration | {'component_id': component_id}
+        await client.storage_client.configuration_detail(component_id=component_id, configuration_id=configuration_id),
     )
 
-    # Create root configuration
-    root_configuration = ComponentRootConfiguration.model_validate(
-        configuration_response.model_dump()
-        | {
-            'parameters': configuration_response.configuration.get('parameters', {}),
-            'storage': configuration_response.configuration.get('storage'),
-        }
+    api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': component_id})
+    api_component = await fetch_component(client=client, component_id=component_id)
+    component_summary = ComponentSummary.from_api_response(api_component)
+
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=raw_configuration.get('name', ''),
     )
 
-    # Create row configurations if they exist
-    row_configurations = None
-    if configuration_response.rows:
-        row_configurations = []
-        for row in configuration_response.rows:
-            if row is None:
-                continue
-            row_configuration = ComponentRowConfiguration.model_validate(
-                row
-                | {
-                    'component_id': configuration_response.component_id,
-                    'parameters': row.get('configuration', {}).get('parameters', {}),
-                    'storage': row.get('configuration', {}).get('storage'),
-                }
-            )
-            row_configurations.append(row_configuration)
-
-    return ComponentConfigurationOutput(
-        root_configuration=root_configuration,
-        row_configurations=row_configurations,
-        component=component,
+    configuration = Configuration.from_api_response(
+        api_config=api_config,
+        component=component_summary,
+        links=links,
     )
 
-
-async def _set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
-    """ Sets configuration metadata to indicate it was created by MCP. """
-    try:
-        await client.storage_client.configuration_metadata_update(
-            component_id=component_id,
-            configuration_id=configuration_id,
-            metadata={MetadataField.CREATED_BY_MCP: 'true'},
-        )
-    except HTTPStatusError as e:
-        LOG.exception(
-            f'Failed to set "{MetadataField.CREATED_BY_MCP}" metadata for configuration {configuration_id}: {e}'
-        )
+    return configuration
 
 
-async def _set_cfg_update_metadata(
-    client: KeboolaClient,
-    component_id: str,
-    configuration_id: str,
-    configuration_version: int,
-) -> None:
-    """ Sets configuration metadata to indicate it was updated by MCP. """
-    updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{configuration_version}'
-    try:
-        await client.storage_client.configuration_metadata_update(
-            component_id=component_id,
-            configuration_id=configuration_id,
-            metadata={updated_by_md_key: 'true'},
-        )
-    except HTTPStatusError as e:
-        LOG.exception(
-            f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}'
-        )
+# ============================================================================
+# CONFIGURATION MANAGEMENT TOOLS
+# ============================================================================
 
 
 @tool_errors()
-@with_session_state()
 async def create_sql_transformation(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the SQL transformation.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the SQL transformation.',
+        ),
     ],
     description: Annotated[
         str,
@@ -304,12 +297,12 @@ async def create_sql_transformation(
             ),
         ),
     ],
-    code_blocks: Annotated[
+    sql_code_blocks: Annotated[
         Sequence[TransformationConfiguration.Parameters.Block.Code],
         Field(
             description=(
-                'The executable SQL query code blocks, each containing a descriptive name and a list of semantically '
-                'related statements written in the current SQL dialect. Each code block is a separate item in the list.'
+                'The SQL query code blocks, each containing a descriptive name and a sequence of '
+                'semantically related independently executable sql_statements written in the current SQL dialect.'
             ),
         ),
     ],
@@ -317,22 +310,23 @@ async def create_sql_transformation(
         Sequence[str],
         Field(
             description=(
-                'An empty list or a list of created table names if and only if they are generated within SQL '
-                'statements (e.g., using `CREATE TABLE ...`).'
+                'A list of created table names if they are generated within the SQL query statements '
+                '(e.g., using `CREATE TABLE ...`).'
             ),
         ),
     ] = tuple(),
-) -> Annotated[ComponentConfigurationResponse, Field(description='Newly created SQL Transformation Configuration.')]:
+) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
-    description, and optionally a list of created table names if and only if they are generated within the SQL
-    statements.
+    description, and a list of created table names.
 
     CONSIDERATIONS:
-    - The SQL query statement is executable and must follow the current SQL dialect, which can be retrieved using
-      appropriate tool.
-    - Each SQL code block should include one or more SQL statements that share a similar purpose or meaning, and should
-      have a descriptive name that reflects that purpose.
+    - By default, SQL transformation must create at least one table to produce a result; omit only if the user
+      explicitly indicates that no table creation is needed.
+    - Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
+      semantically related SQL statements.
+    - Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
+      retrieved using appropriate tool.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
@@ -344,61 +338,66 @@ async def create_sql_transformation(
     - Use when you want to create a new SQL transformation.
 
     EXAMPLES:
-    - user_input: `Can you save me the SQL query you generated as a new transformation?`
-        - set the sql_statements to the query, and set other parameters accordingly.
+    - user_input: `Can you create a new transformation out of this sql query?`
+        - set the sql_code_blocks to the query, and set other parameters accordingly.
         - returns the created SQL transformation configuration if successful.
     - user_input: `Generate me an SQL transformation which [USER INTENT]`
-        - set the sql_statements to the query based on the [USER INTENT], and set other parameters accordingly.
+        - set the sql_code_blocks to the query based on the [USER INTENT], and set other parameters accordingly.
         - returns the created SQL transformation configuration if successful.
     """
 
     # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
     sql_dialect = await get_sql_dialect(ctx)
-    component_id = _get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
-    transformation_configuration_payload = _get_transformation_configuration(
-        codes=code_blocks, transformation_name=name, output_tables=created_table_names
+    transformation_configuration_payload = get_transformation_configuration(
+        codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Creating new transformation configuration: {name} for component: {component_id}.')
+
     new_raw_transformation_configuration = await client.storage_client.configuration_create(
         component_id=component_id,
         name=name,
         description=description,
-        configuration=transformation_configuration_payload.model_dump(),
+        configuration=transformation_configuration_payload.model_dump(by_alias=True),
     )
 
-    component = await _get_component(client=client, component_id=component_id)
-    new_transformation_configuration = ComponentConfigurationResponse.model_validate(
-        new_raw_transformation_configuration
-        | {
-            'component_id': component_id,
-            'component': component,
-        }
-    )
+    configuration_id = new_raw_transformation_configuration['id']
 
-    await _set_cfg_creation_metadata(
+    await set_cfg_creation_metadata(
         client=client,
         component_id=component_id,
-        configuration_id=new_transformation_configuration.configuration_id,
+        configuration_id=configuration_id,
     )
 
-    LOG.info(
-        f'Created new transformation "{component_id}" with configuration id '
-        f'"{new_transformation_configuration.configuration_id}".'
+    LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
+
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=name,
     )
-    return new_transformation_configuration
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
-@with_session_state()
-async def update_sql_transformation_configuration(
+async def update_sql_transformation(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the transformation configuration to update')],
     change_description: Annotated[
@@ -432,19 +431,32 @@ async def update_sql_transformation_configuration(
     ] = '',
     is_disabled: Annotated[
         bool,
-        Field(description='Whether to disable the transformation configuration. Default is False.',),
+        Field(
+            description='Whether to disable the transformation configuration. Default is False.',
+        ),
     ] = False,
-) -> Annotated[ComponentConfigurationResponse, Field(description='Updated transformation configuration.')]:
+) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration, optionally updating the description and disabling the
     configuration.
 
     CONSIDERATIONS:
-    - The parameters configuration must include blocks and codes of SQL statements.
-    - The Codes within the block should be semantically related and have a descriptive name.
-    - The SQL code statements should follow the current SQL dialect, which can be retrieved using appropriate tool.
-    - The storage configuration must not be empty, and it should include input and output tables with correct mappings.
+    - The parameters configuration must include blocks with codes of SQL statements. Using one block with many codes of
+      SQL statements is preferred and commonly used unless specified otherwise by the user.
+    - Each code contains SQL statements that are semantically related and have a descriptive name.
+    - Each SQL statement must be executable and follow the current SQL dialect, which can be retrieved using
+      appropriate tool.
+    - The storage configuration must not be empty, and it should include input or output tables with correct mappings
+      for the transformation.
     - When the behavior of the transformation is not changed, the updated_description can be empty string.
+    - SCHEMA CHANGES: If the transformation update results in a destructive
+      schema change to the output table (such as removing columns, changing
+      column types, or renaming columns), you MUST inform the user that they
+      need to
+      manually delete the output table completely before running the updated
+      transformation. Otherwise, the transformation will fail with a schema
+      mismatch error. Non-destructive changes (adding new columns) typically do
+      not require table deletion.
 
     EXAMPLES:
     - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
@@ -453,17 +465,26 @@ async def update_sql_transformation_configuration(
         - returns the updated transformation configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    sql_transformation_id = _get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
+    links_manager = await ProjectLinksManager.from_client(client)
+    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
+    api_component = await fetch_component(client=client, component_id=sql_transformation_id)
+    transformation = Component.from_api_response(api_component)
+
+    storage = validate_root_storage_configuration(
+        component=transformation,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
 
     updated_configuration = {
-        'parameters': parameters.model_dump(),
+        'parameters': parameters.model_dump(by_alias=True),
         'storage': storage,
     }
 
     LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
@@ -473,36 +494,42 @@ async def update_sql_transformation_configuration(
         is_disabled=is_disabled,
     )
 
-    transformation = await _get_component(client=client, component_id=sql_transformation_id)
-    updated_transformation_configuration = ComponentConfigurationResponse.model_validate(
-        updated_raw_configuration
-        | {
-            'component_id': transformation.component_id,
-            'component': transformation,
-        }
-    )
-
-    await _set_cfg_update_metadata(
+    await set_cfg_update_metadata(
         client=client,
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
-        configuration_version=updated_transformation_configuration.version,
+        configuration_version=updated_raw_configuration.get('version'),
+    )
+
+    links = links_manager.get_configuration_links(
+        component_id=sql_transformation_id,
+        configuration_id=str(configuration_id),
+        configuration_name=str(updated_raw_configuration.get('name', '')),
     )
 
     LOG.info(
-        f'Updated transformation configuration: {updated_transformation_configuration.configuration_id} for '
-        f'component: {updated_transformation_configuration.component_id}.'
+        f'Updated transformation configuration: {updated_raw_configuration["id"]} for '
+        f'component: {sql_transformation_id}.'
     )
-    return updated_transformation_configuration
+
+    return ConfigToolOutput(
+        component_id=sql_transformation_id,
+        configuration_id=str(configuration_id),
+        description=updated_description or updated_raw_configuration.get('description', ''),
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
-@with_session_state()
-async def create_component_root_configuration(
+async def create_config(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -527,9 +554,9 @@ async def create_component_root_configuration(
             ),
         ),
     ],
-) -> Annotated[ComponentRootConfiguration, Field(description='Created component root configuration.')]:
+) -> ConfigToolOutput:
     """
-    Creates a component configuration using the specified name, component ID, configuration JSON, and description.
+    Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 
     CONSIDERATIONS:
     - The configuration JSON object must follow the root_configuration_schema of the specified component.
@@ -546,14 +573,21 @@ async def create_component_root_configuration(
         - returns the created component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Creating new configuration: {name} for component: {component_id}.')
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_root_parameters_configuration(
-        client=client,
+    api_component = await fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
+
+    storage_cfg = validate_root_storage_configuration(
+        component=component,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
+    parameters = validate_root_parameters_configuration(
+        component=component,
         parameters=parameters,
-        component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
@@ -569,30 +603,34 @@ async def create_component_root_configuration(
         ),
     )
 
-    new_configuration = ComponentRootConfiguration(
-        **new_raw_configuration,
+    configuration_id = new_raw_configuration['id']
+
+    LOG.info(f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".')
+
+    await set_cfg_creation_metadata(client, component_id, configuration_id)
+
+    links = links_manager.get_configuration_links(
+        component_id=component_id, configuration_id=configuration_id, configuration_name=name
+    )
+
+    return ConfigToolOutput(
         component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=links,
     )
-    configuration_id = new_configuration.configuration_id
-
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".'
-    )
-
-    await _set_cfg_creation_metadata(client, component_id, configuration_id)
-
-    return new_configuration
 
 
 @tool_errors()
-@with_session_state()
-async def create_component_row_configuration(
+async def add_config_row(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -605,7 +643,9 @@ async def create_component_row_configuration(
     component_id: Annotated[str, Field(description='The ID of the component for which to create the configuration.')],
     configuration_id: Annotated[
         str,
-        Field(description='The ID of the configuration for which to create the configuration row.',),
+        Field(
+            description='The ID of the configuration for which to create the configuration row.',
+        ),
     ],
     parameters: Annotated[
         dict[str, Any],
@@ -621,7 +661,7 @@ async def create_component_row_configuration(
             ),
         ),
     ],
-) -> Annotated[ComponentRowConfiguration, Field(description='Created component row configuration.')]:
+) -> ConfigToolOutput:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
     component ID, configuration JSON, and description.
@@ -636,29 +676,34 @@ async def create_component_row_configuration(
     - Use when you want to create a new row configuration for a specific component configuration.
 
     EXAMPLES:
-    - user_input: `Create a new configuration for component X with these settings`
+    - user_input: `Create a new configuration row for component X with these settings`
         - set the component_id, configuration_id and configuration parameters accordingly
         - returns the created component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
         f'Creating new configuration row: {name} for component: {component_id} '
         f'and configuration {configuration_id}.'
     )
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_row_parameters_configuration(
-        client=client,
+    api_component = await fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
+
+    storage_cfg = validate_row_storage_configuration(
+        component=component,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
+    parameters = validate_row_parameters_configuration(
+        component=component,
         parameters=parameters,
-        component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    # Try to create the new configuration and return the new object if successful
-    # or log an error and raise an exception if not
     new_raw_configuration = cast(
         dict[str, Any],
         await client.storage_client.configuration_row_create(
@@ -670,35 +715,41 @@ async def create_component_row_configuration(
         ),
     )
 
-    new_configuration = ComponentRowConfiguration(
-        **new_raw_configuration,
-        component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
-    )
-
     LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
+        f'Created new configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".'
     )
 
-    await _set_cfg_update_metadata(
+    await set_cfg_update_metadata(
         client=client,
         component_id=component_id,
-        configuration_id=new_configuration.configuration_id,
-        configuration_version=new_configuration.version,
+        configuration_id=configuration_id,
+        configuration_version=new_raw_configuration['version'],
     )
 
-    return new_configuration
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=name,
+    )
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
-@with_session_state()
-async def update_component_root_configuration(
+async def update_config(
     ctx: Context,
     name: Annotated[
         str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.',),
+        Field(
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
     ],
     description: Annotated[
         str,
@@ -729,9 +780,9 @@ async def update_component_root_configuration(
             ),
         ),
     ],
-) -> Annotated[ComponentRootConfiguration, Field(description='Updated component root configuration.')]:
+) -> ConfigToolOutput:
     """
-    Updates a specific component configuration using given by component ID, and configuration ID.
+    Updates a specific root component configuration using given by component ID, and configuration ID.
 
     CONSIDERATIONS:
     - The configuration JSON object must follow the root_configuration_schema of the specified component.
@@ -749,56 +800,62 @@ async def update_component_root_configuration(
         - returns the updated component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_root_parameters_configuration(
-        client=client,
+    api_component = await fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
+
+    storage_cfg = validate_root_storage_configuration(
+        component=component,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
+    parameters = validate_root_parameters_configuration(
+        component=component,
         parameters=parameters,
-        component_id=component_id,
         initial_message='The "parameters" field is not valid.',
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    new_raw_configuration = cast(
-        dict[str, Any],
-        await client.storage_client.configuration_update(
-            component_id=component_id,
-            configuration_id=configuration_id,
-            configuration=configuration_payload,
-            change_description=change_description,
-            updated_name=name,
-            updated_description=description,
-        ),
-    )
-
-    new_configuration = ComponentRootConfiguration(
-        **new_raw_configuration,
+    updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
+        configuration_id=configuration_id,
+        configuration=configuration_payload,
+        change_description=change_description,
+        updated_name=name,
+        updated_description=description,
     )
 
-    LOG.info(
-        f'Updated configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
-    )
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
-    await _set_cfg_update_metadata(
+    await set_cfg_update_metadata(
         client=client,
         component_id=component_id,
-        configuration_id=new_configuration.configuration_id,
-        configuration_version=new_configuration.version,
+        configuration_id=configuration_id,
+        configuration_version=updated_raw_configuration['version'],
     )
 
-    return new_configuration
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=name,
+    )
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
-@with_session_state()
-async def update_component_row_configuration(
+async def update_config_row(
     ctx: Context,
     name: Annotated[
         str,
@@ -814,7 +871,9 @@ async def update_component_row_configuration(
     ],
     change_description: Annotated[
         str,
-        Field(description='Description of the change made to the component configuration.',),
+        Field(
+            description='Description of the change made to the component configuration.',
+        ),
     ],
     component_id: Annotated[str, Field(description='The ID of the component to update.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
@@ -833,7 +892,7 @@ async def update_component_row_configuration(
             ),
         ),
     ],
-) -> Annotated[ComponentRowConfiguration, Field(description='Updated component row configuration.')]:
+) -> ConfigToolOutput:
     """
     Updates a specific component configuration row in the specified configuration_id, using the specified name,
     component ID, configuration JSON, and description.
@@ -852,59 +911,66 @@ async def update_component_row_configuration(
         - returns the updated component configuration if successful.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
         f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
-    storage_cfg = validate_storage_configuration(storage=storage, initial_message='The "storage" field is not valid.')
-    parameters = await validate_row_parameters_configuration(
-        client=client,
+
+    api_component = await fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
+
+    storage_cfg = validate_row_storage_configuration(
+        component=component,
+        storage=storage,
+        initial_message='The "storage" field is not valid.',
+    )
+    parameters = validate_row_parameters_configuration(
+        component=component,
         parameters=parameters,
-        component_id=component_id,
         initial_message='Field "parameters" is not valid.\n',
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
-    new_raw_configuration = cast(
-        dict[str, Any],
-        await client.storage_client.configuration_row_update(
-            component_id=component_id,
-            config_id=configuration_id,
-            configuration_row_id=configuration_row_id,
-            configuration=configuration_payload,
-            change_description=change_description,
-            updated_name=name,
-            updated_description=description,
-        ),
-    )
-
-    new_configuration = ComponentRowConfiguration(
-        **new_raw_configuration,
+    updated_raw_configuration = await client.storage_client.configuration_row_update(
         component_id=component_id,
-        storage=new_raw_configuration['configuration'].get('storage'),
-        parameters=new_raw_configuration['configuration'].get('parameters'),
+        config_id=configuration_id,
+        configuration_row_id=configuration_row_id,
+        configuration=configuration_payload,
+        change_description=change_description,
+        updated_name=name,
+        updated_description=description,
     )
 
-    LOG.info(
-        f'Updated configuration for component "{component_id}" with configuration id '
-        f'"{new_configuration.configuration_id}".'
-    )
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
-    await _set_cfg_update_metadata(
+    await set_cfg_update_metadata(
         client=client,
         component_id=component_id,
-        configuration_id=new_configuration.configuration_id,
-        configuration_version=new_configuration.version,
+        configuration_id=configuration_id,
+        configuration_version=updated_raw_configuration['version'],
     )
 
-    return new_configuration
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=name,
+    )
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=description,
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=links,
+    )
 
 
 @tool_errors()
-@with_session_state()
-async def get_component_configuration_examples(
+async def get_config_examples(
     ctx: Context,
     component_id: Annotated[str, Field(description='The ID of the component to get configuration examples for.')],
 ) -> Annotated[
@@ -947,24 +1013,3 @@ async def get_component_configuration_examples(
             markdown += f'{i}. Row Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
     return markdown
-
-
-@tool_errors()
-@with_session_state()
-async def find_component_id(
-    ctx: Context,
-    query: Annotated[str, Field(description='Natural language query to find the requested component.')],
-) -> list[SuggestedComponent]:
-    """
-    Returns list of component IDs that match the given query.
-
-    USAGE:
-    - Use when you want to find the component for a specific purpose.
-
-    EXAMPLES:
-    - user_input: `I am looking for a salesforce extractor component`
-        - returns a list of component IDs that match the query, ordered by relevance/best match.
-    """
-    client = KeboolaClient.from_state(ctx.session.state)
-    suggestion_response = await client.ai_service_client.suggest_component(query)
-    return suggestion_response.components

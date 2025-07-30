@@ -1,16 +1,21 @@
 from keboola_mcp_server.tools.components.model import (
-    ComponentConfigurationResponse,
+    Component,
     ComponentConfigurationResponseBase,
+    ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
-    ReducedComponent,
 )
 from keboola_mcp_server.tools.components.tools import (
-    RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
     add_component_tools,
+    add_config_row,
+    create_config,
     create_sql_transformation,
-    get_component_configuration,
-    retrieve_components_configurations,
-    retrieve_transformations_configurations,
-    update_sql_transformation_configuration,
+    get_component,
+    get_config,
+    get_config_examples,
+    list_configs,
+    list_transformations,
+    update_config,
+    update_config_row,
+    update_sql_transformation,
 )

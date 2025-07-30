@@ -2,11 +2,13 @@
 
 import importlib.metadata
 import logging
+import math
 import os
-from typing import Any, Mapping, Optional, Union, cast
+from datetime import datetime
+from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 LOG = logging.getLogger(__name__)
 
@@ -14,6 +16,26 @@ JsonPrimitive = Union[int, float, str, bool, None]
 JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
 JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
+
+ComponentResource = Literal['configuration', 'rows', 'state']
+StorageEventType = Literal['info', 'success', 'warn', 'error']
+
+# Project features that can be checked with the is_enabled method
+ProjectFeature = Literal['global-search']
+# Input types for the global search endpoint parameters
+BranchType = Literal['production', 'development']
+ItemType = Literal[
+    'flow',
+    'bucket',
+    'table',
+    'transformation',
+    'configuration',
+    'configuration-row',
+    'workspace',
+    'shared-code',
+    'rows',
+    'state',
+]
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 
@@ -34,12 +56,7 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
-    def __init__(
-        self,
-        storage_api_token: str,
-        storage_api_url: str,
-        bearer_token: str | None = None
-    ) -> None:
+    def __init__(self, storage_api_token: str, storage_api_url: str, bearer_token: str | None = None) -> None:
         """
         Initialize the client.
 
@@ -120,6 +137,34 @@ class RawKeboolaClient:
         if headers:
             self.headers.update(headers)
 
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        """
+        Checks the HTTP response status code and raises an exception with a detailed message. The message will
+        include "error" and "exceptionId" fields if they are present in the response.
+        """
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            message_parts = [str(e)]
+
+            try:
+                error_data = response.json()
+                if error_msg := error_data.get('error'):
+                    message_parts.append(f'API error: {error_msg}')
+                if exception_id := error_data.get('exceptionId'):
+                    message_parts.append(f'Exception ID: {exception_id}')
+                    message_parts.append('When contacting Keboola support please provide the exception ID.')
+
+            except ValueError:
+                try:
+                    if response.text:
+                        message_parts.append(f'API error: {response.text}')
+                except Exception:
+                    pass  # should never get here
+
+            raise httpx.HTTPStatusError('\n'.join(message_parts), request=response.request, response=response) from e
+
     async def get(
         self,
         endpoint: str,
@@ -141,7 +186,7 @@ class RawKeboolaClient:
                 params=params,
                 headers=headers,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return cast(JsonStruct, response.json())
 
     async def post(
@@ -168,7 +213,7 @@ class RawKeboolaClient:
                 headers=headers,
                 json=data or {},
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return cast(JsonStruct, response.json())
 
     async def put(
@@ -195,7 +240,7 @@ class RawKeboolaClient:
                 headers=headers,
                 json=data or {},
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return cast(JsonStruct, response.json())
 
     async def delete(
@@ -216,7 +261,7 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
 
             if response.content:
                 return cast(JsonStruct, response.json())
@@ -313,6 +358,46 @@ class KeboolaServiceClient:
         return await self.raw_client.delete(endpoint=endpoint)
 
 
+class GlobalSearchResponse(BaseModel):
+    """The SAPI global search response."""
+
+    class Item(BaseModel):
+        id: str = Field(description='The id of the item.')
+        name: str = Field(description='The name of the item.')
+        type: ItemType = Field(description='The type of the item.')
+        full_path: dict[str, Any] = Field(
+            description=(
+                'The full path of the item containing project, branch and other information depending on the '
+                'type of the item.'
+            ),
+            alias='fullPath',
+        )
+        component_id: Optional[str] = Field(
+            default=None, description='The id of the component the item belongs to.', alias='componentId'
+        )
+        organization_id: int = Field(
+            description='The id of the organization the item belongs to.', alias='organizationId'
+        )
+        project_id: int = Field(description='The id of the project the item belongs to.', alias='projectId')
+        project_name: str = Field(description='The name of the project the item belongs to.', alias='projectName')
+        created: datetime = Field(description='The date and time the item was created in ISO format.')
+
+    all: int = Field(description='Total number of found results.')
+    items: list[Item] = Field(description='List of search results of the GlobalSearchType.')
+    by_type: dict[str, int] = Field(
+        description='Mapping of found types to the number of corresponding results.', alias='byType'
+    )
+    by_project: dict[str, str] = Field(description='Mapping of project id to project name.', alias='byProject')
+
+    @field_validator('by_type', 'by_project', mode='before')
+    @classmethod
+    def validate_dict_fields(cls, current_value: Any) -> Any:
+        # If the value is empty-list/None, return an empty dictionary, otherwise return the value
+        if not current_value:
+            return dict()
+        return current_value
+
+
 class AsyncStorageClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str = 'default') -> None:
@@ -361,22 +446,84 @@ class AsyncStorageClient(KeboolaServiceClient):
             branch_id=branch_id,
         )
 
-    async def bucket_detail(self, bucket_id: str) -> JsonStruct:
+    async def branch_metadata_get(self) -> list[JsonDict]:
+        """
+        Retrieves metadata for the current branch.
+
+        :return: Branch metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self.branch_id}/metadata'))
+
+    async def branch_metadata_update(self, metadata: dict[str, Any]) -> list[JsonDict]:
+        """
+        Updates metadata for the current branch.
+
+        :param metadata: The metadata to update.
+        :return: The SAPI call response - updated metadata or raise an error.
+        """
+        payload = {
+            'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
+        }
+        return cast(list[JsonDict], await self.post(endpoint=f'branch/{self.branch_id}/metadata', data=payload))
+
+    async def bucket_detail(self, bucket_id: str) -> JsonDict:
         """
         Retrieves information about a given bucket.
 
         :param bucket_id: The id of the bucket
         :return: Bucket details as dictionary
         """
-        return await self.get(endpoint=f'buckets/{bucket_id}')
+        return cast(JsonDict, await self.get(endpoint=f'buckets/{bucket_id}'))
 
-    async def bucket_list(self) -> JsonList:
+    async def bucket_list(self, include: list[str] | None = None) -> list[JsonDict]:
         """
         Lists all buckets.
 
+        :param include: List of fields to include in the response ('metadata' or 'linkedBuckets')
         :return: List of buckets as dictionary
         """
-        return cast(JsonList, await self.get(endpoint='buckets'))
+        params = {}
+        if include is not None and isinstance(include, list):
+            params['include'] = ','.join(include)
+        return cast(list[JsonDict], await self.get(endpoint='buckets', params=params))
+
+    async def bucket_metadata_delete(self, bucket_id: str, metadata_id: str) -> None:
+        """
+        Deletes metadata for a given bucket.
+
+        :param bucket_id: The id of the bucket
+        :param metadata_id: The id of the metadata
+        """
+        await self.delete(endpoint=f'buckets/{bucket_id}/metadata/{metadata_id}')
+
+    async def bucket_metadata_get(self, bucket_id: str) -> list[JsonDict]:
+        """
+        Retrieves metadata for a given bucket.
+
+        :param bucket_id: The id of the bucket
+        :return: Bucket metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/metadata'))
+
+    async def bucket_metadata_update(
+        self,
+        bucket_id: str,
+        metadata: dict[str, Any],
+        provider: str = 'user',
+    ) -> list[JsonDict]:
+        """
+        Updates metadata for a given bucket.
+
+        :param bucket_id: The id of the bucket
+        :param metadata: The metadata to update.
+        :param provider: The provider of the metadata ('user' by default).
+        :return: Bucket metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        payload = {
+            'provider': provider,
+            'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
+        }
+        return cast(list[JsonDict], await self.post(endpoint=f'buckets/{bucket_id}/metadata', data=payload))
 
     async def bucket_table_list(self, bucket_id: str, include: list[str] | None = None) -> list[JsonDict]:
         """
@@ -390,6 +537,33 @@ class AsyncStorageClient(KeboolaServiceClient):
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
         return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
+
+    async def component_detail(self, component_id: str) -> JsonDict:
+        """
+        Retrieves information about a given component.
+
+        :param component_id: The id of the component
+        :return: Component details as a dictionary
+        """
+        return cast(JsonDict, await self.get(endpoint=f'branch/{self.branch_id}/components/{component_id}'))
+
+    async def component_list(
+        self, component_type: str, include: list[ComponentResource] | None = None
+    ) -> list[JsonDict]:
+        """
+        Lists all components of a given type.
+
+        :param component_type: The type of the component (extractor, writer, application, etc.)
+        :param include: Comma separated list of resources to include.
+            Available resources: configuration, rows and state.
+        :return: List of components as dictionary
+        """
+        endpoint = f'branch/{self.branch_id}/components'
+        params = {'componentType': component_type}
+        if include is not None and isinstance(include, list):
+            params['include'] = ','.join(include)
+
+        return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
 
     async def configuration_create(
         self,
@@ -463,7 +637,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
-    async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> JsonList:
+    async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> list[JsonDict]:
         """
         Retrieves metadata for a given configuration.
 
@@ -472,14 +646,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
         """
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
-        return cast(JsonList, await self.get(endpoint=endpoint))
+        return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
     async def configuration_metadata_update(
         self,
         component_id: str,
         configuration_id: str,
         metadata: dict[str, Any],
-    ) -> JsonList:
+    ) -> list[JsonDict]:
         """
         Updates metadata for the given configuration.
 
@@ -492,7 +666,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         payload = {
             'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
         }
-        return cast(JsonList, await self.post(endpoint=endpoint, data=payload))
+        return cast(list[JsonDict], await self.post(endpoint=endpoint, data=payload))
 
     async def configuration_update(
         self,
@@ -562,7 +736,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows', data=payload
+                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
+                data=payload,
             ),
         )
 
@@ -610,6 +785,16 @@ class AsyncStorageClient(KeboolaServiceClient):
             ),
         )
 
+    async def job_detail(self, job_id: str | int) -> JsonDict:
+        """
+        NOTE: To get info for regular jobs, use the Job Queue API.
+        Retrieves information about a given job.
+
+        :param job_id: The id of the job
+        :return: Job details as dictionary
+        """
+        return cast(JsonDict, await self.get(endpoint=f'jobs/{job_id}'))
+
     async def flow_create(
         self,
         name: str,
@@ -652,10 +837,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param config_id: The ID of the flow configuration to retrieve
         :return: Flow configuration details
         """
-        return await self.configuration_detail(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=config_id
-        )
+        return await self.configuration_detail(component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=config_id)
 
     async def flow_list(self) -> list[JsonDict]:
         """
@@ -694,6 +876,35 @@ class AsyncStorageClient(KeboolaServiceClient):
             updated_description=description,
         )
 
+    async def global_search(
+        self,
+        query: str,
+        limit: int = 100,
+        offset: int = 0,
+        types: Sequence[ItemType] = tuple(),
+    ) -> GlobalSearchResponse:
+        """
+        Searches for items in the storage. It allows you to search for entities by name across all projects within an
+        organization, even those you do not have direct access to. The search is conducted only through entity names to
+        ensure confidentiality. We restrict the search to the project and branch production type of the user.
+
+        :param query: The query to search for.
+        :param limit: The maximum number of items to return.
+        :param offset: The offset to start from, pagination parameter.
+        :param types: The types of items to search for.
+        """
+        params: dict[str, Any] = {
+            'query': query,
+            'projectIds[]': [await self.project_id()],
+            'branchTypes[]': 'production',
+            'types[]': types,
+            'limit': limit,
+            'offset': offset,
+        }
+        params = {k: v for k, v in params.items() if v}
+        raw_resp = await self.get(endpoint='global-search', params=params)
+        return GlobalSearchResponse.model_validate(raw_resp)
+
     async def table_detail(self, table_id: str) -> JsonDict:
         """
         Retrieves information about a given table.
@@ -702,6 +913,164 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Table details as dictionary
         """
         return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
+
+    async def table_metadata_delete(self, table_id: str, metadata_id: str) -> None:
+        """
+        Deletes metadata for a given table.
+
+        :param table_id: The id of the table
+        :param metadata_id: The id of the metadata
+        """
+        await self.delete(endpoint=f'tables/{table_id}/metadata/{metadata_id}')
+
+    async def table_metadata_get(self, table_id: str) -> list[JsonDict]:
+        """
+        Retrieves metadata for a given table.
+
+        :param table_id: The id of the table
+        :return: Table metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        return cast(list[JsonDict], await self.get(endpoint=f'tables/{table_id}/metadata'))
+
+    async def table_metadata_update(
+        self,
+        table_id: str,
+        metadata: dict[str, Any] | None = None,
+        columns_metadata: dict[str, list[dict[str, Any]]] | None = None,
+        provider: str = 'user',
+    ) -> JsonDict:
+        """
+        Updates metadata for a given table. At least one of the `metadata` or `columns_metadata` arguments
+        must be provided.
+
+        :param table_id: The id of the table
+        :param metadata: The metadata to update.
+        :param columns_metadata: The column metadata to update. Mapping of column names to a list of dictionaries.
+            Each dictionary contains the 'key' and 'value' keys.
+        :param provider: The provider of the metadata ('user' by default).
+        :return: Dictionary with 'metadata' key under which the table metadata is stored as a list of dictionaries.
+            Each dictionary contains the 'key' and 'value' keys. Under 'columnsMetadata' key, the column metadata
+            is stored as a mapping of column names to a list of dictionaries.
+        """
+        if not metadata and not columns_metadata:
+            raise ValueError('At least one of the `metadata` or `columns_metadata` arguments must be provided.')
+
+        payload: dict[str, Any] = {'provider': provider}
+        if metadata:
+            payload['metadata'] = [{'key': key, 'value': value} for key, value in metadata.items()]
+        if columns_metadata:
+            payload['columnsMetadata'] = columns_metadata
+
+        return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
+
+    async def trigger_event(
+        self,
+        message: str,
+        component_id: str,
+        configuration_id: str | None = None,
+        event_type: StorageEventType | None = None,
+        params: Mapping[str, Any] | None = None,
+        results: Mapping[str, Any] | None = None,
+        duration: float | None = None,
+        run_id: str | None = None,
+    ) -> JsonDict:
+        """
+        Sends a Storage API event.
+
+        :param message: The event message.
+        :param component_id: The ID of the component triggering the event.
+        :param configuration_id: The ID of the component configuration triggering the event.
+        :param event_type: The type of event.
+        :param params: The component parameters. The structure of the params object must follow the JSON schema
+            registered for the component_id.
+        :param results: The component results. The structure of the results object must follow the JSON schema
+            registered for the component_id.
+        :param duration: The component processing duration in seconds.
+        :param run_id: The ID of the associated component job.
+
+        :return: Dictionary with the new event ID.
+        """
+        payload: dict[str, Any] = {
+            'message': message,
+            'component': component_id,
+        }
+        if configuration_id:
+            payload['configurationId'] = configuration_id
+        if event_type:
+            payload['type'] = event_type
+        if params:
+            payload['params'] = params
+        if results:
+            payload['results'] = results
+        if duration is not None:
+            # The events API ignores floats, so we round up to the nearest integer.
+            payload['duration'] = int(math.ceil(duration))
+        if run_id:
+            payload['runId'] = run_id
+
+        LOG.info(f'[trigger_event] payload={payload}')
+
+        return cast(JsonDict, await self.post(endpoint='events', data=payload))
+
+    async def workspace_create(
+        self,
+        login_type: str,
+        backend: str,
+        async_run: bool = True,
+        read_only_storage_access: bool = False,
+    ) -> JsonDict:
+        """
+        Creates a new workspace.
+
+        :param async_run: If True, the workspace creation is run asynchronously.
+        :param read_only_storage_access: If True, the workspace has read-only access to the storage.
+        :return: The SAPI call response - created workspace or raise an error.
+        """
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=f'branch/{self.branch_id}/workspaces',
+                params={'async': async_run},
+                data={
+                    'readOnlyStorageAccess': read_only_storage_access,
+                    'loginType': login_type,
+                    'backend': backend,
+                },
+            ),
+        )
+
+    async def workspace_detail(self, workspace_id: int) -> JsonDict:
+        """
+        Retrieves information about a given workspace.
+
+        :param workspace_id: The id of the workspace
+        :return: Workspace details as dictionary
+        """
+        return cast(JsonDict, await self.get(endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}'))
+
+    async def workspace_query(self, workspace_id: int, query: str) -> JsonDict:
+        """
+        Executes a query in a given workspace.
+
+        :param workspace_id: The id of the workspace
+        :param query: The query to execute
+        :return: The SAPI call response - query result or raise an error.
+        """
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}/query',
+                data={'query': query},
+            ),
+        )
+
+    async def workspace_list(self) -> list[JsonDict]:
+        """
+        Lists all workspaces in the project.
+
+        :return: List of workspaces
+        """
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self.branch_id}/workspaces'))
 
     async def verify_token(self) -> JsonDict:
         """
@@ -718,6 +1087,42 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         raw_data = cast(JsonDict, await self.get(endpoint='tokens/verify'))
         return str(raw_data['owner']['id'])
+
+    async def is_enabled(self, features: ProjectFeature | Iterable[ProjectFeature]) -> bool:
+        """
+        Checks if the features are enabled in the project - conjunction of features.
+        :param features: The features to check.
+        :return: True if the features are enabled, False otherwise.
+        """
+        features = [features] if isinstance(features, str) else features
+        verified_info = await self.verify_token()
+        project_data = cast(JsonDict, verified_info['owner'])
+        project_features = cast(list[str], project_data.get('features', []))
+        return all(feature in project_features for feature in features)
+
+    async def token_create(
+        self,
+        description: str,
+        component_access: list[str] | None = None,
+        expires_in: int | None = None,
+    ) -> JsonDict:
+        """
+        Creates a new Storage API token.
+
+        :param description: Description of the token
+        :param component_access: List of component IDs the token should have access to
+        :param expires_in: Token expiration time in seconds
+        :return: Token creation response containing the token and its details
+        """
+        token_data: dict[str, Any] = {'description': description}
+
+        if component_access:
+            token_data['componentAccess'] = component_access
+
+        if expires_in:
+            token_data['expiresIn'] = expires_in
+
+        return cast(JsonDict, await self.post(endpoint='tokens', data=token_data))
 
 
 class JobsQueueClient(KeboolaServiceClient):

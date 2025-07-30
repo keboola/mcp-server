@@ -1,25 +1,26 @@
 import logging
+import uuid
+from importlib.metadata import distribution
+from unittest.mock import ANY
 
 import pytest
+from fastmcp import Context
+from mcp.shared.context import RequestContext
 
+from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.config import Config
 from keboola_mcp_server.errors import ToolException, tool_errors
+from keboola_mcp_server.mcp import ServerState
 
 
-# --- Fixtures ---
 @pytest.fixture
 def function_with_value_error():
-    """A function that raises ValueError."""
-
-    async def func():
+    """A function that raises ValueError for testing general error handling."""
+    async def func(_ctx: Context):
         raise ValueError('Simulated ValueError')
-
     return func
 
 
-# --- Test Cases ---
-
-
-# --- Test tool_errors ---
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('function_fixture', 'default_recovery', 'recovery_instructions', 'expected_recovery_message', 'exception_message'),
@@ -58,13 +59,14 @@ def function_with_value_error():
         ),
     ],
 )
-async def test_tool_function_recovery_instructions(
+async def test_tool_errors(
     function_fixture,
     default_recovery,
     recovery_instructions,
     expected_recovery_message,
     exception_message,
     request,
+    mcp_context_client: Context,
 ):
     """
     Test that the appropriate recovery message is applied based on the exception type.
@@ -77,27 +79,62 @@ async def test_tool_function_recovery_instructions(
 
     if expected_recovery_message is None:
         with pytest.raises(ValueError, match=exception_message) as excinfo:
-            await decorated_func()
+            await decorated_func(mcp_context_client)
     else:
         with pytest.raises(ToolException) as excinfo:
-            await decorated_func()
+            await decorated_func(mcp_context_client)
         assert expected_recovery_message in str(excinfo.value)
     assert exception_message in str(excinfo.value)
 
 
-# --- Test Logging ---
 @pytest.mark.asyncio
-async def test_logging_on_tool_exception(caplog, function_with_value_error):
-    """Test if logging works correctly with the tool function."""
-    decorated_func = tool_errors(default_recovery='General recovery message.')(function_with_value_error)
+async def test_logging_on_tool_exception(caplog, function_with_value_error, mcp_context_client: Context):
+    """Test that tool_errors decorator logs exceptions properly."""
+    decorated_func = tool_errors()(function_with_value_error)
 
-    with caplog.at_level(logging.ERROR):
-        try:
-            await decorated_func()
-        except ToolException:
-            pass
+    with pytest.raises(ValueError, match='Simulated ValueError'):
+        await decorated_func(mcp_context_client)
 
-    # Capture and assert the correct logging output
-    assert 'failed to run tool' in caplog.text.lower()
-    assert 'simulated valueerror' in caplog.text.lower()
-    assert 'raise valueerror' in caplog.text.lower()
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.ERROR
+    assert 'Failed to run tool func' in caplog.records[0].message
+    assert 'Simulated ValueError' in caplog.records[0].message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('transport', ['http', 'stdio'])
+async def test_get_session_id(transport: str, mcp_context_client: Context, mocker):
+    @tool_errors()
+    async def foo(_ctx: Context):
+        pass
+
+    session_id = uuid.uuid4().hex
+    if transport == 'stdio':
+        mcp_context_client.session_id = None
+        mcp_context_client.request_context = mocker.MagicMock(RequestContext)
+        mcp_context_client.request_context.lifespan_context = ServerState(config=Config(), server_id=session_id)
+    elif transport == 'http':
+        mcp_context_client.session_id = session_id
+    else:
+        pytest.fail(f'Unknown transport: {transport}')
+
+    await foo(mcp_context_client)
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    client.storage_client.trigger_event.assert_called_once_with(
+        message='MCP tool "foo" call succeeded.',
+        component_id='keboola.mcp-server.tool',
+        event_type='success',
+        params={
+            'mcpServerContext': {
+                'appEnv': 'DEV',
+                'version': distribution('keboola_mcp_server').version,
+                'userAgent': '',
+                'sessionId': session_id,
+            },
+            'tool': {
+                'name': 'foo',
+                'arguments': [],
+            },
+        },
+        duration=ANY,
+    )

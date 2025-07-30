@@ -7,7 +7,15 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.jobs import JobDetail, JobListItem, get_job_detail, retrieve_jobs, start_job
+from keboola_mcp_server.links import Link
+from keboola_mcp_server.tools.jobs import (
+    JobDetail,
+    JobListItem,
+    ListJobsOutput,
+    get_job,
+    list_jobs,
+    run_job,
+)
 
 
 @pytest.fixture
@@ -53,9 +61,8 @@ def mock_job() -> dict[str, Any]:
         'endTime': '2024-01-01T00:00:02Z',
         'url': 'https://connection.keboola.com/jobs/123',
         'configData': {'source': 'file.csv'},
-        'configRowIds': ['1', '2', '3'],
+        'configRow': '1',
         'runId': '456',
-        'parentRunId': '789',
         'durationSeconds': 100,
         'result': {'import': 'successful'},
         'metrics': {'rows': 1000},
@@ -68,7 +75,7 @@ def iso_format() -> str:
 
 
 @pytest.mark.asyncio
-async def test_retrieve_jobs(
+async def test_list_jobs(
     mocker: MockerFixture,
     mcp_context_client: Context,
     mock_jobs: list[dict[str, Any]],
@@ -79,31 +86,33 @@ async def test_retrieve_jobs(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
-    result = await retrieve_jobs(context)
+    result = await list_jobs(context)
 
-    assert len(result) == 2
-    assert all(isinstance(job, JobListItem) for job in result)
-    assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.component_id == expected['component'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.config_id == expected['config'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.is_finished == expected['isFinished'] for returned, expected in zip(result, mock_jobs))
+    assert isinstance(result, ListJobsOutput)
+    assert len(result.jobs) == 2
+    assert all(isinstance(job, JobListItem) for job in result.jobs)
+    assert all(returned.id == expected['id'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.status == expected['status'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.component_id == expected['component'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.config_id == expected['config'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.is_finished == expected['isFinished'] for returned, expected in zip(result.jobs, mock_jobs))
     assert all(
         returned.created_time is not None
         and returned.created_time.replace(tzinfo=None) == datetime.strptime(expected['createdTime'], iso_format)
-        for returned, expected in zip(result, mock_jobs)
+        for returned, expected in zip(result.jobs, mock_jobs)
     )
     assert all(
         returned.start_time is not None
         and returned.start_time.replace(tzinfo=None) == datetime.strptime(expected['startTime'], iso_format)
-        for returned, expected in zip(result, mock_jobs)
+        for returned, expected in zip(result.jobs, mock_jobs)
     )
     assert all(
         returned.end_time is not None
         and returned.end_time.replace(tzinfo=None) == datetime.strptime(expected['endTime'], iso_format)
-        for returned, expected in zip(result, mock_jobs)
+        for returned, expected in zip(result.jobs, mock_jobs)
     )
-    assert all(hasattr(returned, 'not_a_desired_field') is False for returned in result)
+    assert all(hasattr(returned, 'not_a_desired_field') is False for returned in result.jobs)
+    assert len(result.links) == 1
 
     keboola_client.jobs_queue_client.search_jobs_by.assert_called_once_with(
         status=None,
@@ -117,7 +126,7 @@ async def test_retrieve_jobs(
 
 
 @pytest.mark.asyncio
-async def test_get_job_detail(
+async def test_get_job(
     mocker: MockerFixture, mcp_context_client: Context, mock_job: dict[str, Any], iso_format: str
 ):
     """Tests get_job_detail tool."""
@@ -125,7 +134,7 @@ async def test_get_job_detail(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.get_job_detail = mocker.AsyncMock(return_value=mock_job)
 
-    result = await get_job_detail('123', context)
+    result = await get_job(ctx=context, job_id='123')
 
     assert isinstance(result, JobDetail)
     assert result.id == mock_job['id']
@@ -141,19 +150,16 @@ async def test_get_job_detail(
     assert result.end_time.replace(tzinfo=None) == datetime.strptime(mock_job['endTime'], iso_format)
     assert result.url == mock_job['url']
     assert result.config_data == mock_job['configData']
-    assert result.config_row_ids == mock_job['configRowIds']
+    assert result.config_row == mock_job['configRow']
     assert result.run_id == mock_job['runId']
-    assert result.parent_run_id == mock_job['parentRunId']
     assert result.duration_seconds == mock_job['durationSeconds']
     assert result.result == mock_job['result']
-    # table_id is not present in the mock_job, should be None
-    assert result.table_id is None
 
     keboola_client.jobs_queue_client.get_job_detail.assert_called_once_with('123')
 
 
 @pytest.mark.asyncio
-async def retrieve_jobs_with_component_and_config_id(
+async def test_list_jobs_with_component_and_config_id(
     mocker: MockerFixture, mcp_context_client: Context, mock_jobs: list[dict[str, Any]]
 ):
     """
@@ -164,12 +170,12 @@ async def retrieve_jobs_with_component_and_config_id(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
-    result = await retrieve_jobs(ctx=context, component_id='keboola.ex-aws-s3', config_id='config-123')
+    result = await list_jobs(ctx=context, component_id='keboola.ex-aws-s3', config_id='config-123')
 
-    assert len(result) == 2
-    assert all(isinstance(job, JobListItem) for job in result)
-    assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
+    assert len(result.jobs) == 2
+    assert all(isinstance(job, JobListItem) for job in result.jobs)
+    assert all(returned.id == expected['id'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.status == expected['status'] for returned, expected in zip(result.jobs, mock_jobs))
 
     keboola_client.jobs_queue_client.search_jobs_by.assert_called_once_with(
         status=None,
@@ -183,7 +189,7 @@ async def retrieve_jobs_with_component_and_config_id(
 
 
 @pytest.mark.asyncio
-async def retrieve_jobs_with_component_id_without_config_id(
+async def test_list_jobs_with_component_id_without_config_id(
     mocker: MockerFixture, mcp_context_client: Context, mock_jobs: list[dict[str, Any]]
 ):
     """Tests retrieve_jobs tool with component_id and without config_id.
@@ -192,12 +198,12 @@ async def retrieve_jobs_with_component_id_without_config_id(
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.search_jobs_by = mocker.AsyncMock(return_value=mock_jobs)
 
-    result = await retrieve_jobs(ctx=context, component_id='keboola.ex-aws-s3')
+    result = await list_jobs(ctx=context, component_id='keboola.ex-aws-s3')
 
-    assert len(result) == 2
-    assert all(isinstance(job, JobListItem) for job in result)
-    assert all(returned.id == expected['id'] for returned, expected in zip(result, mock_jobs))
-    assert all(returned.status == expected['status'] for returned, expected in zip(result, mock_jobs))
+    assert len(result.jobs) == 2
+    assert all(isinstance(job, JobListItem) for job in result.jobs)
+    assert all(returned.id == expected['id'] for returned, expected in zip(result.jobs, mock_jobs))
+    assert all(returned.status == expected['status'] for returned, expected in zip(result.jobs, mock_jobs))
 
     keboola_client.jobs_queue_client.search_jobs_by.assert_called_once_with(
         status=None,
@@ -211,12 +217,12 @@ async def retrieve_jobs_with_component_id_without_config_id(
 
 
 @pytest.mark.asyncio
-async def test_start_job(
+async def test_run_job(
     mocker: MockerFixture,
     mcp_context_client: Context,
     mock_job: dict[str, Any],
 ):
-    """Tests start_job tool.
+    """Tests run_job tool.
     :param mock_job: The newly created job details - expecting api response.
     :param mcp_context_client: The MCP context client.
     """
@@ -228,7 +234,7 @@ async def test_start_job(
 
     component_id = mock_job['component']
     configuration_id = mock_job['config']
-    job_detail = await start_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
+    job_detail = await run_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
 
     assert isinstance(job_detail, JobDetail)
     assert job_detail.result == {}
@@ -237,6 +243,10 @@ async def test_start_job(
     assert job_detail.component_id == component_id
     assert job_detail.config_id == configuration_id
     assert job_detail.result == {}
+    assert set(job_detail.links) == {
+        Link(type='ui-detail', title='Job: 123', url='test://api.keboola.com/admin/projects/69420/queue/123'),
+        Link(type='ui-dashboard', title='Jobs in the project', url='test://api.keboola.com/admin/projects/69420/queue'),
+    }
 
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
@@ -245,8 +255,8 @@ async def test_start_job(
 
 
 @pytest.mark.asyncio
-async def test_start_job_fail(mocker: MockerFixture, mcp_context_client: Context, mock_job: dict[str, Any]):
-    """Tests start_job tool when job creation fails."""
+async def test_run_job_fail(mocker: MockerFixture, mcp_context_client: Context, mock_job: dict[str, Any]):
+    """Tests run_job tool when job creation fails."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.jobs_queue_client.create_job = mocker.AsyncMock(side_effect=HTTPError('Job creation failed'))
@@ -255,7 +265,7 @@ async def test_start_job_fail(mocker: MockerFixture, mcp_context_client: Context
     configuration_id = mock_job['config']
 
     with pytest.raises(HTTPError):
-        await start_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
+        await run_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
 
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
@@ -292,6 +302,7 @@ def test_job_detail_model_validate_dict_fields(
     :param mock_job: The mock job details - expecting api response.
     """
     mock_job[field_name] = input_value
+    mock_job['links'] = []
     if isinstance(expected_result, type) and issubclass(expected_result, Exception):
         with pytest.raises(expected_result):
             JobDetail.model_validate(mock_job)

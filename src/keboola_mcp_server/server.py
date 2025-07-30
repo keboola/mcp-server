@@ -4,32 +4,29 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from importlib.metadata import distribution
 from typing import Callable
 
 from fastmcp import FastMCP
-from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
-from pydantic import AliasChoices, AnyHttpUrl, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState
+from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
-from keboola_mcp_server.tools.flow import add_flow_tools
+from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
+from keboola_mcp_server.tools.oauth import add_oauth_tools
+from keboola_mcp_server.tools.project import add_project_tools
+from keboola_mcp_server.tools.search import add_search_tools
 from keboola_mcp_server.tools.sql import add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
 
 LOG = logging.getLogger(__name__)
-_MCP_VERSION = distribution('mcp').version
-_FASTMCP_VERSION = distribution('fastmcp').version
-_VERSION = distribution('keboola_mcp_server').version
-_DEFAULT_APP_VERSION = 'DEV'
 
 
 class StatusApiResp(BaseModel):
@@ -42,25 +39,21 @@ class ServiceInfoApiResp(BaseModel):
         validation_alias=AliasChoices('appName', 'app_name', 'app-name'),
         serialization_alias='appName')
     app_version: str = Field(
-        default=_DEFAULT_APP_VERSION,
         validation_alias=AliasChoices('appVersion', 'app_version', 'app-version'),
         serialization_alias='appVersion')
     server_version: str = Field(
-        default=_VERSION,
         validation_alias=AliasChoices('serverVersion', 'server_version', 'server-version'),
         serialization_alias='serverVersion')
     mcp_library_version: str = Field(
-        default=_MCP_VERSION,
         validation_alias=AliasChoices('mcpLibraryVersion', 'mcp_library_version', 'mcp-library-version'),
         serialization_alias='mcpLibraryVersion')
     fastmcp_library_version: str = Field(
-        default=_FASTMCP_VERSION,
         validation_alias=AliasChoices('fastmcpLibraryVersion', 'fastmcp_library_version', 'fastmcp-library-version'),
         serialization_alias='fastmcpLibraryVersion')
 
 
 def create_keboola_lifespan(
-    config: Config | None = None,
+    server_state: ServerState,
 ) -> Callable[[FastMCP[ServerState]], AbstractAsyncContextManager[ServerState]]:
     @asynccontextmanager
     async def keboola_lifespan(server: FastMCP) -> AsyncIterator[ServerState]:
@@ -81,14 +74,7 @@ def create_keboola_lifespan(
         - it could handle OAuth token, client access, Reddis database connection for storing sessions, access
         to the Relational DB, etc.
         """
-        # init server state
-        init_config = config or Config()
-        server_state = ServerState(config=init_config)
-        try:
-
-            yield server_state
-        finally:
-            pass
+        yield server_state
 
     return keboola_lifespan
 
@@ -121,33 +107,22 @@ def create_server(config: Config) -> FastMCP:
             server_url=config.oauth_server_url,
             scope=config.oauth_scope,
             # This URL must be reachable from the internet.
+            mcp_server_url=config.mcp_server_url,
             # The path corresponds to oauth_callback_handler() set up below.
-            mcp_callback_url=config.mcp_server_url.rstrip('/') + '/oauth/callback',
+            callback_endpoint='/oauth/callback',
             jwt_secret=config.jwt_secret,
         )
-        auth_settings = AuthSettings(
-            issuer_url=AnyHttpUrl(config.mcp_server_url),
-            client_registration_options=ClientRegistrationOptions(
-                enabled=True,
-                client_secret_expiry_seconds=5 * 60,  # 5 minutes
-                valid_scopes=None,
-                default_scopes=None,
-            ),
-            revocation_options=None,  # no clients revocation; clients expire
-            required_scopes=None,
-        )
-        LOG.debug(f'auth_settings={auth_settings}')
     else:
         oauth_provider = None
-        auth_settings = None
 
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
+    server_state = ServerState(config=config)
     mcp = KeboolaMcpServer(
         name='Keboola Explorer',
-        lifespan=create_keboola_lifespan(config),
-        auth_server_provider=oauth_provider,
-        auth=auth_settings,
+        lifespan=create_keboola_lifespan(server_state),
+        auth=oauth_provider,
+        middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware()],
     )
 
     @mcp.custom_route('/health-check', methods=['GET'])
@@ -159,7 +134,12 @@ def create_server(config: Config) -> FastMCP:
     @mcp.custom_route('/', methods=['GET'])
     async def get_info(_rq: Request) -> Response:
         """Returns basic information about the service."""
-        resp = ServiceInfoApiResp(app_version=os.getenv('APP_VERSION') or _DEFAULT_APP_VERSION)
+        resp = ServiceInfoApiResp(
+            app_version=server_state.app_version,
+            server_version=server_state.server_version,
+            mcp_library_version=server_state.mcp_library_version,
+            fastmcp_library_version=server_state.fastmcp_library_version,
+        )
         return JSONResponse(resp.model_dump(by_alias=True))
 
     @mcp.custom_route('/oauth/callback', methods=['GET'])
@@ -183,10 +163,13 @@ def create_server(config: Config) -> FastMCP:
 
     add_component_tools(mcp)
     add_doc_tools(mcp)
-    add_job_tools(mcp)
-    add_storage_tools(mcp)
-    add_sql_tools(mcp)
     add_flow_tools(mcp)
+    add_job_tools(mcp)
+    add_oauth_tools(mcp)
+    add_project_tools(mcp)
+    add_search_tools(mcp)
+    add_sql_tools(mcp)
+    add_storage_tools(mcp)
     add_keboola_prompts(mcp)
 
     return mcp

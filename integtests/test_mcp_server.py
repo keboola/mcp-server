@@ -2,15 +2,15 @@ import json
 
 import pytest
 from fastmcp import Client, Context, FastMCP
+from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.tools.components.model import ComponentConfigurationOutput
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.tools.components.model import Configuration
+from keboola_mcp_server.workspace import WorkspaceManager
 
 
 @pytest.mark.asyncio
@@ -150,6 +150,7 @@ async def test_http_multiple_clients_with_different_headers(
     run_server_remote: AsyncContextServerRemoteRunner,
     run_client: AsyncContextClientRunner,
     storage_api_url: str,
+    storage_api_token: str,
 ):
     """
     Test that the server can handle multiple clients with different headers and checks the values of the headers.
@@ -159,11 +160,10 @@ async def test_http_multiple_clients_with_different_headers(
     # we do not delete env vars, we want the env vars to be overwritten by http request params
 
     headers = {
-        'client_1': {'storage_token': 'client_1_storage_token', 'workspace_schema': 'client_1_workspace_schema'},
-        'client_2': {'storage_token': 'client_2_storage_token', 'workspace_schema': 'client_2_workspace_schema'},
+        'client_1': {'storage_token': storage_api_token, 'workspace_schema': 'client_1_workspace_schema'},
+        'client_2': {'storage_token': storage_api_token, 'workspace_schema': 'client_2_workspace_schema'},
     }
 
-    @with_session_state()
     async def assessed_function(ctx: Context, which_client: str) -> str:
         storage_token = KeboolaClient.from_state(ctx.session.state).token
         workspace_schema = WorkspaceManager.from_state(ctx.session.state)._workspace_schema
@@ -173,7 +173,7 @@ async def test_http_multiple_clients_with_different_headers(
         return f'{which_client}'
 
     server = create_server(config)
-    server.add_tool(assessed_function)
+    server.add_tool(FunctionTool.from_function(assessed_function))
 
     async with run_server_remote(server, 'streamable-http') as url:
         async with (
@@ -184,10 +184,10 @@ async def test_http_multiple_clients_with_different_headers(
             await _assert_basic_setup(server, client_2)
             ret_1 = await client_1.call_tool('assessed_function', {'which_client': 'client_1'})
             ret_2 = await client_2.call_tool('assessed_function', {'which_client': 'client_2'})
-            assert isinstance(ret_1[0], TextContent)
-            assert isinstance(ret_2[0], TextContent)
-            assert ret_1[0].text == 'client_1'
-            assert ret_2[0].text == 'client_2'
+            assert isinstance(ret_1.content[0], TextContent)
+            assert isinstance(ret_2.content[0], TextContent)
+            assert ret_1.content[0].text == 'client_1'
+            assert ret_2.content[0].text == 'client_2'
 
 
 @pytest.mark.asyncio
@@ -232,12 +232,16 @@ async def _assert_basic_setup(server: FastMCP, client: Client):
 
     # in our case we expect the server contains atleast 1 tool
     assert len(server_tools) > 0
+    assert len(server_prompts) > 0
 
-    assert len(client_tools) == len(server_tools)
+    # ignore 'search' tool which may or may not be exposed based on the testing project's features
+    client_tool_names = sorted(t.name for t in client_tools if t.name not in ['search'])
+    server_tool_names = sorted(t for t in server_tools.keys() if t not in ['search'])
+
+    assert client_tool_names == server_tool_names
     assert len(client_prompts) == len(server_prompts)
-    assert len(client_resources) == len(server_resources)
-    assert all(expected == ret_tool.name for expected, ret_tool in zip(server_tools.keys(), client_tools))
     assert all(expected == ret_prompt.name for expected, ret_prompt in zip(server_prompts.keys(), client_prompts))
+    assert len(client_resources) == len(server_resources)
     assert all(
         expected == ret_resource.name for expected, ret_resource in zip(server_resources.keys(), client_resources)
     )
@@ -247,25 +251,25 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     assert config.configuration_id is not None
 
     tool_result = await client.call_tool(
-        'get_component_configuration',
+        'get_config',
         {'configuration_id': config.configuration_id, 'component_id': config.component_id},
     )
 
     assert tool_result is not None
-    assert len(tool_result) == 1
-    tool_result_content = tool_result[0]
+    assert len(tool_result.content) == 1
+    tool_result_content = tool_result.content[0]
     assert isinstance(tool_result_content, TextContent)  # only one tool call is executed
     component_str = tool_result_content.text
     component_json = json.loads(component_str)
 
-    component_config = ComponentConfigurationOutput.model_validate(component_json)
-    assert isinstance(component_config, ComponentConfigurationOutput)
+    component_config = Configuration.model_validate(component_json)
+    assert isinstance(component_config, Configuration)
     assert component_config.component is not None
     assert component_config.component.component_id == config.component_id
     assert component_config.component.component_type is not None
     assert component_config.component.component_name is not None
 
-    assert component_config.root_configuration is not None
-    assert component_config.root_configuration.configuration_id == config.configuration_id
+    assert component_config.configuration_root is not None
+    assert component_config.configuration_root.configuration_id == config.configuration_id
 
-    assert component_config.row_configurations is None
+    assert component_config.configuration_rows is None

@@ -7,20 +7,23 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
+    ListBucketsOutput,
+    ListTablesOutput,
     TableColumnInfo,
     TableDetail,
-    UpdateDescriptionResponse,
-    get_bucket_detail,
-    get_table_detail,
-    retrieve_bucket_tables,
-    retrieve_buckets,
+    UpdateDescriptionOutput,
+    get_bucket,
+    get_table,
+    list_buckets,
+    list_tables,
     update_bucket_description,
     update_column_description,
     update_table_description,
 )
-from keboola_mcp_server.tools.workspace import TableFqn, WorkspaceManager
+from keboola_mcp_server.workspace import TableFqn, WorkspaceManager
 
 
 def parse_iso_timestamp(ts: str) -> datetime:
@@ -51,6 +54,7 @@ def mock_table_data() -> Mapping[str, Any]:
         'rows_count': 100,
         'data_size_bytes': 1000,
         'columns': ['id', 'name', 'value'],
+        'bucket': {'id': 1}
     }
 
     return {
@@ -164,25 +168,37 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('bucket_id', ['bucket1', 'bucket2'])
-async def test_get_bucket_detail(
+async def test_get_bucket(
     mocker: MockerFixture,
     mcp_context_client: Context,
     mock_buckets: Sequence[Mapping[str, Any]],
     bucket_id: str,
 ):
-    """Test get_bucket_detail tool."""
+    """Test get_bucket tool."""
 
     expected_bucket = next(b for b in mock_buckets if b['id'] == bucket_id)
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(return_value=expected_bucket)
 
-    result = await get_bucket_detail(bucket_id, mcp_context_client)
+    result = await get_bucket(bucket_id, mcp_context_client)
 
     assert isinstance(result, BucketDetail)
     assert result.id == expected_bucket['id']
     assert result.name == expected_bucket['name']
     assert result.display_name == expected_bucket['display_name']
+    assert set(result.links) == {
+        Link(
+            type='ui-detail',
+            title=f'Bucket: {expected_bucket["name"]}',
+            url=f'test://api.keboola.com/admin/projects/69420/storage/{bucket_id}',
+        ),
+        Link(
+            type='ui-dashboard',
+            title='Buckets in the project',
+            url='test://api.keboola.com/admin/projects/69420/storage',
+        ),
+    }
 
     # Check optional fields only if they are present in the expected bucket
     if 'description' in expected_bucket:
@@ -198,22 +214,22 @@ async def test_get_bucket_detail(
 
 
 @pytest.mark.asyncio
-async def test_retrieve_buckets_in_project(
+async def test_list_buckets(
     mocker: MockerFixture, mcp_context_client: Context, mock_buckets: Sequence[Mapping[str, Any]]
 ) -> None:
-    """Test the retrieve_buckets_in_project tool."""
+    """Test the list_buckets tool."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=mock_buckets)
 
-    result = await retrieve_buckets(mcp_context_client)
+    result = await list_buckets(mcp_context_client)
 
-    assert isinstance(result, list)
-    assert len(result) == len(mock_buckets)
-    assert all(isinstance(bucket, BucketDetail) for bucket in result)
+    assert isinstance(result, ListBucketsOutput)
+    assert len(result.buckets) == len(mock_buckets)
+    assert all(isinstance(bucket, BucketDetail) for bucket in result.buckets)
 
     # Assert that the returned BucketDetail objects match the mock data
-    for expected_bucket, result_bucket in zip(mock_buckets, result):
+    for expected_bucket, result_bucket in zip(mock_buckets, result.buckets):
         assert result_bucket.id == expected_bucket['id']
         assert result_bucket.name == expected_bucket['name']
         assert result_bucket.display_name == expected_bucket['display_name']
@@ -232,10 +248,10 @@ async def test_retrieve_buckets_in_project(
 
 
 @pytest.mark.asyncio
-async def test_get_table_detail(
+async def test_get_table(
     mocker: MockerFixture, mcp_context_client: Context, mock_table_data: Mapping[str, Any]
 ) -> None:
-    """Test get_table_detail tool."""
+    """Test get_table tool."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.table_detail = mocker.AsyncMock(return_value=mock_table_data['raw_table_data'])
@@ -243,7 +259,7 @@ async def test_get_table_detail(
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_fqn = mocker.AsyncMock(return_value=mock_table_data['additional_data']['table_fqn'])
     workspace_manager.get_quoted_name.side_effect = lambda name: f'#{name}#'
-    result = await get_table_detail(mock_table_data['raw_table_data']['id'], mcp_context_client)
+    result = await get_table(mock_table_data['raw_table_data']['id'], mcp_context_client)
 
     assert isinstance(result, TableDetail)
     assert result.id == mock_table_data['raw_table_data']['id']
@@ -254,6 +270,25 @@ async def test_get_table_detail(
     assert result.data_size_bytes == mock_table_data['raw_table_data']['data_size_bytes']
     assert result.fully_qualified_name == str(mock_table_data['additional_data']['table_fqn'])
     assert result.columns == mock_table_data['additional_data']['columns']
+    assert set(result.links) == {
+        Link(
+            type='ui-detail',
+            title=f'Table: {mock_table_data["raw_table_data"]["name"]}',
+            url=(
+                f'test://api.keboola.com/admin/projects/69420/storage/'
+                f'{mock_table_data["raw_table_data"]["bucket"]["id"]}/table/'
+                f'{mock_table_data["raw_table_data"]["name"]}'
+            ),
+        ),
+        Link(
+            type='ui-detail',
+            title=f'Bucket: {mock_table_data["raw_table_data"]["bucket"]["id"]}',
+            url=(
+                f'test://api.keboola.com/admin/projects/69420/storage/'
+                f'{mock_table_data["raw_table_data"]["bucket"]["id"]}'
+            ),
+        ),
+    }
 
 
 @pytest.mark.asyncio
@@ -261,7 +296,7 @@ async def test_get_table_detail(
     ('sapi_response', 'expected'),
     [
         (
-            [{'id': 'in.c-bucket.foo', 'name': 'foo', 'display_name': 'foo'}],
+            [{'id': 'in.c-bucket.foo', 'name': 'foo', 'display_name': 'foo', 'bucket': {'id': 1}}],
             [TableDetail(id='in.c-bucket.foo', name='foo', display_name='foo')],
         ),
         (
@@ -270,6 +305,7 @@ async def test_get_table_detail(
                     'id': 'in.c-bucket.bar',
                     'name': 'bar',
                     'display_name': 'foo',
+                    'bucket': {'id': 1},
                     'metadata': [{'key': 'KBC.description', 'value': 'Nice Bar'}],
                 }
             ],
@@ -277,17 +313,18 @@ async def test_get_table_detail(
         ),
     ],
 )
-async def test_retrieve_bucket_tables_in_project(
+async def test_list_tables(
     mocker: MockerFixture,
     sapi_response: dict[str, Any],
     expected: list[TableDetail],
     mcp_context_client: Context,
 ) -> None:
-    """Test retrieve_bucket_tables_in_project tool."""
+    """Test list_tables tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=sapi_response)
-    result = await retrieve_bucket_tables('bucket-id', mcp_context_client)
-    assert result == expected
+    result = await list_tables('bucket-id', mcp_context_client)
+    assert isinstance(result, ListTablesOutput)
+    assert result.tables == expected
     keboola_client.storage_client.bucket_table_list.assert_called_once_with('bucket-id', include=['metadata'])
 
 
@@ -298,7 +335,9 @@ async def test_update_bucket_description_success(
     """Test successful update of bucket description."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_bucket_description_response)
+    keboola_client.storage_client.bucket_metadata_update = mocker.AsyncMock(
+        return_value=mock_update_bucket_description_response,
+    )
 
     result = await update_bucket_description(
         bucket_id='in.c-test.bucket-id',
@@ -306,16 +345,13 @@ async def test_update_bucket_description_success(
         ctx=mcp_context_client,
     )
 
-    assert isinstance(result, UpdateDescriptionResponse)
+    assert isinstance(result, UpdateDescriptionOutput)
     assert result.success is True
     assert result.description == 'Updated bucket description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
-    keboola_client.storage_client.post.assert_called_once_with(
-        endpoint='buckets/in.c-test.bucket-id/metadata',
-        data={
-            'provider': 'user',
-            'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated bucket description'}],
-        },
+    keboola_client.storage_client.bucket_metadata_update.assert_called_once_with(
+        bucket_id='in.c-test.bucket-id',
+        metadata={MetadataField.DESCRIPTION: 'Updated bucket description'},
     )
 
 
@@ -327,7 +363,9 @@ async def test_update_table_description_success(
 
     # Mock the Keboola client post method
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_table_description_response)
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
+        return_value=mock_update_table_description_response,
+    )
 
     result = await update_table_description(
         table_id='in.c-test.test-table',
@@ -335,16 +373,14 @@ async def test_update_table_description_success(
         ctx=mcp_context_client,
     )
 
-    assert isinstance(result, UpdateDescriptionResponse)
+    assert isinstance(result, UpdateDescriptionOutput)
     assert result.success is True
     assert result.description == 'Updated table description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
-    keboola_client.storage_client.post.assert_called_once_with(
-        endpoint='tables/in.c-test.test-table/metadata',
-        data={
-            'provider': 'user',
-            'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated table description'}],
-        },
+    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
+        table_id='in.c-test.test-table',
+        metadata={MetadataField.DESCRIPTION: 'Updated table description'},
+        columns_metadata={},
     )
 
 
@@ -355,7 +391,9 @@ async def test_update_column_description_success(
     """Test successful update of column description."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.post = mocker.AsyncMock(return_value=mock_update_column_description_response)
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
+        return_value=mock_update_column_description_response,
+    )
 
     result = await update_column_description(
         table_id='in.c-test.test-table',
@@ -364,22 +402,15 @@ async def test_update_column_description_success(
         ctx=mcp_context_client,
     )
 
-    assert isinstance(result, UpdateDescriptionResponse)
+    assert isinstance(result, UpdateDescriptionOutput)
     assert result.success is True
     assert result.description == 'Updated column description'
     assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
-    keboola_client.storage_client.post.assert_called_once_with(
-        endpoint='tables/in.c-test.test-table/metadata',
-        data={
-            'columnsMetadata': {
-                'text': [
-                    {
-                        'columnName': 'text',
-                        'key': 'KBC.description',
-                        'value': 'Updated column description',
-                    }
-                ]
-            },
-            'provider': 'user',
+    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
+        table_id='in.c-test.test-table',
+        columns_metadata={
+            'text': [
+                {'key': MetadataField.DESCRIPTION, 'value': 'Updated column description', 'columnName': 'text'}
+            ]
         },
     )

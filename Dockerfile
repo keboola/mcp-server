@@ -20,10 +20,6 @@ ADD src /app/src
 RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
 RUN --mount=type=cache,target=/root/.cache/uv     uv pip install ddtrace~=3.0
 
-# Install the patches of third party libraries
-COPY patches /app/patches/
-RUN --mount=type=cache,target=/root/.cache/uv     uv pip install --no-deps --force-reinstall patches/mcp-1.9.3-py3-none-any.whl
-
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
@@ -35,5 +31,5 @@ COPY logging-json.conf /app/logging-json.conf
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-# when running the container, add --api-url and a bind mount to the host's db file
-ENTRYPOINT ["python", "-m", "keboola_mcp_server.cli", "--api-url", "https://connection.YOUR_REGION.keboola.com", "--log-level", "DEBUG"]
+# when running the container, add KBC_STORAGE_API_URL environment variable and a bind mount to the host's db file
+ENTRYPOINT ["python", "-m", "keboola_mcp_server", "--log-level", "DEBUG"]

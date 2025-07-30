@@ -2,16 +2,12 @@ import json
 from typing import Any
 
 import pytest
-from google.api_core.exceptions import BadRequest
-from google.cloud.bigquery import QueryJob
-from google.cloud.bigquery.table import Row, RowIterator
 from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
-from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.sql import get_sql_dialect, query_table
-from keboola_mcp_server.tools.workspace import (
+from keboola_mcp_server.tools.sql import QueryDataOutput, get_sql_dialect, query_data
+from keboola_mcp_server.workspace import (
     QueryResult,
     SqlSelectData,
     TableFqn,
@@ -21,15 +17,17 @@ from keboola_mcp_server.tools.workspace import (
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('query', 'result', 'expected'),
+    ('query', 'query_name', 'result', 'expected_csv'),
     [
         (
             'select 1;',
+            'Simple Count Query',
             QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}])),
             'a\r\n1\r\n',  # CSV
         ),
         (
             'select id, name, email from user;',
+            'User Details List',
             QueryResult(
                 status='ok',
                 data=SqlSelectData(
@@ -44,28 +42,33 @@ from keboola_mcp_server.tools.workspace import (
         ),
         (
             'create table foo (id integer, name varchar);',
+            'Create Table Operation',
             QueryResult(status='ok', message='1 table created'),
             'message\r\n1 table created\r\n',  # CSV
         ),
     ],
 )
-async def test_query_table(query: str, result: QueryResult, expected: str, empty_context: Context, mocker):
+async def test_query_data(
+    query: str, query_name: str, result: QueryResult, expected_csv: str, mcp_context_client: Context, mocker
+):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.execute_query.return_value = result
-    empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    result = await query_table(query, empty_context)
-    assert result == expected
+    result = await query_data(query, query_name, mcp_context_client)
+    assert isinstance(result, QueryDataOutput)
+    assert result.query_name == query_name
+    assert result.csv_data == expected_csv
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('dialect', ['snowflake', 'biq-query', 'foo'])
-async def test_get_sql_dialect(dialect: str, empty_context: Context, mocker):
+async def test_get_sql_dialect(dialect: str, mcp_context_client: Context, mocker):
     workspace_manager = mocker.AsyncMock(WorkspaceManager)
     workspace_manager.get_sql_dialect.return_value = dialect
-    empty_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
 
-    result = await get_sql_dialect(empty_context)
+    result = await get_sql_dialect(mcp_context_client)
     assert result == dialect
 
 
@@ -73,7 +76,7 @@ class TestWorkspaceManagerSnowflake:
 
     @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
-        keboola_client.storage_client.get.return_value = [
+        keboola_client.storage_client.workspace_list.return_value = [
             {
                 'id': 1234,
                 'connection': {
@@ -81,6 +84,7 @@ class TestWorkspaceManagerSnowflake:
                     'backend': 'snowflake',
                     'user': 'user_1234',
                 },
+                'readOnlyStorageAccess': True,
             }
         ]
 
@@ -138,7 +142,7 @@ class TestWorkspaceManagerSnowflake:
         keboola_client: KeboolaClient,
         context: Context,
     ):
-        keboola_client.storage_client.post.return_value = QueryResult(
+        keboola_client.storage_client.workspace_query.return_value = QueryResult(
             status='ok',
             data=SqlSelectData(columns=list(sapi_result.keys()), rows=[sapi_result]),
         )
@@ -165,7 +169,7 @@ class TestWorkspaceManagerSnowflake:
             ),
             (
                 'create table foo (id integer, name varchar);',
-                QueryResult(status='ok', message='1 table created'),
+                QueryResult(status='ok', data=None, message='1 table created'),
             ),
             (
                 'bla bla bla',
@@ -176,7 +180,7 @@ class TestWorkspaceManagerSnowflake:
     async def test_execute_query(
         self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context
     ):
-        keboola_client.storage_client.post.return_value = TypeAdapter(QueryResult).dump_python(expected)
+        keboola_client.storage_client.workspace_query.return_value = TypeAdapter(QueryResult).dump_python(expected)
         m = WorkspaceManager.from_state(context.session.state)
         result = await m.execute_query(query)
         assert result == expected
@@ -185,7 +189,7 @@ class TestWorkspaceManagerSnowflake:
 class TestWorkspaceManagerBigQuery:
     @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
-        keboola_client.storage_client.get.return_value = [
+        keboola_client.storage_client.workspace_list.return_value = [
             {
                 'id': 1234,
                 'connection': {
@@ -193,6 +197,7 @@ class TestWorkspaceManagerBigQuery:
                     'backend': 'bigquery',
                     'user': json.dumps({'project_id': 'project_1234'}),
                 },
+                'readOnlyStorageAccess': True,
             }
         ]
 
@@ -262,28 +267,14 @@ class TestWorkspaceManagerBigQuery:
             ),
             (
                 'bla bla bla',
-                QueryResult(status='error', message='400 Invalid SQL...'),
+                QueryResult(status='error', data=None, message='400 Invalid SQL...'),
             ),
         ],
     )
-    async def test_execute_query(self, query: str, expected: QueryResult, context: Context, mocker: MockerFixture):
-        # disable BigQuery's Client's constructor to avoid Google authentication
-        bq_client = mocker.patch('keboola_mcp_server.tools.workspace.Client.__init__')
-        bq_client.return_value = None
-        bq_query = mocker.patch('keboola_mcp_server.tools.workspace.Client.query')
-        bq_query.return_value = (bq_job := mocker.MagicMock(QueryJob))
-        bq_job.result.return_value = (bq_rows := mocker.MagicMock(RowIterator))
-        if expected.is_ok:
-            bq_rows.__iter__.return_value = [
-                Row(
-                    values=[value for column, value in row.items()],
-                    field_to_index={column: idx for idx, (column, value) in enumerate(row.items())},
-                )
-                for row in expected.data.rows
-            ]
-        else:
-            bq_rows.__iter__.side_effect = BadRequest(message=expected.message.replace('400 ', ''))
-
+    async def test_execute_query(
+        self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context
+    ):
+        keboola_client.storage_client.workspace_query.return_value = TypeAdapter(QueryResult).dump_python(expected)
         m = WorkspaceManager.from_state(context.session.state)
         result = await m.execute_query(query)
         assert result == expected

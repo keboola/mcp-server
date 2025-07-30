@@ -3,22 +3,15 @@ from typing import Annotated, Any
 
 import pytest
 from fastmcp import Client, Context
+from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import (
-    ServerState,
-    with_session_state,
-)
-from keboola_mcp_server.server import (
-    create_server,
-)
-from keboola_mcp_server.tools.components import (
-    RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
-)
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.server import create_server
+from keboola_mcp_server.workspace import WorkspaceManager
 
 
 class TestServer:
@@ -27,35 +20,38 @@ class TestServer:
         server = create_server(Config())
         tools = await server.get_tools()
         assert sorted(tool.name for tool in tools.values()) == [
-            'create_component_root_configuration',
-            'create_component_row_configuration',
+            'add_config_row',
+            'create_config',
             'create_flow',
+            'create_oauth_url',
             'create_sql_transformation',
             'docs_query',
             'find_component_id',
-            'get_bucket_detail',
+            'get_bucket',
             'get_component',
-            'get_component_configuration',
-            'get_component_configuration_examples',
-            'get_flow_detail',
+            'get_config',
+            'get_config_examples',
+            'get_flow',
             'get_flow_schema',
-            'get_job_detail',
+            'get_job',
+            'get_project_info',
             'get_sql_dialect',
-            'get_table_detail',
-            'query_table',
-            'retrieve_bucket_tables',
-            'retrieve_buckets',
-            'retrieve_components_configurations',
-            'retrieve_flows',
-            'retrieve_jobs',
-            RETRIEVE_TRANSFORMATIONS_CONFIGURATIONS_TOOL_NAME,
-            'start_job',
+            'get_table',
+            'list_buckets',
+            'list_configs',
+            'list_flows',
+            'list_jobs',
+            'list_tables',
+            'list_transformations',
+            'query_data',
+            'run_job',
+            'search',
             'update_bucket_description',
             'update_column_description',
-            'update_component_root_configuration',
-            'update_component_row_configuration',
+            'update_config',
+            'update_config_row',
             'update_flow',
-            'update_sql_transformation_configuration',
+            'update_sql_transformation',
             'update_table_description',
         ]
 
@@ -105,7 +101,6 @@ class TestServer:
 async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     expected_param_description = 'Parameter 1 description'
 
-    @with_session_state()
     async def assessed_function(
         ctx: Context, param: Annotated[str, Field(description=expected_param_description)]
     ) -> str:
@@ -126,10 +121,14 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     os_mock = mocker.patch('keboola_mcp_server.server.os')
     os_mock.environ = envs
 
+    mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
+        'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}
+    })
+
     # create MCP server with the initial Config
     mcp = create_server(config)
     tools_count = len(await mcp.get_tools())
-    mcp.add_tool(assessed_function, name='assessed-function')
+    mcp.add_tool(FunctionTool.from_function(assessed_function, name='assessed-function'))
 
     # running the server as stdio transport through client
     async with Client(mcp) as client:
@@ -140,8 +139,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
         # check if the inputSchema contains the expected param description
         assert expected_param_description in str(tools[-1].inputSchema)
         result = await client.call_tool('assessed-function', {'param': 'value'})
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == 'value'
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text == 'value'
 
 
 @pytest.mark.asyncio
@@ -174,10 +173,12 @@ async def test_keboola_injection_and_lifespan(
     config = Config.from_dict(cfg_dict)
 
     mocker.patch('keboola_mcp_server.server.os.environ', os_environ_params)
+    mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
+        'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}
+    })
 
     server = create_server(config)
 
-    @with_session_state()
     async def assessed_function(ctx: Context, param: str) -> str:
         assert hasattr(ctx.session, 'state')
         client = KeboolaClient.from_state(ctx.session.state)
@@ -194,9 +195,9 @@ async def test_keboola_injection_and_lifespan(
 
         return param
 
-    server.add_tool(assessed_function, name='assessed_function')
+    server.add_tool(FunctionTool.from_function(assessed_function, name='assessed_function'))
 
     async with Client(server) as client:
         result = await client.call_tool('assessed_function', {'param': 'value'})
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == 'value'
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text == 'value'

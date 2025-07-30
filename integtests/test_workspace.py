@@ -6,7 +6,7 @@ import requests
 from kbcstorage.client import Client as SyncStorageClient
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -31,10 +31,19 @@ def dynamic_manager(
         pytest.fail(f'Expecting empty Keboola project {project_id}, but found {metas} in the default branch')
 
     workspaces = storage_client.workspaces.list()
-    # ignore the static workspace
-    workspaces = [w for w in workspaces if w['connection']['schema'] != workspace_schema]
+    # ignore the static workspaces
+    workspaces = [
+        w for w in workspaces
+        if all([
+            w['connection']['schema'] != workspace_schema,
+            w.get('creatorToken', {}).get('description') != 'Background Indexing Token'
+        ])
+    ]
     if workspaces:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(workspaces)} extra workspaces')
+        pytest.fail(
+            f'Expecting empty Keboola project {project_id}, but found {len(workspaces)} extra workspaces: '
+            f'{[{"id": w["id"], "name": w["name"]} for w in workspaces]}'
+        )
 
     yield WorkspaceManager(keboola_client)
 

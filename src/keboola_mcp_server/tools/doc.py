@@ -2,11 +2,11 @@ import logging
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import with_session_state
 
 LOG = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ def add_doc_tools(mcp: FastMCP) -> None:
     ]
     for tool in doc_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(tool)
+        mcp.add_tool(FunctionTool.from_function(tool))
 
     LOG.info('Doc tools initialized.')
 
@@ -31,7 +31,6 @@ class DocsAnswer(BaseModel):
 
 
 @tool_errors()
-@with_session_state()
 async def docs_query(
     ctx: Context,
     query: Annotated[str, Field(description='Natural language query to search for in the documentation.')],
