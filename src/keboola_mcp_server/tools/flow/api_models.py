@@ -22,11 +22,6 @@ class APIFlowResponse(BaseModel):
     """
 
     # Core identification fields
-    component_id: str = Field(
-        description='The ID of the component (always orchestrator for flows)',
-        validation_alias=AliasChoices('component_id', 'componentId', 'component-id'),
-        serialization_alias='componentId',
-    )
     configuration_id: str = Field(
         description='The ID of the flow configuration',
         validation_alias=AliasChoices('id', 'configuration_id', 'configurationId', 'configuration-id'),
