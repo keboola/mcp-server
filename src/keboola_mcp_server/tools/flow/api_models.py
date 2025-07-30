@@ -19,8 +19,6 @@ class APIFlowResponse(BaseModel):
     Mirrors the actual JSON structure returned by Keboola Storage API for:
     - flow_detail()
     - flow_list()
-    - flow_create()
-    - flow_update()
     """
 
     # Core identification fields
