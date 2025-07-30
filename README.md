@@ -28,7 +28,7 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 ### Supported Clients
 
 - **[Cursor](https://cursor.com)**: Use the "Install In Cursor" button in your project's MCP Server settings or click
-  this button  
+  this button
   [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
 - **[Claude Desktop](https://claude.ai)**: Add the integration via Settings → Integrations
 - **[Windsurf](https://windsurf.ai)**: Configure with the remote server URL
@@ -41,10 +41,10 @@ For detailed setup instructions and region-specific URLs, see our [Remote Server
 
 ## Features
 
-- **Storage**: Query tables directly and manage table or bucket descriptions  
-- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations  
+- **Storage**: Query tables directly and manage table or bucket descriptions
+- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations
 - **SQL**: Create SQL transformations with natural language
-- **Jobs**: Run components and transformations, and retrieve job execution details  
+- **Jobs**: Run components and transformations, and retrieve job execution details
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
 
 ## Preparations
@@ -245,7 +245,7 @@ uvx keboola_mcp_server --transport sse
 > you do not need to manually run the server.
 
 > **Note**: The server will use the SSE transport and listen on `localhost:8000` for the incoming SSE connections.
-> You can use `--port` and `--host` parameters to make it listen elsewhere. 
+> You can use `--port` and `--host` parameters to make it listen elsewhere.
 
 ### Option D: Using Docker
 
