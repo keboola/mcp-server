@@ -956,6 +956,14 @@ CONSIDERATIONS:
 - The storage configuration must not be empty, and it should include input or output tables with correct mappings
   for the transformation.
 - When the behavior of the transformation is not changed, the updated_description can be empty string.
+- SCHEMA CHANGES: If the transformation update results in a destructive
+  schema change to the output table (such as removing columns, changing
+  column types, or renaming columns), you MUST inform the user that they
+  need to
+  manually delete the output table completely before running the updated
+  transformation. Otherwise, the transformation will fail with a schema
+  mismatch error. Non-destructive changes (adding new columns) typically do
+  not require table deletion.
 
 EXAMPLES:
 - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
