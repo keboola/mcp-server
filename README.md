@@ -10,6 +10,33 @@
 
 Keboola MCP Server is an open-source bridge between your Keboola project and modern AI tools. It turns Keboola features—like storage access, SQL transformations, and job triggers—into callable tools for Claude, Cursor, CrewAI, LangChain, Amazon Q, and more.
 
+## 🚀 Quick Start: Remote MCP Server (Easiest Way)
+
+The easiest way to use Keboola MCP Server is through our **Remote MCP Server**. This hosted solution eliminates the need for local setup, configuration, or installation.
+
+### What is the Remote MCP Server?
+
+Our remote server is hosted on every multi-tenant Keboola stack and supports OAuth authentication. You can connect to it from any AI assistant that supports remote SSE connection and OAuth authentication.
+
+### How to Connect
+
+1. **Get your remote server URL**: Navigate to your Keboola Project Settings → `MCP Server` tab
+2. **Copy the server URL**: It will look like `https://mcp.<YOUR_REGION>.keboola.com/sse`
+3. **Configure your AI assistant**: Paste the URL into your AI assistant's MCP settings
+4. **Authenticate**: You'll be prompted to authenticate with your Keboola account and select your project
+
+### Supported Clients
+
+- **[Cursor](https://cursor.com)**: Use the "Install In Cursor" button in your project's MCP Server settings
+- **[Claude Desktop](https://claude.ai)**: Add the integration via Settings → Integrations
+- **[Windsurf](https://windsurf.ai)**: Configure with the remote server URL
+- **[Make](https://make.com)**: Configure with the remote server URL
+- **Other MCP clients**: Configure with the remote server URL
+
+For detailed setup instructions and region-specific URLs, see our [Remote Server Setup documentation](https://help.keboola.com/ai/mcp-server/#remote-server-setup).
+
+---
+
 ## Features
 
 - **Storage**: Query tables directly and manage table or bucket descriptions  
