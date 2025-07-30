@@ -7,9 +7,9 @@ from typing import Any, Mapping, Sequence
 
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
-    FlowType,
     FLOW_TYPES,
     ORCHESTRATOR_COMPONENT_ID,
+    FlowType,
     JsonDict,
     KeboolaClient,
 )

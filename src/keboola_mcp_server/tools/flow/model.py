@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import FlowType, ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, FlowType
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 
@@ -117,8 +117,8 @@ class TaskCondition(BaseModel):
     type: Literal['task'] = Field(description='Condition type')
     task: str = Field(description='ID of the task to evaluate, or "*" when used with phase operators')
     value: Literal[
-        'taskId', 'status', 'job.id', 'job.componentId', 'job.configId', 
-        'job.status', 'job.result', 'job.startTime', 'job.endTime', 
+        'taskId', 'status', 'job.id', 'job.componentId', 'job.configId',
+        'job.status', 'job.result', 'job.startTime', 'job.endTime',
         'job.duration', 'job.result.output.tables', 'job.result.message'
     ] = Field(description='Property path to retrieve from the task context')
 

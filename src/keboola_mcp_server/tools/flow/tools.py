@@ -13,8 +13,8 @@ from pydantic import Field
 from keboola_mcp_server import resources
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
-    FlowType,
     ORCHESTRATOR_COMPONENT_ID,
+    FlowType,
     JsonDict,
     KeboolaClient,
 )
@@ -52,7 +52,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(v.from_function(tool))
+        mcp.add_tool(FunctionTool.from_function(tool))
 
     LOG.info('Flow tools initialized.')
 
@@ -162,7 +162,6 @@ async def create_flow(
 
 
 @tool_errors()
-@with_session_state()
 async def create_conditional_flow(
     ctx: Context,
     name: Annotated[str, Field(description='A short, descriptive name for the flow.')],
@@ -380,7 +379,6 @@ async def get_flow(
 
 
 @tool_errors()
-@with_session_state()
 async def get_flow_examples(
     ctx: Context,
     flow_type: Annotated[FlowType, Field(description='The type of the flow to retrieve examples for.')],

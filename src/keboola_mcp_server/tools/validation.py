@@ -12,8 +12,8 @@ import jsonschema
 import jsonschema.validators
 
 from keboola_mcp_server.client import (
-    FlowType,
     ORCHESTRATOR_COMPONENT_ID,
+    FlowType,
     JsonDict,
     JsonPrimitive,
     JsonStruct,
