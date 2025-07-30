@@ -128,7 +128,7 @@ jobs:
           INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
           INTEGTEST_WORKSPACE_SCHEMA: ${{ vars.INTEGTEST_WORKSPACE_SCHEMA }}
         run: |
-          uv run tox -e integtests -- --log-cli-level DEBUG
+          uv run tox -e integtests
 
       - name: Skip integration tests for forks
         # show a message when tests are skipped for forks
