@@ -5,9 +5,9 @@ import pytest
 from keboola_mcp_server.tools.components.model import ComponentType
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
-    _clean_bucket_name,
-    _get_transformation_configuration,
-    _handle_component_types,
+    clean_bucket_name,
+    get_transformation_configuration,
+    handle_component_types,
 )
 
 
@@ -25,7 +25,7 @@ def test_handle_component_types(
     expected: list[ComponentType],
 ):
     """Test list_component_configurations tool with core component."""
-    assert _handle_component_types(component_type) == expected
+    assert handle_component_types(component_type) == expected
 
 
 @pytest.mark.parametrize(
@@ -64,7 +64,7 @@ def test_get_transformation_configuration(
     given the sql statement created_table_names and transformation_name."""
 
     codes = [TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=sql_statements)]
-    configuration = _get_transformation_configuration(
+    configuration = get_transformation_configuration(
         codes=codes,
         transformation_name=transformation_name,
         output_tables=created_table_names,
@@ -108,7 +108,7 @@ def test_get_transformation_configuration(
 )
 def test_clean_bucket_name(input_str: str, expected_str: str):
     """Test clean_bucket_name function."""
-    assert _clean_bucket_name(input_str) == expected_str
+    assert clean_bucket_name(input_str) == expected_str
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer
 
 LOG = logging.getLogger(__name__)
 
@@ -48,13 +48,13 @@ class JobListItem(BaseModel):
     status: JOB_STATUS = Field(description='The status of the job.')
     component_id: Optional[str] = Field(
         description='The ID of the component that the job is running on.',
-        validation_alias=AliasChoices('component', 'componentId', 'component_id', 'component-id'),
+        validation_alias=AliasChoices('componentId', 'component', 'component_id', 'component-id'),
         serialization_alias='componentId',
         default=None,
     )
     config_id: Optional[str] = Field(
         description='The ID of the component configuration that the job is running on.',
-        validation_alias=AliasChoices('config', 'configId', 'config_id', 'config-id'),
+        validation_alias=AliasChoices('configId', 'config', 'config_id', 'config-id'),
         serialization_alias='configId',
         default=None,
     )
@@ -115,8 +115,6 @@ class JobDetail(JobListItem):
     )
     result: Optional[dict[str, Any]] = Field(
         description='The results of the job.',
-        validation_alias='result',
-        serialization_alias='result',
         default=None,
     )
     links: list[Link] = Field(..., description='The links relevant to the job.')
@@ -155,7 +153,6 @@ SORT_ORDER_VALUES = Literal['asc', 'desc']
 # mcp parsing the parameters is not working. So we need to use Annotated[JOB_STATUS, ...] = None instead of
 # Optional[JOB_STATUS] = None despite having type check errors in the code.
 @tool_errors()
-@with_session_state()
 async def list_jobs(
     ctx: Context,
     status: Annotated[
@@ -237,7 +234,6 @@ async def list_jobs(
 
 
 @tool_errors()
-@with_session_state()
 async def get_job(
     job_id: Annotated[
         str,
@@ -262,7 +258,6 @@ async def get_job(
 
 
 @tool_errors()
-@with_session_state()
 async def run_job(
     ctx: Context,
     component_id: Annotated[

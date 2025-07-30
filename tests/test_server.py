@@ -9,7 +9,7 @@ from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import ServerState, with_session_state
+from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -23,6 +23,7 @@ class TestServer:
             'add_config_row',
             'create_config',
             'create_flow',
+            'create_oauth_url',
             'create_sql_transformation',
             'docs_query',
             'find_component_id',
@@ -44,6 +45,7 @@ class TestServer:
             'list_transformations',
             'query_data',
             'run_job',
+            'search',
             'update_bucket_description',
             'update_column_description',
             'update_config',
@@ -99,7 +101,6 @@ class TestServer:
 async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     expected_param_description = 'Parameter 1 description'
 
-    @with_session_state()
     async def assessed_function(
         ctx: Context, param: Annotated[str, Field(description=expected_param_description)]
     ) -> str:
@@ -120,6 +121,10 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     os_mock = mocker.patch('keboola_mcp_server.server.os')
     os_mock.environ = envs
 
+    mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
+        'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}
+    })
+
     # create MCP server with the initial Config
     mcp = create_server(config)
     tools_count = len(await mcp.get_tools())
@@ -134,8 +139,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
         # check if the inputSchema contains the expected param description
         assert expected_param_description in str(tools[-1].inputSchema)
         result = await client.call_tool('assessed-function', {'param': 'value'})
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == 'value'
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text == 'value'
 
 
 @pytest.mark.asyncio
@@ -168,10 +173,12 @@ async def test_keboola_injection_and_lifespan(
     config = Config.from_dict(cfg_dict)
 
     mocker.patch('keboola_mcp_server.server.os.environ', os_environ_params)
+    mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
+        'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}
+    })
 
     server = create_server(config)
 
-    @with_session_state()
     async def assessed_function(ctx: Context, param: str) -> str:
         assert hasattr(ctx.session, 'state')
         client = KeboolaClient.from_state(ctx.session.state)
@@ -192,5 +199,5 @@ async def test_keboola_injection_and_lifespan(
 
     async with Client(server) as client:
         result = await client.call_tool('assessed_function', {'param': 'value'})
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == 'value'
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text == 'value'

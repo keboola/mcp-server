@@ -2,9 +2,10 @@
 
 import importlib.metadata
 import logging
+import math
 import os
 from datetime import datetime
-from typing import Any, Iterable, Literal, Mapping, Optional, Union, cast
+from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
 from pydantic import BaseModel, Field, field_validator
@@ -17,12 +18,13 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 ComponentResource = Literal['configuration', 'rows', 'state']
+StorageEventType = Literal['info', 'success', 'warn', 'error']
 
 # Project features that can be checked with the is_enabled method
 ProjectFeature = Literal['global-search']
 # Input types for the global search endpoint parameters
-GlobalSearchBranchTypes = Literal['production', 'development']
-GlobalSearchTypes = Literal[
+BranchType = Literal['production', 'development']
+ItemType = Literal[
     'flow',
     'bucket',
     'table',
@@ -359,10 +361,10 @@ class KeboolaServiceClient:
 class GlobalSearchResponse(BaseModel):
     """The SAPI global search response."""
 
-    class GlobalSearchResponseItem(BaseModel):
+    class Item(BaseModel):
         id: str = Field(description='The id of the item.')
         name: str = Field(description='The name of the item.')
-        type: GlobalSearchTypes = Field(description='The type of the item.')
+        type: ItemType = Field(description='The type of the item.')
         full_path: dict[str, Any] = Field(
             description=(
                 'The full path of the item containing project, branch and other information depending on the '
@@ -381,9 +383,7 @@ class GlobalSearchResponse(BaseModel):
         created: datetime = Field(description='The date and time the item was created in ISO format.')
 
     all: int = Field(description='Total number of found results.')
-    items: list[GlobalSearchResponseItem] = Field(
-        description='List of search results containing the items of the GlobalSearchType.'
-    )
+    items: list[Item] = Field(description='List of search results of the GlobalSearchType.')
     by_type: dict[str, int] = Field(
         description='Mapping of found types to the number of corresponding results.', alias='byType'
     )
@@ -736,7 +736,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows', data=payload
+                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
+                data=payload,
             ),
         )
 
@@ -880,7 +881,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         query: str,
         limit: int = 100,
         offset: int = 0,
-        types: list[GlobalSearchTypes] | None = None,
+        types: Sequence[ItemType] = tuple(),
     ) -> GlobalSearchResponse:
         """
         Searches for items in the storage. It allows you to search for entities by name across all projects within an
@@ -961,6 +962,55 @@ class AsyncStorageClient(KeboolaServiceClient):
             payload['columnsMetadata'] = columns_metadata
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
+
+    async def trigger_event(
+        self,
+        message: str,
+        component_id: str,
+        configuration_id: str | None = None,
+        event_type: StorageEventType | None = None,
+        params: Mapping[str, Any] | None = None,
+        results: Mapping[str, Any] | None = None,
+        duration: float | None = None,
+        run_id: str | None = None,
+    ) -> JsonDict:
+        """
+        Sends a Storage API event.
+
+        :param message: The event message.
+        :param component_id: The ID of the component triggering the event.
+        :param configuration_id: The ID of the component configuration triggering the event.
+        :param event_type: The type of event.
+        :param params: The component parameters. The structure of the params object must follow the JSON schema
+            registered for the component_id.
+        :param results: The component results. The structure of the results object must follow the JSON schema
+            registered for the component_id.
+        :param duration: The component processing duration in seconds.
+        :param run_id: The ID of the associated component job.
+
+        :return: Dictionary with the new event ID.
+        """
+        payload: dict[str, Any] = {
+            'message': message,
+            'component': component_id,
+        }
+        if configuration_id:
+            payload['configurationId'] = configuration_id
+        if event_type:
+            payload['type'] = event_type
+        if params:
+            payload['params'] = params
+        if results:
+            payload['results'] = results
+        if duration is not None:
+            # The events API ignores floats, so we round up to the nearest integer.
+            payload['duration'] = int(math.ceil(duration))
+        if run_id:
+            payload['runId'] = run_id
+
+        LOG.info(f'[trigger_event] payload={payload}')
+
+        return cast(JsonDict, await self.post(endpoint='events', data=payload))
 
     async def workspace_create(
         self,
@@ -1044,11 +1094,35 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param features: The features to check.
         :return: True if the features are enabled, False otherwise.
         """
-        features = features if isinstance(features, Iterable) else [features]
+        features = [features] if isinstance(features, str) else features
         verified_info = await self.verify_token()
         project_data = cast(JsonDict, verified_info['owner'])
         project_features = cast(list[str], project_data.get('features', []))
         return all(feature in project_features for feature in features)
+
+    async def token_create(
+        self,
+        description: str,
+        component_access: list[str] | None = None,
+        expires_in: int | None = None,
+    ) -> JsonDict:
+        """
+        Creates a new Storage API token.
+
+        :param description: Description of the token
+        :param component_access: List of component IDs the token should have access to
+        :param expires_in: Token expiration time in seconds
+        :return: Token creation response containing the token and its details
+        """
+        token_data: dict[str, Any] = {'description': description}
+
+        if component_access:
+            token_data['componentAccess'] = component_access
+
+        if expires_in:
+            token_data['expiresIn'] = expires_in
+
+        return cast(JsonDict, await self.post(endpoint='tokens', data=token_data))
 
 
 class JobsQueueClient(KeboolaServiceClient):
