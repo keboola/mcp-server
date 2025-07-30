@@ -52,12 +52,12 @@ class ProjectLinksManager:
 
     # --- Flows ---
     def get_flow_detail_link(self, flow_id: str | int, flow_name: str,
-                             flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID) -> Link:
+                             flow_type: FLOW_TYPE) -> Link:
         """Get detail link for a specific flow based on its type."""
         flow_path = 'flows-v2' if flow_type == CONDITIONAL_FLOW_COMPONENT_ID else 'flows'
         return Link.detail(title=f'Flow: {flow_name}', url=self._url(f'{flow_path}/{flow_id}'))
 
-    def get_flows_dashboard_link(self, flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID) -> Link:
+    def get_flows_dashboard_link(self, flow_type: FLOW_TYPE) -> Link:
         """Get dashboard link for flows based on the flow type."""
         flow_path = 'flows-v2' if flow_type == CONDITIONAL_FLOW_COMPONENT_ID else 'flows'
         flow_label = 'Conditional Flows' if flow_type == CONDITIONAL_FLOW_COMPONENT_ID else 'Flows'
@@ -67,7 +67,7 @@ class ProjectLinksManager:
         return Link.docs(title='Documentation for Keboola Flows', url=self.FLOW_DOCUMENTATION_URL)
 
     def get_flow_links(self, flow_id: str | int, flow_name: str,
-                       flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID) -> list[Link]:
+                       flow_type: FLOW_TYPE) -> list[Link]:
         """Get all relevant links for a flow based on its type."""
         return [
             self.get_flow_detail_link(flow_id, flow_name, flow_type),
