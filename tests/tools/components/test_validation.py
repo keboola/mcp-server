@@ -5,9 +5,8 @@ from typing import Optional
 import jsonschema
 import pytest
 
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict
+from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, ComponentAPIResponse, JsonDict
 from keboola_mcp_server.tools import validation
-from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse
 from keboola_mcp_server.tools.components.model import Component
 
 

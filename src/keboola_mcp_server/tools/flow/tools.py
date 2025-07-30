@@ -14,13 +14,13 @@ from keboola_mcp_server import resources
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     ORCHESTRATOR_COMPONENT_ID,
+    CreateConfigurationAPIResponse,
     FlowType,
     JsonDict,
     KeboolaClient,
 )
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.tools.components.api_models import CreateConfigurationAPIResponse
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
