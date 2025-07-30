@@ -896,13 +896,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         params: dict[str, Any] = {
             'query': query,
             'projectIds[]': [await self.project_id()],
-            'branchTypes[]': 'production',
+            'branchTypes[]': ['production'],
             'types[]': types,
             'limit': limit,
             'offset': offset,
         }
         params = {k: v for k, v in params.items() if v}
         raw_resp = await self.get(endpoint='global-search', params=params)
+        LOG.debug(f'Global search: params={params}, response={raw_resp}')
         return GlobalSearchResponse.model_validate(raw_resp)
 
     async def table_detail(self, table_id: str) -> JsonDict:
