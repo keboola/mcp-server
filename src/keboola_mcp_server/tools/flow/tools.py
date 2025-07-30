@@ -20,7 +20,6 @@ from keboola_mcp_server.client import (
 )
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.api_models import CreateConfigurationAPIResponse
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
@@ -59,7 +58,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
 
 @tool_errors()
-@with_session_state()
 async def get_flow_schema(
     ctx: Context,
     flow_type: Annotated[FlowType, Field(description='The type of flow for which to fetch.')],
@@ -89,7 +87,6 @@ async def get_flow_schema(
 
 
 @tool_errors()
-@with_session_state()
 async def create_flow(
     ctx: Context,
     name: Annotated[str, Field(description='A short, descriptive name for the flow.')],
@@ -241,7 +238,6 @@ async def create_conditional_flow(
 
 
 @tool_errors()
-@with_session_state()
 async def update_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
@@ -336,7 +332,6 @@ async def update_flow(
 
 
 @tool_errors()
-@with_session_state()
 async def list_flows(
     ctx: Context,
     flow_ids: Annotated[Sequence[str], Field(description='IDs of the flows to retrieve.')] = tuple(),
@@ -362,7 +357,6 @@ async def list_flows(
 
 
 @tool_errors()
-@with_session_state()
 async def get_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow to retrieve.')],

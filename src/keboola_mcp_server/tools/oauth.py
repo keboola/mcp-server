@@ -2,6 +2,7 @@
 
 import logging
 from typing import Annotated
+from urllib.parse import urlencode, urlunsplit
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -9,7 +10,7 @@ from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import KeboolaMcpServer, with_session_state
+from keboola_mcp_server.mcp import KeboolaMcpServer
 
 LOG = logging.getLogger(__name__)
 
@@ -23,7 +24,6 @@ def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
 
 
 @tool_errors()
-@with_session_state()
 async def create_oauth_url(
     component_id: Annotated[
         str, Field(description='The component ID to grant access to (e.g., "keboola.ex-google-analytics-v4").')
@@ -56,9 +56,18 @@ async def create_oauth_url(
     storage_api_url = client.storage_client.base_api_url
 
     # Generate OAuth URL
-    oauth_url = (
-        f'https://external.keboola.com/oauth/index.html?token={sapi_token}'
-        f'&sapiUrl={storage_api_url}#/{component_id}/{config_id}'
-    )
+    query_params = urlencode({
+        'token': sapi_token,
+        'sapiUrl': storage_api_url
+    })
+    fragment = f'/{component_id}/{config_id}'
+
+    oauth_url = urlunsplit((
+        'https',  # scheme
+        'external.keboola.com',  # netloc
+        '/oauth/index.html',  # path
+        query_params,  # query
+        fragment  # fragment
+    ))
 
     return oauth_url

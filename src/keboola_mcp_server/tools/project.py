@@ -9,7 +9,6 @@ from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -37,7 +36,6 @@ class ProjectInfo(BaseModel):
 
 
 @tool_errors()
-@with_session_state()
 async def get_project_info(
     ctx: Context,
 ) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
