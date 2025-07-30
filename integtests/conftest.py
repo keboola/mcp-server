@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import time
 import uuid
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -245,6 +246,11 @@ def keboola_project(
         pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_configs)} configs')
 
     configs = _create_configs(storage_client)
+
+    if 'global-search' in token_info['owner'].get('fetaures', []):
+        # Give the global search time to catch up on the changes done in the testing project.
+        # See https://help.keboola.com/management/global-search/#limitations for moe info.
+        time.sleep(5)
 
     LOG.info(f'Test setup for project {project_id} complete')
     yield ProjectDef(project_id=project_id, buckets=buckets, tables=tables, configs=configs)

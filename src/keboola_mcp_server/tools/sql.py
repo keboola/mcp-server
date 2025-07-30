@@ -8,7 +8,6 @@ from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -29,7 +28,6 @@ def add_sql_tools(mcp: FastMCP) -> None:
 
 
 @tool_errors()
-@with_session_state()
 async def get_sql_dialect(
     ctx: Context,
 ) -> Annotated[str, Field(description='The SQL dialect of the project database')]:
@@ -38,7 +36,6 @@ async def get_sql_dialect(
 
 
 @tool_errors()
-@with_session_state()
 async def query_data(
     sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
     query_name: Annotated[

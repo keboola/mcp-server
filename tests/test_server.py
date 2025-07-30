@@ -9,7 +9,7 @@ from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import ServerState, with_session_state
+from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -101,7 +101,6 @@ class TestServer:
 async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     expected_param_description = 'Parameter 1 description'
 
-    @with_session_state()
     async def assessed_function(
         ctx: Context, param: Annotated[str, Field(description=expected_param_description)]
     ) -> str:
@@ -121,6 +120,10 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     # mock the environment variables
     os_mock = mocker.patch('keboola_mcp_server.server.os')
     os_mock.environ = envs
+
+    mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
+        'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}
+    })
 
     # create MCP server with the initial Config
     mcp = create_server(config)
@@ -170,10 +173,12 @@ async def test_keboola_injection_and_lifespan(
     config = Config.from_dict(cfg_dict)
 
     mocker.patch('keboola_mcp_server.server.os.environ', os_environ_params)
+    mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
+        'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}
+    })
 
     server = create_server(config)
 
-    @with_session_state()
     async def assessed_function(ctx: Context, param: str) -> str:
         assert hasattr(ctx.session, 'state')
         client = KeboolaClient.from_state(ctx.session.state)
