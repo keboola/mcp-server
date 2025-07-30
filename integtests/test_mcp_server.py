@@ -8,7 +8,6 @@ from mcp.types import TextContent
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
 from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import Configuration
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -151,6 +150,7 @@ async def test_http_multiple_clients_with_different_headers(
     run_server_remote: AsyncContextServerRemoteRunner,
     run_client: AsyncContextClientRunner,
     storage_api_url: str,
+    storage_api_token: str,
 ):
     """
     Test that the server can handle multiple clients with different headers and checks the values of the headers.
@@ -160,11 +160,10 @@ async def test_http_multiple_clients_with_different_headers(
     # we do not delete env vars, we want the env vars to be overwritten by http request params
 
     headers = {
-        'client_1': {'storage_token': 'client_1_storage_token', 'workspace_schema': 'client_1_workspace_schema'},
-        'client_2': {'storage_token': 'client_2_storage_token', 'workspace_schema': 'client_2_workspace_schema'},
+        'client_1': {'storage_token': storage_api_token, 'workspace_schema': 'client_1_workspace_schema'},
+        'client_2': {'storage_token': storage_api_token, 'workspace_schema': 'client_2_workspace_schema'},
     }
 
-    @with_session_state()
     async def assessed_function(ctx: Context, which_client: str) -> str:
         storage_token = KeboolaClient.from_state(ctx.session.state).token
         workspace_schema = WorkspaceManager.from_state(ctx.session.state)._workspace_schema
@@ -235,11 +234,14 @@ async def _assert_basic_setup(server: FastMCP, client: Client):
     assert len(server_tools) > 0
     assert len(server_prompts) > 0
 
-    assert len(client_tools) == len(server_tools)
+    # ignore 'search' tool which may or may not be exposed based on the testing project's features
+    client_tool_names = sorted(t.name for t in client_tools if t.name not in ['search'])
+    server_tool_names = sorted(t for t in server_tools.keys() if t not in ['search'])
+
+    assert client_tool_names == server_tool_names
     assert len(client_prompts) == len(server_prompts)
-    assert len(client_resources) == len(server_resources)
-    assert all(expected == ret_tool.name for expected, ret_tool in zip(server_tools.keys(), client_tools))
     assert all(expected == ret_prompt.name for expected, ret_prompt in zip(server_prompts.keys(), client_prompts))
+    assert len(client_resources) == len(server_resources)
     assert all(
         expected == ret_resource.name for expected, ret_resource in zip(server_resources.keys(), client_resources)
     )
