@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 LOG = logging.getLogger(__name__)
 
@@ -1283,6 +1283,72 @@ class ComponentSuggestionResponse(BaseModel):
     """The AI service response to a /suggest/component request."""
 
     components: list[SuggestedComponent] = Field(description='List of suggested components.', default_factory=list)
+
+
+class APIFlowResponse(BaseModel):
+    """
+    Raw API response for flow configuration endpoints.
+
+    Mirrors the actual JSON structure returned by Keboola Storage API for:
+    - flow_detail()
+    - flow_list()
+    """
+
+    # Core identification fields
+    configuration_id: str = Field(
+        description='The ID of the flow configuration',
+        validation_alias=AliasChoices('id', 'configuration_id', 'configurationId', 'configuration-id'),
+        serialization_alias='id',
+    )
+    name: str = Field(description='The name of the flow configuration')
+    description: Optional[str] = Field(default=None, description='The description of the flow configuration')
+
+    # Versioning and state
+    version: int = Field(description='The version of the flow configuration')
+    is_disabled: bool = Field(
+        default=False,
+        description='Whether the flow configuration is disabled',
+        validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
+        serialization_alias='isDisabled',
+    )
+    is_deleted: bool = Field(
+        default=False,
+        description='Whether the flow configuration is deleted',
+        validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
+        serialization_alias='isDeleted',
+    )
+
+    # Flow-specific configuration data (as returned by API)
+    configuration: dict[str, Any] = Field(
+        description='The nested flow configuration object containing phases and tasks'
+    )
+
+    # Change tracking
+    change_description: Optional[str] = Field(
+        default=None,
+        description='The description of the latest changes',
+        validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
+        serialization_alias='changeDescription',
+    )
+
+    # Metadata
+    metadata: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description='Flow configuration metadata',
+        validation_alias=AliasChoices('metadata', 'configuration_metadata', 'configurationMetadata'),
+    )
+
+    # Timestamps
+    created: Optional[str] = Field(None, description='Creation timestamp')
+    updated: Optional[str] = Field(None, description='Last update timestamp')
+
+    @model_validator(mode='before')
+    @classmethod
+    def _initialize_component_id_to_orchestrator(cls, data: Any) -> Any:
+        """Initialize component_id to Orchestrator if not provided."""
+        if isinstance(data, dict) and 'component_id' not in data:
+            data['component_id'] = ORCHESTRATOR_COMPONENT_ID
+        return data
 
 
 class AIServiceClient(KeboolaServiceClient):

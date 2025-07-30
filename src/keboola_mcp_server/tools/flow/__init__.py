@@ -1,6 +1,3 @@
-from keboola_mcp_server.tools.flow.api_models import (
-    APIFlowResponse,
-)
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowConfiguration,

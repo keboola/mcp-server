@@ -9,11 +9,11 @@ from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     FLOW_TYPES,
     ORCHESTRATOR_COMPONENT_ID,
+    APIFlowResponse,
     FlowType,
     JsonDict,
     KeboolaClient,
 )
-from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
     FlowPhase,
     FlowSummary,
