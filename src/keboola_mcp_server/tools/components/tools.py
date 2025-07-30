@@ -404,20 +404,22 @@ async def update_sql_transformation(
         Field(description='Description of the changes made to the transformation configuration.'),
     ],
     parameters: Annotated[
-        TransformationConfiguration.Parameters,
+        TransformationConfiguration.Parameters | None,
         Field(
+            default=None,
             description=(
                 'The updated "parameters" part of the transformation configuration that contains the newly '
-                'applied settings and preserves all other existing settings.'
+                'applied settings and preserves all other existing settings. Only updated if provided.'
             ),
         ),
     ],
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
+            default=None,
             description=(
                 'The updated "storage" part of the transformation configuration that contains the newly '
-                'applied settings and preserves all other existing settings.'
+                'applied settings and preserves all other existing settings. Only updated if provided.'
             ),
         ),
     ],
@@ -468,19 +470,24 @@ async def update_sql_transformation(
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
+    current_config = await client.storage_client.configuration_detail(
+        component_id=sql_transformation_id, configuration_id=configuration_id
+    )
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
     transformation = Component.from_api_response(api_component)
 
-    storage = validate_root_storage_configuration(
-        component=transformation,
-        storage=storage,
-        initial_message='The "storage" field is not valid.',
-    )
+    updated_configuration = current_config.get('configuration', {}).copy()
 
-    updated_configuration = {
-        'parameters': parameters.model_dump(by_alias=True),
-        'storage': storage,
-    }
+    if parameters is not None:
+        updated_configuration['parameters'] = parameters.model_dump(by_alias=True)
+
+    if storage is not None:
+        storage_cfg = validate_root_storage_configuration(
+            component=transformation,
+            storage=storage,
+            initial_message='The "storage" field is not valid.',
+        )
+        updated_configuration['storage'] = storage_cfg
 
     LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
 
@@ -765,17 +772,21 @@ async def update_config(
     component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     parameters: Annotated[
-        dict[str, Any],
-        Field(description='The component configuration parameters, adhering to the root_configuration_schema schema'),
+        dict[str, Any] | None,
+        Field(
+            default=None,
+            description="""The component configuration parameters, adhering to the root_configuration_schema schema.
+            Only updated if provided.""",
+        ),
     ],
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
-            default_factory=dict,
+            default=None,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that are not row-based and have tables or file '
-                'input mapping defined'
+                'input mapping defined. Only updated if provided.'
             ),
         ),
     ],
@@ -803,21 +814,29 @@ async def update_config(
 
     LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
 
+    current_config = await client.storage_client.configuration_detail(
+        component_id=component_id, configuration_id=configuration_id
+    )
     api_component = await fetch_component(client=client, component_id=component_id)
     component = Component.from_api_response(api_component)
 
-    storage_cfg = validate_root_storage_configuration(
-        component=component,
-        storage=storage,
-        initial_message='The "storage" field is not valid.',
-    )
-    parameters = validate_root_parameters_configuration(
-        component=component,
-        parameters=parameters,
-        initial_message='The "parameters" field is not valid.',
-    )
+    configuration_payload = current_config.get('configuration', {}).copy()
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    if storage is not None:
+        storage_cfg = validate_root_storage_configuration(
+            component=component,
+            storage=storage,
+            initial_message='The "storage" field is not valid.',
+        )
+        configuration_payload['storage'] = storage_cfg
+
+    if parameters is not None:
+        parameters_cfg = validate_root_parameters_configuration(
+            component=component,
+            parameters=parameters,
+            initial_message='The "parameters" field is not valid.',
+        )
+        configuration_payload['parameters'] = parameters_cfg
 
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=component_id,
@@ -878,17 +897,21 @@ async def update_config_row(
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     configuration_row_id: Annotated[str, Field(description='The ID of the configuration row to update.')],
     parameters: Annotated[
-        dict[str, Any],
-        Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
+        dict[str, Any] | None,
+        Field(
+            default=None,
+            description="""The component row configuration parameters, adhering to the row_configuration_schema.
+            Only updated if provided.""",
+        ),
     ],
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
-            default_factory=dict,
-            description=(
-                'The table and/or file input / output mapping of the component configuration. '
-                'It is present only for components that have tables or file input mapping defined'
-            ),
+            default=None,
+            description="""
+                The table and/or file input / output mapping of the component configuration.
+                It is present only for components that have tables or file input mapping defined.
+                Only updated if provided.""",
         ),
     ],
 ) -> ConfigToolOutput:
@@ -917,21 +940,29 @@ async def update_config_row(
         f'and row id {configuration_row_id}.'
     )
 
+    current_row = await client.storage_client.configuration_row_detail(
+        component_id=component_id, config_id=configuration_id, configuration_row_id=configuration_row_id
+    )
     api_component = await fetch_component(client=client, component_id=component_id)
     component = Component.from_api_response(api_component)
 
-    storage_cfg = validate_row_storage_configuration(
-        component=component,
-        storage=storage,
-        initial_message='The "storage" field is not valid.',
-    )
-    parameters = validate_row_parameters_configuration(
-        component=component,
-        parameters=parameters,
-        initial_message='Field "parameters" is not valid.\n',
-    )
+    configuration_payload = current_row.get('configuration', {}).copy()
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    if storage is not None:
+        storage_cfg = validate_row_storage_configuration(
+            component=component,
+            storage=storage,
+            initial_message='The "storage" field is not valid.',
+        )
+        configuration_payload['storage'] = storage_cfg
+
+    if parameters is not None:
+        parameters_cfg = validate_row_parameters_configuration(
+            component=component,
+            parameters=parameters,
+            initial_message='Field "parameters" is not valid.\n',
+        )
+        configuration_payload['parameters'] = parameters_cfg
 
     updated_raw_configuration = await client.storage_client.configuration_row_update(
         component_id=component_id,
