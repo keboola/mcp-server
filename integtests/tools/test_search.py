@@ -71,13 +71,6 @@ async def test_global_search_end_to_end(
     # At least some test configurations should be found
     assert found_config_ids.intersection(expected_config_ids), 'Should find at least one test configuration'
 
-    config_groups = [group for group in result.groups.values() if group.type == 'configuration']
-    assert len(config_groups) == 1
-    config_group = config_groups[0]
-    found_config_ids = {item.id for item in config_group.items}
-    # At least some test configurations should be found
-    assert found_config_ids.intersection(expected_config_ids), 'Should find at least one test configuration'
-
 
 @pytest.mark.asyncio
 async def test_find_component_id(mcp_context: Context):
