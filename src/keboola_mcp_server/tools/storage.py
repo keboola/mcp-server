@@ -12,7 +12,7 @@ from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer, with_session_state
+from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -165,7 +165,6 @@ class UpdateDescriptionOutput(BaseModel):
 
 
 @tool_errors()
-@with_session_state()
 async def get_bucket(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> BucketDetail:
@@ -181,7 +180,6 @@ async def get_bucket(
 
 
 @tool_errors()
-@with_session_state()
 async def list_buckets(ctx: Context) -> ListBucketsOutput:
     """Retrieves information about all buckets in the project."""
     client = KeboolaClient.from_state(ctx.session.state)
@@ -201,7 +199,6 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
 
 
 @tool_errors()
-@with_session_state()
 async def get_table(
     table_id: Annotated[str, Field(description='Unique ID of the table.')], ctx: Context
 ) -> TableDetail:
@@ -226,7 +223,6 @@ async def get_table(
 
 
 @tool_errors()
-@with_session_state()
 async def list_tables(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
 ) -> ListTablesOutput:
@@ -245,7 +241,6 @@ async def list_tables(
 
 
 @tool_errors()
-@with_session_state()
 async def update_bucket_description(
     bucket_id: Annotated[str, Field(description='The ID of the bucket to update.')],
     description: Annotated[str, Field(description='The new description for the bucket.')],
@@ -270,7 +265,6 @@ async def update_bucket_description(
 
 
 @tool_errors()
-@with_session_state()
 async def update_table_description(
     table_id: Annotated[str, Field(description='The ID of the table to update.')],
     description: Annotated[str, Field(description='The new description for the table.')],
@@ -293,7 +287,6 @@ async def update_table_description(
 
 
 @tool_errors()
-@with_session_state()
 async def update_column_description(
     table_id: Annotated[str, Field(description='The ID of the table that contains the column.')],
     column_name: Annotated[str, Field(description='The name of the column to update.')],

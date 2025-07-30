@@ -1,354 +1,505 @@
+"""
+Domain models for Keboola component and configuration management.
+
+This module contains the business domain models used throughout the MCP server for representing
+Keboola components and their configurations. The models are organized into logical groups:
+
+## Component Models
+- Component: Full component details with schemas and documentation
+- ComponentSummary: Lightweight component info for list operations
+- ComponentCapabilities: What a component can do (derived from developer portal flags)
+
+## Configuration Models
+The new configuration models provide a structured approach separating shared settings
+from individual tasks:
+
+    ### Detail Models (for get operations)
+    - Configuration: Complete config with root + rows + component context
+    - ConfigurationRoot: Shared settings (credentials, global config)
+    - ConfigurationRow: Individual tasks (table mappings, specific parameters)
+
+    ### Summary Models (for list operations)
+    - ConfigurationSummary: Lightweight config structure
+    - ConfigurationRootSummary: Essential root metadata only
+    - ConfigurationRowSummary: Essential row metadata only
+
+## Tool Output Models
+- ConfigToolOutput: Standard response for config create/update operations
+- ListConfigsOutput: Response for list_configs tool
+- ListTransformationsOutput: Response for list_transformations tool
+
+## Legacy Models
+- ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
+"""
 from datetime import datetime
 from typing import Any, List, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse, ConfigurationAPIResponse
+
+# ============================================================================
+# TYPE DEFINITIONS
+# ============================================================================
 
 ComponentType = Literal['application', 'extractor', 'writer']
 TransformationType = Literal['transformation']
 AllComponentTypes = Union[ComponentType, TransformationType]
 
 
+# ============================================================================
+# COMPONENT MODELS
+# ============================================================================
+
+class ComponentCapabilities(BaseModel):
+    """
+    Component capabilities derived from developer portal flags.
+
+    Represents what a component can do in terms of data processing:
+    - Row-based: Can have multiple configuration rows for different tasks
+    - Table I/O: Can read from or write to data tables
+    - File I/O: Can read from or write to files
+    - OAuth: Requires OAuth authentication setup
+    """
+
+    is_row_based: bool = Field(
+        default=False,
+        description='Whether the component supports row configurations'
+    )
+    has_table_input: bool = Field(
+        default=False,
+        description='Whether the component can read from tables'
+    )
+    has_table_output: bool = Field(
+        default=False,
+        description='Whether the component can write to tables'
+    )
+    has_file_input: bool = Field(
+        default=False,
+        description='Whether the component can read from files'
+    )
+    has_file_output: bool = Field(
+        default=False,
+        description='Whether the component can write to files'
+    )
+    requires_oauth: bool = Field(
+        default=False,
+        description='Whether the component requires OAuth authorization'
+    )
+
+    @classmethod
+    def from_flags(cls, flags: list[str]) -> 'ComponentCapabilities':
+        """
+        Derive component capabilities from developer portal flags.
+
+        :param flags: List of developer portal flags from API response
+        :return: Structured component capabilities
+        """
+        return cls(
+            is_row_based='genericDockerUI-rows' in flags,
+            has_table_input=any(flag in flags for flag in [
+                'genericDockerUI-tableInput',
+                'genericDockerUI-simpleTableInput'
+            ]),
+            has_table_output='genericDockerUI-tableOutput' in flags,
+            has_file_input='genericDockerUI-fileInput' in flags,
+            has_file_output='genericDockerUI-fileOutput' in flags,
+            requires_oauth='genericDockerUI-authorization' in flags,
+        )
+
+
+class ComponentSummary(BaseModel):
+    """Lightweight component representation for list operations."""
+
+    component_id: str = Field(description='Component ID')
+    component_name: str = Field(description='Component name')
+    component_type: str = Field(description='Component type')
+    capabilities: ComponentCapabilities = Field(description='Component capabilities')
+
+    @classmethod
+    def from_api_response(cls, api_response: ComponentAPIResponse) -> 'ComponentSummary':
+        """
+        Create ComponentSummary from API response.
+
+        :param api_response: Parsed API response from Storage or AI Service API
+        :return: Lightweight component domain model for list operations
+        """
+        capabilities = ComponentCapabilities.from_flags(api_response.flags)
+
+        return cls.model_construct(
+            component_id=api_response.component_id,
+            component_name=api_response.component_name,
+            component_type=api_response.type,
+            capabilities=capabilities,
+        )
+
+
+class Component(BaseModel):
+    """
+    Complete component representation with full details.
+
+    Contains comprehensive component information including documentation,
+    configuration schemas, and metadata. Used by get tools where detailed
+    component information is needed.
+    """
+
+    # Core component metadata (shared with ComponentSummary)
+    component_id: str = Field(description='Component ID')
+    component_name: str = Field(description='Component name')
+    component_type: str = Field(description='Component type')
+    component_categories: list[str] = Field(
+        default_factory=list,
+        description='Component categories',
+    )
+    capabilities: ComponentCapabilities = Field(description='Component capabilities')
+
+    # Additional metadata
+    documentation_url: str | None = Field(
+        default=None,
+        description='URL to component documentation',
+    )
+    documentation: str | None = Field(
+        default=None,
+        description='Component documentation text',
+    )
+    configuration_schema: dict[str, Any] | None = Field(
+        default=None,
+        description='JSON schema for configuration root validation',
+    )
+    configuration_row_schema: dict[str, Any] | None = Field(
+        default=None,
+        description='JSON schema for configuration row validation',
+    )
+
+    links: list[Link] = Field(default_factory=list, description='Links for UI navigation')
+
+    @classmethod
+    def from_api_response(cls, api_response: ComponentAPIResponse) -> 'Component':
+        """
+        Create Component from API response.
+
+        :param api_response: Parsed API response from Storage or AI Service API
+        :return: Complete component domain model with detailed metadata
+        """
+        capabilities = ComponentCapabilities.from_flags(api_response.flags)
+
+        return cls.model_construct(
+            component_id=api_response.component_id,
+            component_name=api_response.component_name,
+            component_type=api_response.type,
+            component_categories=api_response.categories,
+            capabilities=capabilities,
+            documentation_url=api_response.documentation_url,
+            documentation=api_response.documentation,
+            configuration_schema=api_response.configuration_schema,
+            configuration_row_schema=api_response.configuration_row_schema,
+        )
+
+
+# ============================================================================
+# CONFIGURATION MODELS
+# ============================================================================
+
+class ConfigurationRoot(BaseModel):
+    """
+    Complete configuration root with all data.
+
+    Represents the shared configuration settings for a component including
+    credentials, global parameters, and shared storage mappings. For row-based
+    components, this contains the common settings that apply to all rows.
+    """
+    component_id: str = Field(description='The ID of the component')
+    configuration_id: str = Field(description='The ID of this configuration root')
+    name: str = Field(description='The name of the configuration')
+    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    version: int = Field(description='The version of the configuration')
+    is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
+    parameters: dict[str, Any] = Field(
+        description='The configuration parameters, adhering to the configuration root schema'
+    )
+    storage: Optional[dict[str, Any]] = Field(
+        default=None,
+        description='The table and/or file input/output mapping configuration'
+    )
+    configuration_metadata: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description='Configuration metadata including MCP tracking'
+    )
+
+    @classmethod
+    def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRoot':
+        """
+        Create ConfigurationRoot from API response.
+
+        Handles the flattening of nested configuration.parameters and configuration.storage
+        from the API response structure into the domain model.
+
+        :param api_config: Validated API configuration response
+        :return: Complete configuration root domain model
+        """
+        return cls.model_construct(
+            component_id=api_config.component_id,
+            configuration_id=api_config.configuration_id,
+            name=api_config.name,
+            description=api_config.description,
+            version=api_config.version,
+            is_disabled=api_config.is_disabled,
+            is_deleted=api_config.is_deleted,
+            parameters=api_config.configuration.get('parameters', {}),
+            storage=api_config.configuration.get('storage'),
+            configuration_metadata=api_config.metadata,
+        )
+
+
+class ConfigurationRow(BaseModel):
+    """
+    Complete configuration row with all data.
+
+    Represents an individual task or extraction within a configuration.
+    For row-based components, each row typically handles a specific data source,
+    destination, or transformation operation.
+    """
+    component_id: str = Field(description='The ID of the component')
+    configuration_id: str = Field(description='The ID of the corresponding configuration root')
+    configuration_row_id: str = Field(description='The ID of this configuration row')
+    name: str = Field(description='The name of the configuration row')
+    description: Optional[str] = Field(default=None, description='The description of the configuration row')
+    version: int = Field(description='The version of the configuration row')
+    is_disabled: bool = Field(default=False, description='Whether the configuration row is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration row is deleted')
+    parameters: dict[str, Any] = Field(
+        description='The configuration row parameters, adhering to the configuration row schema'
+    )
+    storage: Optional[dict[str, Any]] = Field(
+        default=None,
+        description='The table and/or file input/output mapping configuration'
+    )
+    configuration_metadata: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description='Configuration row metadata'
+    )
+
+    @classmethod
+    def from_api_row_data(
+        cls,
+        row_data: dict[str, Any],
+        component_id: str,
+        configuration_id: str,
+    ) -> 'ConfigurationRow':
+        """
+        Create ConfigurationRow from API row data.
+
+        Converts individual row data from the API into a structured domain model.
+        Handles the nested structure of configuration row data.
+
+        :param row_data: Raw row data from API response
+        :param component_id: ID of the parent component
+        :param configuration_id: ID of the parent configuration
+        :return: Complete configuration row domain model
+        """
+        return cls(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            configuration_row_id=row_data['id'],
+            name=row_data['name'],
+            description=row_data.get('description'),
+            version=row_data['version'],
+            is_disabled=row_data.get('isDisabled', False),
+            is_deleted=row_data.get('isDeleted', False),
+            parameters=row_data.get('configuration', {}).get('parameters', {}),
+            storage=row_data.get('configuration', {}).get('storage'),
+            configuration_metadata=row_data.get('configuration', {}).get('metadata', []),
+        )
+
+
+class ConfigurationRootSummary(BaseModel):
+    """Lightweight configuration root for list operations."""
+    component_id: str = Field(description='The ID of the component')
+    configuration_id: str = Field(description='The ID of this configuration root')
+    name: str = Field(description='The name of the configuration')
+    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
+
+    @classmethod
+    def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRootSummary':
+        """Create lightweight configuration root summary from API response."""
+        return cls.model_construct(
+            component_id=api_config.component_id,
+            configuration_id=api_config.configuration_id,
+            name=api_config.name,
+            description=api_config.description,
+            is_disabled=api_config.is_disabled,
+            is_deleted=api_config.is_deleted,
+        )
+
+
+class ConfigurationRowSummary(BaseModel):
+    """Lightweight configuration row for list operations."""
+    component_id: str = Field(description='The ID of the component')
+    configuration_id: str = Field(description='The ID of the corresponding configuration root')
+    row_configuration_id: str = Field(description='The ID of this configuration row')
+    name: str = Field(description='The name of the configuration row')
+    description: Optional[str] = Field(default=None, description='The description of the configuration row')
+    is_disabled: bool = Field(default=False, description='Whether the configuration row is disabled')
+    is_deleted: bool = Field(default=False, description='Whether the configuration row is deleted')
+
+    @classmethod
+    def from_api_row_data(
+        cls,
+        row_data: dict[str, Any],
+        component_id: str,
+        configuration_id: str,
+    ) -> 'ConfigurationRowSummary':
+        """Create lightweight configuration row summary from API row data."""
+        return cls(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            row_configuration_id=row_data['id'],
+            name=row_data['name'],
+            description=row_data.get('description'),
+            is_disabled=row_data.get('isDisabled', False),
+            is_deleted=row_data.get('isDeleted', False),
+        )
+
+
+class ConfigurationSummary(BaseModel):
+    """
+    Lightweight configuration structure for list operations.
+
+    Container model that mirrors the structure of the full Configuration model
+    but with lightweight summary data. Used by list operations where many
+    configurations are returned.
+    """
+    configuration_root: ConfigurationRootSummary = Field(
+        description='The configuration root summary'
+    )
+    configuration_rows: Optional[list[ConfigurationRowSummary]] = Field(
+        default=None,
+        description='The configuration row summaries'
+    )
+
+    @classmethod
+    def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationSummary':
+        """
+        Create ConfigurationSummary from API response.
+
+        Builds a lightweight configuration structure by creating summary models
+        for both configuration root and configurations row from the API response data.
+
+        :param api_config: Validated API configuration response
+        :return: Lightweight configuration structure for list operations
+        """
+        configuration_root = ConfigurationRootSummary.from_api_response(api_config)
+
+        configuration_rows = None
+        if api_config.rows:
+            configuration_rows = [
+                ConfigurationRowSummary.from_api_row_data(
+                    row_data=row,
+                    component_id=api_config.component_id,
+                    configuration_id=api_config.configuration_id,
+                )
+                for row in api_config.rows
+            ]
+
+        return cls.model_construct(
+            configuration_root=configuration_root,
+            configuration_rows=configuration_rows,
+        )
+
+
+class Configuration(BaseModel):
+    """
+    Complete configuration structure for detailed views.
+
+    Container model that holds both configuration root and configuration rows along with
+    component context and UI links. Used by get operations where detailed
+    configuration information is needed.
+    """
+    configuration_root: ConfigurationRoot = Field(
+        description='The complete configuration root'
+    )
+    configuration_rows: Optional[list[ConfigurationRow]] = Field(
+        default=None,
+        description='The complete configuration rows'
+    )
+    component: Optional[ComponentSummary] = Field(
+        default=None,
+        description='The component this configuration belongs to'
+    )
+    links: list[Link] = Field(
+        default_factory=list,
+        description='Navigation links for the web interface'
+    )
+
+    @classmethod
+    def from_api_response(
+        cls,
+        api_config: 'ConfigurationAPIResponse',
+        component: Optional[ComponentSummary] = None,
+        links: Optional[list[Link]] = None,
+    ) -> 'Configuration':
+        """
+        Create Configuration from API response.
+
+        Builds the complete configuration structure including full root and row
+        data, along with component context and UI links when provided.
+
+        :param api_config: Validated API configuration response
+        :param component: Lightweight component context (optional)
+        :param links: UI navigation links (optional)
+        :return: Complete configuration model for detailed operations
+        """
+        configuration_root = ConfigurationRoot.from_api_response(api_config)
+
+        configuration_rows = None
+        if api_config.rows:
+            configuration_rows = [
+                ConfigurationRow.from_api_row_data(
+                    row_data=row,
+                    component_id=api_config.component_id,
+                    configuration_id=api_config.configuration_id,
+                )
+                for row in api_config.rows
+            ]
+
+        return cls.model_construct(
+            configuration_root=configuration_root,
+            configuration_rows=configuration_rows,
+            component=component,
+            links=links or [],
+        )
+
+
+# ============================================================================
+# TOOL OUTPUT MODELS
+# ============================================================================
+
 class ConfigToolOutput(BaseModel):
+    """Standard response model for configuration tool operations."""
+
     component_id: str = Field(description='The ID of the component.')
     configuration_id: str = Field(description='The ID of the configuration.')
     description: str = Field(description='The description of the configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')
-    # success is always true unless the tool fails - to inform agent and prevent need to fetch objects
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the configuration.')
 
 
-class ReducedComponent(BaseModel):
-    """
-    A Reduced Component containing basic information about the Keboola Component and its capabilities.
-    This model is used in list views or when only basic component information is needed.
-    """
-
-    component_id: str = Field(
-        description='The ID of the component',
-        validation_alias=AliasChoices('id', 'component_id', 'componentId', 'component-id'),
-        serialization_alias='componentId',
-    )
-    component_name: str = Field(
-        description='The name of the component',
-        validation_alias=AliasChoices(
-            'name',
-            'component_name',
-            'componentName',
-            'component-name',
-        ),
-        serialization_alias='componentName',
-    )
-    component_type: str = Field(
-        description='The type of the component',
-        validation_alias=AliasChoices('type', 'component_type', 'componentType', 'component-type'),
-        serialization_alias='componentType',
-    )
-
-    component_flags: list[str] = Field(
-        default_factory=list,
-        description='List of developer portal flags.',
-        validation_alias=AliasChoices('flags', 'component_flags', 'componentFlags', 'component-flags'),
-        serialization_alias='componentFlags',
-    )
-
-    # Capability flags derived from component_flags
-    is_row_based: bool = Field(
-        default=False,
-        description='Whether the component is row-based (e.g. have configuration rows) or not.',
-        validation_alias=AliasChoices('is_row_based', 'isRowBased', 'is-row-based'),
-        serialization_alias='isRowBased',
-    )
-
-    has_table_input_mapping: bool = Field(
-        default=False,
-        description='Whether the component configuration has table input mapping or not.',
-        validation_alias=AliasChoices('has_table_input_mapping', 'hasTableInputMapping', 'has-table-input-mapping'),
-        serialization_alias='hasTableInputMapping',
-    )
-
-    has_table_output_mapping: bool = Field(
-        default=False,
-        description='Whether the component configuration has table output mapping or not.',
-        validation_alias=AliasChoices('has_table_output_mapping', 'hasTableOutputMapping', 'has-table-output-mapping'),
-        serialization_alias='hasTableOutputMapping',
-    )
-
-    has_file_input_mapping: bool = Field(
-        default=False,
-        description='Whether the component configuration has file input mapping or not.',
-        validation_alias=AliasChoices('has_file_input_mapping', 'hasFileInputMapping', 'has-file-input-mapping'),
-        serialization_alias='hasFileInputMapping',
-    )
-
-    has_file_output_mapping: bool = Field(
-        default=False,
-        description='Whether the component configuration has file output mapping or not.',
-        validation_alias=AliasChoices('has_file_output_mapping', 'hasFileOutputMapping', 'has-file-output-mapping'),
-        serialization_alias='hasFileOutputMapping',
-    )
-
-    has_oauth: bool = Field(
-        default=False,
-        description='Whether the component configuration requires OAuth authorization or not.',
-        validation_alias=AliasChoices('has_oauth', 'hasOauth', 'has-oauth'),
-        serialization_alias='hasOauth',
-    )
-
-    @model_validator(mode='after')
-    def derive_capabilities(self) -> 'ReducedComponent':
-        table_input_mapping_flags = ('genericDockerUI-tableInput', 'genericDockerUI-simpleTableInput')
-
-        self.is_row_based = 'genericDockerUI-rows' in self.component_flags
-        self.has_table_input_mapping = any(f in self.component_flags for f in table_input_mapping_flags)
-        self.has_table_output_mapping = 'genericDockerUI-tableOutput' in self.component_flags
-        self.has_file_input_mapping = 'genericDockerUI-fileInput' in self.component_flags
-        self.has_file_output_mapping = 'genericDockerUI-fileOutput' in self.component_flags
-        self.has_oauth = 'genericDockerUI-authorization' in self.component_flags
-
-        return self
-
-
-class ComponentConfigurationResponseBase(BaseModel):
-    """
-    A Reduced Component Configuration containing the Keboola Component ID and the reduced information about
-    configuration used in a list.
-    """
-
-    component_id: str = Field(
-        description='The ID of the component',
-        validation_alias=AliasChoices('component_id', 'componentId', 'component-id'),
-        serialization_alias='componentId',
-    )
-    configuration_id: str = Field(
-        description='The ID of the component configuration',
-        validation_alias=AliasChoices(
-            'id',
-            'configuration_id',
-            'configurationId',
-            'configuration-id',
-        ),
-        serialization_alias='configurationId',
-    )
-    configuration_name: str = Field(
-        description='The name of the component configuration',
-        validation_alias=AliasChoices(
-            'name',
-            'configuration_name',
-            'configurationName',
-            'configuration-name',
-        ),
-        serialization_alias='configurationName',
-    )
-    configuration_description: Optional[str] = Field(
-        description='The description of the component configuration',
-        validation_alias=AliasChoices(
-            'description',
-            'configuration_description',
-            'configurationDescription',
-            'configuration-description',
-        ),
-        serialization_alias='configurationDescription',
-        default=None,
-    )
-    is_disabled: bool = Field(
-        description='Whether the component configuration is disabled',
-        validation_alias=AliasChoices('isDisabled', 'is_disabled', 'is-disabled'),
-        serialization_alias='isDisabled',
-        default=False,
-    )
-    is_deleted: bool = Field(
-        description='Whether the component configuration is deleted',
-        validation_alias=AliasChoices('isDeleted', 'is_deleted', 'is-deleted'),
-        serialization_alias='isDeleted',
-        default=False,
-    )
-
-
-class Component(ReducedComponent):
-    """
-    A Component containing detailed information about the Keboola Component, including its capabilities,
-    documentation, and configuration schemas.
-    """
-
-    component_categories: list[str] = Field(
-        default_factory=list,
-        description='The categories the component belongs to.',
-        validation_alias=AliasChoices(
-            'componentCategories', 'component_categories', 'component-categories', 'categories'
-        ),
-        serialization_alias='categories',
-    )
-    documentation_url: Optional[str] = Field(
-        default=None,
-        description='The url where the documentation can be found.',
-        validation_alias=AliasChoices('documentationUrl', 'documentation_url', 'documentation-url'),
-        serialization_alias='documentationUrl',
-    )
-    documentation: Optional[str] = Field(
-        default=None,
-        description='The documentation of the component.',
-        serialization_alias='documentation',
-    )
-    configuration_schema: Optional[dict[str, Any]] = Field(
-        default=None,
-        description='The configuration schema for the component.',
-        validation_alias=AliasChoices('configurationSchema', 'configuration_schema', 'configuration-schema'),
-        serialization_alias='configurationSchema',
-    )
-    configuration_row_schema: Optional[dict[str, Any]] = Field(
-        default=None,
-        description='The configuration row schema of the component.',
-        validation_alias=AliasChoices('configurationRowSchema', 'configuration_row_schema', 'configuration-row-schema'),
-        serialization_alias='configurationRowSchema',
-    )
-
-
-class ComponentConfigurationResponse(ComponentConfigurationResponseBase):
-    """
-    Detailed information about a Keboola Component Configuration, containing all the relevant details.
-    """
-
-    version: int = Field(description='The version of the component configuration')
-    configuration: dict[str, Any] = Field(description='The configuration of the component')
-    rows: Optional[list[dict[str, Any]]] = Field(description='The rows of the component configuration', default=None)
-    change_description: Optional[str] = Field(
-        description='The description of the changes made to the component configuration',
-        default=None,
-        validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
-    )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        description='The metadata of the component configuration',
-        default_factory=list,
-        validation_alias=AliasChoices(
-            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-        ),
-        serialization_alias='configurationMetadata',
-    )
-    component: Optional[Component] = Field(
-        description='The component this configuration belongs to',
-        default=None,
-    )
-
-
-class ComponentRowConfiguration(ComponentConfigurationResponseBase):
-    """
-    Detailed information about a Keboola Component Row Configuration.
-    """
-
-    version: int = Field(description='The version of the component configuration')
-    storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration. '
-        'It is present only for components that are not row-based and have tables or '
-        'file input mapping defined.',
-        default=None,
-    )
-    parameters: dict[str, Any] = Field(
-        description='The user parameters, adhering to the row configuration schema',
-    )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        description='The metadata of the component configuration',
-        default_factory=list,
-        validation_alias=AliasChoices(
-            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-        ),
-        serialization_alias='configurationMetadata',
-    )
-
-
-class ComponentRootConfiguration(ComponentConfigurationResponseBase):
-    """
-    Detailed information about a Keboola Component Root Configuration.
-    """
-
-    version: int = Field(description='The version of the component configuration')
-    storage: Optional[dict[str, Any]] = Field(
-        description='The table and/or file input / output mapping of the component configuration. '
-        'It is present only for components that are not row-based and have tables or '
-        'file input mapping defined',
-        default=None,
-    )
-    parameters: dict[str, Any] = Field(
-        description='The component configuration parameters, adhering to the root configuration schema',
-    )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        description='The metadata of the component configuration',
-        default_factory=list,
-        validation_alias=AliasChoices(
-            'metadata', 'configuration_metadata', 'configurationMetadata', 'configuration-metadata'
-        ),
-        serialization_alias='configurationMetadata',
-    )
-
-
-class ComponentConfigurationOutput(BaseModel):
-    """
-    The MCP tools' output model for component configuration, containing the root configuration and optional
-    row configurations.
-    """
-
-    root_configuration: ComponentRootConfiguration = Field(
-        description='The root configuration of the component configuration'
-    )
-    row_configurations: Optional[list[ComponentRowConfiguration]] = Field(
-        description='The row configurations of the component configuration',
-        default=None,
-    )
-    component: Optional[Component] = Field(
-        description='The component this configuration belongs to',
-        default=None,
-    )
-    links: list[Link] = Field(..., description='The links relevant to the component configuration.')
-
-
-class ComponentConfigurationMetadata(BaseModel):
-    """
-    Metadata model for component configuration, containing the root configuration metadata and optional
-    row configurations metadata.
-    """
-
-    root_configuration: ComponentConfigurationResponseBase = Field(
-        description='The root configuration metadata of the component configuration'
-    )
-    row_configurations: Optional[list[ComponentConfigurationResponseBase]] = Field(
-        description='The row configurations metadata of the component configuration',
-        default=None,
-    )
-
-    @classmethod
-    def from_component_configuration_response(
-        cls, configuration: ComponentConfigurationResponse
-    ) -> 'ComponentConfigurationMetadata':
-        """
-        Create a ComponentConfigurationMetadata instance from a ComponentConfigurationResponse instance.
-        """
-        root_configuration = ComponentConfigurationResponseBase.model_validate(configuration.model_dump())
-        row_configurations = None
-        if configuration.rows:
-            component_id = root_configuration.component_id
-            row_configurations = [
-                ComponentConfigurationResponseBase.model_validate(row | {'component_id': component_id})
-                for row in configuration.rows
-                if row is not None
-            ]
-        return cls(root_configuration=root_configuration, row_configurations=row_configurations)
-
-
 class ComponentWithConfigurations(BaseModel):
-    """
-    Grouping of a Keboola Component and its associated configurations metadata.
-    """
+    """Grouping of a component and its associated configuration summaries."""
 
-    component: ReducedComponent = Field(description='The Keboola component.')
-    configurations: List[ComponentConfigurationMetadata] = Field(
-        description='The list of configurations metadata associated with the component.',
+    component: ComponentSummary = Field(description='The Keboola component.')
+    configurations: List[ConfigurationSummary] = Field(
+        description='The list of configuration summaries associated with the component.',
     )
 
 
 class ListConfigsOutput(BaseModel):
-    """Output of list_configs tool."""
+    """Response model for list_configs tool."""
 
     components_with_configurations: List[ComponentWithConfigurations] = Field(
         description='The groupings of components and their respective configurations.')
@@ -358,10 +509,66 @@ class ListConfigsOutput(BaseModel):
 
 
 class ListTransformationsOutput(BaseModel):
-    """Output of list_transformations tool."""
+    """Response model for list_transformations tool."""
 
     components_with_configurations: List[ComponentWithConfigurations] = Field(
         description='The groupings of transformation components and their respective configurations.')
     links: List[Link] = Field(
         description='The list of links relevant to the listing of transformation components with configurations.',
+    )
+
+
+# ============================================================================
+# LEGACY MODELS (minimal set for Flow tools compatibility)
+# ============================================================================
+
+class ComponentConfigurationResponseBase(BaseModel):
+    """
+    Legacy base model for component configurations.
+
+    DEPRECATED: Use ConfigurationRootSummary or ConfigurationRowSummary instead.
+    Maintained for backward compatibility with existing code.
+    """
+
+    component_id: str = Field(
+        description='The ID of the component',
+        validation_alias=AliasChoices('component_id', 'componentId', 'component-id'),
+    )
+    configuration_id: str = Field(
+        description='The ID of the component configuration',
+        validation_alias=AliasChoices(
+            'configuration_id',
+            'id',
+            'configurationId',
+            'configuration-id',
+        ),
+    )
+    configuration_name: str = Field(
+        description='The name of the component configuration',
+        validation_alias=AliasChoices(
+            'configuration_name',
+            'name',
+            'configurationName',
+            'configuration-name',
+        ),
+    )
+    configuration_description: Optional[str] = Field(
+        description='The description of the component configuration',
+        validation_alias=AliasChoices(
+            'configuration_description',
+            'description',
+            'configurationDescription',
+            'configuration-description',
+        ),
+        default=None,
+    )
+    is_disabled: bool = Field(
+        description='Whether the component configuration is disabled',
+        validation_alias=AliasChoices('is_disabled', 'isDisabled', 'is-disabled'),
+        default=False,
+    )
+    is_deleted: bool = Field(
+        description='Whether the component configuration is deleted',
+        validation_alias=AliasChoices('is_deleted', 'isDeleted', 'is-deleted'),
+        default=False,
     )
