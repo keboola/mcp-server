@@ -27,7 +27,9 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 
 ### Supported Clients
 
-- **[Cursor](https://cursor.com)**: Use the "Install In Cursor" button in your project's MCP Server settings
+- **[Cursor](https://cursor.com)**: Use the "Install In Cursor" button in your project's MCP Server settings or click
+  this button  
+  [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
 - **[Claude Desktop](https://claude.ai)**: Add the integration via Settings → Integrations
 - **[Windsurf](https://windsurf.ai)**: Configure with the remote server URL
 - **[Make](https://make.com)**: Configure with the remote server URL
@@ -39,42 +41,11 @@ For detailed setup instructions and region-specific URLs, see our [Remote Server
 
 ## Features
 
-- **Storage**: Query tables directly and manage table or bucket descriptions
-- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations
+- **Storage**: Query tables directly and manage table or bucket descriptions  
+- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations  
 - **SQL**: Create SQL transformations with natural language
-- **Jobs**: Run components and transformations, and retrieve job execution details
+- **Jobs**: Run components and transformations, and retrieve job execution details  
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
-
-## Quick MCP Setup (Remote Server)
-
-Use Keboola's hosted MCP server to connect your client in seconds.
-
-### Cursor
-
-Click to install:
-
-[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
-
-### Other MCP Clients
-
-Add this configuration:
-
-```json
-{
-  "mcpServers": {
-    "keboola": {
-      "url": "https://mcp.us-east4.gcp.keboola.com/sse"
-    }
-  }
-}
-```
-
-> [!NOTE]
-> When you are already a Keboola user, make sure to change MCP url stack in configuration JSON correspondingly (see [Keboola regions](#keboola-region) section).
-
-### Other ways how to connect
-<details>
-<summary>Running MCP Server Locally</summary>
 
 ## Preparations
 
@@ -306,8 +277,6 @@ docker run \
 | Testing CLI manually | Yes | Use terminal to run |
 | Using Docker | Yes | Run docker container |
 
-</details>
-
 ## Using MCP Server
 
 Once your MCP client (Claude/Cursor) is configured and running, you can start querying your Keboola data:
@@ -395,7 +364,7 @@ What buckets and tables are in my Keboola project?
 |-------|----------|
 | **Authentication Errors** | Verify `KBC_STORAGE_TOKEN` is valid |
 | **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct |
-| **Connection Timeout** | Check network connectivity | 
+| **Connection Timeout** | Check network connectivity |
 
 ## Development
 
@@ -436,9 +405,7 @@ versions when creating a release (`uv lock --upgrade`).
 
 ## Support and Feedback
 
-**⭐ The primary way to get help, report bugs, or request features is via our [Keboola Discord server](https://discord.com/invite/keboola). ⭐** 
-
-You can also [open an issue on GitHub](https://github.com/keboola/mcp-server/issues/new).
+**⭐ The primary way to get help, report bugs, or request features is by [opening an issue on GitHub](https://github.com/keboola/mcp-server/issues/new). ⭐**
 
 The development team actively monitors issues and will respond as quickly as possible. For general information about Keboola, please use the resources below.
 
@@ -447,7 +414,7 @@ The development team actively monitors issues and will respond as quickly as pos
 - [User Documentation](https://help.keboola.com/)
 - [Developer Documentation](https://developers.keboola.com/)
 - [Keboola Platform](https://www.keboola.com)
-- [Issue Tracker](https://github.com/keboola/mcp-server/issues/new)
+- [Issue Tracker](https://github.com/keboola/mcp-server/issues/new) ← **Primary contact method for MCP Server**
 
 ## Connect
 
