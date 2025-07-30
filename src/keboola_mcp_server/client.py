@@ -788,6 +788,18 @@ class AsyncStorageClient(KeboolaServiceClient):
             ),
         )
 
+    async def configuration_row_detail(self, component_id: str, config_id: str, configuration_row_id: str) -> JsonDict:
+        """
+        Retrieves details of a specific configuration row.
+
+        :param component_id: The id of the component.
+        :param config_id: The id of the configuration.
+        :param configuration_row_id: The id of the configuration row.
+        :return: Configuration row details.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}'
+        return cast(JsonDict, await self.get(endpoint=endpoint))
+
     async def job_detail(self, job_id: str | int) -> JsonDict:
         """
         NOTE: To get info for regular jobs, use the Job Queue API.
