@@ -10,7 +10,6 @@ from pydantic import Field
 from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import with_session_state
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     FlowConfigurationResponse,
@@ -41,7 +40,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
 
 @tool_errors()
-@with_session_state()
 async def get_flow_schema(_ctx: Context) -> Annotated[str, Field(description='The configuration schema of Flow.')]:
     """Returns the JSON schema that defines the structure of Flow configurations."""
     # The _ctx: Context parameter is there for @tool_errors to be able to emit SAPI events.
@@ -50,7 +48,6 @@ async def get_flow_schema(_ctx: Context) -> Annotated[str, Field(description='Th
 
 
 @tool_errors()
-@with_session_state()
 async def create_flow(
     ctx: Context,
     name: Annotated[str, Field(description='A short, descriptive name for the flow.')],
@@ -118,7 +115,6 @@ async def create_flow(
 
 
 @tool_errors()
-@with_session_state()
 async def update_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
@@ -185,7 +181,6 @@ async def update_flow(
 
 
 @tool_errors()
-@with_session_state()
 async def list_flows(
     ctx: Context,
     flow_ids: Annotated[
@@ -217,7 +212,6 @@ async def list_flows(
 
 
 @tool_errors()
-@with_session_state()
 async def get_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to retrieve.')],
