@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 LOG = logging.getLogger(__name__)
 
@@ -1341,14 +1341,6 @@ class APIFlowResponse(BaseModel):
     # Timestamps
     created: Optional[str] = Field(None, description='Creation timestamp')
     updated: Optional[str] = Field(None, description='Last update timestamp')
-
-    @model_validator(mode='before')
-    @classmethod
-    def _initialize_component_id_to_orchestrator(cls, data: Any) -> Any:
-        """Initialize component_id to Orchestrator if not provided."""
-        if isinstance(data, dict) and 'component_id' not in data:
-            data['component_id'] = ORCHESTRATOR_COMPONENT_ID
-        return data
 
 
 class AIServiceClient(KeboolaServiceClient):
