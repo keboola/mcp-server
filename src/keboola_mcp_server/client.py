@@ -39,8 +39,8 @@ ItemType = Literal[
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 CONDITIONAL_FLOW_COMPONENT_ID = 'keboola.flow'
-FLOW_TYPE = Literal['keboola.flow', 'keboola.orchestrator']
-FLOW_TYPES: Sequence[FLOW_TYPE] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID)
+FlowType = Literal['keboola.flow', 'keboola.orchestrator']
+FLOW_TYPES: Sequence[FlowType] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID)
 
 
 class KeboolaClient:
@@ -803,7 +803,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         name: str,
         description: str,
         flow_configuration: dict[str, Any],
-        flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID,
+        flow_type: FlowType = CONDITIONAL_FLOW_COMPONENT_ID,
     ) -> JsonDict:
         """
         Creates a new flow configuration.
@@ -825,7 +825,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         )
 
     async def flow_delete(self, configuration_id: str,
-                          flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID,
+                          flow_type: FlowType = CONDITIONAL_FLOW_COMPONENT_ID,
                           skip_trash: bool = False) -> None:
         """
         Deletes a flow configuration.
@@ -838,7 +838,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         await self.configuration_delete(flow_type, configuration_id, skip_trash)
 
-    async def flow_detail(self, config_id: str, flow_type: FLOW_TYPE) -> JsonDict:
+    async def flow_detail(self, config_id: str, flow_type: FlowType) -> JsonDict:
         """
         Retrieves a specific flow configuration (orchestrator or conditional).
 
@@ -848,7 +848,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return await self.configuration_detail(component_id=flow_type, configuration_id=config_id)
 
-    async def flow_list(self, flow_type: FLOW_TYPE) -> list[JsonDict]:
+    async def flow_list(self, flow_type: FlowType) -> list[JsonDict]:
         """
         Lists all flow (orchestrator) configurations in the project.
 
@@ -863,7 +863,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         description: str,
         change_description: str,
         flow_configuration: dict[str, Any],
-        flow_type: FLOW_TYPE = CONDITIONAL_FLOW_COMPONENT_ID,
+        flow_type: FlowType = CONDITIONAL_FLOW_COMPONENT_ID,
     ) -> JsonDict:
         """
         Updates an existing flow configuration.

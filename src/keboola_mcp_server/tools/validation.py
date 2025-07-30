@@ -12,7 +12,7 @@ import jsonschema
 import jsonschema.validators
 
 from keboola_mcp_server.client import (
-    FLOW_TYPE,
+    FlowType,
     ORCHESTRATOR_COMPONENT_ID,
     JsonDict,
     JsonPrimitive,
@@ -214,7 +214,7 @@ def _validate_parameters_configuration_against_schema(
     return parameters
 
 
-def validate_flow_configuration_against_schema(flow: JsonDict, flow_type: FLOW_TYPE,
+def validate_flow_configuration_against_schema(flow: JsonDict, flow_type: FlowType,
                                                initial_message: Optional[str] = None) -> JsonDict:
     """
     Validate the flow configuration using jsonschema.

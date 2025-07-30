@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import FLOW_TYPE, ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.client import FlowType, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.api_models import APIFlowResponse
 
@@ -115,15 +115,19 @@ class RetryConfiguration(BaseModel):
 class TaskCondition(BaseModel):
     """Task-based condition for flow transitions."""
     type: Literal['task'] = Field(description='Condition type')
-    task: str = Field(description='Task ID to check')
-    value: str = Field(description='Value to check (e.g., status, success, user_error)')
+    task: str = Field(description='ID of the task to evaluate, or "*" when used with phase operators')
+    value: Literal[
+        'taskId', 'status', 'job.id', 'job.componentId', 'job.configId', 
+        'job.status', 'job.result', 'job.startTime', 'job.endTime', 
+        'job.duration', 'job.result.output.tables', 'job.result.message'
+    ] = Field(description='Property path to retrieve from the task context')
 
 
 class PhaseCondition(BaseModel):
     """Phase-based condition for flow transitions."""
     type: Literal['phase'] = Field(description='Condition type')
-    phase: str = Field(description='Phase ID to check')
-    value: str = Field(description='Value to check (e.g., status)')
+    phase: str = Field(description='ID of the phase to evaluate')
+    value: Literal['phaseId', 'status'] = Field(description='Property to retrieve from the phase')
 
 
 class ConstantCondition(BaseModel):
@@ -135,7 +139,7 @@ class ConstantCondition(BaseModel):
 class VariableCondition(BaseModel):
     """Variable-based condition."""
     type: Literal['variable'] = Field(description='Condition type')
-    value: str = Field(description='Variable name')
+    value: str = Field(description='The name of the variable to evaluate')
 
 
 class OperatorCondition(BaseModel):
@@ -151,14 +155,14 @@ class PhaseOperatorCondition(BaseModel):
     """Phase-specific operator condition."""
     type: Literal['operator'] = Field(description='Condition type')
     operator: Literal['ALL_TASKS_IN_PHASE', 'ANY_TASKS_IN_PHASE'] = Field(description='Phase operator type')
-    phase: str = Field(description='Phase ID to check')
+    phase: str = Field(description='ID of the phase to check')
     operands: list['ConditionObject'] = Field(description='List of operand conditions')
 
 
 class FunctionCondition(BaseModel):
     """Function-based condition."""
     type: Literal['function'] = Field(description='Condition type')
-    function: Literal['COUNT', 'DATE'] = Field(description='Function type')
+    function: Literal['COUNT', 'CONTAINS', 'DATE'] = Field(description='Function type')
     operands: list['ConditionObject'] = Field(description='List of operand conditions')
 
 
@@ -209,12 +213,22 @@ class NotificationTaskConfiguration(BaseModel):
     message: Optional[str] = Field(default=None, description='Notification message')
 
 
+# Variable source object (limited subset of conditions)
+VariableSourceObject = Union[
+    ConstantCondition,
+    PhaseCondition,
+    TaskCondition,
+    FunctionCondition,
+    ArrayCondition
+]
+
+
 class VariableTaskConfiguration(BaseModel):
     """Variable task configuration."""
     type: Literal['variable'] = Field(description='Task type')
     name: str = Field(description='Variable name')
     value: Optional[str] = Field(default=None, description='Variable value')
-    source: Optional[ConditionObject] = Field(default=None, description='Variable source')
+    source: Optional[VariableSourceObject] = Field(default=None, description='Variable source')
 
 
 TaskConfiguration = Union[JobTaskConfiguration, NotificationTaskConfiguration, VariableTaskConfiguration]
@@ -268,7 +282,7 @@ class ConditionalFlowConfiguration(BaseModel):
 
 class Flow(BaseModel):
     """Complete flow configuration with all data."""
-    component_id: FLOW_TYPE = Field(description='The ID of the component (keboola.orchestrator/keboola.flow)')
+    component_id: FlowType = Field(description='The ID of the component (keboola.orchestrator/keboola.flow)')
     configuration_id: str = Field(description='The ID of this flow configuration')
     name: str = Field(description='The name of the flow configuration')
     description: Optional[str] = Field(default=None, description='The description of the flow configuration')
@@ -290,7 +304,7 @@ class Flow(BaseModel):
     def from_api_response(
         cls,
         api_config: APIFlowResponse,
-        flow_component_id: FLOW_TYPE,
+        flow_component_id: FlowType,
         links: Optional[list[Link]] = None
     ) -> 'Flow':
         """
@@ -331,7 +345,7 @@ class Flow(BaseModel):
 
 class FlowSummary(BaseModel):
     """Lightweight flow configuration for list operations."""
-    component_id: FLOW_TYPE = Field(description='The ID of the component (keboola.orchestrator/keboola.flow)')
+    component_id: FlowType = Field(description='The ID of the component (keboola.orchestrator/keboola.flow)')
     configuration_id: str = Field(description='The ID of this flow configuration')
     name: str = Field(description='The name of the flow configuration')
     description: Optional[str] = Field(default=None, description='The description of the flow configuration')
@@ -344,7 +358,7 @@ class FlowSummary(BaseModel):
     updated: Optional[str] = Field(None, description='Last update timestamp')
 
     @classmethod
-    def from_api_response(cls, api_config: APIFlowResponse, flow_component_id: FLOW_TYPE) -> 'FlowSummary':
+    def from_api_response(cls, api_config: APIFlowResponse, flow_component_id: FlowType) -> 'FlowSummary':
         """
         Create a FlowSummary domain model from an APIFlowResponse.
 

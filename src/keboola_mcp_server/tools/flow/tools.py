@@ -13,7 +13,7 @@ from pydantic import Field
 from keboola_mcp_server import resources
 from keboola_mcp_server.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
-    FLOW_TYPE,
+    FlowType,
     ORCHESTRATOR_COMPONENT_ID,
     JsonDict,
     KeboolaClient,
@@ -53,7 +53,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
 
     for tool in flow_tools:
         LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(FunctionTool.from_function(tool))
+        mcp.add_tool(v.from_function(tool))
 
     LOG.info('Flow tools initialized.')
 
@@ -62,7 +62,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
 @with_session_state()
 async def get_flow_schema(
     ctx: Context,
-    flow_type: Annotated[FLOW_TYPE, Field(description='The type of flow for which to fetch.')],
+    flow_type: Annotated[FlowType, Field(description='The type of flow for which to fetch.')],
 ) -> Annotated[str, Field(description='The configuration schema of the specified flow type, formatted as markdown.')]:
     """
     Returns the JSON schema for the given flow type in markdown format.
@@ -246,7 +246,7 @@ async def update_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
     flow_type: Annotated[
-        FLOW_TYPE,
+        FlowType,
         Field(
             description=(
                 'The type of flow to update. Use "keboola.flow" for conditional flows or '
@@ -389,7 +389,7 @@ async def get_flow(
 @with_session_state()
 async def get_flow_examples(
     ctx: Context,
-    flow_type: Annotated[FLOW_TYPE, Field(description='The type of the flow to retrieve examples for.')],
+    flow_type: Annotated[FlowType, Field(description='The type of the flow to retrieve examples for.')],
 ) -> Annotated[str, Field(description='Examples of the flow configurations.')]:
     """
     Retrieves examples of valid flow configurations.
