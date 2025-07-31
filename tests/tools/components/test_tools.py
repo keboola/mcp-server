@@ -372,11 +372,54 @@ async def test_create_sql_transformation_fail(
         )
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('sql_dialect', 'expected_component_id'),
-    [('Snowflake', 'keboola.snowflake-transformation'), ('BigQuery', 'keboola.google-bigquery-transformation')],
+    ('sql_dialect', 'expected_component_id', 'parameters', 'storage', 'expected_config'),
+    [
+        pytest.param(
+            'Snowflake',
+            'keboola.snowflake-transformation',
+            {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]},
+            {'output': {'tables': []}},
+            {
+                'parameters': {
+                    'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]
+                },
+                'storage': {'output': {'tables': []}},
+                'other_field': 'should_be_preserved',
+            },
+            id='snowflake_both_provided',
+        ),
+        pytest.param(
+            'BigQuery',
+            'keboola.google-bigquery-transformation',
+            {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]},
+            None,
+            {
+                'parameters': {
+                    'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]
+                },
+                'storage': {'input': {'tables': ['existing_table']}},
+                'other_field': 'should_be_preserved',
+            },
+            id='bigquery_parameters_only',
+        ),
+        pytest.param(
+            'Snowflake',
+            'keboola.snowflake-transformation',
+            None,
+            {'output': {'tables': []}},
+            {
+                'parameters': {
+                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1']}]}]
+                },
+                'storage': {'output': {'tables': []}},
+                'other_field': 'should_be_preserved',
+            },
+            id='snowflake_storage_only',
+        ),
+    ],
 )
+@pytest.mark.asyncio
 async def test_update_sql_transformation(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
@@ -384,6 +427,9 @@ async def test_update_sql_transformation(
     mock_configuration: dict[str, Any],
     sql_dialect: str,
     expected_component_id: str,
+    parameters: dict[str, Any] | None,
+    storage: dict[str, Any] | None,
+    expected_config: dict[str, Any],
 ):
     """Test update_sql_transformation tool."""
     context = mcp_context_components_configs
@@ -392,37 +438,61 @@ async def test_update_sql_transformation(
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
-    new_config = {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]}
-    new_change_description = 'foo fooo'
-    new_storage = {'input': {'tables': []}, 'output': {'tables': []}}
-    mock_configuration['configuration'] = new_config
-    mock_configuration['changeDescription'] = new_change_description
+    existing_configuration = {
+        'id': mock_configuration['id'],
+        'name': 'Existing Transformation',
+        'description': 'Existing description',
+        'configuration': {
+            'parameters': {
+                'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1']}]}]
+            },
+            'storage': {'input': {'tables': ['existing_table']}},
+            'other_field': 'should_be_preserved',
+        },
+        'version': 1,
+    }
+
+    new_change_description = 'Test transformation update'
+    updated_configuration = mock_configuration.copy()
+    updated_configuration['version'] = 2
     mock_component['id'] = expected_component_id
 
-    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=mock_configuration)
-    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value=existing_configuration
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(
+        return_value=updated_configuration
+    )
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(
+        return_value=mock_component
+    )
 
-    updated_configuration = await update_sql_transformation(
+    # Convert parameters dict to TransformationConfiguration.Parameters if provided
+    transformation_parameters = None
+    if parameters is not None:
+        transformation_parameters = TransformationConfiguration.Parameters.model_validate(parameters)
+
+    updated_result = await update_sql_transformation(
         context,
         mock_configuration['id'],
         new_change_description,
-        parameters=TransformationConfiguration.Parameters.model_validate(new_config),
-        storage=new_storage,
+        parameters=transformation_parameters,
+        storage=storage,
         updated_description=str(),
         is_disabled=False,
     )
 
-    assert isinstance(updated_configuration, ConfigToolOutput)
-    assert updated_configuration.component_id == expected_component_id
-    assert updated_configuration.configuration_id == mock_configuration['id']
-    assert updated_configuration.description == mock_configuration['description']
+    assert isinstance(updated_result, ConfigToolOutput)
+    assert updated_result.component_id == expected_component_id
+    assert updated_result.configuration_id == mock_configuration['id']
+    assert updated_result.description == mock_configuration['description']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_with(component_id=expected_component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
         component_id=expected_component_id,
         configuration_id=mock_configuration['id'],
         change_description=new_change_description,
-        configuration={'parameters': new_config, 'storage': new_storage},
+        configuration=expected_config,
         updated_description=None,
         is_disabled=False,
     )
@@ -574,12 +644,50 @@ async def test_add_config_row(
     )
 
 
+@pytest.mark.parametrize(
+    ('parameters', 'storage', 'expected_config'),
+    [
+        pytest.param(
+            {'updated_param': 'updated_value'},
+            {'output': {'tables': []}},
+            {
+                'parameters': {'updated_param': 'updated_value'},
+                'storage': {'output': {'tables': []}},
+                'other_field': 'should_be_preserved',
+            },
+            id='both_provided',
+        ),
+        pytest.param(
+            {'updated_param': 'updated_value'},
+            None,
+            {
+                'parameters': {'updated_param': 'updated_value'},
+                'storage': {'input': {'tables': ['existing_table']}},
+                'other_field': 'should_be_preserved',
+            },
+            id='parameters_only',
+        ),
+        pytest.param(
+            None,
+            {'output': {'tables': []}},
+            {
+                'parameters': {'existing_param': 'existing_value'},
+                'storage': {'output': {'tables': []}},
+                'other_field': 'should_be_preserved',
+            },
+            id='storage_only',
+        ),
+    ],
+)
 @pytest.mark.asyncio
 async def test_update_config(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configuration: dict[str, Any],
+    parameters: dict[str, Any] | None,
+    storage: dict[str, Any] | None,
+    expected_config: dict[str, Any],
 ):
     """Test update_component_root_configuration tool."""
     context = mcp_context_components_configs
@@ -587,20 +695,32 @@ async def test_update_config(
 
     component_id = mock_component['id']
     configuration_id = 'test-config-id'
+
+    existing_configuration = {
+        'id': configuration_id,
+        'name': 'Existing Config',
+        'description': 'Existing description',
+        'configuration': {
+            'parameters': {'existing_param': 'existing_value'},
+            'storage': {'input': {'tables': ['existing_table']}},
+            'other_field': 'should_be_preserved',
+        },
+        'version': 1,
+    }
+
     updated_configuration = mock_configuration.copy()
     updated_configuration['version'] = 2
 
     # Set up the mock for ai_service_client and storage_client
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_configuration)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
     name = 'Updated Configuration'
     description = 'Updated configuration description'
     change_description = 'Test update'
-    parameters = {'updated_param': 'updated_value'}
-    storage = {'output': {'tables': []}}
 
     # Test the update_component_root_configuration tool
     result = await update_config(
@@ -625,19 +745,57 @@ async def test_update_config(
     keboola_client.storage_client.configuration_update.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration={'storage': storage, 'parameters': parameters},
+        configuration=expected_config,
         change_description=change_description,
         updated_name=name,
         updated_description=description,
     )
 
 
+@pytest.mark.parametrize(
+    ('parameters', 'storage', 'expected_config'),
+    [
+        pytest.param(
+            {'updated_param': 'updated_value'},
+            {'output': {'tables': []}},
+            {
+                'parameters': {'updated_param': 'updated_value'},
+                'storage': {'output': {'tables': []}},
+                'other_field': 'should_be_preserved',
+            },
+            id='both_provided',
+        ),
+        pytest.param(
+            {'updated_param': 'updated_value'},
+            None,
+            {
+                'parameters': {'updated_param': 'updated_value'},
+                'storage': {'input': {'tables': ['existing_table']}},
+                'other_field': 'should_be_preserved',
+            },
+            id='parameters_only',
+        ),
+        pytest.param(
+            None,
+            {'output': {'tables': []}},
+            {
+                'parameters': {'existing_param': 'existing_value'},
+                'storage': {'output': {'tables': []}},
+                'other_field': 'should_be_preserved',
+            },
+            id='storage_only',
+        ),
+    ],
+)
 @pytest.mark.asyncio
 async def test_update_config_row(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configuration: dict[str, Any],
+    parameters: dict[str, Any] | None,
+    storage: dict[str, Any] | None,
+    expected_config: dict[str, Any],
 ):
     """Test update_component_row_configuration tool."""
     context = mcp_context_components_configs
@@ -646,19 +804,31 @@ async def test_update_config_row(
     component_id = mock_component['id']
     configuration_id = 'test-config-id'
     configuration_row_id = 'test-row-id'
-    updated_row_configuration = {'id': configuration_row_id, 'name': 'Updated Row', 'version': 2}
+
+    existing_row_configuration = {
+        'configuration': {
+            'parameters': {'existing_param': 'existing_value'},
+            'storage': {'input': {'tables': ['existing_table']}},
+            'other_field': 'should_be_preserved',
+        },
+        'version': 1,
+    }
+
+    updated_row_configuration = {
+        'version': 2
+    }  # to signify that the version is the only field that is used from response
 
     # Set up the mock for ai_service_client and storage_client
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_row_detail = mocker.AsyncMock(return_value=existing_row_configuration)
     keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value=updated_row_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
     name = 'Updated Row Configuration'
     description = 'Updated row configuration description'
     change_description = 'Test row update'
-    parameters = {'updated_row_param': 'updated_row_value'}
-    storage = {}
+
     # Test the update_component_row_configuration tool
     result = await update_config_row(
         ctx=context,
@@ -684,7 +854,7 @@ async def test_update_config_row(
         component_id=component_id,
         config_id=configuration_id,
         configuration_row_id=configuration_row_id,
-        configuration={'storage': storage, 'parameters': parameters},
+        configuration=expected_config,
         change_description=change_description,
         updated_name=name,
         updated_description=description,
