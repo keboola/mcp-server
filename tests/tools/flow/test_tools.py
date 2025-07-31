@@ -266,7 +266,11 @@ class TestCreateFlowTool:
     ):
         """Should create a new legacy (orchestrator) flow with valid phases/tasks."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        mocker.patch.object(keboola_client.storage_client, 'flow_create', return_value=mock_legacy_flow_create_update)
+        mocker.patch.object(
+            keboola_client.storage_client,
+            'configuration_create',
+            return_value=mock_legacy_flow_create_update,
+            )
 
         result = await create_flow(
             ctx=mcp_context_client,
@@ -283,7 +287,7 @@ class TestCreateFlowTool:
         assert result.timestamp is not None
         assert len(result.links) == 3
 
-        keboola_client.storage_client.flow_create.assert_called_once()
+        keboola_client.storage_client.configuration_create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_create_conditional_flow(
@@ -294,7 +298,9 @@ class TestCreateFlowTool:
     ):
         """Test conditional flow creation."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_create = mocker.AsyncMock(return_value=mock_conditional_flow_create_update)
+        keboola_client.storage_client.configuration_create = mocker.AsyncMock(
+            return_value=mock_conditional_flow_create_update
+            )
 
         result = await create_conditional_flow(
             ctx=mcp_context_client,
@@ -311,7 +317,7 @@ class TestCreateFlowTool:
         assert result.timestamp is not None
         assert len(result.links) == 3
 
-        keboola_client.storage_client.flow_create.assert_called_once()
+        keboola_client.storage_client.configuration_create.assert_called_once()
 
 
 # =============================================================================
@@ -337,7 +343,7 @@ class TestUpdateFlowTool:
         updated_config['description'] = 'Updated legacy ETL pipeline'
 
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=updated_config)
+        keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_config)
 
         result = await update_flow(
             ctx=mcp_context_client,
@@ -357,7 +363,7 @@ class TestUpdateFlowTool:
         assert result.timestamp is not None
         assert len(result.links) == 3
 
-        keboola_client.storage_client.flow_update.assert_called_once()
+        keboola_client.storage_client.configuration_update.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_conditional_flow(
@@ -373,7 +379,7 @@ class TestUpdateFlowTool:
         updated_config['description'] = 'Enhanced pipeline with improved conditional logic'
 
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_update = mocker.AsyncMock(return_value=updated_config)
+        keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_config)
 
         result = await update_flow(
             ctx=mcp_context_client,
@@ -393,7 +399,7 @@ class TestUpdateFlowTool:
         assert result.timestamp is not None
         assert len(result.links) == 3
 
-        keboola_client.storage_client.flow_update.assert_called_once()
+        keboola_client.storage_client.configuration_update.assert_called_once()
 
 
 # =============================================================================
@@ -413,16 +419,20 @@ class TestGetFlowTool:
     ):
         """Should fall back to legacy flow when conditional flow is missing (404)."""
 
-        async def mock_flow_detail(config_id: str, flow_type: str) -> dict[str, Any]:
-            if flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
+        async def mock_configuration_detail(component_id: str, configuration_id: str) -> dict[str, Any]:
+            if component_id == CONDITIONAL_FLOW_COMPONENT_ID:
                 response = mocker.Mock(status_code=404)
                 raise httpx.HTTPStatusError('404 Not Found', request=None, response=response)
-            if flow_type == ORCHESTRATOR_COMPONENT_ID:
+            if component_id == ORCHESTRATOR_COMPONENT_ID:
                 return mock_legacy_flow
-            raise ValueError(f'Unexpected flow type: {flow_type}')
+            raise ValueError(f'Unexpected component_id: {component_id}')
 
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        mocker.patch.object(keboola_client.storage_client, 'flow_detail', side_effect=mock_flow_detail)
+        mocker.patch.object(
+            keboola_client.storage_client,
+            'configuration_detail',
+            side_effect=mock_configuration_detail
+            )
 
         result = await get_flow(
             ctx=mcp_context_client,
@@ -457,7 +467,7 @@ class TestGetFlowTool:
     ):
         """Test retrieving conditional flow details."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.flow_detail = mocker.AsyncMock(return_value=mock_conditional_flow)
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_conditional_flow)
 
         result = await get_flow(
             ctx=mcp_context_client,
@@ -505,14 +515,14 @@ class TestListFlowsTool:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
         # Mock different responses for different flow types
-        def mock_flow_list(flow_type):
-            if flow_type == ORCHESTRATOR_COMPONENT_ID:
+        def mock_configuration_list(component_id):
+            if component_id == ORCHESTRATOR_COMPONENT_ID:
                 return [mock_legacy_flow]
-            elif flow_type == CONDITIONAL_FLOW_COMPONENT_ID:
+            elif component_id == CONDITIONAL_FLOW_COMPONENT_ID:
                 return [mock_conditional_flow]
             return []
 
-        keboola_client.storage_client.flow_list = mocker.AsyncMock(side_effect=mock_flow_list)
+        keboola_client.storage_client.configuration_list = mocker.AsyncMock(side_effect=mock_configuration_list)
 
         result = await list_flows(ctx=mcp_context_client)
 
@@ -552,7 +562,7 @@ class TestListFlowsTool:
         assert conditional_flow.is_disabled == mock_conditional_flow['isDisabled']
         assert conditional_flow.is_deleted == mock_conditional_flow['isDeleted']
 
-        assert keboola_client.storage_client.flow_list.call_count == 2
+        assert keboola_client.storage_client.configuration_list.call_count == 2
 
     @pytest.mark.asyncio
     async def test_list_flows_specific_ids_mixed_types(
@@ -565,14 +575,14 @@ class TestListFlowsTool:
         """Test listing specific flows by ID when they're different types with comprehensive validation."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-        def mock_flow_detail(flow_id, component_id=None):
-            if flow_id == 'legacy_flow_123' and component_id == ORCHESTRATOR_COMPONENT_ID:
+        def mock_configuration_detail(component_id, configuration_id):
+            if configuration_id == 'legacy_flow_123' and component_id == ORCHESTRATOR_COMPONENT_ID:
                 return mock_legacy_flow
-            elif flow_id == 'conditional_flow_456' and component_id == CONDITIONAL_FLOW_COMPONENT_ID:
+            elif configuration_id == 'conditional_flow_456' and component_id == CONDITIONAL_FLOW_COMPONENT_ID:
                 return mock_conditional_flow
-            raise Exception(f'Flow {flow_id} not found')
+            raise Exception(f'Configuration {configuration_id} not found')
 
-        keboola_client.storage_client.flow_detail = mocker.AsyncMock(side_effect=mock_flow_detail)
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_configuration_detail)
 
         result = await list_flows(
             ctx=mcp_context_client,
@@ -617,7 +627,7 @@ class TestListFlowsTool:
         assert conditional_flow.is_deleted == mock_conditional_flow['isDeleted']
 
         # Since we look up for both types (conditional flows first) we expect the calls to be 2 and 1, respectfully
-        assert keboola_client.storage_client.flow_detail.call_count == 3
+        assert keboola_client.storage_client.configuration_detail.call_count == 3
 
 
 # =============================================================================

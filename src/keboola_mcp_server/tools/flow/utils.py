@@ -199,7 +199,10 @@ async def _resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIF
 
     for flow_type in FLOW_TYPES:
         try:
-            raw_flow = await client.storage_client.flow_detail(flow_id, flow_type)
+            raw_flow = await client.storage_client.configuration_detail(
+                component_id=flow_type,
+                configuration_id=flow_id
+                )
             api_flow = APIFlowResponse.model_validate(raw_flow)
             return api_flow, flow_type
         except Exception as e:
@@ -233,7 +236,7 @@ async def _get_flows_by_type(
     client: KeboolaClient,
     flow_type: FlowType
 ) -> list[FlowSummary]:
-    raw_flows = await client.storage_client.flow_list(flow_type=flow_type)
+    raw_flows = await client.storage_client.configuration_list(component_id=flow_type)
     return [
         FlowSummary.from_api_response(api_config=APIFlowResponse.model_validate(raw), flow_component_id=flow_type)
         for raw in raw_flows

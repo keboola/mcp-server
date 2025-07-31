@@ -138,8 +138,11 @@ async def create_flow(
     LOG.info(f'Creating new flow: {name} (type: {ORCHESTRATOR_COMPONENT_ID})')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    new_raw_configuration = await client.storage_client.flow_create(
-        name=name, description=description, flow_configuration=flow_configuration, flow_type=flow_type
+    new_raw_configuration = await client.storage_client.configuration_create(
+        component_id=flow_type,
+        name=name,
+        description=description,
+        configuration=flow_configuration,
     )
     api_config = CreateConfigurationAPIResponse.model_validate(new_raw_configuration)
     await set_cfg_creation_metadata(
@@ -212,8 +215,11 @@ async def create_conditional_flow(
     LOG.info(f'Creating new enhanced conditional flow: {name} (type: {flow_type})')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    new_raw_configuration = await client.storage_client.flow_create(
-        name=name, description=description, flow_configuration=flow_configuration, flow_type=flow_type
+    new_raw_configuration = await client.storage_client.configuration_create(
+        component_id=flow_type,
+        name=name,
+        description=description,
+        configuration=flow_configuration,
     )
     api_config = CreateConfigurationAPIResponse.model_validate(new_raw_configuration)
 
@@ -301,13 +307,13 @@ async def update_flow(
 
     LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
     links_manager = await ProjectLinksManager.from_client(client)
-    updated_raw_configuration = await client.storage_client.flow_update(
-        config_id=configuration_id,
-        name=name,
-        description=description,
+    updated_raw_configuration = await client.storage_client.configuration_update(
+        component_id=flow_type,
+        configuration_id=configuration_id,
+        configuration=flow_configuration,
         change_description=change_description,
-        flow_configuration=flow_configuration,  # Direct configuration
-        flow_type=flow_type,
+        updated_name=name,
+        updated_description=description,
     )
     api_config = CreateConfigurationAPIResponse.model_validate(updated_raw_configuration)
 

@@ -112,7 +112,11 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert MetadataField.CREATED_BY_MCP in metadata_dict
         assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
     finally:
-        await client.storage_client.flow_delete(flow_id, skip_trash=True)
+        await client.storage_client.configuration_delete(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=flow_id,
+            skip_trash=True,
+            )
 
 
 @pytest.mark.skip
@@ -180,13 +184,20 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
 
         assert isinstance(metadata, list)
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-        sync_flow = await client.storage_client.flow_detail(flow_type=ORCHESTRATOR_COMPONENT_ID, config_id=flow_id)
+        sync_flow = await client.storage_client.configuration_detail(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=flow_id,
+            )
         updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow["version"]}'
         assert updated_by_md_key in metadata_dict
         assert metadata_dict[updated_by_md_key] == 'true'
 
     finally:
-        await client.storage_client.flow_delete(flow_id, skip_trash=True)
+        await client.storage_client.configuration_delete(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=flow_id,
+            skip_trash=True
+            )
 
 
 @pytest.mark.asyncio
@@ -516,7 +527,11 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
     client = KeboolaClient.from_state(mcp_context.session.state)
     for flow_type, flow_id in created_flows:
         try:
-            await client.storage_client.flow_delete(flow_id, flow_type=flow_type, skip_trash=True)
+            await client.storage_client.configuration_delete(
+                component_id=flow_type,
+                configuration_id=flow_id,
+                skip_trash=True,
+                )
             LOG.info(f'Successfully deleted {flow_type} flow {flow_id}')
         except Exception as e:
             LOG.warning(f'Failed to delete {flow_type} flow {flow_id}: {e}')
