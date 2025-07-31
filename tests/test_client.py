@@ -32,9 +32,7 @@ def mock_http_response_500(mock_http_request: httpx.Request) -> httpx.Response:
     response.request = mock_http_request
     response.is_error = True
     response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        message=f"{response.reason_phrase} for url '{response.url}'",
-        request=mock_http_request,
-        response=response
+        message=f"{response.reason_phrase} for url '{response.url}'", request=mock_http_request, response=response
     )
     return response
 
@@ -49,9 +47,7 @@ def mock_http_response_404(mock_http_request: httpx.Request) -> httpx.Response:
     response.request = mock_http_request
     response.is_error = True
     response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        message=f"{response.reason_phrase} for url '{response.url}'",
-        request=mock_http_request,
-        response=response
+        message=f"{response.reason_phrase} for url '{response.url}'", request=mock_http_request, response=response
     )
     return response
 
@@ -62,13 +58,10 @@ class TestRawKeboolaClient:
     @pytest.fixture
     def raw_client(self) -> RawKeboolaClient:
         """Create a RawKeboolaClient instance for testing."""
-        return RawKeboolaClient(
-            base_api_url='https://api.example.com',
-            api_token='test-token'
-        )
+        return RawKeboolaClient(base_api_url='https://api.example.com', api_token='test-token')
 
     def test_raise_for_status_500_with_exception_id(
-            self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
+        self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
     ):
         """Test that HTTP 500 errors are enhanced with exception ID when available."""
 
@@ -77,31 +70,30 @@ class TestRawKeboolaClient:
             'exceptionId': 'exc-123-456',
             'message': 'Application error',
             'errorCode': 'DB_ERROR',
-            'requestId': 'req-789'
+            'requestId': 'req-789',
         }
 
-        match = ("Internal Server Error for url 'https://api.example.com/test'\n"
-                 'Exception ID: exc-123-456\n'
-                 'When contacting Keboola support please provide the exception ID.')
+        match = (
+            "Internal Server Error for url 'https://api.example.com/test'\n"
+            'Exception ID: exc-123-456\n'
+            'When contacting Keboola support please provide the exception ID.'
+        )
         with pytest.raises(httpx.HTTPStatusError, match=match):
             raw_client._raise_for_status(mock_http_response_500)
 
     def test_raise_for_status_500_without_exception_id(
-            self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
+        self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
     ):
         """Test that HTTP 500 errors without exception ID fall back gracefully."""
 
         # Mock response with JSON but no exception ID
-        mock_http_response_500.json.return_value = {
-            'message': 'Internal server error',
-            'errorCode': 'INTERNAL_ERROR'
-        }
+        mock_http_response_500.json.return_value = {'message': 'Internal server error', 'errorCode': 'INTERNAL_ERROR'}
 
         with pytest.raises(httpx.HTTPStatusError, match="Internal Server Error for url 'https://api.example.com/test'"):
             raw_client._raise_for_status(mock_http_response_500)
 
     def test_raise_for_status_500_with_malformed_json(
-            self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
+        self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
     ):
         """Test that HTTP 500 errors with malformed JSON fall back to standard error handling."""
 
@@ -109,32 +101,33 @@ class TestRawKeboolaClient:
         type(mock_http_response_500).text = PropertyMock(return_value='Invalid JSON')
         mock_http_response_500.json.side_effect = ValueError('Invalid JSON')
 
-        match = ("Internal Server Error for url 'https://api.example.com/test'\n"
-                 'API error: Invalid JSON')
+        match = "Internal Server Error for url 'https://api.example.com/test'\n" 'API error: Invalid JSON'
         with pytest.raises(httpx.HTTPStatusError, match=match):
             raw_client._raise_for_status(mock_http_response_500)
 
     def test_raise_for_status_404_uses_standard_exception(
-            self, raw_client: RawKeboolaClient, mock_http_response_404: httpx.Response
+        self, raw_client: RawKeboolaClient, mock_http_response_404: httpx.Response
     ):
         """Test that HTTP 404 errors use standard HTTPStatusError."""
 
         mock_http_response_404.json.return_value = {
             'exceptionId': 'exc-123-456',
             'error': 'The bucket "foo.bar.baz" was not found in the project "123"',
-            'code': 'storage.buckets.notFound'
+            'code': 'storage.buckets.notFound',
         }
 
-        match = ("Not Found for url 'https://api.example.com/test'\n"
-                 'API error: The bucket "foo.bar.baz" was not found in the project "123"\n'
-                 'Exception ID: exc-123-456\n'
-                 'When contacting Keboola support please provide the exception ID.')
+        match = (
+            "Not Found for url 'https://api.example.com/test'\n"
+            'API error: The bucket "foo.bar.baz" was not found in the project "123"\n'
+            'Exception ID: exc-123-456\n'
+            'When contacting Keboola support please provide the exception ID.'
+        )
         with pytest.raises(httpx.HTTPStatusError, match=match):
             raw_client._raise_for_status(mock_http_response_404)
 
     @pytest.mark.asyncio
     async def test_get_method_integration_with_enhanced_error_handling(
-            self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
+        self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
     ):
         """Test that GET method integrates with enhanced error handling."""
 
@@ -142,14 +135,13 @@ class TestRawKeboolaClient:
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
             mock_client.get.return_value = mock_http_response_500
-            mock_http_response_500.json.return_value = {
-                'exceptionId': 'test-exc-123',
-                'message': 'Test error message'
-            }
+            mock_http_response_500.json.return_value = {'exceptionId': 'test-exc-123', 'message': 'Test error message'}
 
-            match = ("Internal Server Error for url 'https://api.example.com/test'\n"
-                     'Exception ID: test-exc-123\n'
-                     'When contacting Keboola support please provide the exception ID.')
+            match = (
+                "Internal Server Error for url 'https://api.example.com/test'\n"
+                'Exception ID: test-exc-123\n'
+                'When contacting Keboola support please provide the exception ID.'
+            )
             with pytest.raises(httpx.HTTPStatusError, match=match):
                 await raw_client.get('test-endpoint')
 
@@ -161,31 +153,38 @@ class TestAsyncStorageClient:
         [
             ('foo', 'bar', None, None, None, None, None, None),
             ('foo', 'bar', 'baz', 'error', {'param1': 'value1'}, {'result1': 'value1'}, 123, '987654321'),
-        ]
+        ],
     )
     async def test_trigger_event(
-            self, message: str, component_id: str, configuration_id: str | None, event_type: str | None,
-            params: Mapping[str, Any] | None, results: Mapping[str, Any], duration: int | None, run_id: str | None,
-            keboola_client: KeboolaClient
+        self,
+        message: str,
+        component_id: str,
+        configuration_id: str | None,
+        event_type: str | None,
+        params: Mapping[str, Any] | None,
+        results: Mapping[str, Any],
+        duration: int | None,
+        run_id: str | None,
+        keboola_client: KeboolaClient,
     ):
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
             mock_client.post.return_value = (response := Mock(spec=httpx.Response))
             response.status_code = 200
-            response.json.return_value = {
-                'id': '13008826',
-                'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'
-            }
+            response.json.return_value = {'id': '13008826', 'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'}
 
             result = await keboola_client.storage_client.trigger_event(
-                message=message, component_id=component_id, configuration_id=configuration_id,
-                event_type=event_type, params=params, results=results, duration=duration, run_id=run_id
+                message=message,
+                component_id=component_id,
+                configuration_id=configuration_id,
+                event_type=event_type,
+                params=params,
+                results=results,
+                duration=duration,
+                run_id=run_id,
             )
 
-            assert result == {
-                'id': '13008826',
-                'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'
-            }
+            assert result == {'id': '13008826', 'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'}
             version = importlib.metadata.version('keboola-mcp-server')
             mock_client.post.assert_called_once_with(
                 'https://connection.nowhere/v2/storage/events',
@@ -194,17 +193,22 @@ class TestAsyncStorageClient:
                     'Content-Type': 'application/json',
                     'Accept-encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
-                    'User-Agent': f'Keboola MCP Server/{version} app_env=local'
+                    'User-Agent': f'Keboola MCP Server/{version} app_env=local',
                 },
                 json={
                     key: value
                     for key, value in [
-                        ('message', message), ('component', component_id), ('configurationId', configuration_id),
-                        ('type', event_type), ('params', params), ('results', results), ('duration', duration),
+                        ('message', message),
+                        ('component', component_id),
+                        ('configurationId', configuration_id),
+                        ('type', event_type),
+                        ('params', params),
+                        ('results', results),
+                        ('duration', duration),
                         ('runId', run_id),
                     ]
                     if value
-                }
+                },
             )
 
     @pytest.mark.asyncio
@@ -218,15 +222,10 @@ class TestAsyncStorageClient:
                 'OAuth token',
                 ['keboola.ex-google-analytics-v4'],
                 None,
-                {'description': 'OAuth token', 'componentAccess': ['keboola.ex-google-analytics-v4']}
+                {'description': 'OAuth token', 'componentAccess': ['keboola.ex-google-analytics-v4']},
             ),
             # Token with expiration
-            (
-                'Short-lived token',
-                None,
-                3600,
-                {'description': 'Short-lived token', 'expiresIn': 3600}
-            ),
+            ('Short-lived token', None, 3600, {'description': 'Short-lived token', 'expiresIn': 3600}),
             # Token with all parameters
             (
                 'Full token',
@@ -235,10 +234,10 @@ class TestAsyncStorageClient:
                 {
                     'description': 'Full token',
                     'componentAccess': ['keboola.ex-gmail', 'keboola.ex-google-analytics-v4'],
-                    'expiresIn': 7200
-                }
+                    'expiresIn': 7200,
+                },
             ),
-        ]
+        ],
     )
     async def test_token_create(
         self,
@@ -246,7 +245,7 @@ class TestAsyncStorageClient:
         component_access: list[str] | None,
         expires_in: int | None,
         expected_data: dict[str, Any],
-        keboola_client: KeboolaClient
+        keboola_client: KeboolaClient,
     ):
         """Test token creation with various parameter combinations."""
         with patch('httpx.AsyncClient') as mock_client_class:
@@ -259,13 +258,11 @@ class TestAsyncStorageClient:
                 'description': description,
                 'created': '2023-01-01T00:00:00+00:00',
                 'expiresIn': expires_in,
-                'componentAccess': component_access or []
+                'componentAccess': component_access or [],
             }
 
             result = await keboola_client.storage_client.token_create(
-                description=description,
-                component_access=component_access,
-                expires_in=expires_in
+                description=description, component_access=component_access, expires_in=expires_in
             )
 
             # Verify the response
@@ -281,7 +278,7 @@ class TestAsyncStorageClient:
                     'Content-Type': 'application/json',
                     'Accept-encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
-                    'User-Agent': f'Keboola MCP Server/{version} app_env=local'
+                    'User-Agent': f'Keboola MCP Server/{version} app_env=local',
                 },
-                json=expected_data
+                json=expected_data,
             )

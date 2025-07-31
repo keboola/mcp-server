@@ -66,12 +66,16 @@ class ProxyRefreshToken(RefreshToken):
 class SimpleOAuthProvider(OAuthProvider):
 
     def __init__(
-            self, *,
-            storage_api_url: str,
-            mcp_server_url: str,
-            callback_endpoint: str,
-            client_id: str, client_secret: str, server_url: str, scope: str,
-            jwt_secret: str | None = None,
+        self,
+        *,
+        storage_api_url: str,
+        mcp_server_url: str,
+        callback_endpoint: str,
+        client_id: str,
+        client_secret: str,
+        server_url: str,
+        scope: str,
+        jwt_secret: str | None = None,
     ) -> None:
         """
         Creates OAuth provider implementation.
@@ -127,9 +131,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # This is a no-op. We don't register clients, otherwise we would need a persistent registry.
         LOG.debug(f'Client registered: client_id={client_info.client_id}')
 
-    async def authorize(
-            self, client: OAuthClientInformationFull, params: AuthorizationParams
-    ) -> str:
+    async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         """
         Creates a URL that redirects to the OAuth server for authorization.
 
@@ -213,10 +215,13 @@ class SimpleOAuthProvider(OAuthProvider):
             )
 
             if response.status_code != 200:
-                LOG.error('[handle_oauth_callback] Failed to exchange code for token, '
-                          f'OAuth server response: status={response.status_code}, text={response.text}')
-                raise HTTPException(400, 'Failed to exchange code for token: '
-                                         f'status={response.status_code}, text={response.text}')
+                LOG.error(
+                    '[handle_oauth_callback] Failed to exchange code for token, '
+                    f'OAuth server response: status={response.status_code}, text={response.text}'
+                )
+                raise HTTPException(
+                    400, 'Failed to exchange code for token: ' f'status={response.status_code}, text={response.text}'
+                )
 
             data = response.json()
             LOG.debug(f'[handle_oauth_callback] OAuth server response: {data}')
@@ -245,14 +250,16 @@ class SimpleOAuthProvider(OAuthProvider):
         auth_code_jwt = self._encode(auth_code)
 
         mcp_redirect_uri = construct_redirect_uri(
-            redirect_uri_base=redirect_uri, code=auth_code_jwt, state=state_data['state'],
+            redirect_uri_base=redirect_uri,
+            code=auth_code_jwt,
+            state=state_data['state'],
         )
         LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
 
         return mcp_redirect_uri
 
     async def load_authorization_code(
-            self, client: OAuthClientInformationFull, authorization_code: str
+        self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
         """
         Loads and validates the authorization code.
@@ -273,20 +280,24 @@ class SimpleOAuthProvider(OAuthProvider):
         auth_code = _ExtendedAuthorizationCode.model_validate(
             auth_code_raw | {'redirect_uri': AnyUrl(auth_code_raw['redirect_uri'])}
         )
-        LOG.debug(f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
-                  f'auth_code={auth_code}')
+        LOG.debug(
+            f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
+            f'auth_code={auth_code}'
+        )
 
         # Log the expired authorization code.
         # The mcp library itself performs the check and returns a proper response, but no logs.
         now = time.time()
         if auth_code.expires_at and auth_code.expires_at < now:
-            LOG.info(f'[load_authorization_code] Expired authorization code: '
-                     f'auth_code.expires_at={auth_code.expires_at}, now={now}')
+            LOG.info(
+                f'[load_authorization_code] Expired authorization code: '
+                f'auth_code.expires_at={auth_code.expires_at}, now={now}'
+            )
 
         return auth_code
 
     async def exchange_authorization_code(
-            self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
+        self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
         """
         Swaps the authorization code for a new access and refresh tokens from the OAuth server.
@@ -299,15 +310,16 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :raises HTTPException: If the OAuth server response indicates an error.
         """
-        LOG.debug(f'[exchange_authorization_code] authorization_code={authorization_code}, '
-                  f'client_id={client.client_id}')
+        LOG.debug(
+            f'[exchange_authorization_code] authorization_code={authorization_code}, ' f'client_id={client.client_id}'
+        )
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
 
         expires_in = max(0, int(authorization_code.oauth_access_token.expires_at - time.time()))  # seconds
         sapi_token = await self._create_sapi_token(
             oauth_access_token=authorization_code.oauth_access_token.token,
-            expires_in=self._ceil_to_hour(expires_in * 2)  # twice as much as the access token's time out
+            expires_in=self._ceil_to_hour(expires_in * 2),  # twice as much as the access token's time out
         )
 
         # wrap the access_token from the OAuth into our own access_token
@@ -317,7 +329,7 @@ class SimpleOAuthProvider(OAuthProvider):
             scopes=authorization_code.scopes,
             expires_at=authorization_code.oauth_access_token.expires_at,
             delegate=authorization_code.oauth_access_token,
-            sapi_token=sapi_token
+            sapi_token=sapi_token,
         )
         access_token_jwt = self._encode(access_token.model_dump())
 
@@ -339,8 +351,10 @@ class SimpleOAuthProvider(OAuthProvider):
             scope=' '.join(access_token.scopes),
         )
 
-        LOG.debug(f'[exchange_authorization_code] access_token={access_token}, refresh_token={refresh_token},'
-                  f'oauth_token={oauth_token}')
+        LOG.debug(
+            f'[exchange_authorization_code] access_token={access_token}, refresh_token={refresh_token},'
+            f'oauth_token={oauth_token}'
+        )
 
         return oauth_token
 
@@ -366,14 +380,14 @@ class SimpleOAuthProvider(OAuthProvider):
         # The mcp library itself performs the check and returns a proper response, but no logs.
         now = time.time()
         if proxy_token.expires_at and proxy_token.expires_at < now:
-            LOG.info(f'[load_access_token] Expired access token: proxy_token.expires_at={proxy_token.expires_at}, '
-                     f'now={now}')
+            LOG.info(
+                f'[load_access_token] Expired access token: proxy_token.expires_at={proxy_token.expires_at}, '
+                f'now={now}'
+            )
 
         return proxy_token
 
-    async def load_refresh_token(
-            self, client: OAuthClientInformationFull, refresh_token: str
-    ) -> RefreshToken | None:
+    async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
         """
         Loads and validates a refresh token.
         The method decrypts a JWT refresh token, validates its content, and returns a `RefreshToken` object
@@ -396,16 +410,18 @@ class SimpleOAuthProvider(OAuthProvider):
         # The mcp library itself performs the check and returns a proper response, but no logs.
         now = time.time()
         if proxy_token.expires_at and proxy_token.expires_at < now:
-            LOG.info(f'[load_refresh_token] Expired refresh token: proxy_token.expires_at={proxy_token.expires_at}, '
-                     f'now={now}')
+            LOG.info(
+                f'[load_refresh_token] Expired refresh token: proxy_token.expires_at={proxy_token.expires_at}, '
+                f'now={now}'
+            )
 
         return proxy_token
 
     async def exchange_refresh_token(
-            self,
-            client: OAuthClientInformationFull,
-            refresh_token: RefreshToken,
-            scopes: list[str],
+        self,
+        client: OAuthClientInformationFull,
+        refresh_token: RefreshToken,
+        scopes: list[str],
     ) -> OAuthToken:
         """
         Swaps the refresh token for a new access and refresh tokens from the OAuth server. The function also creates
@@ -420,8 +436,9 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :raises HTTPException: If the OAuth server response indicates an error.
         """
-        LOG.debug(f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, '
-                  f'scopes={scopes}')
+        LOG.debug(
+            f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, ' f'scopes={scopes}'
+        )
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
 
@@ -439,10 +456,13 @@ class SimpleOAuthProvider(OAuthProvider):
             )
 
             if response.status_code != 200:
-                LOG.exception('[exchange_refresh_token] Failed to refresh token, '
-                              f'OAuth server response: status={response.status_code}, text={response.text}')
-                raise HTTPException(400, 'Failed to refresh token: '
-                                         f'status={response.status_code}, text={response.text}')
+                LOG.exception(
+                    '[exchange_refresh_token] Failed to refresh token, '
+                    f'OAuth server response: status={response.status_code}, text={response.text}'
+                )
+                raise HTTPException(
+                    400, 'Failed to refresh token: ' f'status={response.status_code}, text={response.text}'
+                )
 
             data = response.json()
             LOG.debug(f'[exchange_refresh_token] OAuth server response: {data}')
@@ -455,7 +475,7 @@ class SimpleOAuthProvider(OAuthProvider):
         expires_in = max(0, int(oauth_access_token.expires_at - time.time()))  # seconds
         sapi_token = await self._create_sapi_token(
             oauth_access_token=oauth_access_token.token,
-            expires_in=self._ceil_to_hour(expires_in * 2)  # twice as much as the access token's time out
+            expires_in=self._ceil_to_hour(expires_in * 2),  # twice as much as the access token's time out
         )
 
         # wrap the access_token from the OAuth into our own access_token
@@ -465,7 +485,7 @@ class SimpleOAuthProvider(OAuthProvider):
             scopes=oauth_access_token.scopes,
             expires_at=oauth_access_token.expires_at,
             delegate=oauth_access_token,
-            sapi_token=sapi_token
+            sapi_token=sapi_token,
         )
         access_token_jwt = self._encode(access_token.model_dump())
 
@@ -487,14 +507,14 @@ class SimpleOAuthProvider(OAuthProvider):
             scope=' '.join(access_token.scopes),
         )
 
-        LOG.debug(f'[exchange_refresh_token] access_token={access_token}, refresh_token={refresh_token}, '
-                  f'oauth_token={oauth_token}')
+        LOG.debug(
+            f'[exchange_refresh_token] access_token={access_token}, refresh_token={refresh_token}, '
+            f'oauth_token={oauth_token}'
+        )
 
         return oauth_token
 
-    async def revoke_token(
-            self, token: str, token_type_hint: str | None = None
-    ) -> None:
+    async def revoke_token(self, token: str, token_type_hint: str | None = None) -> None:
         """
         Revokes a token.
 
@@ -560,11 +580,14 @@ class SimpleOAuthProvider(OAuthProvider):
             )
 
             if response.status_code != 200:
-                LOG.error('[_create_sapi_token] Failed to create Storage API token, '
-                          f'Storage API response: status={response.status_code}, text={response.text}')
+                LOG.error(
+                    '[_create_sapi_token] Failed to create Storage API token, '
+                    f'Storage API response: status={response.status_code}, text={response.text}'
+                )
                 raise HTTPException(
                     response.status_code,
-                    f'Failed to create Storage API token: status={response.status_code}, text={response.text}')
+                    f'Failed to create Storage API token: status={response.status_code}, text={response.text}',
+                )
 
             data = response.json()
             LOG.debug(f'[_create_sapi_token] Storage API response: {data}')

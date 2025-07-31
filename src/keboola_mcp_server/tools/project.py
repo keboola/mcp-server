@@ -26,26 +26,14 @@ def add_project_tools(mcp: FastMCP) -> None:
 
 
 class ProjectInfo(BaseModel):
-    project_id: str | int = Field(
-        ...,
-        description='The id of the project.'
-    )
-    project_name: str = Field(
-        ...,
-        description='The name of the project.'
-    )
+    project_id: str | int = Field(..., description='The id of the project.')
+    project_name: str = Field(..., description='The name of the project.')
     project_description: str = Field(
         ...,
         description='The description of the project.',
     )
-    organization_id: str | int = Field(
-        ...,
-        description='The ID of the organization this project belongs to.'
-    )
-    sql_dialect: str = Field(
-        ...,
-        description='The sql dialect used in the project.'
-    )
+    organization_id: str | int = Field(..., description='The ID of the organization this project belongs to.')
+    sql_dialect: str = Field(..., description='The sql dialect used in the project.')
     links: list[Link] = Field(..., description='The links relevant to the project.')
 
 
@@ -68,8 +56,7 @@ async def get_project_info(
 
     metadata = await storage.branch_metadata_get()
     description = cast(
-        str,
-        next((item['value'] for item in metadata if item.get('key') == MetadataField.PROJECT_DESCRIPTION), '')
+        str, next((item['value'] for item in metadata if item.get('key') == MetadataField.PROJECT_DESCRIPTION), '')
     )
 
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()

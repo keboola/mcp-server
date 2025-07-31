@@ -139,6 +139,7 @@ class ListJobsOutput(BaseModel):
     jobs: list[JobListItem] = Field(..., description='List of jobs.')
     links: list[Link] = Field(..., description='Links relevant to the jobs listing.')
 
+
 # End of Job Base Models ########################################
 
 # MCP tools ########################################

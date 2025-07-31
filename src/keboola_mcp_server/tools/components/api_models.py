@@ -113,8 +113,7 @@ class ConfigurationAPIResponse(BaseModel):
         description='The nested configuration object containing parameters and storage'
     )
     rows: Optional[list[dict[str, Any]]] = Field(
-        default=None,
-        description='The row configurations within this configuration'
+        default=None, description='The row configurations within this configuration'
     )
     change_description: Optional[str] = Field(
         default=None,

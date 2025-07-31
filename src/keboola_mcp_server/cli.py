@@ -22,7 +22,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog='python -m keboola-mcp-server',
         description='Keboola MCP Server',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         '--transport',
@@ -42,17 +42,19 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         help=(
             'Keboola Storage API URL using format of https://connection.<REGION>.keboola.com. Example: For AWS region '
             '"eu-central-1", use: https://connection.eu-central-1.keboola.com'
-        )
+        ),
     )
     parser.add_argument('--storage-token', metavar='STR', help='Keboola Storage API token.')
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
     parser.add_argument(
-        '--accept-secrets-in-url', action='store_true',
+        '--accept-secrets-in-url',
+        action='store_true',
         help='(NOT RECOMMENDED) Read Storage API token and other configuration parameters from the query part '
-             'of the MCP server URL. Please note that the URL query parameters are not secure '
-             'for sending sensitive information.')
+        'of the MCP server URL. Please note that the URL query parameters are not secure '
+        'for sending sensitive information.',
+    )
     parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
 
     return parser.parse_args(args)
@@ -95,7 +97,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 port=parsed_args.port,
                 # Adding ForwardSlashMiddleware in KeboolaMcpServer's constructor doesn't seem to have any effect.
                 # See https://github.com/jlowin/fastmcp/pull/896 for the related changes in the fastmcp==2.9.0 library.
-                middleware=[Middleware(ForwardSlashMiddleware)]
+                middleware=[Middleware(ForwardSlashMiddleware)],
             )
     except Exception as e:
         LOG.exception(f'Server failed: {e}')

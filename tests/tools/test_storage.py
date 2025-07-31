@@ -54,7 +54,7 @@ def mock_table_data() -> Mapping[str, Any]:
         'rows_count': 100,
         'data_size_bytes': 1000,
         'columns': ['id', 'name', 'value'],
-        'bucket': {'id': 1}
+        'bucket': {'id': 1},
     }
 
     return {
@@ -409,8 +409,6 @@ async def test_update_column_description_success(
     keboola_client.storage_client.table_metadata_update.assert_called_once_with(
         table_id='in.c-test.test-table',
         columns_metadata={
-            'text': [
-                {'key': MetadataField.DESCRIPTION, 'value': 'Updated column description', 'columnName': 'text'}
-            ]
+            'text': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated column description', 'columnName': 'text'}]
         },
     )

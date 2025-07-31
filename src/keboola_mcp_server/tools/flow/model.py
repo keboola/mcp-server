@@ -58,6 +58,7 @@ class FlowConfigurationResponse(ComponentConfigurationResponseBase):
     """
     Detailed information about a Keboola Flow Configuration, extending the base configuration response.
     """
+
     version: int = Field(description='The version of the flow configuration')
     configuration: FlowConfiguration = Field(description='The flow configuration containing phases and tasks')
     change_description: Optional[str] = Field(
