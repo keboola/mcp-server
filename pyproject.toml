@@ -59,6 +59,21 @@ keboola-mcp-server = "keboola_mcp_server.cli:main"
 target-version = ["py310"]
 skip-string-normalization = true
 line-length = 120
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
 
 [tool.isort]
 profile = "black"
@@ -97,7 +112,8 @@ extend-ignore = ["E203", "W503", "I101"]
 
 [tool.tox]
 requires = ["tox>=4.23"]
-env_list = ["python", "flake8"]
+env_list = ["python", "black", "flake8"]
+labels = { cs-fix = ["black"], cs = ["flake8"] }
 
 [tool.tox.env_run_base]
 description = "Run tests"
@@ -136,6 +152,14 @@ commands = [
         ], extend = true },
     ],
 ]
+
+[tool.tox.env.black]
+description = "Fix code formatting using black"
+package = "skip"
+deps = [
+    "black ~= 25.1",
+]
+commands = [["black", "src/", "tests/", "integtests/"]]
 
 [tool.tox.env.flake8]
 description = "Run code style check using flake8"
