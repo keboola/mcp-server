@@ -296,14 +296,11 @@ class WorkspaceManager:
                 login_type='snowflake-person-sso',
                 backend=default_backend,
                 async_run=True,
-                read_only_storage_access=True
+                read_only_storage_access=True,
             )
         elif default_backend == 'bigquery':
             resp = await self._client.storage_client.workspace_create(
-                login_type='default',
-                backend=default_backend,
-                async_run=True,
-                read_only_storage_access=True
+                login_type='default', backend=default_backend, async_run=True, read_only_storage_access=True
             )
         else:
             raise ValueError(f'Unexpected default backend: {default_backend}')
@@ -320,8 +317,10 @@ class WorkspaceManager:
             job_status = job_info['status']
 
             duration = time.perf_counter() - start_ts
-            LOG.info(f'Job info: job_id={job_id}, status={job_status}, '
-                     f'duration={duration:.2f} seconds, timeout={timeout_sec:.2f} seconds')
+            LOG.info(
+                f'Job info: job_id={job_id}, status={job_status}, '
+                f'duration={duration:.2f} seconds, timeout={timeout_sec:.2f} seconds'
+            )
 
             if job_info['status'] == 'success':
                 assert 'results' in job_info, f'Expected `results` in job info: {job_info}'

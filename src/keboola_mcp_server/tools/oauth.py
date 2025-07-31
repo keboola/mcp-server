@@ -56,18 +56,17 @@ async def create_oauth_url(
     storage_api_url = client.storage_client.base_api_url
 
     # Generate OAuth URL
-    query_params = urlencode({
-        'token': sapi_token,
-        'sapiUrl': storage_api_url
-    })
+    query_params = urlencode({'token': sapi_token, 'sapiUrl': storage_api_url})
     fragment = f'/{component_id}/{config_id}'
 
-    oauth_url = urlunsplit((
-        'https',  # scheme
-        'external.keboola.com',  # netloc
-        '/oauth/index.html',  # path
-        query_params,  # query
-        fragment  # fragment
-    ))
+    oauth_url = urlunsplit(
+        (
+            'https',  # scheme
+            'external.keboola.com',  # netloc
+            '/oauth/index.html',  # path
+            query_params,  # query
+            fragment,  # fragment
+        )
+    )
 
     return oauth_url

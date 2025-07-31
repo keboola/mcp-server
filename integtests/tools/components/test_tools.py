@@ -615,24 +615,26 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         assert created_transformation.description == test_description
         assert created_transformation.component_id == expected_component_id
         assert created_transformation.configuration_id is not None
-        expected_links = frozenset([
-            Link(
-                type='ui-detail',
-                title=f'Configuration: {test_name}',
-                url=(
-                    f'https://connection.keboola.com/admin/projects/{project_id}/components/'
-                    f'{expected_component_id}/{created_transformation.configuration_id}'
+        expected_links = frozenset(
+            [
+                Link(
+                    type='ui-detail',
+                    title=f'Configuration: {test_name}',
+                    url=(
+                        f'https://connection.keboola.com/admin/projects/{project_id}/components/'
+                        f'{expected_component_id}/{created_transformation.configuration_id}'
+                    ),
                 ),
-            ),
-            Link(
-                type='ui-dashboard',
-                title=f'{expected_component_id} Configurations Dashboard',
-                url=(
-                    f'https://connection.keboola.com/admin/projects/{project_id}/components/'
-                    f'{expected_component_id}'
+                Link(
+                    type='ui-dashboard',
+                    title=f'{expected_component_id} Configurations Dashboard',
+                    url=(
+                        f'https://connection.keboola.com/admin/projects/{project_id}/components/'
+                        f'{expected_component_id}'
+                    ),
                 ),
-            ),
-        ])
+            ]
+        )
 
         assert frozenset(created_transformation.links) == expected_links
 

@@ -31,7 +31,7 @@ class TestHttpErrors:
             r'API error: The bucket "non.existent.bucket" was not found in the project "\d+"\n'
             r'Exception ID: .+\n'
             r'When contacting Keboola support please provide the exception ID\.',
-            re.IGNORECASE
+            re.IGNORECASE,
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
             await get_bucket('non.existent.bucket', mcp_context)
@@ -45,7 +45,7 @@ class TestHttpErrors:
             r'API error: Job "999999999" not found\n'
             r'Exception ID: .+\n'
             r'When contacting Keboola support please provide the exception ID\.',
-            re.IGNORECASE
+            re.IGNORECASE,
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
             await get_job('999999999', mcp_context)
@@ -60,7 +60,7 @@ class TestHttpErrors:
             r'API error: Request contents is not valid\n'
             r'Exception ID: .+\n'
             r'When contacting Keboola support please provide the exception ID\.',
-            re.IGNORECASE
+            re.IGNORECASE,
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
             await docs_query(ctx=mcp_context, query='')
@@ -70,7 +70,7 @@ class TestHttpErrors:
         match = re.compile(
             r'Failed to run SQL query, error: An exception occurred while executing a query: SQL compilation error:\n'
             r"syntax error line 1 at position 0 unexpected 'INVALID'\.",
-            re.IGNORECASE
+            re.IGNORECASE,
         )
         with pytest.raises(ValueError, match=match):
             await query_data('INVALID SQL SYNTAX HERE', 'Invalid SQL query.', mcp_context)
@@ -89,7 +89,7 @@ class TestHttpErrors:
             r'API error: The bucket "non.existent.bucket.\d" was not found in the project "\d+"\n'
             r'Exception ID: .+\n'
             r'When contacting Keboola support please provide the exception ID\.',
-            re.IGNORECASE
+            re.IGNORECASE,
         )
 
         unexpected_errors: list[str] = []
@@ -117,16 +117,19 @@ class TestStorageEvents:
         raise ValueError('Intentional error in bar tool.')
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(('tool_name', 'event_message', 'event_type'), [
-        ('foo', 'MCP tool "foo" call succeeded.', 'success'),
-        ('bar', 'MCP tool "bar" call failed. ValueError: Intentional error in bar tool.', 'error'),
-    ])
+    @pytest.mark.parametrize(
+        ('tool_name', 'event_message', 'event_type'),
+        [
+            ('foo', 'MCP tool "foo" call succeeded.', 'success'),
+            ('bar', 'MCP tool "bar" call failed. ValueError: Intentional error in bar tool.', 'error'),
+        ],
+    )
     async def test_event_emitted(self, tool_name: str, event_message: str, event_type: str, mcp_context: Context):
         mcp_context.session_id = 'deadbee'
         mcp_context.session.client_params = InitializeRequestParams(
             protocolVersion='1',
             capabilities=ClientCapabilities(),
-            clientInfo=Implementation(name='integtest', version='1.2.3')
+            clientInfo=Implementation(name='integtest', version='1.2.3'),
         )
         unique = uuid.uuid4().hex
         tool_func = getattr(self, tool_name)
@@ -142,7 +145,7 @@ class TestStorageEvents:
             params={
                 'component': 'keboola.mcp-server.tool',
                 'q': f'message:"MCP tool "{tool_name}" call*"',
-                'limit': 10
+                'limit': 10,
             },
         )
         emitted_event = self._find_event(events, tool_name=tool_name, param_name='unique', param_value=unique)
@@ -160,7 +163,7 @@ class TestStorageEvents:
 
     @staticmethod
     def _find_event(
-            events: list[Mapping[str, Any]], *, tool_name: str, param_name: str, param_value: str
+        events: list[Mapping[str, Any]], *, tool_name: str, param_name: str, param_value: str
     ) -> Mapping[str, Any] | None:
         for event in events:
             event_tool = event['params']['tool']

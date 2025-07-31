@@ -91,9 +91,7 @@ def env_file_loaded() -> bool:
 
 
 @pytest.fixture(scope='session')
-def env_init(
-    env_file_loaded: bool, storage_api_token: str, storage_api_url: str, workspace_schema: str
-) -> bool:
+def env_init(env_file_loaded: bool, storage_api_token: str, storage_api_url: str, workspace_schema: str) -> bool:
     # We reset the development environment variables to the values of the integtest environment variables.
     os.environ[DEV_STORAGE_API_URL_ENV_VAR] = storage_api_url
     os.environ[DEV_STORAGE_TOKEN_ENV_VAR] = storage_api_token
@@ -209,16 +207,16 @@ def _create_configs(storage_client: SyncStorageClient) -> list[ConfigDef]:
 def _sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncStorageClient:
     client = SyncStorageClient(storage_api_url, storage_api_token)
     token_info = client.tokens.verify()
-    LOG.info(f'Authorized as "{token_info["description"]}" ({token_info["id"]}) '
-             f'to project "{token_info["owner"]["name"]}" ({token_info["owner"]["id"]}) '
-             f'at "{client.root_url}" stack.')
+    LOG.info(
+        f'Authorized as "{token_info["description"]}" ({token_info["id"]}) '
+        f'to project "{token_info["owner"]["name"]}" ({token_info["owner"]["id"]}) '
+        f'at "{client.root_url}" stack.'
+    )
     return client
 
 
 @pytest.fixture(scope='session')
-def keboola_project(
-    env_init: bool, storage_api_token: str, storage_api_url: str
-) -> Generator[ProjectDef, Any, None]:
+def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str) -> Generator[ProjectDef, Any, None]:
     """
     Sets up a Keboola project with items needed for integration tests,
     such as buckets, tables and configurations.
@@ -308,8 +306,11 @@ def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> W
 
 @pytest.fixture
 def mcp_context(
-    mocker, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, keboola_project: ProjectDef,
-    mcp_config: Config
+    mocker,
+    keboola_client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+    keboola_project: ProjectDef,
+    mcp_config: Config,
 ) -> Context:
     """
     MCP context containing the Keboola client and workspace manager.

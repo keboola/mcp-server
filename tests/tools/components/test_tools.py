@@ -77,10 +77,7 @@ def assert_retrieve_components() -> Callable[
         # assert configurations list details
         assert all(len(component.configurations) == len(configurations) for component in components_with_configurations)
         assert all(
-            all(
-                isinstance(config.configuration_root, ConfigurationRootSummary)
-                for config in component.configurations
-            )
+            all(isinstance(config.configuration_root, ConfigurationRootSummary) for config in component.configurations)
             for component in components_with_configurations
         )
         # use zip to iterate over the result and mock_configurations since we artificially mock the .get method
