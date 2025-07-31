@@ -29,7 +29,6 @@ from keboola_mcp_server.tools.project import get_project_info
 LOG = logging.getLogger(__name__)
 
 
-@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
@@ -39,6 +38,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
     """
     assert configs
     assert configs[0].configuration_id is not None
+    flow_type = ORCHESTRATOR_COMPONENT_ID
     phases = [
         {'name': 'Extract', 'dependsOn': [], 'description': 'Extract data'},
         {'name': 'Transform', 'dependsOn': [1], 'description': 'Transform data'},
@@ -75,8 +75,8 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
     client = KeboolaClient.from_state(mcp_context.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     expected_links = [
-        links_manager.get_flow_detail_link(flow_id, flow_name),
-        links_manager.get_flows_dashboard_link(),
+        links_manager.get_flow_detail_link(flow_id=flow_id, flow_name=flow_name, flow_type=flow_type),
+        links_manager.get_flows_dashboard_link(flow_type=flow_type),
         links_manager.get_flows_docs_link(),
     ]
     try:
@@ -119,7 +119,6 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
             )
 
 
-@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
@@ -129,6 +128,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
     """
     assert configs
     assert configs[0].configuration_id is not None
+    flow_type = ORCHESTRATOR_COMPONENT_ID
     phases = [
         {'name': 'Phase1', 'dependsOn': [], 'description': 'First phase'},
     ]
@@ -151,20 +151,21 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         phases=phases,
         tasks=tasks,
     )
-    flow_id = created.flow_id
+    flow_id = created.id
     client = KeboolaClient.from_state(mcp_context.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     try:
         new_name = 'Updated Flow Name'
         new_description = 'Updated description.'
         expected_links = [
-            links_manager.get_flow_detail_link(flow_id, new_name),
-            links_manager.get_flows_dashboard_link(),
+            links_manager.get_flow_detail_link(flow_id=flow_id, flow_name=new_name, flow_type=flow_type),
+            links_manager.get_flows_dashboard_link(flow_type=flow_type),
             links_manager.get_flows_docs_link(),
         ]
         updated = await update_flow(
             ctx=mcp_context,
-            configuration_id=created.flow_id,
+            configuration_id=created.id,
+            flow_type=flow_type,
             name=new_name,
             description=new_description,
             phases=phases,
@@ -172,7 +173,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
             change_description='Integration test update',
         )
         assert isinstance(updated, FlowToolResponse)
-        assert created.flow_id == updated.flow_id
+        assert created.id == updated.id
         assert updated.description == new_description
         assert updated.success is True
         assert set(updated.links) == set(expected_links)
