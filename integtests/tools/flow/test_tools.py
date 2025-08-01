@@ -251,8 +251,8 @@ async def test_get_flow_schema(mcp_context: Context) -> None:
     parsed_conditional_schema = json.loads(json_content)
 
     # Test 3: Verify the conditional behavior
-    if project_info.conditional_flows_disabled:
-        # If conditional flows are disabled, both requests should return the same schema
+    if not project_info.conditional_flows:
+        # If the project does not support conditional flows, both requests should return the same schema
         assert legacy_flow_schema == conditional_schema
         LOG.info('Project has conditional flows disabled - both schemas are identical')
     else:
@@ -475,7 +475,7 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
     conditional_flow_name = 'Integration Test Conditional Flow'
     conditional_flow_description = 'Conditional flow created by integration test'
 
-    if not project_info.conditional_flows_disabled:
+    if project_info.conditional_flows:
         conditional_result = await create_conditional_flow(
             ctx=mcp_context,
             name=conditional_flow_name,

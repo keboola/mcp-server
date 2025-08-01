@@ -77,7 +77,7 @@ async def get_flow_schema(
     """
     project_info = await get_project_info(ctx)
 
-    if project_info.conditional_flows_disabled or flow_type == ORCHESTRATOR_COMPONENT_ID:
+    if not project_info.conditional_flows or flow_type == ORCHESTRATOR_COMPONENT_ID:
         effective_type = ORCHESTRATOR_COMPONENT_ID
     else:
         effective_type = CONDITIONAL_FLOW_COMPONENT_ID
@@ -392,7 +392,7 @@ async def get_flow_examples(
     """
     Retrieves examples of valid flow configurations.
 
-    Projects have conditional flows enabled by default (check the `conditional_flows_disabled` flag in
+    Projects have conditional flows enabled by default (check the `conditional_flows` flag in
     get_project_info()) and should therefore fetch examples for type `keboola.flow`.
     Projects that have conditional flows disabled should fetch examples for type `keboola.orchestrator`.
     """

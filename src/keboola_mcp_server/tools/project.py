@@ -31,7 +31,7 @@ class ProjectInfo(BaseModel):
     project_description: str = Field(description='The description of the project.',)
     organization_id: str | int = Field(description='The ID of the organization this project belongs to.')
     sql_dialect: str = Field(description='The sql dialect used in the project.')
-    conditional_flows_disabled: bool = Field(description='Whether the project has conditional flows disabled.')
+    conditional_flows: bool = Field(description='Whether the project supports conditional flows.')
     links: list[Link] = Field(description='The links relevant to the project.')
 
 
@@ -60,7 +60,7 @@ async def get_project_info(
 
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
     project_features = cast(JsonDict, token_data.get('features', {}))
-    conditional_flows_disabled = 'conditional-flows-disabled' in project_features
+    conditional_flows = 'hide-conditional-flows' not in project_features
     links = links_manager.get_project_links()
 
     project_info = ProjectInfo(
@@ -69,7 +69,7 @@ async def get_project_info(
         project_description=description,
         organization_id=organization_id,
         sql_dialect=sql_dialect,
-        conditional_flows_disabled=conditional_flows_disabled,
+        conditional_flows=conditional_flows,
         links=links,
     )
 
