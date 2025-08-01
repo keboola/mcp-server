@@ -31,12 +31,12 @@ from keboola_mcp_server.tools.flow.model import (
 )
 from keboola_mcp_server.tools.flow.utils import (
     FlowResolutionError,
-    _get_all_flows,
-    _get_flows_by_ids,
-    _resolve_flow_by_id,
     ensure_legacy_phase_ids,
     ensure_legacy_task_ids,
+    get_all_flows,
+    get_flows_by_ids,
     get_schema_as_markdown,
+    resolve_flow_by_id,
     validate_legacy_flow_structure,
 )
 from keboola_mcp_server.tools.project import get_project_info
@@ -347,10 +347,10 @@ async def list_flows(
     links_manager = await ProjectLinksManager.from_client(client)
 
     if flow_ids:
-        flows = await _get_flows_by_ids(client, flow_ids)
+        flows = await get_flows_by_ids(client, flow_ids)
         LOG.info(f'Retrieved {len(flows)} flows by ID.')
     else:
-        flows = await _get_all_flows(client)
+        flows = await get_all_flows(client)
         LOG.info(f'Retrieved {len(flows)} flows.')
 
     # For list_flows, we don't know the specific flow types, so we'll use both flow types
@@ -372,7 +372,7 @@ async def get_flow(
     links_manager = await ProjectLinksManager.from_client(client)
 
     try:
-        api_flow, found_type = await _resolve_flow_by_id(client, configuration_id)
+        api_flow, found_type = await resolve_flow_by_id(client, configuration_id)
         LOG.info(f'Found flow {configuration_id} under flow type {found_type}.')
     except FlowResolutionError as e:
         raise ValueError(f'Flow configuration "{configuration_id}" not found: {e}')

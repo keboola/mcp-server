@@ -186,7 +186,7 @@ class FlowResolutionError(Exception):
     pass
 
 
-async def _resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFlowResponse, FlowType]:
+async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFlowResponse, FlowType]:
     """
     Resolve a flow by ID across all flow types.
 
@@ -214,7 +214,7 @@ async def _resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIF
     )
 
 
-async def _get_flows_by_ids(
+async def get_flows_by_ids(
     client: KeboolaClient,
     flow_ids: Sequence[str]
 ) -> list[FlowSummary]:
@@ -222,7 +222,7 @@ async def _get_flows_by_ids(
 
     for flow_id in flow_ids:
         try:
-            api_flow, flow_type = await _resolve_flow_by_id(client, flow_id)
+            api_flow, flow_type = await resolve_flow_by_id(client, flow_id)
             flow_summary = FlowSummary.from_api_response(api_config=api_flow, flow_component_id=flow_type)
             flows.append(flow_summary)
         except FlowResolutionError as e:
@@ -232,7 +232,7 @@ async def _get_flows_by_ids(
     return flows
 
 
-async def _get_flows_by_type(
+async def get_flows_by_type(
     client: KeboolaClient,
     flow_type: FlowType
 ) -> list[FlowSummary]:
@@ -243,9 +243,9 @@ async def _get_flows_by_type(
     ]
 
 
-async def _get_all_flows(client: KeboolaClient) -> list[FlowSummary]:
+async def get_all_flows(client: KeboolaClient) -> list[FlowSummary]:
     all_flows = []
     for flow_type in FLOW_TYPES:
-        flows = await _get_flows_by_type(client=client, flow_type=flow_type)
+        flows = await get_flows_by_type(client=client, flow_type=flow_type)
         all_flows.extend(flows)
     return all_flows
