@@ -182,10 +182,6 @@ def ensure_legacy_task_ids(tasks: list[dict[str, Any]]) -> list[FlowTask]:
     return processed_tasks
 
 
-class FlowResolutionError(Exception):
-    pass
-
-
 async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFlowResponse, FlowType]:
     """
     Resolve a flow by ID across all flow types.
@@ -193,10 +189,8 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
     :param client: Keboola client instance.
     :param flow_id: The flow configuration ID to resolve.
     :return: Tuple of (APIFlowResponse, flow_type) if found.
-    :raises FlowResolutionError: If flow cannot be resolved in any flow type.
+    :raises ValueError: If flow cannot be resolved in any flow type.
     """
-    errors = []
-
     for flow_type in FLOW_TYPES:
         try:
             raw_flow = await client.storage_client.configuration_detail(
@@ -205,13 +199,10 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
                 )
             api_flow = APIFlowResponse.model_validate(raw_flow)
             return api_flow, flow_type
-        except Exception as e:
-            errors.append(f'{flow_type}: {type(e).__name__} - {str(e)}')
+        except Exception:
+            continue
 
-    raise FlowResolutionError(
-        f'Unable to resolve flow {flow_id}. Tried flow types: {", ".join(FLOW_TYPES)}. '
-        f'Errors: {" | ".join(errors)}'
-    )
+    raise ValueError(f'Flow configuration "{flow_id}" not found')
 
 
 async def get_flows_by_ids(
@@ -225,8 +216,8 @@ async def get_flows_by_ids(
             api_flow, flow_type = await resolve_flow_by_id(client, flow_id)
             flow_summary = FlowSummary.from_api_response(api_config=api_flow, flow_component_id=flow_type)
             flows.append(flow_summary)
-        except FlowResolutionError as e:
-            LOG.warning(str(e))
+        except ValueError as e:
+            LOG.warning(f'Flow {flow_id} not found: {e}')
             continue
 
     return flows
