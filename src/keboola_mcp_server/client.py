@@ -1198,11 +1198,9 @@ class ComponentSuggestionResponse(BaseModel):
 
 class APIFlowResponse(BaseModel):
     """
-    Raw API response for flow configuration endpoints.
+    Raw API response for configuration endpoints.
 
-    Mirrors the actual JSON structure returned by Keboola Storage API for:
-    - flow_detail()
-    - flow_list()
+    Note: will be removed soon due to removal of flow specific client methods.
     """
 
     # Core identification fields
