@@ -38,7 +38,7 @@ from pydantic import Field
 from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer
+from keboola_mcp_server.mcp import KeboolaMcpServer, exclude_none_serializer
 from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse
 from keboola_mcp_server.tools.components.model import (
     Component,
@@ -80,7 +80,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     # Component/Configuration discovery tools
     mcp.add_tool(FunctionTool.from_function(get_component))
     mcp.add_tool(FunctionTool.from_function(get_config))
-    mcp.add_tool(FunctionTool.from_function(list_configs, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(list_configs, serializer=exclude_none_serializer))
     mcp.add_tool(FunctionTool.from_function(get_config_examples))
 
     # Configuration management tools
@@ -90,7 +90,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(FunctionTool.from_function(update_config_row))
 
     # SQL transformation tools
-    mcp.add_tool(FunctionTool.from_function(list_transformations, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(list_transformations, serializer=exclude_none_serializer))
     mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
     mcp.add_tool(FunctionTool.from_function(update_sql_transformation))
 

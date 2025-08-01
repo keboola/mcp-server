@@ -139,5 +139,4 @@ class MetadataField:
 
     # Data type metadata fields
     DATATYPE_TYPE = 'KBC.datatype.type'
-    DATATYPE_BASETYPE = 'KBC.datatype.basetype'
     DATATYPE_NULLABLE = 'KBC.datatype.nullable'

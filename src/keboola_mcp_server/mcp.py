@@ -266,5 +266,5 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         return await call_next(context)
 
 
-def listing_output_serializer(data: BaseModel) -> str:
+def exclude_none_serializer(data: BaseModel) -> str:
     return data.model_dump_json(exclude_none=True, indent=2, by_alias=False)

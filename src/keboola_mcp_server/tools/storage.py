@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Optional, cast
+from typing import Annotated, Any, Mapping, Optional, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -12,7 +12,7 @@ from keboola_mcp_server.client import JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer
+from keboola_mcp_server.mcp import KeboolaMcpServer, exclude_none_serializer
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -23,30 +23,42 @@ TOOL_GROUP_NAME = 'STORAGE'
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
     mcp.add_tool(FunctionTool.from_function(get_bucket))
-    mcp.add_tool(FunctionTool.from_function(list_buckets, serializer=listing_output_serializer))
-    mcp.add_tool(FunctionTool.from_function(get_table))
-    mcp.add_tool(FunctionTool.from_function(list_tables, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(list_buckets, serializer=exclude_none_serializer))
+    mcp.add_tool(FunctionTool.from_function(get_table, serializer=exclude_none_serializer))
+    mcp.add_tool(FunctionTool.from_function(list_tables, serializer=exclude_none_serializer))
     mcp.add_tool(FunctionTool.from_function(update_bucket_description))
-    mcp.add_tool(FunctionTool.from_function(update_table_description, serializer=listing_output_serializer))
-    mcp.add_tool(FunctionTool.from_function(update_column_description, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(update_table_description, serializer=exclude_none_serializer))
+    mcp.add_tool(FunctionTool.from_function(update_column_description, serializer=exclude_none_serializer))
 
     LOG.info('Storage tools added to the MCP server.')
 
 
-def extract_description(values: dict[str, Any]) -> Optional[str]:
+def _get_metadata_property(metadata: list[Mapping[str, Any]], key: str, provider: str | None = None) -> Optional[Any]:
+    """
+    Gets the value of a metadata property based on the provided key and optional provider. If multiple metadata entries
+    exists with the same key, the most recent one is returned.
+
+    :param metadata: A list of metadata entries.
+    :param key: The metadata property key to search for.
+    :param provider: Specifies the metadata provider name to filter by.
+
+    :return: The value of the most recent matching metadata entry if found, or None otherwise.
+    """
+    filtered = [
+        m for m in metadata
+        if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
+    ]
+    # TODO: ideally we should first convert the timestamps to UTC
+    filtered.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+    return filtered[0].get('value') if filtered else None
+
+
+def _extract_description(values: dict[str, Any]) -> Optional[str]:
     """Extracts the description from values or metadata."""
     if description := values.get('description'):
         return description
     else:
-        metadata = values.get('metadata', [])
-        return next(
-            (
-                value
-                for item in metadata
-                if item.get('key') == MetadataField.DESCRIPTION and (value := item.get('value'))
-            ),
-            None,
-        )
+        return _get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
 
 
 class BucketDetail(BaseModel):
@@ -87,7 +99,7 @@ class BucketDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        values['description'] = extract_description(values)
+        values['description'] = _extract_description(values)
         return values
 
 
@@ -103,9 +115,8 @@ class TableColumnInfo(BaseModel):
         validation_alias=AliasChoices('quotedName', 'quoted_name', 'quoted-name'),
         serialization_alias='quotedName',
     )
-    data_type: Optional[str] = Field(None, description='Data type of the column.')
-    base_type: Optional[str] = Field(None, description='Base data type of the column.')
-    nullable: Optional[bool] = Field(None, description='Whether the column can contain null values.')
+    native_type: str | None = Field(default=None, description='The database type of data in the column.')
+    nullable: bool | None = Field(default=None, description='Whether the column can contain null values.')
 
 
 class TableDetail(BaseModel):
@@ -116,42 +127,42 @@ class TableDetail(BaseModel):
         validation_alias=AliasChoices('displayName', 'display_name', 'display-name'),
         serialization_alias='displayName',
     )
-    description: Optional[str] = Field(None, description='Description of the table.')
-    primary_key: Optional[list[str]] = Field(
-        None,
+    description: str | None = Field(default=None, description='Description of the table.')
+    primary_key: list[str] | None = Field(
+        default=None,
         description='List of primary key columns.',
         validation_alias=AliasChoices('primaryKey', 'primary_key', 'primary-key'),
         serialization_alias='primaryKey',
     )
-    created: Optional[str] = Field(None, description='Creation timestamp of the table.')
-    rows_count: Optional[int] = Field(
-        None,
+    created: str | None = Field(default=None, description='Creation timestamp of the table.')
+    rows_count: int | None = Field(
+        default=None,
         description='Number of rows in the table.',
         validation_alias=AliasChoices('rowsCount', 'rows_count', 'rows-count'),
         serialization_alias='rowsCount',
     )
-    data_size_bytes: Optional[int] = Field(
-        None,
+    data_size_bytes: int | None = Field(
+        default=None,
         description='Total data size of the table in bytes.',
         validation_alias=AliasChoices('dataSizeBytes', 'data_size_bytes', 'data-size-bytes'),
         serialization_alias='dataSizeBytes',
     )
-    columns: Optional[list[TableColumnInfo]] = Field(
-        None,
+    columns: list[TableColumnInfo] | None = Field(
+        default=None,
         description='List of column information including database identifiers.',
     )
-    fully_qualified_name: Optional[str] = Field(
-        None,
+    fully_qualified_name: str | None = Field(
+        default=None,
         description='Fully qualified name of the table.',
         validation_alias=AliasChoices('fullyQualifiedName', 'fully_qualified_name', 'fully-qualified-name'),
         serialization_alias='fullyQualifiedName',
     )
-    links: Optional[list[Link]] = Field(default=None, description='The links relevant to the table.')
+    links: list[Link] | None = Field(default=None, description='The links relevant to the table.')
 
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        values['description'] = extract_description(values)
+        values['description'] = _extract_description(values)
         return values
 
 
@@ -212,35 +223,22 @@ async def get_table(
 
     raw_table = await client.storage_client.table_detail(table_id)
     raw_columns = cast(list[str], raw_table.get('columns', []))
-    column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))
-
-    def extract_column_metadata(column_name: str) -> dict[str, Any]:
-        """Extract data type information from column metadata."""
-        metadata_entries = column_metadata.get(column_name, [])
-        result = {}
-
-        for entry in metadata_entries:
-            key = entry.get('key')
-            value = entry.get('value')
-
-            if key == MetadataField.DATATYPE_TYPE:
-                result['data_type'] = value
-            elif key == MetadataField.DATATYPE_BASETYPE:
-                result['base_type'] = value
-            elif key == MetadataField.DATATYPE_NULLABLE:
-                result['nullable'] = value == '1' if value is not None else None
-
-        return result
+    raw_column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))
 
     column_info = []
-    for col in raw_columns:
-        metadata = extract_column_metadata(col)
+    for col_name in raw_columns:
+        col_meta = raw_column_metadata.get(col_name, [])
+        native_type: str | None = _get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
+        nullable: bool | None = None
+        if native_type:
+            raw_nullable = _get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
+            nullable = raw_nullable.lower() in ['1', 'yes', 'true']
+
         column_info.append(TableColumnInfo(
-            name=col,
-            quoted_name=await workspace_manager.get_quoted_name(col),
-            data_type=metadata.get('data_type'),
-            base_type=metadata.get('base_type'),
-            nullable=metadata.get('nullable')
+            name=col_name,
+            quoted_name=await workspace_manager.get_quoted_name(col_name),
+            native_type=native_type,
+            nullable=nullable,
         ))
 
     table_fqn = await workspace_manager.get_table_fqn(raw_table)
