@@ -639,14 +639,14 @@ class TestGetFlowSchemaTool:
     """Tests for the get_flow_schema tool."""
 
     @pytest.mark.asyncio
-    async def test_get_legacy_flow_schema(
+    async def test_get_legacy_flow_schema_when_conditional_flows_disabled(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
     ):
-        """Test getting schema for legacy flow type."""
+        """Test getting schema for legacy flow type when conditional flows are disabled."""
         mock_project_info = mocker.Mock()
-        mock_project_info.conditional_flows_disabled = True
+        mock_project_info.conditional_flows = False
         mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
 
         result = await get_flow_schema(ctx=mcp_context_client, flow_type=ORCHESTRATOR_COMPONENT_ID)
@@ -656,14 +656,31 @@ class TestGetFlowSchemaTool:
         assert 'dependsOn' in result
 
     @pytest.mark.asyncio
-    async def test_get_conditional_flow_schema(
+    async def test_get_legacy_flow_schema_when_conditional_flows_enabled(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
     ):
-        """Test getting schema for conditional flow type."""
+        """Test getting schema for legacy flow type when conditional flows are enabled."""
         mock_project_info = mocker.Mock()
-        mock_project_info.conditional_flows_disabled = False
+        mock_project_info.conditional_flows = True
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
+
+        result = await get_flow_schema(ctx=mcp_context_client, flow_type=ORCHESTRATOR_COMPONENT_ID)
+
+        assert isinstance(result, str)
+        assert '```json' in result
+        assert 'dependsOn' in result
+
+    @pytest.mark.asyncio
+    async def test_get_conditional_flow_schema_when_conditional_flows_enabled(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+    ):
+        """Test getting schema for conditional flow type when conditional flows are enabled."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = True
         mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
 
         result = await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
@@ -672,6 +689,24 @@ class TestGetFlowSchemaTool:
         assert '```json' in result
         assert 'keboola.flow' in result or 'conditional' in result.lower()
         assert 'next' in result
+
+    @pytest.mark.asyncio
+    async def test_get_conditional_flow_schema_fallback_when_conditional_flows_disabled(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+    ):
+        """Test that requesting conditional flow schema falls back to legacy when conditional flows are disabled."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = False
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
+
+        result = await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+        assert isinstance(result, str)
+        assert '```json' in result
+        # Should return legacy schema (dependsOn) instead of conditional schema (next)
+        assert 'dependsOn' in result
 
 
 # =============================================================================
