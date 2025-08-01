@@ -129,7 +129,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
     assert configs
     assert configs[0].configuration_id is not None
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
-    
+
     phases = [
         {
             'id': 'extract_phase',
@@ -144,7 +144,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
             ]
         },
         {
-            'id': 'transform_phase', 
+            'id': 'transform_phase',
             'name': 'Transform',
             'description': 'Transform data',
             'next': [
@@ -170,7 +170,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
         },
         {
             'id': 'transform_task',
-            'name': 'Transform Task', 
+            'name': 'Transform Task',
             'phase': 'transform_phase',
             'task': {
                 'type': 'job',
@@ -329,12 +329,12 @@ async def test_update_conditional_flow(mcp_context: Context, configs: list[Confi
     assert configs
     assert configs[0].configuration_id is not None
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
-    
+
     # Initial conditional flow structure
     phases = [
         {
             'id': 'phase1',
-            'name': 'Phase1', 
+            'name': 'Phase1',
             'description': 'First phase',
             'next': [
                 {
