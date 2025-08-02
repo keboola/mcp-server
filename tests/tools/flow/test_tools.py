@@ -338,6 +338,14 @@ class TestUpdateFlowTool:
         mock_legacy_flow_create_update: Dict[str, Any],
     ):
         """Test legacy flow update with new phases and tasks."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = True
+
+        async def mock_get_project_info(ctx):
+            return mock_project_info
+
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
+
         updated_config = mock_legacy_flow_create_update.copy()
         updated_config['version'] = 2
         updated_config['description'] = 'Updated legacy ETL pipeline'
@@ -373,6 +381,14 @@ class TestUpdateFlowTool:
         mock_conditional_flow_create_update: Dict[str, Any],
     ):
         """Test conditional flow update with enhanced conditions."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = True
+
+        async def mock_get_project_info(ctx):
+            return mock_project_info
+
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
+
         updated_config = mock_conditional_flow_create_update.copy()
         updated_config['version'] = 2
         updated_config['name'] = 'Enhanced Advanced Data Pipeline'
@@ -400,6 +416,42 @@ class TestUpdateFlowTool:
         assert len(result.links) == 3
 
         keboola_client.storage_client.configuration_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_conditional_flow_fails_when_conditional_flows_disabled(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+    ):
+        """Test that updating conditional flow fails when conditional flows are disabled."""
+        # Mock project info with conditional flows disabled
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = False
+        mock_project_info.project_name = 'Test Project'
+
+        async def mock_get_project_info(ctx):
+            return mock_project_info
+
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
+
+        # Should raise ValueError with proper error message
+        with pytest.raises(ValueError) as exc_info:
+            await update_flow(
+                ctx=mcp_context_client,
+                configuration_id='test-config-id',
+                flow_type=CONDITIONAL_FLOW_COMPONENT_ID,
+                name='Updated Conditional Flow',
+                description='Updated description for conditional flow',
+                phases=[],
+                tasks=[],
+                change_description='Test update'
+            )
+
+        error_message = str(exc_info.value)
+        assert 'Conditional flows are not supported in this project' in error_message
+        assert 'Test Project' in error_message
+        assert 'conditional_flows=false' in error_message
+        assert 'enable them in your project settings' in error_message
 
 
 # =============================================================================
@@ -691,22 +743,30 @@ class TestGetFlowSchemaTool:
         assert 'next' in result
 
     @pytest.mark.asyncio
-    async def test_get_conditional_flow_schema_fallback_when_conditional_flows_disabled(
+    async def test_get_conditional_flow_schema_fails_when_conditional_flows_disabled(
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
     ):
-        """Test that requesting conditional flow schema falls back to legacy when conditional flows are disabled."""
+        """Test that requesting conditional flow schema fails when conditional flows are disabled."""
         mock_project_info = mocker.Mock()
         mock_project_info.conditional_flows = False
-        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
+        mock_project_info.project_name = 'Test Project'
 
-        result = await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        async def mock_get_project_info(ctx):
+            return mock_project_info
 
-        assert isinstance(result, str)
-        assert '```json' in result
-        # Should return legacy schema (dependsOn) instead of conditional schema (next)
-        assert 'dependsOn' in result
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
+
+        # Should raise ValueError with proper error message
+        with pytest.raises(ValueError) as exc_info:
+            await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+        error_message = str(exc_info.value)
+        assert 'Conditional flows are not supported in this project' in error_message
+        assert 'Test Project' in error_message
+        assert 'conditional_flows=false' in error_message
+        assert 'enable them in your project settings' in error_message
 
 
 # =============================================================================
@@ -724,6 +784,14 @@ class TestGetFlowExamplesTool:
         mcp_context_client: Context,
     ):
         """Test getting examples for legacy flow type."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = True
+
+        async def mock_get_project_info(ctx):
+            return mock_project_info
+
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
+
         # Mock the file path and content properly - using actual structure from the real file
         mock_file_content = [
             (
@@ -765,6 +833,14 @@ class TestGetFlowExamplesTool:
         mcp_context_client: Context,
     ):
         """Test getting examples for conditional flow type."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = True
+
+        async def mock_get_project_info(ctx):
+            return mock_project_info
+
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
+
         # Mock the file path and content properly - using actual structure from the real file
         mock_file_content = [
             (
@@ -807,3 +883,34 @@ class TestGetFlowExamplesTool:
         assert 'keboola.wr-azure-event-hub-92021091' in result
         assert 'keboola.python-transformation-v2-16550' in result
         assert 'Phase1' in result
+
+    @pytest.mark.asyncio
+    async def test_get_conditional_flow_examples_when_conditional_flows_disabled(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+    ):
+        """Test that requesting conditional flow examples fails when conditional flows are disabled."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = False
+        mock_project_info.project_name = 'Test Project'
+
+        async def mock_get_project_info(ctx):
+            return mock_project_info
+
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
+
+        # Mock the file path resolution (should not be called due to early failure)
+        mock_path = mocker.Mock()
+        mock_path.__truediv__ = mocker.Mock(return_value=mock_path)
+        mock_path.open = mocker.mock_open()
+        mocker.patch('importlib.resources.files', return_value=mock_path)
+
+        # Should raise ValueError with proper error message
+        with pytest.raises(ValueError) as exc_info:
+            await get_flow_examples(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        error_message = str(exc_info.value)
+        assert 'Conditional flows are not supported in this project' in error_message
+        assert 'Test Project' in error_message
+        assert 'conditional_flows=false' in error_message
+        assert 'enable them in your project settings' in error_message

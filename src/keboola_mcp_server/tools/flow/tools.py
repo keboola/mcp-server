@@ -61,16 +61,15 @@ def add_flow_tools(mcp: FastMCP) -> None:
 @tool_errors()
 async def get_flow_schema(
     ctx: Context,
-    flow_type: Annotated[FlowType, Field(description='The type of flow for which to fetch.')],
-) -> Annotated[str, Field(description='The configuration schema of the specified flow type, formatted as markdown.')]:
+    flow_type: Annotated[FlowType, Field(description='The type of flow for which to fetch schema.')],
+) -> Annotated[str, Field(description='The configuration schema of the specified flow type.')]:
     """
     Returns the JSON schema for the given flow type in markdown format.
     `keboola.flow` = conditional flows
     `keboola.orchestrator` = legacy flows
 
     CONSIDERATIONS:
-    - If the project_info has conditional flows disabled, the legacy flow schema (orchestrator) is returned regardless
-    of requested type.
+    - If the project has conditional flows disabled, this tool will fail when requesting conditional flow schema.
     - Otherwise, the returned schema matches the requested flow type.
 
     Usage:
@@ -78,13 +77,16 @@ async def get_flow_schema(
     """
     project_info = await get_project_info(ctx)
 
-    if not project_info.conditional_flows or flow_type == ORCHESTRATOR_COMPONENT_ID:
-        effective_type = ORCHESTRATOR_COMPONENT_ID
-    else:
-        effective_type = CONDITIONAL_FLOW_COMPONENT_ID
+    if flow_type == CONDITIONAL_FLOW_COMPONENT_ID and not project_info.conditional_flows:
+        raise ValueError(
+            f'Conditional flows are not supported in this project. '
+            f'Project "{project_info.project_name}" has conditional_flows=false. '
+            f'If you want to use conditional flows, please enable them in your project settings. '
+            f'Otherwise, use flow_type="{ORCHESTRATOR_COMPONENT_ID}" for legacy flows instead.'
+        )
 
-    LOG.info(f'Returning flow configuration schema for flow type: {effective_type}')
-    return get_schema_as_markdown(flow_type=effective_type)
+    LOG.info(f'Returning flow configuration schema for flow type: {flow_type}')
+    return get_schema_as_markdown(flow_type=flow_type)
 
 
 @tool_errors()
@@ -181,17 +183,9 @@ async def create_conditional_flow(
 ) -> Annotated[FlowToolResponse, Field(description='Response object for enhanced flow creation.')]:
     """
     Creates a new **conditional flow** configuration in Keboola.
-    Use this to create a flow always when the project has conditional flows enabled (in project_info tool)
 
     If you haven't already called it, always use the `get_flow_schema` tool using `keboola.flow` flow type
     to see the latest schema for conditional flows and also look at the examples under `get_flow_examples` tool.
-
-    This enhanced version provides:
-    - **Structured conditions**: Type-safe condition objects with proper validation
-    - **Structured retry configurations**: Properly typed retry parameters and conditions
-    - **Structured task configurations**: Type-safe job, notification, and variable task configurations
-    - **Better validation**: Compile-time validation of flow structure and relationships
-    - **Enhanced error messages**: More descriptive errors when validation fails
 
     CONSIDERATIONS:
     - Do not create conditions, unless user asks for them explicitly
@@ -277,6 +271,7 @@ async def update_flow(
     - Items in the `dependsOn` phase field reference ids of other phases.
     - The flow specified by `configuration_id` must already exist in the project.
     - The `flow_type` parameter must match the actual type of the flow being updated.
+    - If the project has conditional flows disabled, this tool will fail when trying to update conditional flows.
     - Links contained in the response should ALWAYS be presented to the user
 
     USAGE:
@@ -284,6 +279,15 @@ async def update_flow(
     - Use "keboola.flow" for conditional flows (advanced flows with conditional logic)
     - Use "keboola.orchestrator" for legacy flows (basic orchestration flows)
     """
+
+    project_info = await get_project_info(ctx)
+    if flow_type == CONDITIONAL_FLOW_COMPONENT_ID and not project_info.conditional_flows:
+        raise ValueError(
+            f'Conditional flows are not supported in this project. '
+            f'Project "{project_info.project_name}" has conditional_flows=false. '
+            f'If you want to use conditional flows, please enable them in your project settings. '
+            f'Otherwise, use flow_type="{ORCHESTRATOR_COMPONENT_ID}" for legacy flows instead.'
+        )
 
     client = KeboolaClient.from_state(ctx.session.state)
 
@@ -390,10 +394,20 @@ async def get_flow_examples(
     """
     Retrieves examples of valid flow configurations.
 
-    Projects have conditional flows enabled by default (check the `conditional_flows` flag in
-    get_project_info()) and should therefore fetch examples for type `keboola.flow`.
-    Projects that have conditional flows disabled should fetch examples for type `keboola.orchestrator`.
+    CONSIDERATIONS:
+    - If the project has conditional flows disabled, this tool will fail when requesting conditional flow examples.
+    - Projects with conditional flows enabled can fetch examples for both flow types.
+    - Projects with conditional flows disabled should use `keboola.orchestrator` for legacy flow examples.
     """
+    project_info = await get_project_info(ctx)
+    if flow_type == CONDITIONAL_FLOW_COMPONENT_ID and not project_info.conditional_flows:
+        raise ValueError(
+            f'Conditional flows are not supported in this project. '
+            f'Project "{project_info.project_name}" has conditional_flows=false. '
+            f'If you want to use conditional flows, please enable them in your project settings. '
+            f'Otherwise, use flow_type="{ORCHESTRATOR_COMPONENT_ID}" for legacy flow examples instead.'
+        )
+
     filename = (
         'conditional_flow_examples.jsonl' if flow_type == CONDITIONAL_FLOW_COMPONENT_ID
         else 'legacy_flow_examples.jsonl'
