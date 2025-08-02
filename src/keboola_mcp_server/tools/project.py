@@ -59,7 +59,7 @@ async def get_project_info(
     )
 
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
-    project_features = cast(JsonDict, token_data.get('features', {}))
+    project_features = cast(JsonDict, project_data.get('features', {}))
     conditional_flows = 'hide-conditional-flows' not in project_features
     links = links_manager.get_project_links()
 
