@@ -1,10 +1,10 @@
 import pytest
 
 from keboola_mcp_server.tools.flow.utils import (
-    _check_circular_dependencies,
-    ensure_phase_ids,
-    ensure_task_ids,
-    validate_flow_structure,
+    _check_legacy_circular_dependencies,
+    ensure_legacy_phase_ids,
+    ensure_legacy_task_ids,
+    validate_legacy_flow_structure,
 )
 
 # --- Test Helper Functions ---
@@ -17,7 +17,7 @@ class TestFlowHelpers:
         """Test phase ID generation when IDs are missing."""
         phases = [{'name': 'Phase 1'}, {'name': 'Phase 2', 'dependsOn': [1]}, {'id': 5, 'name': 'Phase 5'}]
 
-        processed_phases = ensure_phase_ids(phases)
+        processed_phases = ensure_legacy_phase_ids(phases)
 
         assert len(processed_phases) == 3
         assert processed_phases[0].id == 1
@@ -34,7 +34,7 @@ class TestFlowHelpers:
             {'id': 'string-id', 'name': 'Custom Phase 2', 'dependsOn': [10]},
         ]
 
-        processed_phases = ensure_phase_ids(phases)
+        processed_phases = ensure_legacy_phase_ids(phases)
 
         assert len(processed_phases) == 2
         assert processed_phases[0].id == 10
@@ -49,7 +49,7 @@ class TestFlowHelpers:
             {'id': 30000, 'name': 'Task 3', 'phase': 3, 'task': {'componentId': 'comp3'}},
         ]
 
-        processed_tasks = ensure_task_ids(tasks)
+        processed_tasks = ensure_legacy_task_ids(tasks)
 
         assert len(processed_tasks) == 3
         assert processed_tasks[0].id == 20001
@@ -63,7 +63,7 @@ class TestFlowHelpers:
             {'name': 'Task 2', 'phase': 1, 'task': {'componentId': 'comp2', 'mode': 'debug'}},
         ]
 
-        processed_tasks = ensure_task_ids(tasks)
+        processed_tasks = ensure_legacy_task_ids(tasks)
 
         assert processed_tasks[0].task['mode'] == 'run'  # Default added
         assert processed_tasks[1].task['mode'] == 'debug'  # Existing preserved
@@ -71,35 +71,35 @@ class TestFlowHelpers:
     def test_ensure_task_ids_validates_required_fields(self):
         """Test validation of required task fields."""
         with pytest.raises(ValueError, match="missing 'task' configuration"):
-            ensure_task_ids([{'name': 'Bad Task', 'phase': 1}])
+            ensure_legacy_task_ids([{'name': 'Bad Task', 'phase': 1}])
 
         with pytest.raises(ValueError, match='missing componentId'):
-            ensure_task_ids([{'name': 'Bad Task', 'phase': 1, 'task': {}}])
+            ensure_legacy_task_ids([{'name': 'Bad Task', 'phase': 1, 'task': {}}])
 
     def test_validate_flow_structure_success(self, sample_phases, sample_tasks):
         """Test successful flow structure validation."""
-        phases = ensure_phase_ids(sample_phases)
-        tasks = ensure_task_ids(sample_tasks)
+        phases = ensure_legacy_phase_ids(sample_phases)
+        tasks = ensure_legacy_task_ids(sample_tasks)
 
-        validate_flow_structure(phases, tasks)
+        validate_legacy_flow_structure(phases, tasks)
 
     def test_validate_flow_structure_invalid_phase_dependency(self):
         """Test validation failure for invalid phase dependencies."""
-        phases = ensure_phase_ids([{'id': 1, 'name': 'Phase 1', 'dependsOn': [999]}])  # Non-existent phase
+        phases = ensure_legacy_phase_ids([{'id': 1, 'name': 'Phase 1', 'dependsOn': [999]}])  # Non-existent phase
         tasks = []
 
         with pytest.raises(ValueError, match='depends on non-existent phase 999'):
-            validate_flow_structure(phases, tasks)
+            validate_legacy_flow_structure(phases, tasks)
 
     def test_validate_flow_structure_invalid_task_phase(self):
         """Test validation failure for task referencing non-existent phase."""
-        phases = ensure_phase_ids([{'id': 1, 'name': 'Phase 1'}])
-        tasks = ensure_task_ids(
+        phases = ensure_legacy_phase_ids([{'id': 1, 'name': 'Phase 1'}])
+        tasks = ensure_legacy_task_ids(
             [{'name': 'Bad Task', 'phase': 999, 'task': {'componentId': 'comp1'}}]  # Non-existent phase
         )
 
         with pytest.raises(ValueError, match='references non-existent phase 999'):
-            validate_flow_structure(phases, tasks)
+            validate_legacy_flow_structure(phases, tasks)
 
 
 # --- Test Circular Dependency Detection ---
@@ -110,7 +110,7 @@ class TestCircularDependencies:
 
     def test_no_circular_dependencies(self):
         """Test flow with no circular dependencies."""
-        phases = ensure_phase_ids(
+        phases = ensure_legacy_phase_ids(
             [
                 {'id': 1, 'name': 'Phase 1'},
                 {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
@@ -118,20 +118,20 @@ class TestCircularDependencies:
             ]
         )
 
-        _check_circular_dependencies(phases)
+        _check_legacy_circular_dependencies(phases)
 
     def test_direct_circular_dependency(self):
         """Test detection of direct circular dependency."""
-        phases = ensure_phase_ids(
+        phases = ensure_legacy_phase_ids(
             [{'id': 1, 'name': 'Phase 1', 'dependsOn': [2]}, {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]}]
         )
 
         with pytest.raises(ValueError, match='Circular dependency detected'):
-            _check_circular_dependencies(phases)
+            _check_legacy_circular_dependencies(phases)
 
     def test_indirect_circular_dependency(self):
         """Test detection of indirect circular dependency."""
-        phases = ensure_phase_ids(
+        phases = ensure_legacy_phase_ids(
             [
                 {'id': 1, 'name': 'Phase 1', 'dependsOn': [3]},
                 {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
@@ -140,18 +140,18 @@ class TestCircularDependencies:
         )
 
         with pytest.raises(ValueError, match='Circular dependency detected'):
-            _check_circular_dependencies(phases)
+            _check_legacy_circular_dependencies(phases)
 
     def test_self_referencing_dependency(self):
         """Test detection of self-referencing dependency."""
-        phases = ensure_phase_ids([{'id': 1, 'name': 'Phase 1', 'dependsOn': [1]}])
+        phases = ensure_legacy_phase_ids([{'id': 1, 'name': 'Phase 1', 'dependsOn': [1]}])
 
         with pytest.raises(ValueError, match='Circular dependency detected'):
-            _check_circular_dependencies(phases)
+            _check_legacy_circular_dependencies(phases)
 
     def test_complex_valid_dependencies(self):
         """Test complex but valid dependency structure."""
-        phases = ensure_phase_ids(
+        phases = ensure_legacy_phase_ids(
             [
                 {'id': 1, 'name': 'Phase 1'},
                 {'id': 2, 'name': 'Phase 2'},
@@ -161,7 +161,7 @@ class TestCircularDependencies:
             ]
         )
 
-        _check_circular_dependencies(phases)
+        _check_legacy_circular_dependencies(phases)
 
 
 # --- Test Edge Cases ---
@@ -174,7 +174,7 @@ class TestFlowEdgeCases:
         """Test phase validation when required name field is missing."""
         invalid_phases = [{'name': 'Valid Phase'}, {}]
 
-        processed_phases = ensure_phase_ids(invalid_phases)
+        processed_phases = ensure_legacy_phase_ids(invalid_phases)
         assert len(processed_phases) == 2
         assert processed_phases[1].name == 'Phase 2'
 
@@ -183,11 +183,11 @@ class TestFlowEdgeCases:
         invalid_tasks = [{}]
 
         with pytest.raises(ValueError, match="missing 'task' configuration"):
-            ensure_task_ids(invalid_tasks)
+            ensure_legacy_task_ids(invalid_tasks)
 
     def test_empty_flow_validation(self):
         """Test validation of completely empty flow."""
-        phases = ensure_phase_ids([])
-        tasks = ensure_task_ids([])
+        phases = ensure_legacy_phase_ids([])
+        tasks = ensure_legacy_task_ids([])
 
-        validate_flow_structure(phases, tasks)
+        validate_legacy_flow_structure(phases, tasks)

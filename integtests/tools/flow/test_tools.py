@@ -1,22 +1,32 @@
 import json
+import logging
 
 import pytest
 from fastmcp import Context
+from pydantic import ValidationError
 
 from integtests.conftest import ConfigDef
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    ORCHESTRATOR_COMPONENT_ID,
+    KeboolaClient,
+)
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.tools.flow.model import FlowConfigurationResponse
+from keboola_mcp_server.tools.flow.model import Flow
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolResponse,
     ListFlowsOutput,
+    create_conditional_flow,
     create_flow,
     get_flow,
     get_flow_schema,
     list_flows,
     update_flow,
 )
+from keboola_mcp_server.tools.project import get_project_info
+
+LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -28,6 +38,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
     """
     assert configs
     assert configs[0].configuration_id is not None
+    flow_type = ORCHESTRATOR_COMPONENT_ID
     phases = [
         {'name': 'Extract', 'dependsOn': [], 'description': 'Extract data'},
         {'name': 'Transform', 'dependsOn': [1], 'description': 'Transform data'},
@@ -60,12 +71,12 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         phases=phases,
         tasks=tasks,
     )
-    flow_id = created.flow_id
+    flow_id = created.id
     client = KeboolaClient.from_state(mcp_context.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     expected_links = [
-        links_manager.get_flow_detail_link(flow_id, flow_name),
-        links_manager.get_flows_dashboard_link(),
+        links_manager.get_flow_detail_link(flow_id=flow_id, flow_name=flow_name, flow_type=flow_type),
+        links_manager.get_flows_dashboard_link(flow_type=flow_type),
         links_manager.get_flows_docs_link(),
     ]
     try:
@@ -78,19 +89,16 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         # Verify the flow is listed in the list_flows tool
         result = await list_flows(mcp_context)
         assert any(f.name == flow_name for f in result.flows)
-        found = [f for f in result.flows if f.id == flow_id][0]
-        detail = await get_flow(mcp_context, configuration_id=found.id)
+        found = [f for f in result.flows if f.configuration_id == flow_id][0]
+        flow = await get_flow(mcp_context, configuration_id=found.configuration_id)
 
-        assert isinstance(detail, FlowConfigurationResponse)
-        assert detail.component_id == ORCHESTRATOR_COMPONENT_ID
-        assert detail.configuration_id == found.id
-        assert detail.configuration.phases[0].name == 'Extract'
-        assert detail.configuration.phases[1].name == 'Transform'
-        assert detail.configuration.tasks[0].task['componentId'] == configs[0].component_id
-
-        # Verify the links of the retrieved flow
-        assert detail.links is not None
-        assert set(detail.links) == set(expected_links)
+        assert isinstance(flow, Flow)
+        assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
+        assert flow.configuration_id == found.configuration_id
+        assert flow.configuration.phases[0].name == 'Extract'
+        assert flow.configuration.phases[1].name == 'Transform'
+        assert flow.configuration.tasks[0].task['componentId'] == configs[0].component_id
+        assert set(flow.links) == set(expected_links)
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
@@ -104,7 +112,129 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert MetadataField.CREATED_BY_MCP in metadata_dict
         assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
     finally:
-        await client.storage_client.flow_delete(flow_id, skip_trash=True)
+        await client.storage_client.configuration_delete(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=flow_id,
+            skip_trash=True,
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_and_retrieve_conditional_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    Create a conditional flow and retrieve it using list_flows.
+    :param mcp_context: The test context fixture.
+    :param configs: List of real configuration definitions.
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+    flow_type = CONDITIONAL_FLOW_COMPONENT_ID
+
+    phases = [
+        {
+            'id': 'extract_phase',
+            'name': 'Extract',
+            'description': 'Extract data',
+            'next': [
+                {
+                    'id': 'extract_to_transform',
+                    'name': 'Extract to Transform',
+                    'goto': 'transform_phase'
+                }
+            ]
+        },
+        {
+            'id': 'transform_phase',
+            'name': 'Transform',
+            'description': 'Transform data',
+            'next': [
+                {
+                    'id': 'transform_end',
+                    'name': 'End Flow',
+                    'goto': None
+                }
+            ]
+        },
+    ]
+    tasks = [
+        {
+            'id': 'extract_task',
+            'name': 'Extract Task',
+            'phase': 'extract_phase',
+            'task': {
+                'type': 'job',
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            },
+        },
+        {
+            'id': 'transform_task',
+            'name': 'Transform Task',
+            'phase': 'transform_phase',
+            'task': {
+                'type': 'job',
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            },
+        },
+    ]
+    flow_name = 'Integration Test Conditional Flow'
+    flow_description = 'Conditional flow created by integration test.'
+
+    created = await create_conditional_flow(
+        ctx=mcp_context,
+        name=flow_name,
+        description=flow_description,
+        phases=phases,
+        tasks=tasks,
+    )
+    flow_id = created.id
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+    expected_links = [
+        links_manager.get_flow_detail_link(flow_id=flow_id, flow_name=flow_name, flow_type=flow_type),
+        links_manager.get_flows_dashboard_link(flow_type=flow_type),
+        links_manager.get_flows_docs_link(),
+    ]
+    try:
+        assert isinstance(created, FlowToolResponse)
+        assert created.description == flow_description
+        assert created.success is True
+        assert set(created.links) == set(expected_links)
+
+        # Verify the flow is listed in the list_flows tool
+        result = await list_flows(mcp_context)
+        assert any(f.name == flow_name for f in result.flows)
+        found = [f for f in result.flows if f.configuration_id == flow_id][0]
+        flow = await get_flow(mcp_context, configuration_id=found.configuration_id)
+
+        assert isinstance(flow, Flow)
+        assert flow.component_id == CONDITIONAL_FLOW_COMPONENT_ID
+        assert flow.configuration_id == found.configuration_id
+        assert flow.configuration.phases[0].name == 'Extract'
+        assert flow.configuration.phases[1].name == 'Transform'
+        assert flow.configuration.tasks[0].task.component_id == configs[0].component_id
+        assert set(flow.links) == set(expected_links)
+
+        # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=CONDITIONAL_FLOW_COMPONENT_ID, configuration_id=flow_id
+        )
+
+        # Convert metadata list to dictionary for easier checking
+        # metadata is a list of dicts with 'key' and 'value' keys
+        assert isinstance(metadata, list)
+        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+        assert MetadataField.CREATED_BY_MCP in metadata_dict
+        assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
+    finally:
+        await client.storage_client.configuration_delete(
+            component_id=CONDITIONAL_FLOW_COMPONENT_ID,
+            configuration_id=flow_id,
+            skip_trash=True,
+            )
 
 
 @pytest.mark.asyncio
@@ -116,6 +246,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
     """
     assert configs
     assert configs[0].configuration_id is not None
+    flow_type = ORCHESTRATOR_COMPONENT_ID
     phases = [
         {'name': 'Phase1', 'dependsOn': [], 'description': 'First phase'},
     ]
@@ -138,20 +269,21 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         phases=phases,
         tasks=tasks,
     )
-    flow_id = created.flow_id
+    flow_id = created.id
     client = KeboolaClient.from_state(mcp_context.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     try:
         new_name = 'Updated Flow Name'
         new_description = 'Updated description.'
         expected_links = [
-            links_manager.get_flow_detail_link(flow_id, new_name),
-            links_manager.get_flows_dashboard_link(),
+            links_manager.get_flow_detail_link(flow_id=flow_id, flow_name=new_name, flow_type=flow_type),
+            links_manager.get_flows_dashboard_link(flow_type=flow_type),
             links_manager.get_flows_docs_link(),
         ]
         updated = await update_flow(
             ctx=mcp_context,
-            configuration_id=created.flow_id,
+            configuration_id=created.id,
+            flow_type=flow_type,
             name=new_name,
             description=new_description,
             phases=phases,
@@ -159,7 +291,7 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
             change_description='Integration test update',
         )
         assert isinstance(updated, FlowToolResponse)
-        assert created.flow_id == updated.flow_id
+        assert created.id == updated.id
         assert updated.description == new_description
         assert updated.success is True
         assert set(updated.links) == set(expected_links)
@@ -171,13 +303,118 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
 
         assert isinstance(metadata, list)
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-        sync_flow = await client.storage_client.flow_detail(flow_id)
+        sync_flow = await client.storage_client.configuration_detail(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=flow_id,
+            )
         updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow["version"]}'
         assert updated_by_md_key in metadata_dict
         assert metadata_dict[updated_by_md_key] == 'true'
 
     finally:
-        await client.storage_client.flow_delete(flow_id, skip_trash=True)
+        await client.storage_client.configuration_delete(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=flow_id,
+            skip_trash=True
+            )
+
+
+@pytest.mark.asyncio
+async def test_update_conditional_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    Update a conditional flow and verify the update.
+    :param mcp_context: The test context fixture.
+    :param configs: List of real configuration definitions.
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+    flow_type = CONDITIONAL_FLOW_COMPONENT_ID
+
+    # Initial conditional flow structure
+    phases = [
+        {
+            'id': 'phase1',
+            'name': 'Phase1',
+            'description': 'First phase',
+            'next': [
+                {
+                    'id': 'phase1_end',
+                    'name': 'End Flow',
+                    'goto': None
+                }
+            ]
+        },
+    ]
+    tasks = [
+        {
+            'id': 'task1',
+            'name': 'Task1',
+            'phase': 'phase1',
+            'task': {
+                'type': 'job',
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            },
+        },
+    ]
+    flow_name = 'Conditional Flow to Update'
+    flow_description = 'Initial description.'
+    created = await create_conditional_flow(
+        ctx=mcp_context,
+        name=flow_name,
+        description=flow_description,
+        phases=phases,
+        tasks=tasks,
+    )
+    flow_id = created.id
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+    try:
+        new_name = 'Updated Conditional Flow Name'
+        new_description = 'Updated description.'
+        expected_links = [
+            links_manager.get_flow_detail_link(flow_id=flow_id, flow_name=new_name, flow_type=flow_type),
+            links_manager.get_flows_dashboard_link(flow_type=flow_type),
+            links_manager.get_flows_docs_link(),
+        ]
+        updated = await update_flow(
+            ctx=mcp_context,
+            configuration_id=created.id,
+            flow_type=flow_type,
+            name=new_name,
+            description=new_description,
+            phases=phases,
+            tasks=tasks,
+            change_description='Integration test update',
+        )
+        assert isinstance(updated, FlowToolResponse)
+        assert created.id == updated.id
+        assert updated.description == new_description
+        assert updated.success is True
+        assert set(updated.links) == set(expected_links)
+
+        # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=CONDITIONAL_FLOW_COMPONENT_ID, configuration_id=flow_id
+        )
+
+        assert isinstance(metadata, list)
+        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+        sync_flow = await client.storage_client.configuration_detail(
+            component_id=CONDITIONAL_FLOW_COMPONENT_ID,
+            configuration_id=flow_id,
+            )
+        updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow["version"]}'
+        assert updated_by_md_key in metadata_dict
+        assert metadata_dict[updated_by_md_key] == 'true'
+
+    finally:
+        await client.storage_client.configuration_delete(
+            component_id=CONDITIONAL_FLOW_COMPONENT_ID,
+            configuration_id=flow_id,
+            skip_trash=True
+            )
 
 
 @pytest.mark.asyncio
@@ -194,29 +431,63 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
 async def test_get_flow_schema(mcp_context: Context) -> None:
     """
     Test that get_flow_schema returns the flow configuration JSON schema.
+    Tests the conditional behavior where the tool might return a different schema
+    than requested based on project settings.
     """
-    schema_result = await get_flow_schema(mcp_context)
+    project_info = await get_project_info(mcp_context)
 
-    assert isinstance(schema_result, str)
-    assert schema_result.startswith('```json\n')
-    assert schema_result.endswith('\n```')
+    # Test 1: Request orchestrator schema (should always work)
+    legacy_flow_schema = await get_flow_schema(mcp_context, ORCHESTRATOR_COMPONENT_ID)
+
+    assert isinstance(legacy_flow_schema, str)
+    assert legacy_flow_schema.startswith('```json\n')
+    assert legacy_flow_schema.endswith('\n```')
+    assert 'dependsOn' in legacy_flow_schema
 
     # Extract and parse the JSON content to verify it's valid
-    json_content = schema_result[8:-4]  # Remove ```json\n and \n```
-    parsed_schema = json.loads(json_content)
+    json_content = legacy_flow_schema[8:-4]  # Remove ```json\n and \n```
+    parsed_legacy_schema = json.loads(json_content)
 
-    # Verify basic schema structure
-    assert isinstance(parsed_schema, dict)
-    assert '$schema' in parsed_schema
-    assert 'properties' in parsed_schema
-    assert 'phases' in parsed_schema['properties']
-    assert 'tasks' in parsed_schema['properties']
+    # Verify basic schema structure for legacy flow
+    assert isinstance(parsed_legacy_schema, dict)
+    assert '$schema' in parsed_legacy_schema
+    assert 'properties' in parsed_legacy_schema
+    assert 'phases' in parsed_legacy_schema['properties']
+    assert 'tasks' in parsed_legacy_schema['properties']
+
+    # Test 2: Request conditional flow schema (behavior depends on project settings)
+    conditional_schema = await get_flow_schema(mcp_context, CONDITIONAL_FLOW_COMPONENT_ID)
+
+    assert isinstance(conditional_schema, str)
+    assert conditional_schema.startswith('```json\n')
+    assert conditional_schema.endswith('\n```')
+
+    # Extract and parse the JSON content
+    json_content = conditional_schema[8:-4]  # Remove ```json\n and \n```
+    parsed_conditional_schema = json.loads(json_content)
+
+    # Test 3: Verify the conditional behavior
+    if not project_info.conditional_flows:
+        # If the project does not support conditional flows, both requests should return the same schema
+        assert legacy_flow_schema == conditional_schema
+        LOG.info('Project has conditional flows disabled - both schemas are identical')
+    else:
+        # If conditional flows are enabled, the schemas should be different
+        assert legacy_flow_schema != conditional_schema
+        LOG.info('Project has conditional flows enabled - schemas are different')
+
+        # Verify that the conditional schema has conditional-specific properties
+        conditional_phases = parsed_conditional_schema['properties']['phases']['items']['properties']
+        assert 'next' in conditional_phases  # Conditional flows use 'next' instead of 'dependsOn'
+
+        conditional_tasks = parsed_conditional_schema['properties']['tasks']['items']['properties']['task']
+        assert 'oneOf' in conditional_tasks  # Conditional flows have structured task types
 
 
 @pytest.mark.asyncio
-async def test_create_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
+async def test_create_legacy_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
-    Create a flow with invalid structure (should raise ValueError).
+    Create a legacy flow with invalid structure (should raise ValueError).
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
     """
@@ -238,8 +509,246 @@ async def test_create_flow_invalid_structure(mcp_context: Context, configs: list
     with pytest.raises(ValueError, match='depends on non-existent phase'):
         await create_flow(
             ctx=mcp_context,
-            name='Invalid Flow',
+            name='Invalid Legacy Flow',
             description='Should fail',
             phases=phases,
             tasks=tasks,
         )
+
+
+@pytest.mark.asyncio
+async def test_create_conditional_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    Create a conditional flow with invalid structure (should raise ValueError).
+    :param mcp_context: The test context fixture.
+    :param configs: List of real configuration definitions.
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+
+    # Test invalid conditional flow structure - missing required fields and invalid types
+    phases = [
+        {
+            'id': 123,  # Invalid: should be string, not integer
+            'name': '',  # Invalid: empty string not allowed
+            'next': [
+                {
+                    'id': 'transition-1',
+                    'goto': 'phase-2'
+                }
+            ]
+        }
+    ]
+
+    tasks = [
+        {
+            'id': 'task-1',
+            'name': 'Task1',
+            'phase': 'phase-1',
+            'enabled': True,
+            'task': {
+                'type': 'invalid_type',  # Invalid: not one of job, notification, variable
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'invalid_mode'  # Invalid: should be 'run'
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError):
+        await create_conditional_flow(
+            ctx=mcp_context,
+            name='Invalid Conditional Flow',
+            description='Should fail',
+            phases=phases,
+            tasks=tasks,
+        )
+
+
+@pytest.mark.asyncio
+async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    Test complete flow lifecycle for both legacy and conditional flows.
+    Creates flows, retrieves them individually, and lists all flows.
+    Tests project-aware behavior based on conditional flows setting.
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+
+    project_info = await get_project_info(mcp_context)
+
+    # Test data for legacy flow
+    legacy_phases = [
+        {
+            'id': 1,
+            'name': 'Extract',
+            'description': 'Extract data from source',
+            'dependsOn': []
+        },
+        {
+            'id': 2,
+            'name': 'Load',
+            'description': 'Load data to destination',
+            'dependsOn': [1]
+        }
+    ]
+
+    legacy_tasks = [
+        {
+            'id': 20001,
+            'name': 'Extract from API',
+            'phase': 1,
+            'enabled': True,
+            'continueOnFailure': False,
+            'task': {
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            }
+        },
+        {
+            'id': 20002,
+            'name': 'Load to Warehouse',
+            'phase': 2,
+            'enabled': True,
+            'continueOnFailure': False,
+            'task': {
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            }
+        }
+    ]
+
+    # Test data for conditional flow
+    conditional_phases = [
+        {
+            'id': 'phase-1',
+            'name': 'Extract',
+            'description': 'Extract data from source',
+            'next': [
+                {
+                    'id': 'transition-1',
+                    'goto': 'phase-2'
+                }
+            ]
+        },
+        {
+            'id': 'phase-2',
+            'name': 'Load',
+            'description': 'Load data to destination',
+            'next': []
+        }
+    ]
+
+    conditional_tasks = [
+        {
+            'id': 'task-1',
+            'name': 'Extract from API',
+            'phase': 'phase-1',
+            'enabled': True,
+            'task': {
+                'type': 'job',
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            }
+        },
+        {
+            'id': 'task-2',
+            'name': 'Load to Warehouse',
+            'phase': 'phase-2',
+            'enabled': True,
+            'task': {
+                'type': 'job',
+                'componentId': configs[0].component_id,
+                'configId': configs[0].configuration_id,
+                'mode': 'run'
+            }
+        }
+    ]
+
+    created_flows = []
+
+    # Step 1: Create orchestrator flow (should always work)
+    orchestrator_flow_name = 'Integration Test Orchestrator Flow'
+    orchestrator_flow_description = 'Orchestrator flow created by integration test'
+
+    orchestrator_result = await create_flow(
+        ctx=mcp_context,
+        name=orchestrator_flow_name,
+        description=orchestrator_flow_description,
+        phases=legacy_phases,
+        tasks=legacy_tasks,
+    )
+
+    assert isinstance(orchestrator_result, FlowToolResponse)
+    assert orchestrator_result.success is True
+    assert orchestrator_result.description == orchestrator_flow_description
+    created_flows.append((ORCHESTRATOR_COMPONENT_ID, orchestrator_result.id))
+
+    # Step 2: Try to create conditional flow (only if project allows it)
+    conditional_flow_name = 'Integration Test Conditional Flow'
+    conditional_flow_description = 'Conditional flow created by integration test'
+
+    if project_info.conditional_flows:
+        conditional_result = await create_conditional_flow(
+            ctx=mcp_context,
+            name=conditional_flow_name,
+            description=conditional_flow_description,
+            phases=conditional_phases,
+            tasks=conditional_tasks,
+        )
+
+        assert isinstance(conditional_result, FlowToolResponse)
+        assert conditional_result.success is True
+        assert conditional_result.description == conditional_flow_description
+        created_flows.append((CONDITIONAL_FLOW_COMPONENT_ID, conditional_result.id))
+    else:
+        LOG.info('Conditional flows are disabled in this project, skipping conditional flow creation')
+
+    # Step 3: Get individual flows
+    for flow_type, flow_id in created_flows:
+        flow = await get_flow(mcp_context, configuration_id=flow_id)
+
+        assert isinstance(flow, Flow)
+        assert flow.configuration_id == flow_id
+
+        if flow_type == ORCHESTRATOR_COMPONENT_ID:
+            assert flow.name == orchestrator_flow_name
+            assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
+            assert len(flow.configuration.phases) == 2
+            assert len(flow.configuration.tasks) == 2
+            assert flow.configuration.phases[0].name == 'Extract'
+            assert flow.configuration.phases[1].name == 'Load'
+        else:
+            assert flow.name == conditional_flow_name
+            assert flow.component_id == CONDITIONAL_FLOW_COMPONENT_ID
+            assert len(flow.configuration.phases) == 2
+            assert len(flow.configuration.tasks) == 2
+            assert flow.configuration.phases[0].name == 'Extract'
+            assert flow.configuration.phases[1].name == 'Load'
+
+    # Step 4: List all flows and verify our created flows are there
+    flows_list = await list_flows(mcp_context)
+
+    assert isinstance(flows_list, ListFlowsOutput)
+    assert len(flows_list.flows) >= len(created_flows)
+
+    # Verify our created flows are in the list
+    flow_ids = [flow.configuration_id for flow in flows_list.flows]
+    for flow_type, flow_id in created_flows:
+        assert flow_id in flow_ids, f'Created {flow_type} flow {flow_id} not found in flows list'
+
+    # Step 5: Clean up - delete all created flows
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    for flow_type, flow_id in created_flows:
+        try:
+            await client.storage_client.configuration_delete(
+                component_id=flow_type,
+                configuration_id=flow_id,
+                skip_trash=True,
+                )
+            LOG.info(f'Successfully deleted {flow_type} flow {flow_id}')
+        except Exception as e:
+            LOG.warning(f'Failed to delete {flow_type} flow {flow_id}: {e}')

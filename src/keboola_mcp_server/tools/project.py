@@ -26,27 +26,13 @@ def add_project_tools(mcp: FastMCP) -> None:
 
 
 class ProjectInfo(BaseModel):
-    project_id: str | int = Field(
-        ...,
-        description='The id of the project.'
-    )
-    project_name: str = Field(
-        ...,
-        description='The name of the project.'
-    )
-    project_description: str = Field(
-        ...,
-        description='The description of the project.',
-    )
-    organization_id: str | int = Field(
-        ...,
-        description='The ID of the organization this project belongs to.'
-    )
-    sql_dialect: str = Field(
-        ...,
-        description='The sql dialect used in the project.'
-    )
-    links: list[Link] = Field(..., description='The links relevant to the project.')
+    project_id: str | int = Field(description='The id of the project.')
+    project_name: str = Field(description='The name of the project.')
+    project_description: str = Field(description='The description of the project.',)
+    organization_id: str | int = Field(description='The ID of the organization this project belongs to.')
+    sql_dialect: str = Field(description='The sql dialect used in the project.')
+    conditional_flows: bool = Field(description='Whether the project supports conditional flows.')
+    links: list[Link] = Field(description='The links relevant to the project.')
 
 
 @tool_errors()
@@ -73,6 +59,8 @@ async def get_project_info(
     )
 
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    project_features = cast(JsonDict, project_data.get('features', {}))
+    conditional_flows = 'hide-conditional-flows' not in project_features
     links = links_manager.get_project_links()
 
     project_info = ProjectInfo(
@@ -81,7 +69,9 @@ async def get_project_info(
         project_description=description,
         organization_id=organization_id,
         sql_dialect=sql_dialect,
+        conditional_flows=conditional_flows,
         links=links,
     )
+
     LOG.info('Returning unified project info.')
     return project_info
