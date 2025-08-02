@@ -47,7 +47,6 @@ LOG = logging.getLogger(__name__)
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    # Add tools with specific serializers where needed
     mcp.add_tool(FunctionTool.from_function(create_flow))
     mcp.add_tool(FunctionTool.from_function(create_conditional_flow))
     mcp.add_tool(FunctionTool.from_function(list_flows, serializer=listing_output_serializer))
