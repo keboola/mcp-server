@@ -246,7 +246,7 @@ async def update_flow(
         Field(
             description=(
                 'The type of flow to update. Use "keboola.flow" for conditional flows or '
-                '"keboola.orchestrator" for legacy flows.'
+                '"keboola.orchestrator" for legacy flows. This MUST match the existing flow type.'
             )
         )
     ],
@@ -258,26 +258,44 @@ async def update_flow(
 ) -> Annotated[FlowToolResponse, Field(description='Response object for flow update.')]:
     """
     Updates an existing flow configuration in Keboola.
+
     A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
     how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
     Each flow is composed of:
     - Tasks: individual component configurations (e.g., extractors, writers, transformations).
     - Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
 
+    PREREQUISITES:
+    - The flow specified by `configuration_id` must already exist in the project
+    - Use `get_flow` to retrieve the current flow configuration and determine its type
+    - Use `get_flow_schema` with the correct flow type to understand the required structure
+    - Ensure all referenced component configurations exist in the project
+
     CONSIDERATIONS:
-    - The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
-    - Each task and phase must include at least: `id` and `name`.
-    - Each task must reference an existing component configuration in the project.
-    - Items in the `dependsOn` phase field reference ids of other phases.
-    - The flow specified by `configuration_id` must already exist in the project.
-    - The `flow_type` parameter must match the actual type of the flow being updated.
-    - If the project has conditional flows disabled, this tool will fail when trying to update conditional flows.
+    - The `flow_type` parameter **MUST** match the actual type of the flow being updated
+    - The `phases` and `tasks` parameters must conform to the appropriate JSON schema
+    - Each task and phase must include at least: `id` and `name`
+    - Each task must reference an existing component configuration in the project
+    - Items in the `dependsOn` phase field reference ids of other phases
+    - If the project has conditional flows disabled, this tool will fail when trying to update conditional flows
     - Links contained in the response should ALWAYS be presented to the user
 
     USAGE:
     Use this tool to update an existing flow. You must specify the correct flow_type:
-    - Use "keboola.flow" for conditional flows (advanced flows with conditional logic)
-    - Use "keboola.orchestrator" for legacy flows (basic orchestration flows)
+    - Use `"keboola.flow"` for conditional flows
+    - Use `"keboola.orchestrator"` for legacy flows
+
+    EXAMPLES:
+    - user_input: "Add a new transformation phase to my existing flow"
+        - First use `get_flow` to retrieve the current flow configuration
+        - Determine the flow type from the response
+        - Use `get_flow_schema` with the correct flow type
+        - Update the phases and tasks arrays with the new transformation
+        - Set `flow_type` to match the existing flow type
+    - user_input: "Update my flow to include error handling"
+        - For conditional flows: add retry configurations and error conditions
+        - For legacy flows: adjust `continueOnFailure` settings
+        - Ensure the `flow_type` matches the existing flow
     """
 
     project_info = await get_project_info(ctx)
