@@ -435,7 +435,7 @@ class TestUpdateFlowTool:
         mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
 
         # Should raise ValueError with proper error message
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match='Conditional flows are not supported.') as exc_info:
             await update_flow(
                 ctx=mcp_context_client,
                 configuration_id='test-config-id',
@@ -759,7 +759,7 @@ class TestGetFlowSchemaTool:
         mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
 
         # Should raise ValueError with proper error message
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match='Conditional flows are not supported.') as exc_info:
             await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
 
         error_message = str(exc_info.value)
@@ -907,7 +907,7 @@ class TestGetFlowExamplesTool:
         mocker.patch('importlib.resources.files', return_value=mock_path)
 
         # Should raise ValueError with proper error message
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match='Conditional flows are not supported.') as exc_info:
             await get_flow_examples(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
         error_message = str(exc_info.value)
         assert 'Conditional flows are not supported in this project' in error_message
