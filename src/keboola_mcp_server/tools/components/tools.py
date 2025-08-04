@@ -35,11 +35,10 @@ from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
 from pydantic import Field
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.client import ConfigurationAPIResponse, JsonDict, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, listing_output_serializer
-from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentSummary,

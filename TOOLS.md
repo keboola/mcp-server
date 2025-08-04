@@ -36,9 +36,11 @@ component ID, configuration JSON, and description.
 configuration.
 
 ### Flow Tools
+- [create_conditional_flow](#create_conditional_flow): Creates a new **conditional flow** configuration in Keboola.
 - [create_flow](#create_flow): Creates a new flow configuration in Keboola.
 - [get_flow](#get_flow): Gets detailed information about a specific flow configuration.
-- [get_flow_schema](#get_flow_schema): Returns the JSON schema that defines the structure of Flow configurations.
+- [get_flow_examples](#get_flow_examples): Retrieves examples of valid flow configurations.
+- [get_flow_schema](#get_flow_schema): Returns the JSON schema for the given flow type in markdown format.
 - [list_flows](#list_flows): Retrieves flow configurations from the project.
 - [update_flow](#update_flow): Updates an existing flow configuration in Keboola.
 
@@ -53,6 +55,7 @@ filtering.
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
 ### Other Tools
+- [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
 - [search](#search): Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
 potentially narrowed down by item type, limited and paginated.
@@ -281,6 +284,8 @@ Executes an SQL SELECT query to get the data from the underlying database.
   about tables. The fully qualified table name can be found in the response from that tool.
 * Always use quoted column names when referring to table columns. The quoted column names can also be found
   in the response from the table information tool.
+* When querying columns with categorical values, use the `query_data` tool to inspect distinct values
+  beforehand and ensure valid filtering.
 
 
 **Input JSON Schema**:
@@ -291,10 +296,16 @@ Executes an SQL SELECT query to get the data from the underlying database.
       "description": "SQL SELECT query to run.",
       "title": "Sql Query",
       "type": "string"
+    },
+    "query_name": {
+      "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
+      "title": "Query Name",
+      "type": "string"
     }
   },
   "required": [
-    "sql_query"
+    "sql_query",
+    "query_name"
   ],
   "type": "object"
 }
@@ -1091,6 +1102,72 @@ EXAMPLES:
 ---
 
 # Flow Tools
+<a name="create_conditional_flow"></a>
+## create_conditional_flow
+**Description**:
+
+Creates a new **conditional flow** configuration in Keboola.
+
+If you haven't already called it, always use the `get_flow_schema` tool using `keboola.flow` flow type
+to see the latest schema for conditional flows and also look at the examples under `get_flow_examples` tool.
+
+CONSIDERATIONS:
+- Do not create conditions, unless user asks for them explicitly
+- All IDs must be unique and clearly defined.
+- The `phases` and `tasks` parameters must conform to the keboola.flow JSON schema.
+- The phases cannot be empty.
+- Conditional flows are the default and recommended flow type in Keboola.
+
+USE CASES:
+- user_input: Create a flow.
+- user_input: Create a flow with complex conditional logic and retry mechanisms.
+- user_input: Build a data pipeline with sophisticated error handling and notifications.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "A short, descriptive name for the flow.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "Detailed description of the flow purpose.",
+      "title": "Description",
+      "type": "string"
+    },
+    "phases": {
+      "description": "List of phase definitions for conditional flows.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "tasks": {
+      "description": "List of task definitions for conditional flows.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Tasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "phases",
+    "tasks"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="create_flow"></a>
 ## create_flow
 **Description**:
@@ -1101,6 +1178,9 @@ how tasks are grouped and ordered — enabling control over parallelization** an
 Each flow is composed of:
 - Tasks: individual component configurations (e.g., extractors, writers, transformations).
 - Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
+
+If you haven't already called it, always use the `get_flow_schema` tool using `keboola.orchestrator` flow type
+to see the latest schema for flows and also look at the examples under `get_flow_examples` tool.
 
 CONSIDERATIONS:
 - The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
@@ -1178,7 +1258,7 @@ Gets detailed information about a specific flow configuration.
 {
   "properties": {
     "configuration_id": {
-      "description": "ID of the flow configuration to retrieve.",
+      "description": "ID of the flow to retrieve.",
       "title": "Configuration Id",
       "type": "string"
     }
@@ -1191,17 +1271,73 @@ Gets detailed information about a specific flow configuration.
 ```
 
 ---
-<a name="get_flow_schema"></a>
-## get_flow_schema
+<a name="get_flow_examples"></a>
+## get_flow_examples
 **Description**:
 
-Returns the JSON schema that defines the structure of Flow configurations.
+Retrieves examples of valid flow configurations.
+
+CONSIDERATIONS:
+- If the project has conditional flows disabled, this tool will fail when requesting conditional flow examples.
+- Projects with conditional flows enabled can fetch examples for both flow types.
+- Projects with conditional flows disabled should use `keboola.orchestrator` for legacy flow examples.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "properties": {},
+  "properties": {
+    "flow_type": {
+      "description": "The type of the flow to retrieve examples for.",
+      "enum": [
+        "keboola.flow",
+        "keboola.orchestrator"
+      ],
+      "title": "Flow Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "flow_type"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_flow_schema"></a>
+## get_flow_schema
+**Description**:
+
+Returns the JSON schema for the given flow type in markdown format.
+`keboola.flow` = conditional flows
+`keboola.orchestrator` = legacy flows
+
+CONSIDERATIONS:
+- If the project has conditional flows disabled, this tool will fail when requesting conditional flow schema.
+- Otherwise, the returned schema matches the requested flow type.
+
+Usage:
+    Use this tool to inspect the required structure of phases and tasks for `create_flow` or `update_flow`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "flow_type": {
+      "description": "The type of flow for which to fetch schema.",
+      "enum": [
+        "keboola.flow",
+        "keboola.orchestrator"
+      ],
+      "title": "Flow Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "flow_type"
+  ],
   "type": "object"
 }
 ```
@@ -1211,7 +1347,7 @@ Returns the JSON schema that defines the structure of Flow configurations.
 ## list_flows
 **Description**:
 
-Retrieves flow configurations from the project.
+Retrieves flow configurations from the project. Optionally filtered by IDs.
 
 
 **Input JSON Schema**:
@@ -1219,7 +1355,8 @@ Retrieves flow configurations from the project.
 {
   "properties": {
     "flow_ids": {
-      "description": "The configuration IDs of the flows to retrieve.",
+      "default": [],
+      "description": "IDs of the flows to retrieve.",
       "items": {
         "type": "string"
       },
@@ -1237,22 +1374,44 @@ Retrieves flow configurations from the project.
 **Description**:
 
 Updates an existing flow configuration in Keboola.
+
 A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
 how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
 Each flow is composed of:
 - Tasks: individual component configurations (e.g., extractors, writers, transformations).
 - Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
 
+PREREQUISITES:
+- The flow specified by `configuration_id` must already exist in the project
+- Use `get_flow` to retrieve the current flow configuration and determine its type
+- Use `get_flow_schema` with the correct flow type to understand the required structure
+- Ensure all referenced component configurations exist in the project
+
 CONSIDERATIONS:
-- The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
-- Each task and phase must include at least: `id` and `name`.
-- Each task must reference an existing component configuration in the project.
-- Items in the `dependsOn` phase field reference ids of other phases.
-- The flow specified by `configuration_id` must already exist in the project.
+- The `flow_type` parameter **MUST** match the actual type of the flow being updated
+- The `phases` and `tasks` parameters must conform to the appropriate JSON schema
+- Each task and phase must include at least: `id` and `name`
+- Each task must reference an existing component configuration in the project
+- Items in the `dependsOn` phase field reference ids of other phases
+- If the project has conditional flows disabled, this tool will fail when trying to update conditional flows
 - Links contained in the response should ALWAYS be presented to the user
 
 USAGE:
-Use this tool to update an existing flow.
+Use this tool to update an existing flow. You must specify the correct flow_type:
+- Use `"keboola.flow"` for conditional flows
+- Use `"keboola.orchestrator"` for legacy flows
+
+EXAMPLES:
+- user_input: "Add a new transformation phase to my existing flow"
+    - First use `get_flow` to retrieve the current flow configuration
+    - Determine the flow type from the response
+    - Use `get_flow_schema` with the correct flow type
+    - Update the phases and tasks arrays with the new transformation
+    - Set `flow_type` to match the existing flow type
+- user_input: "Update my flow to include error handling"
+    - For conditional flows: add retry configurations and error conditions
+    - For legacy flows: adjust `continueOnFailure` settings
+    - Ensure the `flow_type` matches the existing flow
 
 
 **Input JSON Schema**:
@@ -1262,6 +1421,15 @@ Use this tool to update an existing flow.
     "configuration_id": {
       "description": "ID of the flow configuration to update.",
       "title": "Configuration Id",
+      "type": "string"
+    },
+    "flow_type": {
+      "description": "The type of flow to update. Use \"keboola.flow\" for conditional flows or \"keboola.orchestrator\" for legacy flows. This MUST match the existing flow type.",
+      "enum": [
+        "keboola.flow",
+        "keboola.orchestrator"
+      ],
+      "title": "Flow Type",
       "type": "string"
     },
     "name": {
@@ -1300,6 +1468,7 @@ Use this tool to update an existing flow.
   },
   "required": [
     "configuration_id",
+    "flow_type",
     "name",
     "description",
     "phases",
@@ -1500,6 +1669,43 @@ Answers a question using the Keboola documentation as a source.
 ---
 
 # Other Tools
+<a name="create_oauth_url"></a>
+## create_oauth_url
+**Description**:
+
+Generates an OAuth authorization URL for a Keboola component configuration.
+
+When using this tool, be very concise in your response. Just guide the user to click the
+authorization link.
+
+Note that this tool should be called specifically for the OAuth-requiring components after their
+configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmail.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "component_id": {
+      "description": "The component ID to grant access to (e.g., \"keboola.ex-google-analytics-v4\").",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "config_id": {
+      "description": "The configuration ID for the component.",
+      "title": "Config Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "component_id",
+    "config_id"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="get_project_info"></a>
 ## get_project_info
 **Description**:
