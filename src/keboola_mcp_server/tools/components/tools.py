@@ -28,7 +28,7 @@ component-related operations in the MCP server.
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -772,26 +772,26 @@ async def update_config(
     component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     parameters: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any],
         Field(
-            default=None,
+            Optional[dict[str, Any]],
             description=(
                 'The component configuration parameters, adhering to the root_configuration_schema schema. '
                 'Only updated if provided.'
             ),
         ),
-    ],
+    ] = None,
     storage: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any],
         Field(
-            default=None,
+            Optional[dict[str, Any]],
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that are not row-based and have tables or file '
                 'input mapping defined. Only updated if provided.'
             ),
         ),
-    ],
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates a specific root component configuration using given by component ID, and configuration ID.
@@ -899,26 +899,26 @@ async def update_config_row(
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     configuration_row_id: Annotated[str, Field(description='The ID of the configuration row to update.')],
     parameters: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any],
         Field(
-            default=None,
+            Optional[dict[str, Any]],
             description=(
                 'The component row configuration parameters, adhering to the row_configuration_schema. '
                 'Only updated if provided.'
             ),
         ),
-    ],
+    ] = None,
     storage: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any],
         Field(
-            default=None,
+            Optional[dict[str, Any]],
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined. '
                 'Only updated if provided.'
             ),
         ),
-    ],
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates a specific component configuration row in the specified configuration_id, using the specified name,
