@@ -751,26 +751,28 @@ async def add_config_row(
 @tool_errors()
 async def update_config(
     ctx: Context,
-    name: Annotated[
-        str,
-        Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
-        ),
-    ],
-    description: Annotated[
-        str,
-        Field(
-            description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
-            ),
-        ),
-    ],
     change_description: Annotated[
         str,
         Field(description='Description of the change made to the component configuration.'),
     ],
     component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
+    name: Annotated[
+        str,
+        Field(
+            Optional[str],
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
+    ] = None,
+    description: Annotated[
+        str,
+        Field(
+            Optional[str],
+            description=(
+                'The detailed description of the component configuration explaining its purpose and functionality.'
+            ),
+        ),
+    ] = None,
     parameters: Annotated[
         dict[str, Any],
         Field(
@@ -814,7 +816,7 @@ async def update_config(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    LOG.info(f'Updating configuration: {name} for component: {component_id} and configuration ID {configuration_id}.')
+    LOG.info(f'Updating configuration for component: {component_id} and configuration ID {configuration_id}.')
 
     current_config = await client.storage_client.configuration_detail(
         component_id=component_id, configuration_id=configuration_id
@@ -877,18 +879,6 @@ async def update_config(
 @tool_errors()
 async def update_config_row(
     ctx: Context,
-    name: Annotated[
-        str,
-        Field(description='A short, descriptive name summarizing the purpose of the component configuration.'),
-    ],
-    description: Annotated[
-        str,
-        Field(
-            description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
-            ),
-        ),
-    ],
     change_description: Annotated[
         str,
         Field(
@@ -898,6 +888,22 @@ async def update_config_row(
     component_id: Annotated[str, Field(description='The ID of the component to update.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     configuration_row_id: Annotated[str, Field(description='The ID of the configuration row to update.')],
+    name: Annotated[
+        str,
+        Field(
+            Optional[str],
+            description='A short, descriptive name summarizing the purpose of the component configuration.',
+        ),
+    ] = None,
+    description: Annotated[
+        str,
+        Field(
+            Optional[str],
+            description=(
+                'The detailed description of the component configuration explaining its purpose and functionality.'
+            ),
+        ),
+    ] = None,
     parameters: Annotated[
         dict[str, Any],
         Field(
@@ -941,7 +947,7 @@ async def update_config_row(
     links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
-        f'Updating configuration row: {name} for component: {component_id}, configuration id {configuration_id} '
+        f'Updating configuration row for component: {component_id}, configuration id {configuration_id} '
         f'and row id {configuration_row_id}.'
     )
 
