@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any, Mapping, Sequence
+from unittest.mock import call
 
 import pytest
 from mcp.server.fastmcp import Context
@@ -47,7 +48,10 @@ def _get_sapi_table() -> dict[str, Any]:
                 {'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
                 {'key': 'KBC.datatype.nullable', 'value': '1'},
             ],
-            'value': []
+            'value': [
+                {'key': 'KBC.description', 'value': 'Table ID'},
+                {'key': 'KBC.datatype.type', 'value': 'INTEGER'},
+            ]
         },
         'bucket': {'id': 'in.c-test'}
     }
@@ -229,9 +233,10 @@ async def test_list_buckets(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('sapi_table', 'expected'), [
+@pytest.mark.parametrize(('sapi_table', 'sql_dialect', 'expected'), [
     (
         _get_sapi_table(),
+        'Snowflake',
         TableDetail(
             id='in.c-test.test-table',
             name='test-table',
@@ -241,9 +246,9 @@ async def test_list_buckets(
             rows_count=100,
             data_size_bytes=1000,
             columns=[
-                TableColumnInfo(name='id', quoted_name='#id#'),
+                TableColumnInfo(name='id', quoted_name='#id#', native_type='VARCHAR', nullable=True),
                 TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=True),
-                TableColumnInfo(name='value', quoted_name='#value#'),
+                TableColumnInfo(name='value', quoted_name='#value#', native_type='INTEGER', nullable=False),
             ],
             fully_qualified_name='#SAPI_TEST#.#in.c-test#.#test-table#',
             links=[
@@ -257,10 +262,40 @@ async def test_list_buckets(
                     url='test://api.keboola.com/admin/projects/69420/storage/in.c-test')
             ]
         )
-    )
+    ),
+    (
+        _get_sapi_table(),
+        'BigQuery',
+        TableDetail(
+            id='in.c-test.test-table',
+            name='test-table',
+            display_name='test-table-display-name',
+            primary_key=['id'],
+            created='2024-01-01T00:00:00Z',
+            rows_count=100,
+            data_size_bytes=1000,
+            columns=[
+                TableColumnInfo(name='id', quoted_name='#id#', native_type='STRING', nullable=True),
+                TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=True),
+                TableColumnInfo(name='value', quoted_name='#value#', native_type='INTEGER', nullable=False),
+            ],
+            fully_qualified_name='#SAPI_TEST#.#in.c-test#.#test-table#',
+            links=[
+                Link(
+                    type='ui-detail',
+                    title='Table: test-table',
+                    url='test://api.keboola.com/admin/projects/69420/storage/in.c-test/table/test-table'),
+                Link(
+                    type='ui-detail',
+                    title='Bucket: in.c-test',
+                    url='test://api.keboola.com/admin/projects/69420/storage/in.c-test')
+            ]
+        )
+    ),
 ])
 async def test_get_table(
-    sapi_table: dict[str, Any], expected: TableDetail, mocker: MockerFixture, mcp_context_client: Context
+    sapi_table: dict[str, Any], sql_dialect: str, expected: TableDetail,
+    mocker: MockerFixture, mcp_context_client: Context
 ) -> None:
     """Test get_table tool."""
 
@@ -274,12 +309,17 @@ async def test_get_table(
         table_name=sapi_table['id'].rsplit('.')[-1],
         quote_char='#'
     ))
-    workspace_manager.get_quoted_name.side_effect = lambda name: f'#{name}#'
+    workspace_manager.get_quoted_name = mocker.AsyncMock(side_effect=lambda name: f'#{name}#')
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
     result = await get_table(sapi_table['id'], mcp_context_client)
 
     assert isinstance(result, TableDetail)
     assert expected == result
+    keboola_client.storage_client.table_detail.assert_called_once_with(sapi_table['id'])
+    workspace_manager.get_sql_dialect.assert_called_once()
+    workspace_manager.get_table_fqn.assert_called_once_with(sapi_table)
+    workspace_manager.get_quoted_name.assert_has_calls([call(col_name) for col_name in sapi_table['columns']])
 
 
 @pytest.mark.asyncio

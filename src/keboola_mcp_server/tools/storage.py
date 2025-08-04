@@ -115,8 +115,8 @@ class TableColumnInfo(BaseModel):
         validation_alias=AliasChoices('quotedName', 'quoted_name', 'quoted-name'),
         serialization_alias='quotedName',
     )
-    native_type: str | None = Field(default=None, description='The database type of data in the column.')
-    nullable: bool | None = Field(default=None, description='Whether the column can contain null values.')
+    native_type: str = Field(description='The database type of data in the column.')
+    nullable: bool = Field(description='Whether the column can contain null values.')
 
 
 class TableDetail(BaseModel):
@@ -224,15 +224,20 @@ async def get_table(
     raw_table = await client.storage_client.table_detail(table_id)
     raw_columns = cast(list[str], raw_table.get('columns', []))
     raw_column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))
+    raw_primary_key = cast(list[str], raw_table.get('primaryKey', []))
 
     column_info = []
     for col_name in raw_columns:
         col_meta = raw_column_metadata.get(col_name, [])
         native_type: str | None = _get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
-        nullable: bool | None = None
         if native_type:
             raw_nullable = _get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
             nullable = raw_nullable.lower() in ['1', 'yes', 'true']
+        else:
+            # default values for untyped columns
+            sql_dialect = await workspace_manager.get_sql_dialect()
+            native_type = 'STRING' if sql_dialect == 'BigQuery' else 'VARCHAR'
+            nullable = col_name not in raw_primary_key
 
         column_info.append(TableColumnInfo(
             name=col_name,
