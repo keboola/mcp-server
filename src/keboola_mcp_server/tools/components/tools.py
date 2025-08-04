@@ -476,7 +476,7 @@ async def update_sql_transformation(
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
     transformation = Component.from_api_response(api_component)
 
-    updated_configuration = current_config.get('configuration', {}).copy()
+    updated_configuration = current_config.get('configuration', {})
 
     if parameters is not None:
         updated_configuration['parameters'] = parameters.model_dump(by_alias=True)
@@ -775,8 +775,10 @@ async def update_config(
         dict[str, Any] | None,
         Field(
             default=None,
-            description="""The component configuration parameters, adhering to the root_configuration_schema schema.
-            Only updated if provided.""",
+            description=(
+                'The component configuration parameters, adhering to the root_configuration_schema schema. '
+                'Only updated if provided.'
+            ),
         ),
     ],
     storage: Annotated[
@@ -900,18 +902,21 @@ async def update_config_row(
         dict[str, Any] | None,
         Field(
             default=None,
-            description="""The component row configuration parameters, adhering to the row_configuration_schema.
-            Only updated if provided.""",
+            description=(
+                'The component row configuration parameters, adhering to the row_configuration_schema. '
+                'Only updated if provided.'
+            ),
         ),
     ],
     storage: Annotated[
         dict[str, Any] | None,
         Field(
             default=None,
-            description="""
-                The table and/or file input / output mapping of the component configuration.
-                It is present only for components that have tables or file input mapping defined.
-                Only updated if provided.""",
+            description=(
+                'The table and/or file input / output mapping of the component configuration. '
+                'It is present only for components that have tables or file input mapping defined. '
+                'Only updated if provided.'
+            ),
         ),
     ],
 ) -> ConfigToolOutput:
