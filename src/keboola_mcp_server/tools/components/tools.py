@@ -403,25 +403,25 @@ async def update_sql_transformation(
         Field(description='Description of the changes made to the transformation configuration.'),
     ],
     parameters: Annotated[
-        TransformationConfiguration.Parameters | None,
+        TransformationConfiguration.Parameters,
         Field(
-            default=None,
+            Optional[TransformationConfiguration.Parameters],
             description=(
                 'The updated "parameters" part of the transformation configuration that contains the newly '
                 'applied settings and preserves all other existing settings. Only updated if provided.'
             ),
         ),
-    ],
+    ] = None,
     storage: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any],
         Field(
-            default=None,
+            Optional[dict[str, Any]],
             description=(
                 'The updated "storage" part of the transformation configuration that contains the newly '
                 'applied settings and preserves all other existing settings. Only updated if provided.'
             ),
         ),
-    ],
+    ] = None,
     updated_description: Annotated[
         str,
         Field(
