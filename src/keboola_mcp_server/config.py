@@ -136,3 +136,7 @@ class MetadataField:
 
     # Brnach filtering works only for "fake development branches"
     FAKE_DEVELOPMENT_BRANCH = 'KBC.createdBy.branch.id'
+
+    # Data type metadata fields
+    DATATYPE_TYPE = 'KBC.datatype.type'
+    DATATYPE_NULLABLE = 'KBC.datatype.nullable'

@@ -1,12 +1,13 @@
 from datetime import datetime
 from typing import Any, Mapping, Sequence
+from unittest.mock import call
 
 import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
@@ -30,22 +31,8 @@ def parse_iso_timestamp(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace('Z', '+00:00'))
 
 
-@pytest.fixture
-def test_config() -> Config:
-    """Create a test configuration."""
-    return Config(
-        storage_token='test-token',
-        storage_api_url='https://connection.test.keboola.com',
-    )
-
-
-@pytest.fixture
-def mock_table_data() -> Mapping[str, Any]:
-    """Create a combined fixture for table testing.
-
-    Contains both the raw API response data and the expected transformed data.
-    """
-    raw_table_data = {
+def _get_sapi_table() -> dict[str, Any]:
+    return {
         'id': 'in.c-test.test-table',
         'name': 'test-table',
         'display_name': 'test-table-display-name',
@@ -54,21 +41,19 @@ def mock_table_data() -> Mapping[str, Any]:
         'rows_count': 100,
         'data_size_bytes': 1000,
         'columns': ['id', 'name', 'value'],
-        'bucket': {'id': 1}
-    }
-
-    return {
-        'raw_table_data': raw_table_data,  # What the client returns
-        'additional_data': {
-            # What workspace_manager should return
-            'table_fqn': TableFqn('SAPI_TEST', 'in.c-test', 'test-table', quote_char='#'),
-            # Expected transformed columns
-            'columns': [
-                TableColumnInfo(name='id', quoted_name='#id#'),
-                TableColumnInfo(name='name', quoted_name='#name#'),
-                TableColumnInfo(name='value', quoted_name='#value#'),
+        'columnMetadata': {
+            'id': [{'key': 'KBC.description', 'value': 'Table ID'}],
+            'name': [
+                {'key': 'KBC.description', 'value': 'Table ID'},
+                {'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                {'key': 'KBC.datatype.nullable', 'value': '1'},
             ],
+            'value': [
+                {'key': 'KBC.description', 'value': 'Table ID'},
+                {'key': 'KBC.datatype.type', 'value': 'INTEGER'},
+            ]
         },
+        'bucket': {'id': 'in.c-test'}
     }
 
 
@@ -248,47 +233,93 @@ async def test_list_buckets(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('sapi_table', 'sql_dialect', 'expected'), [
+    (
+        _get_sapi_table(),
+        'Snowflake',
+        TableDetail(
+            id='in.c-test.test-table',
+            name='test-table',
+            display_name='test-table-display-name',
+            primary_key=['id'],
+            created='2024-01-01T00:00:00Z',
+            rows_count=100,
+            data_size_bytes=1000,
+            columns=[
+                TableColumnInfo(name='id', quoted_name='#id#', native_type='VARCHAR', nullable=True),
+                TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=True),
+                TableColumnInfo(name='value', quoted_name='#value#', native_type='INTEGER', nullable=False),
+            ],
+            fully_qualified_name='#SAPI_TEST#.#in.c-test#.#test-table#',
+            links=[
+                Link(
+                    type='ui-detail',
+                    title='Table: test-table',
+                    url='test://api.keboola.com/admin/projects/69420/storage/in.c-test/table/test-table'),
+                Link(
+                    type='ui-detail',
+                    title='Bucket: in.c-test',
+                    url='test://api.keboola.com/admin/projects/69420/storage/in.c-test')
+            ]
+        )
+    ),
+    (
+        _get_sapi_table(),
+        'BigQuery',
+        TableDetail(
+            id='in.c-test.test-table',
+            name='test-table',
+            display_name='test-table-display-name',
+            primary_key=['id'],
+            created='2024-01-01T00:00:00Z',
+            rows_count=100,
+            data_size_bytes=1000,
+            columns=[
+                TableColumnInfo(name='id', quoted_name='#id#', native_type='STRING', nullable=True),
+                TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=True),
+                TableColumnInfo(name='value', quoted_name='#value#', native_type='INTEGER', nullable=False),
+            ],
+            fully_qualified_name='#SAPI_TEST#.#in.c-test#.#test-table#',
+            links=[
+                Link(
+                    type='ui-detail',
+                    title='Table: test-table',
+                    url='test://api.keboola.com/admin/projects/69420/storage/in.c-test/table/test-table'),
+                Link(
+                    type='ui-detail',
+                    title='Bucket: in.c-test',
+                    url='test://api.keboola.com/admin/projects/69420/storage/in.c-test')
+            ]
+        )
+    ),
+])
 async def test_get_table(
-    mocker: MockerFixture, mcp_context_client: Context, mock_table_data: Mapping[str, Any]
+    sapi_table: dict[str, Any], sql_dialect: str, expected: TableDetail,
+    mocker: MockerFixture, mcp_context_client: Context
 ) -> None:
     """Test get_table tool."""
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.table_detail = mocker.AsyncMock(return_value=mock_table_data['raw_table_data'])
+    keboola_client.storage_client.table_detail = mocker.AsyncMock(return_value=sapi_table)
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
-    workspace_manager.get_table_fqn = mocker.AsyncMock(return_value=mock_table_data['additional_data']['table_fqn'])
-    workspace_manager.get_quoted_name.side_effect = lambda name: f'#{name}#'
-    result = await get_table(mock_table_data['raw_table_data']['id'], mcp_context_client)
+    workspace_manager.get_table_fqn = mocker.AsyncMock(return_value=TableFqn(
+        db_name='SAPI_TEST',
+        schema_name=sapi_table['bucket']['id'],
+        table_name=sapi_table['id'].rsplit('.')[-1],
+        quote_char='#'
+    ))
+    workspace_manager.get_quoted_name = mocker.AsyncMock(side_effect=lambda name: f'#{name}#')
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+
+    result = await get_table(sapi_table['id'], mcp_context_client)
 
     assert isinstance(result, TableDetail)
-    assert result.id == mock_table_data['raw_table_data']['id']
-    assert result.name == mock_table_data['raw_table_data']['name']
-    assert result.display_name == mock_table_data['raw_table_data']['display_name']
-    assert result.primary_key == mock_table_data['raw_table_data']['primary_key']
-    assert result.rows_count == mock_table_data['raw_table_data']['rows_count']
-    assert result.data_size_bytes == mock_table_data['raw_table_data']['data_size_bytes']
-    assert result.fully_qualified_name == str(mock_table_data['additional_data']['table_fqn'])
-    assert result.columns == mock_table_data['additional_data']['columns']
-    assert set(result.links) == {
-        Link(
-            type='ui-detail',
-            title=f'Table: {mock_table_data["raw_table_data"]["name"]}',
-            url=(
-                f'test://api.keboola.com/admin/projects/69420/storage/'
-                f'{mock_table_data["raw_table_data"]["bucket"]["id"]}/table/'
-                f'{mock_table_data["raw_table_data"]["name"]}'
-            ),
-        ),
-        Link(
-            type='ui-detail',
-            title=f'Bucket: {mock_table_data["raw_table_data"]["bucket"]["id"]}',
-            url=(
-                f'test://api.keboola.com/admin/projects/69420/storage/'
-                f'{mock_table_data["raw_table_data"]["bucket"]["id"]}'
-            ),
-        ),
-    }
+    assert expected == result
+    keboola_client.storage_client.table_detail.assert_called_once_with(sapi_table['id'])
+    workspace_manager.get_sql_dialect.assert_called_once()
+    workspace_manager.get_table_fqn.assert_called_once_with(sapi_table)
+    workspace_manager.get_quoted_name.assert_has_calls([call(col_name) for col_name in sapi_table['columns']])
 
 
 @pytest.mark.asyncio
