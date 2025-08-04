@@ -224,11 +224,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         # if 'waii-integration' not in features:
         #     tools = [t for t in tools if t.name != 'text_to_sql']
 
-        # TODO: uncomment and adjust when the conditional flows support is added
-        # if 'conditional-flows-disabled' in features:
-        #     tools = [t for t in tools if t.name != 'create_conditional_flow']
-        # else:
-        #     tools = [t for t in tools if t.name != 'create_flow']
+        if 'hide-conditional-flows' in features:
+            tools = [t for t in tools if t.name != 'create_conditional_flow']
+        else:
+            tools = [t for t in tools if t.name != 'create_flow']
 
         return tools
 

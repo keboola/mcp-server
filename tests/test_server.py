@@ -21,6 +21,7 @@ class TestServer:
         tools = await server.get_tools()
         assert sorted(tool.name for tool in tools.values()) == [
             'add_config_row',
+            'create_conditional_flow',
             'create_config',
             'create_flow',
             'create_oauth_url',
@@ -32,6 +33,7 @@ class TestServer:
             'get_config',
             'get_config_examples',
             'get_flow',
+            'get_flow_examples',
             'get_flow_schema',
             'get_job',
             'get_project_info',
@@ -122,7 +124,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     os_mock.environ = envs
 
     mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
-        'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}
+        'owner': {'features': ['global-search', 'waii-integration', 'hide-conditional-flows']}
     })
 
     # create MCP server with the initial Config
@@ -133,7 +135,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     # running the server as stdio transport through client
     async with Client(mcp) as client:
         tools = await client.list_tools()
-        assert len(tools) == tools_count + 1  # plus the one we've added in this test
+        # plus the one we've added in this test minus one for filtering create_flow()
+        assert len(tools) == tools_count + 1 - 1
         assert tools[-1].name == 'assessed-function'
         assert tools[-1].description == 'custom text'
         # check if the inputSchema contains the expected param description

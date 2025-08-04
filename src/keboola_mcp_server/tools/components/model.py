@@ -36,8 +36,8 @@ from typing import Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
+from keboola_mcp_server.client import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse, ConfigurationAPIResponse
 
 # ============================================================================
 # TYPE DEFINITIONS
