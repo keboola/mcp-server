@@ -21,7 +21,7 @@ from keboola_mcp_server.client import (
 )
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import listing_output_serializer
+from keboola_mcp_server.mcp import exclude_none_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
@@ -49,7 +49,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
     mcp.add_tool(FunctionTool.from_function(create_flow))
     mcp.add_tool(FunctionTool.from_function(create_conditional_flow))
-    mcp.add_tool(FunctionTool.from_function(list_flows, serializer=listing_output_serializer))
+    mcp.add_tool(FunctionTool.from_function(list_flows, serializer=exclude_none_serializer))
     mcp.add_tool(FunctionTool.from_function(update_flow))
     mcp.add_tool(FunctionTool.from_function(get_flow))
     mcp.add_tool(FunctionTool.from_function(get_flow_examples))
