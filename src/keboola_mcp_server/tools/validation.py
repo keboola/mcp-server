@@ -261,7 +261,9 @@ def _validate_json_against_schema(
 
 
 def _load_schema(json_schema_name: ConfigurationSchemaResources) -> JsonDict:
-    with resources.open_text(RESOURCES, json_schema_name.value, encoding='utf-8') as f:
+    files = resources.files(RESOURCES)
+    schema_file = files / json_schema_name.value
+    with schema_file.open('r', encoding='utf-8') as f:
         return json.load(f)
 
 
