@@ -78,6 +78,7 @@ class FlowConfiguration(BaseModel):
 
 # =============================================================================
 # CONDITIONAL FLOW MODELS - RETRY CONFIGURATION
+# NOTE: These will be removed in future iterations once we fetch the shcema from AI service
 # =============================================================================
 
 class RetryStrategyParams(BaseModel):
