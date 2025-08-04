@@ -4,7 +4,7 @@ import importlib.resources as pkg_resources
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -250,11 +250,13 @@ async def update_flow(
             )
         )
     ],
-    name: Annotated[str, Field(description='Updated flow name.')],
-    description: Annotated[str, Field(description='Updated flow description.')],
     phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')],
     change_description: Annotated[str, Field(description='Description of changes made.')],
+    name: Annotated[Optional[str], Field(description='Updated flow name. Only updated if provided.')] = None,
+    description: Annotated[
+        Optional[str], Field(description='Updated flow description. Only updated if provided.')
+    ] = None,
 ) -> Annotated[FlowToolResponse, Field(description='Response object for flow update.')]:
     """
     Updates an existing flow configuration in Keboola.
