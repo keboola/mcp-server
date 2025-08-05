@@ -62,6 +62,7 @@ async def query_data(
       in the response from the table information tool.
     * When querying columns with categorical values, use the `query_data` tool to inspect distinct values
       beforehand and ensure valid filtering.
+    * Do not include any comments in the SQL code.
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     result = await workspace_manager.execute_query(sql_query)
