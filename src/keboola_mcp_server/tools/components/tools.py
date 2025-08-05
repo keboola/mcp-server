@@ -29,7 +29,7 @@ component-related operations in the MCP server.
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Optional, Sequence, cast
+from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -405,17 +405,16 @@ async def update_sql_transformation(
     parameters: Annotated[
         TransformationConfiguration.Parameters,
         Field(
-            Optional[TransformationConfiguration.Parameters],
             description=(
                 'The updated "parameters" part of the transformation configuration that contains the newly '
                 'applied settings and preserves all other existing settings. Only updated if provided.'
             ),
+            json_schema_extra={'type': 'object'},
         ),
     ] = None,
     storage: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The updated "storage" part of the transformation configuration that contains the newly '
                 'applied settings and preserves all other existing settings. Only updated if provided.'
@@ -428,7 +427,7 @@ async def update_sql_transformation(
             description='Updated transformation description reflecting the changes made in the behavior of '
             'the transformation. If no behavior changes are made, empty string preserves the original description.',
         ),
-    ] = '',
+    ] = None,
     is_disabled: Annotated[
         bool,
         Field(
@@ -552,13 +551,12 @@ async def create_config(
     storage: Annotated[
         dict[str, Any],
         Field(
-            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
             ),
         ),
-    ],
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -659,13 +657,12 @@ async def add_config_row(
     storage: Annotated[
         dict[str, Any],
         Field(
-            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
             ),
         ),
-    ],
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -759,14 +756,12 @@ async def update_config(
     name: Annotated[
         str,
         Field(
-            Optional[str],
             description='A short, descriptive name summarizing the purpose of the component configuration.',
         ),
     ] = None,
     description: Annotated[
         str,
         Field(
-            Optional[str],
             description=(
                 'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
@@ -775,7 +770,6 @@ async def update_config(
     parameters: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The component configuration parameters, adhering to the root_configuration_schema schema. '
                 'Only updated if provided.'
@@ -785,7 +779,6 @@ async def update_config(
     storage: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that are not row-based and have tables or file '
@@ -890,14 +883,12 @@ async def update_config_row(
     name: Annotated[
         str,
         Field(
-            Optional[str],
             description='A short, descriptive name summarizing the purpose of the component configuration.',
         ),
     ] = None,
     description: Annotated[
         str,
         Field(
-            Optional[str],
             description=(
                 'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
@@ -906,7 +897,6 @@ async def update_config_row(
     parameters: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The component row configuration parameters, adhering to the row_configuration_schema. '
                 'Only updated if provided.'
@@ -916,7 +906,6 @@ async def update_config_row(
     storage: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined. '
