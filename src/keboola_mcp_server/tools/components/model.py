@@ -31,6 +31,7 @@ from individual tasks:
 ## Legacy Models
 - ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
 """
+
 from datetime import datetime
 from typing import Any, List, Literal, Optional, Union
 
@@ -52,6 +53,7 @@ AllComponentTypes = Union[ComponentType, TransformationType]
 # COMPONENT MODELS
 # ============================================================================
 
+
 class ComponentCapabilities(BaseModel):
     """
     Component capabilities derived from developer portal flags.
@@ -63,30 +65,12 @@ class ComponentCapabilities(BaseModel):
     - OAuth: Requires OAuth authentication setup
     """
 
-    is_row_based: bool = Field(
-        default=False,
-        description='Whether the component supports row configurations'
-    )
-    has_table_input: bool = Field(
-        default=False,
-        description='Whether the component can read from tables'
-    )
-    has_table_output: bool = Field(
-        default=False,
-        description='Whether the component can write to tables'
-    )
-    has_file_input: bool = Field(
-        default=False,
-        description='Whether the component can read from files'
-    )
-    has_file_output: bool = Field(
-        default=False,
-        description='Whether the component can write to files'
-    )
-    requires_oauth: bool = Field(
-        default=False,
-        description='Whether the component requires OAuth authorization'
-    )
+    is_row_based: bool = Field(default=False, description='Whether the component supports row configurations')
+    has_table_input: bool = Field(default=False, description='Whether the component can read from tables')
+    has_table_output: bool = Field(default=False, description='Whether the component can write to tables')
+    has_file_input: bool = Field(default=False, description='Whether the component can read from files')
+    has_file_output: bool = Field(default=False, description='Whether the component can write to files')
+    requires_oauth: bool = Field(default=False, description='Whether the component requires OAuth authorization')
 
     @classmethod
     def from_flags(cls, flags: list[str]) -> 'ComponentCapabilities':
@@ -98,10 +82,9 @@ class ComponentCapabilities(BaseModel):
         """
         return cls(
             is_row_based='genericDockerUI-rows' in flags,
-            has_table_input=any(flag in flags for flag in [
-                'genericDockerUI-tableInput',
-                'genericDockerUI-simpleTableInput'
-            ]),
+            has_table_input=any(
+                flag in flags for flag in ['genericDockerUI-tableInput', 'genericDockerUI-simpleTableInput']
+            ),
             has_table_output='genericDockerUI-tableOutput' in flags,
             has_file_input='genericDockerUI-fileInput' in flags,
             has_file_output='genericDockerUI-fileOutput' in flags,
@@ -201,6 +184,7 @@ class Component(BaseModel):
 # CONFIGURATION MODELS
 # ============================================================================
 
+
 class ConfigurationRoot(BaseModel):
     """
     Complete configuration root with all data.
@@ -209,6 +193,7 @@ class ConfigurationRoot(BaseModel):
     credentials, global parameters, and shared storage mappings. For row-based
     components, this contains the common settings that apply to all rows.
     """
+
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of this configuration root')
     name: str = Field(description='The name of the configuration')
@@ -220,12 +205,10 @@ class ConfigurationRoot(BaseModel):
         description='The configuration parameters, adhering to the configuration root schema'
     )
     storage: Optional[dict[str, Any]] = Field(
-        default=None,
-        description='The table and/or file input/output mapping configuration'
+        default=None, description='The table and/or file input/output mapping configuration'
     )
     configuration_metadata: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description='Configuration metadata including MCP tracking'
+        default_factory=list, description='Configuration metadata including MCP tracking'
     )
 
     @classmethod
@@ -261,6 +244,7 @@ class ConfigurationRow(BaseModel):
     For row-based components, each row typically handles a specific data source,
     destination, or transformation operation.
     """
+
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of the corresponding configuration root')
     configuration_row_id: str = Field(description='The ID of this configuration row')
@@ -273,13 +257,9 @@ class ConfigurationRow(BaseModel):
         description='The configuration row parameters, adhering to the configuration row schema'
     )
     storage: Optional[dict[str, Any]] = Field(
-        default=None,
-        description='The table and/or file input/output mapping configuration'
+        default=None, description='The table and/or file input/output mapping configuration'
     )
-    configuration_metadata: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description='Configuration row metadata'
-    )
+    configuration_metadata: list[dict[str, Any]] = Field(default_factory=list, description='Configuration row metadata')
 
     @classmethod
     def from_api_row_data(
@@ -316,6 +296,7 @@ class ConfigurationRow(BaseModel):
 
 class ConfigurationRootSummary(BaseModel):
     """Lightweight configuration root for list operations."""
+
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of this configuration root')
     name: str = Field(description='The name of the configuration')
@@ -338,6 +319,7 @@ class ConfigurationRootSummary(BaseModel):
 
 class ConfigurationRowSummary(BaseModel):
     """Lightweight configuration row for list operations."""
+
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of the corresponding configuration root')
     row_configuration_id: str = Field(description='The ID of this configuration row')
@@ -373,12 +355,10 @@ class ConfigurationSummary(BaseModel):
     but with lightweight summary data. Used by list operations where many
     configurations are returned.
     """
-    configuration_root: ConfigurationRootSummary = Field(
-        description='The configuration root summary'
-    )
+
+    configuration_root: ConfigurationRootSummary = Field(description='The configuration root summary')
     configuration_rows: Optional[list[ConfigurationRowSummary]] = Field(
-        default=None,
-        description='The configuration row summaries'
+        default=None, description='The configuration row summaries'
     )
 
     @classmethod
@@ -419,21 +399,15 @@ class Configuration(BaseModel):
     component context and UI links. Used by get operations where detailed
     configuration information is needed.
     """
-    configuration_root: ConfigurationRoot = Field(
-        description='The complete configuration root'
-    )
+
+    configuration_root: ConfigurationRoot = Field(description='The complete configuration root')
     configuration_rows: Optional[list[ConfigurationRow]] = Field(
-        default=None,
-        description='The complete configuration rows'
+        default=None, description='The complete configuration rows'
     )
     component: Optional[ComponentSummary] = Field(
-        default=None,
-        description='The component this configuration belongs to'
+        default=None, description='The component this configuration belongs to'
     )
-    links: list[Link] = Field(
-        default_factory=list,
-        description='Navigation links for the web interface'
-    )
+    links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
 
     @classmethod
     def from_api_response(
@@ -478,6 +452,7 @@ class Configuration(BaseModel):
 # TOOL OUTPUT MODELS
 # ============================================================================
 
+
 class ConfigToolOutput(BaseModel):
     """Standard response model for configuration tool operations."""
 
@@ -502,7 +477,8 @@ class ListConfigsOutput(BaseModel):
     """Response model for list_configs tool."""
 
     components_with_configurations: List[ComponentWithConfigurations] = Field(
-        description='The groupings of components and their respective configurations.')
+        description='The groupings of components and their respective configurations.'
+    )
     links: List[Link] = Field(
         description='The list of links relevant to the listing of components with configurations.',
     )
@@ -512,7 +488,8 @@ class ListTransformationsOutput(BaseModel):
     """Response model for list_transformations tool."""
 
     components_with_configurations: List[ComponentWithConfigurations] = Field(
-        description='The groupings of transformation components and their respective configurations.')
+        description='The groupings of transformation components and their respective configurations.'
+    )
     links: List[Link] = Field(
         description='The list of links relevant to the listing of transformation components with configurations.',
     )
@@ -521,6 +498,7 @@ class ListTransformationsOutput(BaseModel):
 # ============================================================================
 # LEGACY MODELS (minimal set for Flow tools compatibility)
 # ============================================================================
+
 
 class ComponentConfigurationResponseBase(BaseModel):
     """

@@ -32,14 +32,12 @@ async def test_get_project_info(mocker: MockerFixture, mcp_context_client: Conte
 
     project_id = 'proj-123'
     base_url = 'https://connection.test.keboola.com'
-    links = [
-        Link(type='ui-detail', title='Project Dashboard', url=f'{base_url}/admin/projects/{project_id}')
-    ]
+    links = [Link(type='ui-detail', title='Project Dashboard', url=f'{base_url}/admin/projects/{project_id}')]
     mock_links_manager = mocker.Mock()
     mock_links_manager.get_project_links.return_value = links
     mocker.patch(
         'keboola_mcp_server.tools.project.ProjectLinksManager.from_client',
-        new=mocker.AsyncMock(return_value=mock_links_manager)
+        new=mocker.AsyncMock(return_value=mock_links_manager),
     )
 
     # Call the tool

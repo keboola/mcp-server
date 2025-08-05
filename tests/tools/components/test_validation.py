@@ -124,9 +124,10 @@ def test_validate_parameters_output_format(input_parameters, output_parameters):
 def test_validate_flow_valid(valid_flow_path: str):
     with open(valid_flow_path, 'r') as f:
         valid_flow = json.load(f)
-    assert validation.validate_flow_configuration_against_schema(
-        valid_flow,
-        flow_type=ORCHESTRATOR_COMPONENT_ID) == valid_flow
+    assert (
+        validation.validate_flow_configuration_against_schema(valid_flow, flow_type=ORCHESTRATOR_COMPONENT_ID)
+        == valid_flow
+    )
 
 
 @pytest.mark.parametrize(

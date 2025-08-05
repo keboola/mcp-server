@@ -123,9 +123,10 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     os_mock = mocker.patch('keboola_mcp_server.server.os')
     os_mock.environ = envs
 
-    mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
-        'owner': {'features': ['global-search', 'waii-integration', 'hide-conditional-flows']}
-    })
+    mocker.patch(
+        'keboola_mcp_server.client.AsyncStorageClient.verify_token',
+        return_value={'owner': {'features': ['global-search', 'waii-integration', 'hide-conditional-flows']}},
+    )
 
     # create MCP server with the initial Config
     mcp = create_server(config)
@@ -176,9 +177,10 @@ async def test_keboola_injection_and_lifespan(
     config = Config.from_dict(cfg_dict)
 
     mocker.patch('keboola_mcp_server.server.os.environ', os_environ_params)
-    mocker.patch('keboola_mcp_server.client.AsyncStorageClient.verify_token', return_value={
-        'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}
-    })
+    mocker.patch(
+        'keboola_mcp_server.client.AsyncStorageClient.verify_token',
+        return_value={'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}},
+    )
 
     server = create_server(config)
 

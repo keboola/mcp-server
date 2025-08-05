@@ -49,7 +49,7 @@ the names of real example buckets, tables & configurations that are within the p
 • Provide real-world examples the project can handle
 • Connect technical capabilities to business outcomes
 
-Please provide a comprehensive analysis with specific examples and names from the actual project data."""
+Please provide a comprehensive analysis with specific examples and names from the actual project data.""",
         )
     ]
 
@@ -103,7 +103,7 @@ any issues, risks, or optimization opportunities.
 • Long-term optimization strategies
 • Best practices implementation suggestions
 
-Please provide specific findings with component and table names and actionable recommendations."""
+Please provide specific findings with component and table names and actionable recommendations.""",
         )
     ]
 
@@ -157,7 +157,7 @@ async def data_quality_assessment() -> List[Message]:
 • Data governance suggestions
 
 Please analyze the actual project data and provide specific findings with table names,
-metrics, and actionable recommendations."""
+metrics, and actionable recommendations.""",
         )
     ]
 
@@ -211,7 +211,7 @@ identify potential vulnerabilities and security best practice violations.
 • Security best practices implementation
 • Compliance enhancement suggestions
 
-Please provide specific findings with component and bucket names and prioritized security recommendations."""
+Please provide specific findings with component and bucket names and prioritized security recommendations.""",
         )
     ]
 
@@ -266,7 +266,7 @@ identify optimization opportunities.
 • Resource allocation recommendations
 
 Please analyze actual project performance data and provide specific
-recommendations with component names and expected performance improvements."""
+recommendations with component names and expected performance improvements.""",
         )
     ]
 
@@ -321,7 +321,7 @@ project, their configurations, and usage patterns.
 • Efficiency improvement suggestions
 
 Please provide specific details including component names, configuration IDs, and
-actionable insights for project optimization."""
+actionable insights for project optimization.""",
         )
     ]
 
@@ -376,7 +376,7 @@ provide troubleshooting recommendations.
 • Monitoring and alerting enhancements
 
 Please analyze actual error logs and job histories to provide specific error
-instances with component names and detailed troubleshooting guidance."""
+instances with component names and detailed troubleshooting guidance.""",
         )
     ]
 
@@ -437,14 +437,13 @@ project that can be used for onboarding, maintenance, and knowledge sharing.
 • Development and testing procedures
 
 Please create detailed, professional documentation using actual project data
-including specific names, configurations, and real examples."""
+including specific names, configurations, and real examples.""",
         )
     ]
 
 
 async def generate_project_descriptions(
-    focus_area: str = 'all',
-    include_technical_details: bool = True
+    focus_area: str = 'all', include_technical_details: bool = True
 ) -> List[Message]:
     """Generate comprehensive descriptions for all tables and buckets in a Keboola project.
 
@@ -463,7 +462,7 @@ async def generate_project_descriptions(
     focus_instruction = {
         'buckets': 'Focus specifically on bucket-level descriptions and organization.',
         'tables': 'Focus specifically on table-level descriptions and data structures.',
-        'all': 'Provide comprehensive descriptions for both buckets and tables.'
+        'all': 'Provide comprehensive descriptions for both buckets and tables.',
     }.get(focus_area, 'Provide comprehensive descriptions for both buckets and tables.')
 
     # Pre-calculate conditional sections to avoid long lines
@@ -508,7 +507,7 @@ For each table, provide:
 • Recommendations for improving descriptions
 • Suggestions for better data organization
 
-Please analyze the actual project data and provide specific, actionable descriptions for each component."""
+Please analyze the actual project data and provide specific, actionable descriptions for each component.""",
         )
     ]
 
@@ -531,15 +530,13 @@ Please help me:
 4. Recommend debugging approaches
 5. Provide best practices for transformation development
 
-What specific information would you need to effectively debug this transformation?"""
+What specific information would you need to effectively debug this transformation?""",
         )
     ]
 
 
 async def create_data_pipeline_plan(
-    source_description: str,
-    target_description: str,
-    requirements: str = ''
+    source_description: str, target_description: str, requirements: str = ''
 ) -> List[Message]:
     """Generate a prompt to create a data pipeline plan.
 
@@ -583,7 +580,7 @@ Please help me design a comprehensive data pipeline plan that includes:
    - Scalability recommendations
    - Maintenance and documentation
 
-Please provide a detailed, step-by-step implementation plan with specific Keboola components and configurations."""
+Please provide a detailed, step-by-step implementation plan with specific Keboola components and configurations.""",
         )
     ]
 
@@ -627,15 +624,13 @@ I need help with:
    - Trade-offs between approaches
    - Scalability considerations
 
-Please provide the optimized query with explanations for each improvement."""
+Please provide the optimized query with explanations for each improvement.""",
         )
     ]
 
 
 async def troubleshoot_component_error(
-    component_name: str,
-    error_message: str,
-    component_type: str = 'unknown'
+    component_name: str, error_message: str, component_type: str = 'unknown'
 ) -> List[Message]:
     """Generate a prompt to troubleshoot a component error.
 
@@ -676,6 +671,6 @@ Please help me:
    - Logs or metrics to check
    - Related components that might be affected
 
-Please provide a comprehensive troubleshooting guide with specific actions I can take."""
+Please provide a comprehensive troubleshooting guide with specific actions I can take.""",
         )
     ]

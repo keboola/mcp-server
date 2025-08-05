@@ -1,4 +1,5 @@
 """Module to add prompts to the Keboola MCP server."""
+
 from fastmcp.prompts import Prompt
 
 from keboola_mcp_server.mcp import KeboolaMcpServer

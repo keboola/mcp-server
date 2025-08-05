@@ -37,24 +37,9 @@ from keboola_mcp_server.tools.flow.tools import (
 def legacy_flow_phases() -> List[Dict[str, Any]]:
     """Sample legacy flow phases."""
     return [
-        {
-            'id': 1,
-            'name': 'Data Extraction',
-            'description': 'Extract data from various sources',
-            'dependsOn': []
-        },
-        {
-            'id': 2,
-            'name': 'Data Transformation',
-            'description': 'Transform and process data',
-            'dependsOn': [1]
-        },
-        {
-            'id': 3,
-            'name': 'Data Loading',
-            'description': 'Load data to destination',
-            'dependsOn': [2]
-        }
+        {'id': 1, 'name': 'Data Extraction', 'description': 'Extract data from various sources', 'dependsOn': []},
+        {'id': 2, 'name': 'Data Transformation', 'description': 'Transform and process data', 'dependsOn': [1]},
+        {'id': 3, 'name': 'Data Loading', 'description': 'Load data to destination', 'dependsOn': [2]},
     ]
 
 
@@ -68,11 +53,7 @@ def legacy_flow_tasks() -> List[Dict[str, Any]]:
             'phase': 1,
             'enabled': True,
             'continueOnFailure': False,
-            'task': {
-                'componentId': 'keboola.ex-aws-s3',
-                'configId': '123456',
-                'mode': 'run'
-            }
+            'task': {'componentId': 'keboola.ex-aws-s3', 'configId': '123456', 'mode': 'run'},
         },
         {
             'id': 20002,
@@ -80,11 +61,7 @@ def legacy_flow_tasks() -> List[Dict[str, Any]]:
             'phase': 2,
             'enabled': True,
             'continueOnFailure': False,
-            'task': {
-                'componentId': 'keboola.snowflake-transformation',
-                'configId': '789012',
-                'mode': 'run'
-            }
+            'task': {'componentId': 'keboola.snowflake-transformation', 'configId': '789012', 'mode': 'run'},
         },
         {
             'id': 20003,
@@ -92,12 +69,8 @@ def legacy_flow_tasks() -> List[Dict[str, Any]]:
             'phase': 3,
             'enabled': True,
             'continueOnFailure': False,
-            'task': {
-                'componentId': 'keboola.wr-snowflake',
-                'configId': '345678',
-                'mode': 'run'
-            }
-        }
+            'task': {'componentId': 'keboola.wr-snowflake', 'configId': '345678', 'mode': 'run'},
+        },
     ]
 
 
@@ -109,13 +82,7 @@ def mock_conditional_flow_phases() -> List[Dict[str, Any]]:
             'id': 'phase1',
             'name': 'Simple Phase',
             'description': 'A simple conditional flow phase',
-            'next': [
-                {
-                    'id': 'transition1',
-                    'name': 'Simple Transition',
-                    'goto': None
-                }
-            ]
+            'next': [{'id': 'transition1', 'name': 'Simple Transition', 'goto': None}],
         }
     ]
 
@@ -131,23 +98,17 @@ def mock_conditional_flow_tasks() -> List[Dict[str, Any]]:
             'enabled': True,
             'task': {
                 'type': 'notification',
-                'recipients': [
-                    {
-                        'channel': 'email',
-                        'address': 'admin@company.com'
-                    }
-                ],
+                'recipients': [{'channel': 'email', 'address': 'admin@company.com'}],
                 'title': 'Simple Notification',
-                'message': 'This is a simple notification task'
-            }
+                'message': 'This is a simple notification task',
+            },
         }
     ]
 
 
 @pytest.fixture
 def mock_conditional_flow(
-    mock_conditional_flow_phases: List[Dict[str, Any]],
-    mock_conditional_flow_tasks: List[Dict[str, Any]]
+    mock_conditional_flow_phases: List[Dict[str, Any]], mock_conditional_flow_tasks: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """Mock conditional flow configuration response for get_flow endpoint."""
     return {
@@ -162,19 +123,15 @@ def mock_conditional_flow(
         'changeDescription': 'Initial creation',
         'isDisabled': False,
         'isDeleted': False,
-        'configuration': {
-            'phases': mock_conditional_flow_phases,
-            'tasks': mock_conditional_flow_tasks
-        },
+        'configuration': {'phases': mock_conditional_flow_phases, 'tasks': mock_conditional_flow_tasks},
         'rows': [],
-        'metadata': []
+        'metadata': [],
     }
 
 
 @pytest.fixture
 def mock_conditional_flow_create_update(
-    mock_conditional_flow_phases: List[Dict[str, Any]],
-    mock_conditional_flow_tasks: List[Dict[str, Any]]
+    mock_conditional_flow_phases: List[Dict[str, Any]], mock_conditional_flow_tasks: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """Mock conditional flow configuration response for create/update endpoints."""
     return {
@@ -187,19 +144,15 @@ def mock_conditional_flow_create_update(
         'changeDescription': 'Initial creation',
         'isDisabled': False,
         'isDeleted': False,
-        'configuration': {
-            'phases': mock_conditional_flow_phases,
-            'tasks': mock_conditional_flow_tasks
-        },
+        'configuration': {'phases': mock_conditional_flow_phases, 'tasks': mock_conditional_flow_tasks},
         'state': {},
-        'currentVersion': {'version': 1}
+        'currentVersion': {'version': 1},
     }
 
 
 @pytest.fixture
 def mock_legacy_flow_create_update(
-    legacy_flow_phases: list[dict[str, Any]],
-    legacy_flow_tasks: list[dict[str, Any]]
+    legacy_flow_phases: list[dict[str, Any]], legacy_flow_tasks: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Mock legacy flow configuration response for create/update endpoints."""
     return {
@@ -212,19 +165,15 @@ def mock_legacy_flow_create_update(
         'changeDescription': 'Initial creation',
         'isDisabled': False,
         'isDeleted': False,
-        'configuration': {
-            'phases': legacy_flow_phases,
-            'tasks': legacy_flow_tasks
-        },
+        'configuration': {'phases': legacy_flow_phases, 'tasks': legacy_flow_tasks},
         'state': {},
-        'currentVersion': {'version': 1}
+        'currentVersion': {'version': 1},
     }
 
 
 @pytest.fixture
 def mock_legacy_flow(
-    legacy_flow_phases: list[dict[str, Any]],
-    legacy_flow_tasks: list[dict[str, Any]]
+    legacy_flow_phases: list[dict[str, Any]], legacy_flow_tasks: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Mock legacy flow configuration response for get_flow endpoint."""
     return {
@@ -239,13 +188,11 @@ def mock_legacy_flow(
         'changeDescription': 'Initial creation',
         'isDisabled': False,
         'isDeleted': False,
-        'configuration': {
-            'phases': legacy_flow_phases,
-            'tasks': legacy_flow_tasks
-        },
+        'configuration': {'phases': legacy_flow_phases, 'tasks': legacy_flow_tasks},
         'rows': [],
-        'metadata': []
+        'metadata': [],
     }
+
 
 # =============================================================================
 # CREATE_FLOW TOOL TESTS
@@ -270,7 +217,7 @@ class TestCreateFlowTool:
             keboola_client.storage_client,
             'configuration_create',
             return_value=mock_legacy_flow_create_update,
-            )
+        )
 
         result = await create_flow(
             ctx=mcp_context_client,
@@ -300,7 +247,7 @@ class TestCreateFlowTool:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.configuration_create = mocker.AsyncMock(
             return_value=mock_conditional_flow_create_update
-            )
+        )
 
         result = await create_conditional_flow(
             ctx=mcp_context_client,
@@ -444,7 +391,7 @@ class TestUpdateFlowTool:
                 description='Updated description for conditional flow',
                 phases=[],
                 tasks=[],
-                change_description='Test update'
+                change_description='Test update',
             )
 
         error_message = str(exc_info.value)
@@ -481,10 +428,8 @@ class TestGetFlowTool:
 
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         mocker.patch.object(
-            keboola_client.storage_client,
-            'configuration_detail',
-            side_effect=mock_configuration_detail
-            )
+            keboola_client.storage_client, 'configuration_detail', side_effect=mock_configuration_detail
+        )
 
         result = await get_flow(
             ctx=mcp_context_client,
@@ -501,12 +446,10 @@ class TestGetFlowTool:
         assert result.is_disabled == mock_legacy_flow['isDisabled']
         assert result.is_deleted == mock_legacy_flow['isDeleted']
         assert result.configuration.phases == [
-            FlowPhase.model_validate(phase)
-            for phase in mock_legacy_flow['configuration']['phases']
+            FlowPhase.model_validate(phase) for phase in mock_legacy_flow['configuration']['phases']
         ]
         assert result.configuration.tasks == [
-            FlowTask.model_validate(task)
-            for task in mock_legacy_flow['configuration']['tasks']
+            FlowTask.model_validate(task) for task in mock_legacy_flow['configuration']['tasks']
         ]
         assert len(result.links) == 3
 
@@ -521,10 +464,7 @@ class TestGetFlowTool:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_conditional_flow)
 
-        result = await get_flow(
-            ctx=mcp_context_client,
-            configuration_id='conditional_flow_456'
-        )
+        result = await get_flow(ctx=mcp_context_client, configuration_id='conditional_flow_456')
 
         assert isinstance(result, Flow)
         assert result.component_id == mock_conditional_flow['component_id']
@@ -537,12 +477,10 @@ class TestGetFlowTool:
         assert result.is_disabled == mock_conditional_flow['isDisabled']
         assert result.is_deleted == mock_conditional_flow['isDeleted']
         assert result.configuration.phases == [
-            ConditionalFlowPhase.model_validate(phase)
-            for phase in mock_conditional_flow['configuration']['phases']
+            ConditionalFlowPhase.model_validate(phase) for phase in mock_conditional_flow['configuration']['phases']
         ]
         assert result.configuration.tasks == [
-            ConditionalFlowTask.model_validate(task)
-            for task in mock_conditional_flow['configuration']['tasks']
+            ConditionalFlowTask.model_validate(task) for task in mock_conditional_flow['configuration']['tasks']
         ]
         assert len(result.links) == 3
 
@@ -636,10 +574,7 @@ class TestListFlowsTool:
 
         keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_configuration_detail)
 
-        result = await list_flows(
-            ctx=mcp_context_client,
-            flow_ids=['legacy_flow_123', 'conditional_flow_456']
-        )
+        result = await list_flows(ctx=mcp_context_client, flow_ids=['legacy_flow_123', 'conditional_flow_456'])
 
         # Validate the overall response structure
         assert isinstance(result, ListFlowsOutput)
@@ -806,7 +741,7 @@ class TestGetFlowExamplesTool:
                 '"tasks":[{"id":36614,"name":"ex-generic-v2-34446855","phase":59812,'
                 '"task":{"componentId":"ex-generic-v2","configId":"34446855","mode":"run"},'
                 '"continueOnFailure":false,"enabled":false}]}'
-            )
+            ),
         ]
 
         # Mock the file path resolution
@@ -865,7 +800,7 @@ class TestGetFlowExamplesTool:
                 '"name":"Phase1",'
                 '"next":[{"id":"e5dc7c43-d311-4e90-a2ca-6cac8d2eb5f5",'
                 '"goto":"92649482-45d6-475d-aace-33466f37e381"}]}]}'
-            )
+            ),
         ]
 
         # Mock the file path resolution

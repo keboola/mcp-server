@@ -25,7 +25,7 @@ LOG = logging.getLogger(__name__)
 RESOURCES = 'keboola_mcp_server.resources'
 FLOW_SCHEMAS: Mapping[FlowType, str] = {
     CONDITIONAL_FLOW_COMPONENT_ID: 'conditional-flow-schema.json',
-    ORCHESTRATOR_COMPONENT_ID: 'flow-schema.json'
+    ORCHESTRATOR_COMPONENT_ID: 'flow-schema.json',
 }
 
 
@@ -194,9 +194,8 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
     for flow_type in FLOW_TYPES:
         try:
             raw_flow = await client.storage_client.configuration_detail(
-                component_id=flow_type,
-                configuration_id=flow_id
-                )
+                component_id=flow_type, configuration_id=flow_id
+            )
             api_flow = APIFlowResponse.model_validate(raw_flow)
             return api_flow, flow_type
         except Exception:
@@ -205,10 +204,7 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
     raise ValueError(f'Flow configuration "{flow_id}" not found')
 
 
-async def get_flows_by_ids(
-    client: KeboolaClient,
-    flow_ids: Sequence[str]
-) -> list[FlowSummary]:
+async def get_flows_by_ids(client: KeboolaClient, flow_ids: Sequence[str]) -> list[FlowSummary]:
     flows: list[FlowSummary] = []
 
     for flow_id in flow_ids:
@@ -223,10 +219,7 @@ async def get_flows_by_ids(
     return flows
 
 
-async def get_flows_by_type(
-    client: KeboolaClient,
-    flow_type: FlowType
-) -> list[FlowSummary]:
+async def get_flows_by_type(client: KeboolaClient, flow_type: FlowType) -> list[FlowSummary]:
     raw_flows = await client.storage_client.configuration_list(component_id=flow_type)
     return [
         FlowSummary.from_api_response(api_config=APIFlowResponse.model_validate(raw), flow_component_id=flow_type)

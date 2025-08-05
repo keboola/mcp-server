@@ -25,6 +25,7 @@ component-related operations in the MCP server.
 - `create_sql_transformation`: Create new SQL transformations with code blocks
 - `update_sql_transformation`: Update existing SQL transformation configurations
 """
+
 import json
 import logging
 from datetime import datetime, timezone
@@ -73,6 +74,7 @@ LOG = logging.getLogger(__name__)
 # ============================================================================
 # TOOL REGISTRATION
 # ============================================================================
+
 
 def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
@@ -147,9 +149,7 @@ async def list_configs(
         components_with_configurations = await list_configs_by_ids(client, component_ids)
     links = [links_manager.get_used_components_link()]
 
-    return ListConfigsOutput(
-        components_with_configurations=components_with_configurations, links=links
-    )
+    return ListConfigsOutput(components_with_configurations=components_with_configurations, links=links)
 
 
 @tool_errors()
@@ -190,14 +190,13 @@ async def list_transformations(
 
     links = [links_manager.get_transformations_dashboard_link()]
 
-    return ListTransformationsOutput(
-        components_with_configurations=components_with_configurations, links=links
-    )
+    return ListTransformationsOutput(components_with_configurations=components_with_configurations, links=links)
 
 
 # ============================================================================
 # COMPONENT DISCOVERY TOOLS
 # ============================================================================
+
 
 @tool_errors()
 async def get_component(

@@ -77,10 +77,7 @@ def assert_retrieve_components() -> Callable[
         # assert configurations list details
         assert all(len(component.configurations) == len(configurations) for component in components_with_configurations)
         assert all(
-            all(
-                isinstance(config.configuration_root, ConfigurationRootSummary)
-                for config in component.configurations
-            )
+            all(isinstance(config.configuration_root, ConfigurationRootSummary) for config in component.configurations)
             for component in components_with_configurations
         )
         # use zip to iterate over the result and mock_configurations since we artificially mock the .get method
@@ -457,15 +454,9 @@ async def test_update_sql_transformation(
     updated_configuration['version'] = 2
     mock_component['id'] = expected_component_id
 
-    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
-        return_value=existing_configuration
-    )
-    keboola_client.storage_client.configuration_update = mocker.AsyncMock(
-        return_value=updated_configuration
-    )
-    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(
-        return_value=mock_component
-    )
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_configuration)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
     # Convert parameters dict to TransformationConfiguration.Parameters if provided
     transformation_parameters = None

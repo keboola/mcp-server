@@ -96,7 +96,6 @@ async def create_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
-
 ) -> Annotated[FlowToolResponse, Field(description='Response object for flow creation.')]:
     """
     Creates a new flow configuration in Keboola.
@@ -160,7 +159,7 @@ async def create_flow(
         description=api_config.description,
         timestamp=datetime.now(timezone.utc),
         success=True,
-        links=flow_links
+        links=flow_links,
     )
 
     LOG.info(f'Created legacy flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
@@ -172,14 +171,8 @@ async def create_conditional_flow(
     ctx: Context,
     name: Annotated[str, Field(description='A short, descriptive name for the flow.')],
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
-    phases: Annotated[
-        list[dict[str, Any]],
-        Field(description='List of phase definitions for conditional flows.')
-    ],
-    tasks: Annotated[
-        list[dict[str, Any]],
-        Field(description='List of task definitions for conditional flows.')
-    ],
+    phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions for conditional flows.')],
+    tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
 ) -> Annotated[FlowToolResponse, Field(description='Response object for enhanced flow creation.')]:
     """
     Creates a new **conditional flow** configuration in Keboola.
@@ -230,7 +223,7 @@ async def create_conditional_flow(
         description=api_config.description,
         timestamp=datetime.now(timezone.utc),
         success=True,
-        links=flow_links
+        links=flow_links,
     )
 
     LOG.info(f'Created conditional flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
@@ -248,7 +241,7 @@ async def update_flow(
                 'The type of flow to update. Use "keboola.flow" for conditional flows or '
                 '"keboola.orchestrator" for legacy flows. This MUST match the existing flow type.'
             )
-        )
+        ),
     ],
     phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')],
@@ -326,7 +319,7 @@ async def update_flow(
         flow_configuration = {
             'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
             'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
-            }
+        }
 
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
@@ -355,7 +348,7 @@ async def update_flow(
         description=api_config.description,
         timestamp=datetime.now(timezone.utc),
         success=True,
-        links=flow_links
+        links=flow_links,
     )
     LOG.info(f'Updated flow configuration: {api_config.id}')
     return tool_response
@@ -429,7 +422,8 @@ async def get_flow_examples(
         )
 
     filename = (
-        'conditional_flow_examples.jsonl' if flow_type == CONDITIONAL_FLOW_COMPONENT_ID
+        'conditional_flow_examples.jsonl'
+        if flow_type == CONDITIONAL_FLOW_COMPONENT_ID
         else 'legacy_flow_examples.jsonl'
     )
     file_path = pkg_resources.files(resources) / 'flow_examples' / filename

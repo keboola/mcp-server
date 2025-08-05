@@ -30,6 +30,7 @@ class _JsonWrapper(BaseModel):
     Uses Pydantic's serialization to handle complex objects as well as simple types like int, float, bool, str, etc.
     Primary use case is serializing tool function parameters for Keboola Storage API events.
     """
+
     data: Any  # The arbitrary object to be JSON serialized
 
     @classmethod
@@ -38,7 +39,7 @@ class _JsonWrapper(BaseModel):
 
 
 async def _trigger_event(
-        func: Callable, args: tuple, kwargs: dict, exception: Exception | None, execution_time: float
+    func: Callable, args: tuple, kwargs: dict, exception: Exception | None, execution_time: float
 ) -> None:
     # TODO: This is not always correct. In general tool functions can be registered
     #  in the MCP server under different names.
@@ -52,8 +53,10 @@ async def _trigger_event(
     assert ctx_param_name, f'The tool function {tool_name} must have a "Context" parameter.'
 
     ctx = bound_args.arguments.get(ctx_param_name)
-    assert isinstance(ctx, Context), (f'The tool function {tool_name} has invalid "{ctx_param_name}" parameter. '
-                                      f'Expecting instance of "Context", got {type(ctx)}.')
+    assert isinstance(ctx, Context), (
+        f'The tool function {tool_name} has invalid "{ctx_param_name}" parameter. '
+        f'Expecting instance of "Context", got {type(ctx)}.'
+    )
 
     server_state = ServerState.from_context(ctx)
     user_agent: str | None = None
