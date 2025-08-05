@@ -6,7 +6,7 @@
   "properties": {
     "phases": {
       "type": "array",
-      "description": "Array of phases that group tasks and define execution order. Tasks within a phase run in parallel, while phases run sequentially based on dependencies and conditions.",
+      "description": "Array of phases that group tasks and define execution order. Within each phase, tasks execute in this order: notification tasks first (sequentially), then variable tasks (sequentially), finally job tasks (in parallel). Phases themselves run sequentially based on dependencies and conditions. Phases cannot be empty and must have at least one enabled task.",
       "items": {
         "type": "object",
         "required": ["id", "name"],
@@ -74,7 +74,11 @@
             "type": "object",
             "oneOf": [
               {
-                "required": ["type", "componentId", "configId", "mode"],
+                "required": ["type", "componentId", "mode"],
+                "anyOf": [
+                  { "required": ["configId"] },
+                  { "required": ["configData"] }
+                ],
                 "description": "Job task that executes a Keboola component configuration",
                 "properties": {
                   "type": {
@@ -88,6 +92,10 @@
                   "configId": {
                     "type": "string",
                     "description": "ID of the component configuration to run"
+                  },
+                  "configData": {
+                    "type": "object",
+                    "description": "Inline component configuration parameters"
                   },
                   "mode": {
                     "type": "string",
@@ -219,6 +227,7 @@
           },
           "enabled": {
             "type": "boolean",
+            "default": true,
             "description": "Whether this task is enabled. Disabled tasks are skipped during execution. Defaults to true if not specified."
           }
         }
@@ -228,14 +237,14 @@
   "definitions": {
     "conditionObject": {
       "type": "object",
-      "description": "Base condition object that can evaluate to true or false. Used in flow transitions and variable sources.",
       "oneOf": [
         { "$ref": "#/definitions/constantCondition" },
         { "$ref": "#/definitions/phaseCondition" },
         { "$ref": "#/definitions/taskCondition" },
         { "$ref": "#/definitions/variableCondition" },
         { "$ref": "#/definitions/operatorCondition" },
-        { "$ref": "#/definitions/functionCondition" }
+        { "$ref": "#/definitions/functionCondition" },
+        { "$ref": "#/definitions/arrayCondition" }
       ]
     },
     "constantCondition": {
@@ -257,7 +266,8 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["phase"]
+          "enum": ["phase"],
+          "description": "Returns a value from the specified phase"
         },
         "phase": {
           "type": "string",
@@ -276,7 +286,8 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["task"]
+          "enum": ["task"],
+          "description": "Returns a value from the specified task or its associated job"
         },
         "task": {
           "type": "string",
@@ -286,6 +297,7 @@
           "type": "string",
           "enum": [
             "taskId",
+            "phaseId",
             "status",
             "job.id",
             "job.componentId",
@@ -298,7 +310,7 @@
             "job.result.output.tables",
             "job.result.message"
           ],
-          "description": "Property path to retrieve from the task context. Basic properties: 'taskId', 'status' (success, user_error, application_error, terminated). Job properties available for job tasks: 'job.id', 'job.componentId', 'job.configId', 'job.status', 'job.result', 'job.startTime', 'job.endTime', 'job.duration' (in seconds), 'job.result.output.tables' (array), 'job.result.message' (string)."
+          "description": "Property path to retrieve from the task context. Basic properties: 'taskId', 'phaseId', 'status' (success, user_error, application_error, terminated). Job properties available for job tasks: 'job.id', 'job.componentId', 'job.configId', 'job.status', 'job.result', 'job.startTime', 'job.endTime', 'job.duration' (in seconds), 'job.result.output.tables' (array), 'job.result.message' (string)."
         }
       }
     },
@@ -319,7 +331,7 @@
     "operatorCondition": {
       "type": "object",
       "required": ["type", "operator"],
-      "description": "A condition that applies logical or relational operators to other conditions.",
+      "description": "A condition that applies logical or relational operators to other conditions and returns boolean result (true/false).",
       "oneOf": [
         {
           "required": ["operator", "operands"],
@@ -331,7 +343,7 @@
             "operator": {
               "type": "string",
               "enum": ["AND", "OR", "EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "INCLUDES", "CONTAINS"],
-              "description": "Operator type: 'AND'/'OR' (logical, requires 2+ operands), 'EQUALS'/'NOT_EQUALS' (equality, requires 2 operands), 'GREATER_THAN'/'LESS_THAN' (comparison, requires 2 operands), 'INCLUDES' (checks if first operand is included in second operand array, requires 2 operands), 'CONTAINS' (checks if first operand string contains second operand string, case-insensitive, requires 2 operands)"
+              "description": "Operator type: 'AND'/'OR' (logical, requires 1+ operands), 'EQUALS'/'NOT_EQUALS' (equality, requires 2 operands), 'GREATER_THAN'/'LESS_THAN' (comparison, requires 2 operands), 'INCLUDES' (checks if first operand is included in second operand array, requires 2 operands), 'CONTAINS' (checks if first operand string contains second operand string, case-insensitive, requires 2 operands)"
             },
             "operands": {
               "type": "array",
@@ -353,7 +365,7 @@
             "operator": {
               "type": "string",
               "enum": ["ALL_TASKS_IN_PHASE", "ANY_TASKS_IN_PHASE"],
-              "description": "Phase operator type: 'ALL_TASKS_IN_PHASE' (condition must be true for all tasks in phase), 'ANY_TASKS_IN_PHASE' (condition must be true for at least one task in phase)"
+              "description": "Phase operator type: 'ALL_TASKS_IN_PHASE' (condition must be true for all tasks in phase, requires 1 operand), 'ANY_TASKS_IN_PHASE' (condition must be true for at least one task in phase, requires 1 operand)"
             },
             "phase": {
               "type": "string",
@@ -363,7 +375,7 @@
               "type": "array",
               "description": "Array containing the condition to apply to each task in the phase. Use '*' as the task ID in task conditions.",
               "items": {
-                "$ref": "#/definitions/conditionObject"
+                "$ref": "#/definitions/operatorCondition"
               }
             }
           }
@@ -380,25 +392,26 @@
         },
         "function": {
           "type": "string",
-          "enum": ["COUNT", "CONTAINS", "DATE"],
-          "description": "Function type: 'COUNT' (counts elements in array, requires 1 operand), 'CONTAINS' (checks if string contains substring case-insensitively, requires 2 operands), 'DATE' (formats current date/time using PHP DateTime::format, requires 1 operand with format string)"
+          "enum": ["COUNT", "DATE"],
+          "description": "Function type: 'COUNT' (counts elements in array, requires 1 operand), 'DATE' (formats current date/time using PHP DateTime::format, requires 1 operand with format string)"
         },
         "operands": {
           "type": "array",
           "description": "Array of conditions that provide inputs to the function. Number of required operands depends on function type.",
           "items": {
-            "$ref": "#/definitions/conditionObject"
+            "$ref": "#/definitions/variableSourceObject"
           }
         }
       }
     },
     "variableSourceObject": {
       "type": "object",
-      "description": "Source definition for computing variable values dynamically. Limited subset of condition types that can be used as variable sources (excludes logical operators and variable references).",
+      "description": "Source definition for computing variable values dynamically. Limited subset of condition types that can be used as variable sources (excludes logical operators).",
       "oneOf": [
         { "$ref": "#/definitions/constantCondition" },
         { "$ref": "#/definitions/phaseCondition" },
         { "$ref": "#/definitions/taskCondition" },
+        { "$ref": "#/definitions/variableCondition" },
         { "$ref": "#/definitions/functionCondition" },
         { "$ref": "#/definitions/arrayCondition" }
       ]
@@ -415,7 +428,7 @@
         "operands": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/conditionObject"
+            "$ref": "#/definitions/variableSourceObject"
           }
         }
       }
