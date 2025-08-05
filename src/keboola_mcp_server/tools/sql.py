@@ -67,7 +67,7 @@ async def query_data(
     * Always use fully qualified table names that include database name, schema name and table name
     * Get fully qualified table names using table information tools - use exact format shown
     * Snowflake format: "DATABASE"."SCHEMA"."TABLE"
-    * BigQuery format: `project.dataset.table`
+    * BigQuery format: `project`.`dataset`.`table`
     * Always use quoted column names when referring to table columns (exact quotes from table info)
     
     CTE (WITH CLAUSE) RULES:
