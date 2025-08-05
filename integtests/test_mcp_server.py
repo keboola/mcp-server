@@ -237,13 +237,11 @@ async def _assert_basic_setup(server: FastMCP, client: Client):
     # ignore 'search' tool which may or may not be exposed based on the testing project's features
     # ignore 'create_flow' and 'create_conditional_flow' since they are dependent on project settings
     client_tool_names = sorted(
-        t.name for t in client_tools
-        if t.name not in ['search', 'create_flow', 'create_conditional_flow']
+        t.name for t in client_tools if t.name not in ['search', 'create_flow', 'create_conditional_flow']
     )
 
     server_tool_names = sorted(
-        t for t in server_tools.keys()
-        if t not in ['search', 'create_flow', 'create_conditional_flow']
+        t for t in server_tools.keys() if t not in ['search', 'create_flow', 'create_conditional_flow']
     )
     assert client_tool_names == server_tool_names
     assert len(client_prompts) == len(server_prompts)

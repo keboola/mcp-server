@@ -19,6 +19,7 @@ This module contains helper functions and utilities used across the component to
 ## Data Models
 - TransformationConfiguration: Pydantic model for SQL transformation structure
 """
+
 import logging
 import re
 import unicodedata
@@ -51,6 +52,7 @@ BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 # COMPONENT TYPE HANDLING
 # ============================================================================
 
+
 def handle_component_types(
     types: Optional[Union[ComponentType, Sequence[ComponentType]]],
 ) -> Sequence[ComponentType]:
@@ -71,6 +73,7 @@ def handle_component_types(
 # ============================================================================
 # CONFIGURATION LISTING UTILITIES
 # ============================================================================
+
 
 async def list_configs_by_types(
     client: KeboolaClient, component_types: Sequence[AllComponentTypes]
@@ -97,16 +100,13 @@ async def list_configs_by_types(
         # Process each component and its configurations
         for raw_component in raw_components_with_configurations_by_type:
             raw_configuration_responses = [
-                ConfigurationAPIResponse.model_validate(
-                    raw_configuration | {'component_id': raw_component['id']}
-                )
+                ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': raw_component['id']})
                 for raw_configuration in cast(list[JsonDict], raw_component.get('configurations', []))
             ]
 
             # Convert to domain models
             configuration_summaries = [
-                ConfigurationSummary.from_api_response(api_config)
-                for api_config in raw_configuration_responses
+                ConfigurationSummary.from_api_response(api_config) for api_config in raw_configuration_responses
             ]
 
             # Process component
@@ -128,9 +128,7 @@ async def list_configs_by_types(
     return components_with_configurations
 
 
-async def list_configs_by_ids(
-    client: KeboolaClient, component_ids: Sequence[str]
-) -> list[ComponentWithConfigurations]:
+async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str]) -> list[ComponentWithConfigurations]:
     """
     Retrieve components with their configurations filtered by specific component IDs.
 
@@ -159,8 +157,7 @@ async def list_configs_by_ids(
             for raw_configuration in raw_configurations
         ]
         configuration_summaries = [
-            ConfigurationSummary.from_api_response(api_config)
-            for api_config in raw_configuration_responses
+            ConfigurationSummary.from_api_response(api_config) for api_config in raw_configuration_responses
         ]
 
         components_with_configurations.append(
@@ -181,6 +178,7 @@ async def list_configs_by_ids(
 # ============================================================================
 # COMPONENT FETCHING
 # ============================================================================
+
 
 async def fetch_component(
     client: KeboolaClient,
@@ -229,6 +227,7 @@ async def fetch_component(
 # ============================================================================
 # SQL TRANSFORMATION UTILITIES
 # ============================================================================
+
 
 def get_sql_transformation_id_from_sql_dialect(
     sql_dialect: str,

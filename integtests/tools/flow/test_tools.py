@@ -116,7 +116,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
             component_id=ORCHESTRATOR_COMPONENT_ID,
             configuration_id=flow_id,
             skip_trash=True,
-            )
+        )
 
 
 @pytest.mark.asyncio
@@ -135,25 +135,13 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
             'id': 'extract_phase',
             'name': 'Extract',
             'description': 'Extract data',
-            'next': [
-                {
-                    'id': 'extract_to_transform',
-                    'name': 'Extract to Transform',
-                    'goto': 'transform_phase'
-                }
-            ]
+            'next': [{'id': 'extract_to_transform', 'name': 'Extract to Transform', 'goto': 'transform_phase'}],
         },
         {
             'id': 'transform_phase',
             'name': 'Transform',
             'description': 'Transform data',
-            'next': [
-                {
-                    'id': 'transform_end',
-                    'name': 'End Flow',
-                    'goto': None
-                }
-            ]
+            'next': [{'id': 'transform_end', 'name': 'End Flow', 'goto': None}],
         },
     ]
     tasks = [
@@ -165,7 +153,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
                 'type': 'job',
                 'componentId': configs[0].component_id,
                 'configId': configs[0].configuration_id,
-                'mode': 'run'
+                'mode': 'run',
             },
         },
         {
@@ -176,7 +164,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
                 'type': 'job',
                 'componentId': configs[0].component_id,
                 'configId': configs[0].configuration_id,
-                'mode': 'run'
+                'mode': 'run',
             },
         },
     ]
@@ -234,7 +222,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
             component_id=CONDITIONAL_FLOW_COMPONENT_ID,
             configuration_id=flow_id,
             skip_trash=True,
-            )
+        )
 
 
 @pytest.mark.asyncio
@@ -306,17 +294,15 @@ async def test_update_flow(mcp_context: Context, configs: list[ConfigDef]) -> No
         sync_flow = await client.storage_client.configuration_detail(
             component_id=ORCHESTRATOR_COMPONENT_ID,
             configuration_id=flow_id,
-            )
+        )
         updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow["version"]}'
         assert updated_by_md_key in metadata_dict
         assert metadata_dict[updated_by_md_key] == 'true'
 
     finally:
         await client.storage_client.configuration_delete(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=flow_id,
-            skip_trash=True
-            )
+            component_id=ORCHESTRATOR_COMPONENT_ID, configuration_id=flow_id, skip_trash=True
+        )
 
 
 @pytest.mark.asyncio
@@ -336,13 +322,7 @@ async def test_update_conditional_flow(mcp_context: Context, configs: list[Confi
             'id': 'phase1',
             'name': 'Phase1',
             'description': 'First phase',
-            'next': [
-                {
-                    'id': 'phase1_end',
-                    'name': 'End Flow',
-                    'goto': None
-                }
-            ]
+            'next': [{'id': 'phase1_end', 'name': 'End Flow', 'goto': None}],
         },
     ]
     tasks = [
@@ -354,7 +334,7 @@ async def test_update_conditional_flow(mcp_context: Context, configs: list[Confi
                 'type': 'job',
                 'componentId': configs[0].component_id,
                 'configId': configs[0].configuration_id,
-                'mode': 'run'
+                'mode': 'run',
             },
         },
     ]
@@ -404,17 +384,15 @@ async def test_update_conditional_flow(mcp_context: Context, configs: list[Confi
         sync_flow = await client.storage_client.configuration_detail(
             component_id=CONDITIONAL_FLOW_COMPONENT_ID,
             configuration_id=flow_id,
-            )
+        )
         updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{sync_flow["version"]}'
         assert updated_by_md_key in metadata_dict
         assert metadata_dict[updated_by_md_key] == 'true'
 
     finally:
         await client.storage_client.configuration_delete(
-            component_id=CONDITIONAL_FLOW_COMPONENT_ID,
-            configuration_id=flow_id,
-            skip_trash=True
-            )
+            component_id=CONDITIONAL_FLOW_COMPONENT_ID, configuration_id=flow_id, skip_trash=True
+        )
 
 
 @pytest.mark.asyncio
@@ -531,12 +509,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
         {
             'id': 123,  # Invalid: should be string, not integer
             'name': '',  # Invalid: empty string not allowed
-            'next': [
-                {
-                    'id': 'transition-1',
-                    'goto': 'phase-2'
-                }
-            ]
+            'next': [{'id': 'transition-1', 'goto': 'phase-2'}],
         }
     ]
 
@@ -550,8 +523,8 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                 'type': 'invalid_type',  # Invalid: not one of job, notification, variable
                 'componentId': configs[0].component_id,
                 'configId': configs[0].configuration_id,
-                'mode': 'invalid_mode'  # Invalid: should be 'run'
-            }
+                'mode': 'invalid_mode',  # Invalid: should be 'run'
+            },
         }
     ]
 
@@ -579,18 +552,8 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
 
     # Test data for legacy flow
     legacy_phases = [
-        {
-            'id': 1,
-            'name': 'Extract',
-            'description': 'Extract data from source',
-            'dependsOn': []
-        },
-        {
-            'id': 2,
-            'name': 'Load',
-            'description': 'Load data to destination',
-            'dependsOn': [1]
-        }
+        {'id': 1, 'name': 'Extract', 'description': 'Extract data from source', 'dependsOn': []},
+        {'id': 2, 'name': 'Load', 'description': 'Load data to destination', 'dependsOn': [1]},
     ]
 
     legacy_tasks = [
@@ -600,11 +563,7 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
             'phase': 1,
             'enabled': True,
             'continueOnFailure': False,
-            'task': {
-                'componentId': configs[0].component_id,
-                'configId': configs[0].configuration_id,
-                'mode': 'run'
-            }
+            'task': {'componentId': configs[0].component_id, 'configId': configs[0].configuration_id, 'mode': 'run'},
         },
         {
             'id': 20002,
@@ -612,12 +571,8 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
             'phase': 2,
             'enabled': True,
             'continueOnFailure': False,
-            'task': {
-                'componentId': configs[0].component_id,
-                'configId': configs[0].configuration_id,
-                'mode': 'run'
-            }
-        }
+            'task': {'componentId': configs[0].component_id, 'configId': configs[0].configuration_id, 'mode': 'run'},
+        },
     ]
 
     # Test data for conditional flow
@@ -626,19 +581,9 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
             'id': 'phase-1',
             'name': 'Extract',
             'description': 'Extract data from source',
-            'next': [
-                {
-                    'id': 'transition-1',
-                    'goto': 'phase-2'
-                }
-            ]
+            'next': [{'id': 'transition-1', 'goto': 'phase-2'}],
         },
-        {
-            'id': 'phase-2',
-            'name': 'Load',
-            'description': 'Load data to destination',
-            'next': []
-        }
+        {'id': 'phase-2', 'name': 'Load', 'description': 'Load data to destination', 'next': []},
     ]
 
     conditional_tasks = [
@@ -651,8 +596,8 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
                 'type': 'job',
                 'componentId': configs[0].component_id,
                 'configId': configs[0].configuration_id,
-                'mode': 'run'
-            }
+                'mode': 'run',
+            },
         },
         {
             'id': 'task-2',
@@ -663,9 +608,9 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
                 'type': 'job',
                 'componentId': configs[0].component_id,
                 'configId': configs[0].configuration_id,
-                'mode': 'run'
-            }
-        }
+                'mode': 'run',
+            },
+        },
     ]
 
     created_flows = []
@@ -748,7 +693,7 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
                 component_id=flow_type,
                 configuration_id=flow_id,
                 skip_trash=True,
-                )
+            )
             LOG.info(f'Successfully deleted {flow_type} flow {flow_id}')
         except Exception as e:
             LOG.warning(f'Failed to delete {flow_type} flow {flow_id}: {e}')

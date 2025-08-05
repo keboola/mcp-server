@@ -20,9 +20,7 @@ def mock_token_response() -> Mapping[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_create_oauth_url_success(
-    mcp_context_client: Context, mock_token_response: Mapping[str, Any]
-) -> None:
+async def test_create_oauth_url_success(mcp_context_client: Context, mock_token_response: Mapping[str, Any]) -> None:
     """Test successful OAuth URL creation."""
     # Mock the storage client's token_create method to return the token response
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -94,9 +92,7 @@ async def test_create_oauth_url_token_creation_failure(
     """Test OAuth URL creation when token creation fails."""
     # Mock the storage client to raise an exception
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.token_create.side_effect = Exception(
-        'Token creation failed'
-    )
+    keboola_client.storage_client.token_create.side_effect = Exception('Token creation failed')
 
     with pytest.raises(Exception, match='Token creation failed'):
         await create_oauth_url(

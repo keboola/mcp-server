@@ -126,9 +126,7 @@ async def test_list_jobs(
 
 
 @pytest.mark.asyncio
-async def test_get_job(
-    mocker: MockerFixture, mcp_context_client: Context, mock_job: dict[str, Any], iso_format: str
-):
+async def test_get_job(mocker: MockerFixture, mcp_context_client: Context, mock_job: dict[str, Any], iso_format: str):
     """Tests get_job_detail tool."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)

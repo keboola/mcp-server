@@ -51,8 +51,7 @@ class ProjectLinksManager:
         return [self.get_project_detail_link()]
 
     # --- Flows ---
-    def get_flow_detail_link(self, flow_id: str | int, flow_name: str,
-                             flow_type: FlowType) -> Link:
+    def get_flow_detail_link(self, flow_id: str | int, flow_name: str, flow_type: FlowType) -> Link:
         """Get detail link for a specific flow based on its type."""
         flow_path = 'flows-v2' if flow_type == CONDITIONAL_FLOW_COMPONENT_ID else 'flows'
         return Link.detail(title=f'Flow: {flow_name}', url=self._url(f'{flow_path}/{flow_id}'))
@@ -66,8 +65,7 @@ class ProjectLinksManager:
     def get_flows_docs_link(self) -> Link:
         return Link.docs(title='Documentation for Keboola Flows', url=self.FLOW_DOCUMENTATION_URL)
 
-    def get_flow_links(self, flow_id: str | int, flow_name: str,
-                       flow_type: FlowType) -> list[Link]:
+    def get_flow_links(self, flow_id: str | int, flow_name: str, flow_type: FlowType) -> list[Link]:
         """Get all relevant links for a flow based on its type."""
         return [
             self.get_flow_detail_link(flow_id, flow_name, flow_type),
@@ -86,16 +84,10 @@ class ProjectLinksManager:
             title=f'{component_name} Configurations Dashboard', url=self._url(f'components/{component_id}')
         )
 
-    def get_used_components_link(
-        self
-    ) -> Link:
-        return Link.dashboard(
-            title='Used Components Dashboard', url=self._url('components/configurations')
-        )
+    def get_used_components_link(self) -> Link:
+        return Link.dashboard(title='Used Components Dashboard', url=self._url('components/configurations'))
 
-    def get_configuration_links(
-        self, component_id: str, configuration_id: str, configuration_name: str
-    ) -> list[Link]:
+    def get_configuration_links(self, component_id: str, configuration_id: str, configuration_name: str) -> list[Link]:
         return [
             self.get_component_config_link(
                 component_id=component_id, configuration_id=configuration_id, configuration_name=configuration_name
@@ -105,9 +97,7 @@ class ProjectLinksManager:
 
     # --- Transformations ---
     def get_transformations_dashboard_link(self) -> Link:
-        return Link.dashboard(
-            title='Transformations dashboard', url=self._url('transformations-v2')
-        )
+        return Link.dashboard(title='Transformations dashboard', url=self._url('transformations-v2'))
 
     # --- Jobs ---
     def get_job_detail_link(self, job_id: str) -> Link:

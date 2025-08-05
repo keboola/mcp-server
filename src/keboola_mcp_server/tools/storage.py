@@ -45,8 +45,7 @@ def _get_metadata_property(metadata: list[Mapping[str, Any]], key: str, provider
     :return: The value of the most recent matching metadata entry if found, or None otherwise.
     """
     filtered = [
-        m for m in metadata
-        if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
+        m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
     ]
     # TODO: ideally we should first convert the timestamps to UTC
     filtered.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
@@ -239,12 +238,14 @@ async def get_table(
             native_type = 'STRING' if sql_dialect == 'BigQuery' else 'VARCHAR'
             nullable = col_name not in raw_primary_key
 
-        column_info.append(TableColumnInfo(
-            name=col_name,
-            quoted_name=await workspace_manager.get_quoted_name(col_name),
-            native_type=native_type,
-            nullable=nullable,
-        ))
+        column_info.append(
+            TableColumnInfo(
+                name=col_name,
+                quoted_name=await workspace_manager.get_quoted_name(col_name),
+                native_type=native_type,
+                nullable=nullable,
+            )
+        )
 
     table_fqn = await workspace_manager.get_table_fqn(raw_table)
     bucket_info = cast(dict[str, Any], raw_table.get('bucket', {}))

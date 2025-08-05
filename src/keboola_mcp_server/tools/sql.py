@@ -78,10 +78,7 @@ async def query_data(
         writer.writeheader()
         writer.writerows(data.rows)
 
-        return QueryDataOutput(
-            query_name=query_name,
-            csv_data=output.getvalue()
-        )
+        return QueryDataOutput(query_name=query_name, csv_data=output.getvalue())
 
     else:
         raise ValueError(f'Failed to run SQL query, error: {result.message}')

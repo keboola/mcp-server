@@ -16,8 +16,10 @@ from keboola_mcp_server.mcp import ServerState
 @pytest.fixture
 def function_with_value_error():
     """A function that raises ValueError for testing general error handling."""
+
     async def func(_ctx: Context):
         raise ValueError('Simulated ValueError')
+
     return func
 
 

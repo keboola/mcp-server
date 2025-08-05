@@ -214,8 +214,9 @@ def _validate_parameters_configuration_against_schema(
     return parameters
 
 
-def validate_flow_configuration_against_schema(flow: JsonDict, flow_type: FlowType,
-                                               initial_message: Optional[str] = None) -> JsonDict:
+def validate_flow_configuration_against_schema(
+    flow: JsonDict, flow_type: FlowType, initial_message: Optional[str] = None
+) -> JsonDict:
     """
     Validate the flow configuration using jsonschema.
     :flow: json data to validate
@@ -224,7 +225,8 @@ def validate_flow_configuration_against_schema(flow: JsonDict, flow_type: FlowTy
     :returns: The validated flow configuration
     """
     schema_type = (
-        ConfigurationSchemaResources.LEGACY_FLOW if flow_type == ORCHESTRATOR_COMPONENT_ID
+        ConfigurationSchemaResources.LEGACY_FLOW
+        if flow_type == ORCHESTRATOR_COMPONENT_ID
         else ConfigurationSchemaResources.FLOW
     )
     schema = _load_schema(schema_type)

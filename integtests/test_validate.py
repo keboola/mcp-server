@@ -9,6 +9,7 @@ received from the LLM Agent.
 update of the component) assuming that the validation of json object against the schema had been correct. That is the
 reason why we are having those tests.
 """
+
 import logging
 from typing import cast
 

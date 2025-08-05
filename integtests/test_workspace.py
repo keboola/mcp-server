@@ -13,7 +13,7 @@ LOG = logging.getLogger(__name__)
 
 @pytest.fixture
 def dynamic_manager(
-        keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
+    keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
 ) -> Generator[WorkspaceManager, Any, None]:
     storage_client = sync_storage_client
     token_info = storage_client.tokens.verify()
@@ -33,11 +33,14 @@ def dynamic_manager(
     workspaces = storage_client.workspaces.list()
     # ignore the static workspaces
     workspaces = [
-        w for w in workspaces
-        if all([
-            w['connection']['schema'] != workspace_schema,
-            w.get('creatorToken', {}).get('description') != 'Background Indexing Token'
-        ])
+        w
+        for w in workspaces
+        if all(
+            [
+                w['connection']['schema'] != workspace_schema,
+                w.get('creatorToken', {}).get('description') != 'Background Indexing Token',
+            ]
+        )
     ]
     if workspaces:
         pytest.fail(

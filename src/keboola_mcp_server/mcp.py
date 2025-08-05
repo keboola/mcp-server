@@ -3,6 +3,7 @@ This module overrides FastMCP.add_tool() to improve conversion of tool function 
 into tool descriptions.
 It also provides a decorator that MCP tool functions can use to inject session state into their Context parameter.
 """
+
 import dataclasses
 import logging
 import os
@@ -99,10 +100,11 @@ class SessionStateMiddleware(fmw.Middleware):
 
     Note: HTTP headers and URL query parameters are only used when the server runs on HTTP-based transport.
     """
+
     async def on_message(
-            self,
-            context: fmw.MiddlewareContext[Any],
-            call_next: fmw.CallNext[Any, Any],
+        self,
+        context: fmw.MiddlewareContext[Any],
+        call_next: fmw.CallNext[Any, Any],
     ) -> Any:
         """
         Manages session state in the Context parameter. This middleware sets up the session state for all the other
@@ -142,12 +144,13 @@ class SessionStateMiddleware(fmw.Middleware):
                 if user := http_rq.scope.get('user'):
                     LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
                     assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
-                    assert isinstance(user.access_token, ProxyAccessToken), \
-                        f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+                    assert isinstance(
+                        user.access_token, ProxyAccessToken
+                    ), f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
                     config = dataclasses.replace(
                         config,
                         storage_token=user.access_token.sapi_token,
-                        bearer_token=user.access_token.delegate.token
+                        bearer_token=user.access_token.delegate.token,
                     )
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
@@ -200,6 +203,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     The middleware also intercepts the `on_call_tool()` call and raises an exception if a call is attempted to a tool
     that is not available in the current project.
     """
+
     @staticmethod
     async def get_project_features(ctx: Context) -> set[str]:
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
@@ -208,9 +212,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         return set(filter(None, token_info.get('owner', {}).get('features', [])))
 
     async def on_list_tools(
-            self,
-            context: MiddlewareContext[mt.ListToolsRequest],
-            call_next: CallNext[mt.ListToolsRequest, list[Tool]]
+        self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
         features = await self.get_project_features(context.fastmcp_context)
@@ -232,17 +234,19 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         return tools
 
     async def on_call_tool(
-            self,
-            context: MiddlewareContext[mt.CallToolRequestParams],
-            call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult]
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
         features = await self.get_project_features(context.fastmcp_context)
 
         if 'global-search' not in features:
             if tool.name == 'search':
-                raise ToolError('The "search" tool is not available in this project. '
-                                'Please ask Keboola support to enable "Global Search" feature.')
+                raise ToolError(
+                    'The "search" tool is not available in this project. '
+                    'Please ask Keboola support to enable "Global Search" feature.'
+                )
 
         # TODO: uncomment and adjust when WAII tools are implemented
         # if 'waii-integration' not in features:

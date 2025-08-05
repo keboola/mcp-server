@@ -1,4 +1,5 @@
 """MCP server implementation for Keboola Connection."""
+
 import dataclasses
 import logging
 import os
@@ -37,19 +38,23 @@ class ServiceInfoApiResp(BaseModel):
     app_name: str = Field(
         default='KeboolaMcpServer',
         validation_alias=AliasChoices('appName', 'app_name', 'app-name'),
-        serialization_alias='appName')
+        serialization_alias='appName',
+    )
     app_version: str = Field(
-        validation_alias=AliasChoices('appVersion', 'app_version', 'app-version'),
-        serialization_alias='appVersion')
+        validation_alias=AliasChoices('appVersion', 'app_version', 'app-version'), serialization_alias='appVersion'
+    )
     server_version: str = Field(
         validation_alias=AliasChoices('serverVersion', 'server_version', 'server-version'),
-        serialization_alias='serverVersion')
+        serialization_alias='serverVersion',
+    )
     mcp_library_version: str = Field(
         validation_alias=AliasChoices('mcpLibraryVersion', 'mcp_library_version', 'mcp-library-version'),
-        serialization_alias='mcpLibraryVersion')
+        serialization_alias='mcpLibraryVersion',
+    )
     fastmcp_library_version: str = Field(
         validation_alias=AliasChoices('fastmcpLibraryVersion', 'fastmcp_library_version', 'fastmcp-library-version'),
-        serialization_alias='fastmcpLibraryVersion')
+        serialization_alias='fastmcpLibraryVersion',
+    )
 
 
 def create_keboola_lifespan(
