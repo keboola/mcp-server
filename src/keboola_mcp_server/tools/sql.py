@@ -37,7 +37,7 @@ async def get_sql_dialect(
 
 @tool_errors()
 async def query_data(
-    sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
+    sql_query: Annotated[str, Field(description='SQL SELECT query to run, MUST NOT start with comment')],
     query_name: Annotated[
         str,
         Field(
