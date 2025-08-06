@@ -112,7 +112,7 @@ extend-ignore = ["E203", "W503", "I101"]
 
 [tool.tox]
 requires = ["tox>=4.23"]
-env_list = ["python", "black", "flake8"]
+env_list = ["python", "black", "flake8", "check-tools-docs"]
 labels = { cs-fix = ["black"], cs = ["flake8"] }
 
 [tool.tox.env_run_base]
@@ -176,3 +176,14 @@ deps = [
     "pep8-naming ~= 0.14",
 ]
 commands = [["flake8", "src/", "tests/", "integtests/"]]
+
+[tool.tox.env.check-tools-docs]
+description = "Check if TOOLS.md is up-to-date with tool definitions"
+extras = []
+package = "wheel"
+wheel_build_env = ".pkg"
+allowlist_externals = ["git"]
+commands = [
+    ["python", "-m", "keboola_mcp_server.generate_tool_docs"],
+    ["git", "diff", "--exit-code", "TOOLS.md"],
+]

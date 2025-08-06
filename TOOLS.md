@@ -818,16 +818,6 @@ EXAMPLES:
 ```json
 {
   "properties": {
-    "name": {
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "title": "Description",
-      "type": "string"
-    },
     "change_description": {
       "description": "Description of the change made to the component configuration.",
       "title": "Change Description",
@@ -843,26 +833,37 @@ EXAMPLES:
       "title": "Configuration Id",
       "type": "string"
     },
+    "name": {
+      "default": null,
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": null,
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "title": "Description",
+      "type": "string"
+    },
     "parameters": {
       "additionalProperties": true,
-      "description": "The component configuration parameters, adhering to the root_configuration_schema schema",
+      "default": null,
+      "description": "The component configuration parameters, adhering to the root_configuration_schema schema. Only updated if provided.",
       "title": "Parameters",
       "type": "object"
     },
     "storage": {
       "additionalProperties": true,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined",
+      "default": null,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined. Only updated if provided.",
       "title": "Storage",
       "type": "object"
     }
   },
   "required": [
-    "name",
-    "description",
     "change_description",
     "component_id",
-    "configuration_id",
-    "parameters"
+    "configuration_id"
   ],
   "type": "object"
 }
@@ -894,16 +895,6 @@ EXAMPLES:
 ```json
 {
   "properties": {
-    "name": {
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "title": "Description",
-      "type": "string"
-    },
     "change_description": {
       "description": "Description of the change made to the component configuration.",
       "title": "Change Description",
@@ -924,27 +915,38 @@ EXAMPLES:
       "title": "Configuration Row Id",
       "type": "string"
     },
+    "name": {
+      "default": null,
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": null,
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "title": "Description",
+      "type": "string"
+    },
     "parameters": {
       "additionalProperties": true,
-      "description": "The component row configuration parameters, adhering to the row_configuration_schema",
+      "default": null,
+      "description": "The component row configuration parameters, adhering to the row_configuration_schema. Only updated if provided.",
       "title": "Parameters",
       "type": "object"
     },
     "storage": {
       "additionalProperties": true,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
+      "default": null,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined. Only updated if provided.",
       "title": "Storage",
       "type": "object"
     }
   },
   "required": [
-    "name",
-    "description",
     "change_description",
     "component_id",
     "configuration_id",
-    "configuration_row_id",
-    "parameters"
+    "configuration_row_id"
   ],
   "type": "object"
 }
@@ -1066,15 +1068,31 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
-      "$ref": "#/$defs/Parameters",
-      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Parameters"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
       "title": "Parameters"
     },
     "storage": {
-      "additionalProperties": true,
-      "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings.",
-      "title": "Storage",
-      "type": "object"
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
+      "title": "Storage"
     },
     "updated_description": {
       "default": "",
@@ -1091,9 +1109,7 @@ EXAMPLES:
   },
   "required": [
     "configuration_id",
-    "change_description",
-    "parameters",
-    "storage"
+    "change_description"
   ],
   "type": "object"
 }
@@ -1432,16 +1448,6 @@ EXAMPLES:
       "title": "Flow Type",
       "type": "string"
     },
-    "name": {
-      "description": "Updated flow name.",
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "description": "Updated flow description.",
-      "title": "Description",
-      "type": "string"
-    },
     "phases": {
       "description": "Updated list of phase definitions.",
       "items": {
@@ -1464,13 +1470,37 @@ EXAMPLES:
       "description": "Description of changes made.",
       "title": "Change Description",
       "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Updated flow name. Only updated if provided.",
+      "title": "Name"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Updated flow description. Only updated if provided.",
+      "title": "Description"
     }
   },
   "required": [
     "configuration_id",
     "flow_type",
-    "name",
-    "description",
     "phases",
     "tasks",
     "change_description"

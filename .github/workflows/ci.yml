@@ -44,8 +44,9 @@ jobs:
 
       # Runs tests with coverage and generates coverage.xml file and test-results.xml file
       # and checks flake8 code-style formatting that is compatible with isort & black
+      # and verifies TOOLS.md is up-to-date with tool definitions
       # see setup in pyproject.toml
-      - name: Unit tests and code style check
+      - name: Unit tests, code style and documentation check
         run: |
           uv run tox
 
