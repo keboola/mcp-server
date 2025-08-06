@@ -267,11 +267,11 @@
         "type": {
           "type": "string",
           "enum": ["phase"],
-          "description": "Returns a value from the specified phase"
+          "description": "Returns phase-level metadata from a phase that has already completed."
         },
         "phase": {
           "type": "string",
-          "description": "ID of the phase to evaluate. Must reference an existing phase in the flow."
+          "description": "ID of the phase to evaluate. The referenced phase must have already completed execution."
         },
         "value": {
           "type": "string",
@@ -287,11 +287,11 @@
         "type": {
           "type": "string",
           "enum": ["task"],
-          "description": "Returns a value from the specified task or its associated job"
+          "description": "Returns task-level metadata or associated job metadata from a task that has already completed."
         },
         "task": {
           "type": "string",
-          "description": "ID of the task to evaluate, or '*' when used with phase operators (ALL_TASKS_IN_PHASE, ANY_TASKS_IN_PHASE)"
+          "description": "ID of the task to evaluate. The referenced task must have already completed execution. Set '*' when used with phase operators (ALL_TASKS_IN_PHASE, ANY_TASKS_IN_PHASE)"
         },
         "value": {
           "type": "string",
