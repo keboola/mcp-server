@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.16.1"
+version = "1.16.2"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -101,13 +101,13 @@ import-order-style = "edited"
 application-package-names = ["keboola_mcp_server"]
 min-python-version = "3.10.0"
 pytest-fixture-no-parentheses = true
-# Skip unused import checks F401 in __init__.py files; re-exported imports are intentional. 
+# Skip unused import checks F401 in __init__.py files; re-exported imports are intentional.
 per-file-ignores = [
     "__init__.py: F401",
 ]
 # For Compatibility with black we skip: E203 whitespace before ':', W503 checks line break before binary operator
 # For Compatibility with isort we skip: I101 Imported names are in the wrong order since we follow isort format using
-# alphabetical case-sensitive sort A, B, a, b 
+# alphabetical case-sensitive sort A, B, a, b
 extend-ignore = ["E203", "W503", "I101"]
 
 [tool.tox]
