@@ -43,6 +43,25 @@ FlowType = Literal['keboola.flow', 'keboola.orchestrator']
 FLOW_TYPES: Sequence[FlowType] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID)
 
 
+def get_metadata_property(metadata: list[Mapping[str, Any]], key: str, provider: str | None = None) -> Optional[Any]:
+    """
+    Gets the value of a metadata property based on the provided key and optional provider. If multiple metadata entries
+    exists with the same key, the most recent one is returned.
+
+    :param metadata: A list of metadata entries.
+    :param key: The metadata property key to search for.
+    :param provider: Specifies the metadata provider name to filter by.
+
+    :return: The value of the most recent matching metadata entry if found, or None otherwise.
+    """
+    filtered = [
+        m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
+    ]
+    # TODO: ideally we should first convert the timestamps to UTC
+    filtered.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+    return filtered[0].get('value') if filtered else None
+
+
 class KeboolaClient:
     """Class holding clients for Keboola APIs: Storage API, Job Queue API, and AI Service."""
 

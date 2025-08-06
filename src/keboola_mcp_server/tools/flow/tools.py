@@ -246,8 +246,8 @@ async def update_flow(
     phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')],
     change_description: Annotated[str, Field(description='Description of changes made.')],
-    name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = None,
-    description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = None,
+    name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
+    description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
 ) -> Annotated[FlowToolResponse, Field(description='Response object for flow update.')]:
     """
     Updates an existing flow configuration in Keboola.
@@ -343,7 +343,7 @@ async def update_flow(
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     tool_response = FlowToolResponse(
         id=api_config.id,
-        description=api_config.description,
+        description=api_config.description or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,

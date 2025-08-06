@@ -427,7 +427,7 @@ async def update_sql_transformation(
             description='Updated transformation description reflecting the changes made in the behavior of '
             'the transformation. If no behavior changes are made, empty string preserves the original description.',
         ),
-    ] = None,
+    ] = '',
     is_disabled: Annotated[
         bool,
         Field(
@@ -494,7 +494,7 @@ async def update_sql_transformation(
         configuration_id=configuration_id,
         configuration=updated_configuration,
         change_description=change_description,
-        updated_description=updated_description if updated_description else None,
+        updated_description=updated_description,
         is_disabled=is_disabled,
     )
 
@@ -507,8 +507,8 @@ async def update_sql_transformation(
 
     links = links_manager.get_configuration_links(
         component_id=sql_transformation_id,
-        configuration_id=str(configuration_id),
-        configuration_name=str(updated_raw_configuration.get('name', '')),
+        configuration_id=configuration_id,
+        configuration_name=updated_raw_configuration.get('name') or '',
     )
 
     LOG.info(
@@ -518,8 +518,8 @@ async def update_sql_transformation(
 
     return ConfigToolOutput(
         component_id=sql_transformation_id,
-        configuration_id=str(configuration_id),
-        description=updated_description or updated_raw_configuration.get('description', ''),
+        configuration_id=configuration_id,
+        description=updated_raw_configuration.get('description') or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -758,7 +758,7 @@ async def update_config(
         Field(
             description='A short, descriptive name summarizing the purpose of the component configuration.',
         ),
-    ] = None,
+    ] = '',
     description: Annotated[
         str,
         Field(
@@ -766,7 +766,7 @@ async def update_config(
                 'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
-    ] = None,
+    ] = '',
     parameters: Annotated[
         dict[str, Any],
         Field(
@@ -855,13 +855,13 @@ async def update_config(
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_name=name,
+        configuration_name=updated_raw_configuration.get('name') or '',
     )
 
     return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
-        description=description,
+        description=updated_raw_configuration.get('description') or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -885,7 +885,7 @@ async def update_config_row(
         Field(
             description='A short, descriptive name summarizing the purpose of the component configuration.',
         ),
-    ] = None,
+    ] = '',
     description: Annotated[
         str,
         Field(
@@ -893,7 +893,7 @@ async def update_config_row(
                 'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
-    ] = None,
+    ] = '',
     parameters: Annotated[
         dict[str, Any],
         Field(
@@ -985,13 +985,13 @@ async def update_config_row(
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_name=name,
+        configuration_name=updated_raw_configuration.get('name') or '',
     )
 
     return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
-        description=description,
+        description=updated_raw_configuration.get('description') or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
