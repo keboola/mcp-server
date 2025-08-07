@@ -126,6 +126,7 @@ class TaskCondition(BaseModel):
     task: str = Field(description='ID of the task to evaluate, or "*" when used with phase operators')
     value: Literal[
         'taskId',
+        'phaseId',
         'status',
         'job.id',
         'job.componentId',
@@ -178,22 +179,22 @@ class PhaseOperatorCondition(BaseModel):
     type: Literal['operator'] = Field(description='Condition type')
     operator: Literal['ALL_TASKS_IN_PHASE', 'ANY_TASKS_IN_PHASE'] = Field(description='Phase operator type')
     phase: str = Field(description='ID of the phase to check')
-    operands: list['ConditionObject'] = Field(description='List of operand conditions')
+    operands: list['OperatorCondition'] = Field(description='List of operand conditions')
 
 
 class FunctionCondition(BaseModel):
     """Function-based condition."""
 
     type: Literal['function'] = Field(description='Condition type')
-    function: Literal['COUNT', 'CONTAINS', 'DATE'] = Field(description='Function type')
-    operands: list['ConditionObject'] = Field(description='List of operand conditions')
+    function: Literal['COUNT', 'DATE'] = Field(description='Function type')
+    operands: list['VariableSourceObject'] = Field(description='List of operand conditions')
 
 
 class ArrayCondition(BaseModel):
     """Array-based condition."""
 
     type: Literal['array'] = Field(description='Condition type')
-    operands: list['ConditionObject'] = Field(description='List of operand conditions')
+    operands: list['VariableSourceObject'] = Field(description='List of operand conditions')
 
 
 # Union type for all condition types
@@ -219,7 +220,8 @@ class JobTaskConfiguration(BaseModel):
 
     type: Literal['job'] = Field(description='Task type')
     component_id: str = Field(description='Component ID', alias='componentId')
-    config_id: str = Field(description='Configuration ID', alias='configId')
+    config_id: Optional[str] = Field(default=None, description='Configuration ID', alias='configId')
+    config_data: Optional[dict[str, Any]] = Field(default=None, description='Configuration data', alias='configData')
     mode: Literal['run'] = Field(description='Execution mode')
     delay: Optional[Union[str, int]] = Field(default=None, description='Initial delay in seconds')
     retry: Optional[RetryConfiguration] = Field(default=None, description='Retry configuration')
@@ -242,7 +244,9 @@ class NotificationTaskConfiguration(BaseModel):
 
 
 # Variable source object (limited subset of conditions)
-VariableSourceObject = Union[ConstantCondition, PhaseCondition, TaskCondition, FunctionCondition, ArrayCondition]
+VariableSourceObject = Union[
+    ConstantCondition, PhaseCondition, TaskCondition, VariableCondition, FunctionCondition, ArrayCondition
+]
 
 
 class VariableTaskConfiguration(BaseModel):
