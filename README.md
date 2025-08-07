@@ -403,6 +403,14 @@ In order to get these values, you need a dedicated Keboola project for integrati
 Update the `uv.lock` file if you have added or removed dependencies. Also consider updating the lock with newer dependency
 versions when creating a release (`uv lock --upgrade`).
 
+### Updating Tool Documentation
+
+When you make changes to any tool descriptions (docstrings in tool functions), you must regenerate the `TOOLS.md` documentation file to reflect these changes:
+
+```bash
+uv run python -m src.keboola_mcp_server.generate_tool_docs
+```
+
 ## Support and Feedback
 
 **⭐ The primary way to get help, report bugs, or request features is by [opening an issue on GitHub](https://github.com/keboola/mcp-server/issues/new). ⭐**

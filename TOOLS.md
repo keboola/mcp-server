@@ -276,16 +276,45 @@ Gets the name of the SQL dialect used by Keboola project's underlying database.
 **Description**:
 
 Executes an SQL SELECT query to get the data from the underlying database.
-* When constructing the SQL SELECT query make sure to check the SQL dialect
-  used by the Keboola project's underlying database.
-* When referring to tables always use fully qualified table names that include the database name,
-  schema name and the table name.
-* The fully qualified table name can be found in the table information, use a tool to get the information
-  about tables. The fully qualified table name can be found in the response from that tool.
-* Always use quoted column names when referring to table columns. The quoted column names can also be found
-  in the response from the table information tool.
-* When querying columns with categorical values, use the `query_data` tool to inspect distinct values
-  beforehand and ensure valid filtering.
+
+CRITICAL SQL REQUIREMENTS:
+
+* ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
+* Do not include any comments in the SQL code
+
+DIALECT-SPECIFIC REQUIREMENTS:
+* Snowflake: Use double quotes for identifiers: "column_name", "table_name"
+* BigQuery: Use backticks for identifiers: `column_name`, `table_name`  
+* Never mix quoting styles within a single query
+
+TABLE AND COLUMN REFERENCES:
+* Always use fully qualified table names that include database name, schema name and table name
+* Get fully qualified table names using table information tools - use exact format shown
+* Snowflake format: "DATABASE"."SCHEMA"."TABLE"
+* BigQuery format: `project.dataset.table`
+* Always use quoted column names when referring to table columns (exact quotes from table info)
+
+CTE (WITH CLAUSE) RULES:
+* ALL column references in main query MUST match exact case used in the CTE
+* If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
+* For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
+* Define all column aliases explicitly in CTEs
+* Quote identifiers in both CTE definition and references to preserve case
+
+FUNCTION COMPATIBILITY:
+* Snowflake: Use LISTAGG instead of STRING_AGG
+* Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
+* Cast VARCHAR columns to appropriate types before using in date/numeric functions
+
+ERROR PREVENTION:
+* Never pass empty strings ('') where numeric or date values are expected
+* Use NULLIF or CASE statements to handle empty values
+* Always use TRY_CAST or similar safe casting functions when converting data types
+* Check for division by zero using NULLIF(denominator, 0)
+
+DATA VALIDATION:
+* When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
+* Ensure valid filtering by checking actual data values first
 
 
 **Input JSON Schema**:
@@ -818,16 +847,6 @@ EXAMPLES:
 ```json
 {
   "properties": {
-    "name": {
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "title": "Description",
-      "type": "string"
-    },
     "change_description": {
       "description": "Description of the change made to the component configuration.",
       "title": "Change Description",
@@ -843,26 +862,37 @@ EXAMPLES:
       "title": "Configuration Id",
       "type": "string"
     },
+    "name": {
+      "default": null,
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": null,
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "title": "Description",
+      "type": "string"
+    },
     "parameters": {
       "additionalProperties": true,
-      "description": "The component configuration parameters, adhering to the root_configuration_schema schema",
+      "default": null,
+      "description": "The component configuration parameters, adhering to the root_configuration_schema schema. Only updated if provided.",
       "title": "Parameters",
       "type": "object"
     },
     "storage": {
       "additionalProperties": true,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined",
+      "default": null,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined. Only updated if provided.",
       "title": "Storage",
       "type": "object"
     }
   },
   "required": [
-    "name",
-    "description",
     "change_description",
     "component_id",
-    "configuration_id",
-    "parameters"
+    "configuration_id"
   ],
   "type": "object"
 }
@@ -894,16 +924,6 @@ EXAMPLES:
 ```json
 {
   "properties": {
-    "name": {
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "title": "Description",
-      "type": "string"
-    },
     "change_description": {
       "description": "Description of the change made to the component configuration.",
       "title": "Change Description",
@@ -924,27 +944,38 @@ EXAMPLES:
       "title": "Configuration Row Id",
       "type": "string"
     },
+    "name": {
+      "default": null,
+      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": null,
+      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "title": "Description",
+      "type": "string"
+    },
     "parameters": {
       "additionalProperties": true,
-      "description": "The component row configuration parameters, adhering to the row_configuration_schema",
+      "default": null,
+      "description": "The component row configuration parameters, adhering to the row_configuration_schema. Only updated if provided.",
       "title": "Parameters",
       "type": "object"
     },
     "storage": {
       "additionalProperties": true,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
+      "default": null,
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined. Only updated if provided.",
       "title": "Storage",
       "type": "object"
     }
   },
   "required": [
-    "name",
-    "description",
     "change_description",
     "component_id",
     "configuration_id",
-    "configuration_row_id",
-    "parameters"
+    "configuration_row_id"
   ],
   "type": "object"
 }
@@ -1066,15 +1097,31 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
-      "$ref": "#/$defs/Parameters",
-      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Parameters"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
       "title": "Parameters"
     },
     "storage": {
-      "additionalProperties": true,
-      "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings.",
-      "title": "Storage",
-      "type": "object"
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
+      "title": "Storage"
     },
     "updated_description": {
       "default": "",
@@ -1091,9 +1138,7 @@ EXAMPLES:
   },
   "required": [
     "configuration_id",
-    "change_description",
-    "parameters",
-    "storage"
+    "change_description"
   ],
   "type": "object"
 }
@@ -1432,16 +1477,6 @@ EXAMPLES:
       "title": "Flow Type",
       "type": "string"
     },
-    "name": {
-      "description": "Updated flow name.",
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "description": "Updated flow description.",
-      "title": "Description",
-      "type": "string"
-    },
     "phases": {
       "description": "Updated list of phase definitions.",
       "items": {
@@ -1464,13 +1499,37 @@ EXAMPLES:
       "description": "Description of changes made.",
       "title": "Change Description",
       "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Updated flow name. Only updated if provided.",
+      "title": "Name"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Updated flow description. Only updated if provided.",
+      "title": "Description"
     }
   },
   "required": [
     "configuration_id",
     "flow_type",
-    "name",
-    "description",
     "phases",
     "tasks",
     "change_description"
