@@ -236,7 +236,7 @@ async def get_job(
         Field(description='The unique identifier of the job whose details should be retrieved.'),
     ],
     ctx: Context,
-) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
+) -> Annotated[JobDetail, Field(description='The detailed information about the job.')]:
     """
     Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.
