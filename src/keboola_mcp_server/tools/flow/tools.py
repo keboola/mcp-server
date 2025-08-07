@@ -27,6 +27,8 @@ from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
     ConditionalFlowTask,
     Flow,
+    FlowPhase,
+    FlowTask,
     FlowToolResponse,
     ListFlowsOutput,
 )
@@ -96,7 +98,7 @@ async def create_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
-) -> Annotated[FlowToolResponse, Field(description='Response object for flow creation.')]:
+) -> FlowToolResponse:
     """
     Creates a new flow configuration in Keboola.
     A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
@@ -173,7 +175,7 @@ async def create_conditional_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions for conditional flows.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
-) -> Annotated[FlowToolResponse, Field(description='Response object for enhanced flow creation.')]:
+) -> FlowToolResponse:
     """
     Creates a new **conditional flow** configuration in Keboola.
 
@@ -243,12 +245,12 @@ async def update_flow(
             )
         ),
     ],
-    phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')],
-    tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')],
     change_description: Annotated[str, Field(description='Description of changes made.')],
+    phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')] = None,
+    tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
     name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
-) -> Annotated[FlowToolResponse, Field(description='Response object for flow update.')]:
+) -> FlowToolResponse:
     """
     Updates an existing flow configuration in Keboola.
 
@@ -302,22 +304,36 @@ async def update_flow(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    # Use flow-type specific utilities
+    current_config = await client.storage_client.configuration_detail(
+        component_id=flow_type, configuration_id=configuration_id
+    )
+    flow_configuration = current_config.get('configuration', {}).copy()
+
+    if phases is not None:
+        if flow_type == ORCHESTRATOR_COMPONENT_ID:
+            processed_phases = ensure_legacy_phase_ids(phases)
+            flow_configuration['phases'] = [phase.model_dump(by_alias=True) for phase in processed_phases]
+        else:
+            processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
+            flow_configuration['phases'] = [
+                phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases
+            ]
+
+    if tasks is not None:
+        if flow_type == ORCHESTRATOR_COMPONENT_ID:
+            processed_tasks = ensure_legacy_task_ids(tasks)
+            flow_configuration['tasks'] = [task.model_dump(by_alias=True) for task in processed_tasks]
+        else:
+            processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks]
+            flow_configuration['tasks'] = [
+                task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks
+            ]
+
     if flow_type == ORCHESTRATOR_COMPONENT_ID:
-        processed_phases = ensure_legacy_phase_ids(phases)
-        processed_tasks = ensure_legacy_task_ids(tasks)
-        validate_legacy_flow_structure(processed_phases, processed_tasks)
-        flow_configuration = {
-            'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
-            'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
-        }
-    else:
-        processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
-        processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks]
-        flow_configuration = {
-            'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
-            'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
-        }
+        validate_legacy_flow_structure(
+            phases=[FlowPhase.model_validate(phase) for phase in flow_configuration.get('phases', [])],
+            tasks=[FlowTask.model_validate(task) for task in flow_configuration.get('tasks', [])],
+        )
 
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
@@ -336,8 +352,8 @@ async def update_flow(
     await set_cfg_update_metadata(
         client,
         component_id=flow_type,
-        configuration_id=str(updated_raw_configuration['id']),
-        configuration_version=cast(int, updated_raw_configuration['version']),
+        configuration_id=api_config.id,
+        configuration_version=api_config.version,
     )
 
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
@@ -381,7 +397,7 @@ async def list_flows(
 async def get_flow(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='ID of the flow to retrieve.')],
-) -> Annotated[Flow, Field(description='Detailed flow configuration.')]:
+) -> Flow:
     """Gets detailed information about a specific flow configuration."""
 
     client = KeboolaClient.from_state(ctx.session.state)

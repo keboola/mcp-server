@@ -1437,7 +1437,13 @@ EXAMPLES:
       "title": "Flow Type",
       "type": "string"
     },
+    "change_description": {
+      "description": "Description of changes made.",
+      "title": "Change Description",
+      "type": "string"
+    },
     "phases": {
+      "default": null,
       "description": "Updated list of phase definitions.",
       "items": {
         "additionalProperties": true,
@@ -1447,6 +1453,7 @@ EXAMPLES:
       "type": "array"
     },
     "tasks": {
+      "default": null,
       "description": "Updated list of task definitions.",
       "items": {
         "additionalProperties": true,
@@ -1454,11 +1461,6 @@ EXAMPLES:
       },
       "title": "Tasks",
       "type": "array"
-    },
-    "change_description": {
-      "description": "Description of changes made.",
-      "title": "Change Description",
-      "type": "string"
     },
     "name": {
       "default": "",
@@ -1476,8 +1478,6 @@ EXAMPLES:
   "required": [
     "configuration_id",
     "flow_type",
-    "phases",
-    "tasks",
     "change_description"
   ],
   "type": "object"

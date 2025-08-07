@@ -202,7 +202,7 @@ async def list_transformations(
 async def get_component(
     ctx: Context,
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-) -> Annotated[Component, Field(description='The component.')]:
+) -> Component:
     """
     Gets information about a specific component given its ID.
 
@@ -232,7 +232,7 @@ async def get_config(
         ),
     ],
     ctx: Context,
-) -> Annotated[Configuration, Field(description='The component/transformation and its configuration.')]:
+) -> Configuration:
     """
     Gets information about a specific component/transformation configuration.
 
