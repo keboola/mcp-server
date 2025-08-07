@@ -275,6 +275,9 @@ class TestCreateFlowTool:
 class TestUpdateFlowTool:
     """Tests for the update_flow tool."""
 
+    # TODO: The test_update_*() tests need to cover different variations of the tool's parameters
+    #  and properly check that the original flow was correctly updated.
+
     @pytest.mark.asyncio
     async def test_update_legacy_flow(
         self,
@@ -298,6 +301,7 @@ class TestUpdateFlowTool:
         updated_config['description'] = 'Updated legacy ETL pipeline'
 
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value={})
         keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_config)
 
         result = await update_flow(
@@ -342,6 +346,7 @@ class TestUpdateFlowTool:
         updated_config['description'] = 'Enhanced pipeline with improved conditional logic'
 
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value={})
         keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_config)
 
         result = await update_flow(

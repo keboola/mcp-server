@@ -2,13 +2,13 @@
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Mapping, Optional, cast
+from typing import Annotated, Any, Optional, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.client import JsonDict, KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
@@ -33,31 +33,12 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     LOG.info('Storage tools added to the MCP server.')
 
 
-def _get_metadata_property(metadata: list[Mapping[str, Any]], key: str, provider: str | None = None) -> Optional[Any]:
-    """
-    Gets the value of a metadata property based on the provided key and optional provider. If multiple metadata entries
-    exists with the same key, the most recent one is returned.
-
-    :param metadata: A list of metadata entries.
-    :param key: The metadata property key to search for.
-    :param provider: Specifies the metadata provider name to filter by.
-
-    :return: The value of the most recent matching metadata entry if found, or None otherwise.
-    """
-    filtered = [
-        m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
-    ]
-    # TODO: ideally we should first convert the timestamps to UTC
-    filtered.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
-    return filtered[0].get('value') if filtered else None
-
-
 def _extract_description(values: dict[str, Any]) -> Optional[str]:
     """Extracts the description from values or metadata."""
     if description := values.get('description'):
         return description
     else:
-        return _get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
+        return get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
 
 
 class BucketDetail(BaseModel):
@@ -228,9 +209,9 @@ async def get_table(
     column_info = []
     for col_name in raw_columns:
         col_meta = raw_column_metadata.get(col_name, [])
-        native_type: str | None = _get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
+        native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
         if native_type:
-            raw_nullable = _get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
+            raw_nullable = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
             nullable = raw_nullable.lower() in ['1', 'yes', 'true']
         else:
             # default values for untyped columns

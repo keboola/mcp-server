@@ -159,40 +159,35 @@ async def list_jobs(
     status: Annotated[
         JOB_STATUS,
         Field(
-            Optional[JOB_STATUS],
             description='The optional status of the jobs to filter by, if None then default all.',
         ),
     ] = None,
     component_id: Annotated[
         str,
         Field(
-            Optional[str],
             description='The optional ID of the component whose jobs you want to list, default = None.',
         ),
     ] = None,
     config_id: Annotated[
         str,
         Field(
-            Optional[str],
             description='The optional ID of the component configuration whose jobs you want to list, default = None.',
         ),
     ] = None,
     limit: Annotated[
         int,
-        Field(int, description='The number of jobs to list, default = 100, max = 500.', ge=1, le=500),
+        Field(description='The number of jobs to list, default = 100, max = 500.', ge=1, le=500),
     ] = 100,
     offset: Annotated[int, Field(int, description='The offset of the jobs to list, default = 0.', ge=0)] = 0,
     sort_by: Annotated[
         SORT_BY_VALUES,
         Field(
-            Optional[SORT_BY_VALUES],
             description='The field to sort the jobs by, default = "startTime".',
         ),
     ] = 'startTime',
     sort_order: Annotated[
         SORT_ORDER_VALUES,
         Field(
-            Optional[SORT_ORDER_VALUES],
             description='The order to sort the jobs by, default = "desc".',
         ),
     ] = 'desc',
@@ -241,7 +236,7 @@ async def get_job(
         Field(description='The unique identifier of the job whose details should be retrieved.'),
     ],
     ctx: Context,
-) -> Annotated[JobDetail, Field(JobDetail, description='The detailed information about the job.')]:
+) -> Annotated[JobDetail, Field(description='The detailed information about the job.')]:
     """
     Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.

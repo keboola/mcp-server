@@ -1,13 +1,16 @@
 import logging
-from typing import cast
+from typing import Any, AsyncGenerator, cast
 
 import pytest
+import pytest_asyncio
+from fastmcp import Client, FastMCP
 from mcp.server.fastmcp import Context
 
 from integtests.conftest import ConfigDef, ProjectDef
-from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
@@ -17,9 +20,6 @@ from keboola_mcp_server.tools.components import (
     get_config_examples,
     list_configs,
     list_transformations,
-    update_config,
-    update_config_row,
-    update_sql_transformation,
 )
 from keboola_mcp_server.tools.components.model import (
     Component,
@@ -197,118 +197,142 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
         )
 
 
-@pytest.mark.asyncio
-async def test_update_config(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
-    """Tests that `update_config` updates a configuration with correct metadata."""
+@pytest.fixture
+def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
+    config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
+    return create_server(config)
 
-    # Use the first component from configs for testing
-    test_config = configs[0]
-    component_id = test_config.component_id
 
-    # Define initial configuration test data
-    initial_name = 'Initial Test Configuration'
-    initial_description = 'Initial test configuration created by automated test'
-    initial_parameters = {'initial_param': 'initial_value'}
-    initial_storage = {'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}}
+@pytest_asyncio.fixture
+async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
+    async with Client(mcp_server) as client:
+        yield client
 
-    # Define updated configuration test data
-    updated_name = 'Updated Test Configuration'
-    updated_description = 'Updated test configuration by automated test'
-    updated_parameters = {'updated_param': 'updated_value'}
-    updated_storage = {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}
-    change_description = 'Automated test update'
 
-    client = KeboolaClient.from_state(mcp_context.session.state)
-
-    project_id = keboola_project.project_id
-
-    # Create the initial configuration
-    created_config = await create_config(
-        ctx=mcp_context,
-        name=initial_name,
-        description=initial_description,
-        component_id=component_id,
-        parameters=initial_parameters,
-        storage=initial_storage,
+@pytest_asyncio.fixture
+async def initial_cmpconf(
+    mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
+) -> AsyncGenerator[ConfigToolOutput, None]:
+    # Create the initial component configuration test data
+    tool_result = await mcp_client.call_tool(
+        name='create_config',
+        arguments={
+            'name': 'Initial Test Configuration',
+            'description': 'Initial test configuration created by automated test',
+            'component_id': configs[0].component_id,
+            'parameters': {'initial_param': 'initial_value'},
+            'storage': {'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}},
+        },
     )
-
     try:
-
-        # Update the configuration
-        updated_config = await update_config(
-            ctx=mcp_context,
-            name=updated_name,
-            description=updated_description,
-            change_description=change_description,
-            component_id=component_id,
-            configuration_id=created_config.configuration_id,
-            parameters=updated_parameters,
-            storage=updated_storage,
-        )
-
-        # Verify the response structure
-        assert isinstance(updated_config, ConfigToolOutput)
-        assert updated_config.component_id == component_id
-        assert updated_config.configuration_id == created_config.configuration_id
-        assert updated_config.description == updated_description
-        assert updated_config.success is True
-        assert updated_config.timestamp is not None
-        assert frozenset(updated_config.links) == frozenset(
-            [
-                Link(
-                    type='ui-detail',
-                    title=f'Configuration: {updated_name}',
-                    url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
-                        + f'{updated_config.configuration_id}'
-                    ),
-                ),
-                Link(
-                    type='ui-dashboard',
-                    title=f'{component_id} Configurations Dashboard',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
-                ),
-            ]
-        )
-
-        # Verify the configuration exists in the backend by fetching it
-        config_detail = await client.storage_client.configuration_detail(
-            component_id=component_id, configuration_id=updated_config.configuration_id
-        )
-
-        assert config_detail['name'] == updated_name
-        assert config_detail['description'] == updated_description
-        assert 'configuration' in config_detail
-
-        # Cast to dict to help type checker
-        configuration_data = cast(dict, config_detail['configuration'])
-        assert configuration_data['parameters'] == updated_parameters
-        # Storage API might return more keys than what we set, so we check subset
-        for k, v in updated_storage.items():
-            assert k in configuration_data['storage']
-            assert configuration_data['storage'][k] == v
-
-        # Get the current version for metadata verification
-        current_version = config_detail['version']
-
-        # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
-        metadata = await client.storage_client.configuration_metadata_get(
-            component_id=component_id, configuration_id=updated_config.configuration_id
-        )
-
-        assert isinstance(metadata, list)
-        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-        updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{current_version}'
-        assert updated_by_md_key in metadata_dict
-        assert metadata_dict[updated_by_md_key] == 'true'
-
+        yield ConfigToolOutput.model_validate(tool_result.structured_content)
     finally:
         # Clean up: Delete the configuration
-        await client.storage_client.configuration_delete(
-            component_id=component_id,
-            configuration_id=created_config.configuration_id,
+        await keboola_client.storage_client.configuration_delete(
+            component_id=configs[0].component_id,
+            configuration_id=tool_result.structured_content['configuration_id'],
             skip_trash=True,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'updates',
+    [
+        {
+            'name': 'Updated Test Configuration',
+            'description': 'Updated test configuration by automated test',
+            'parameters': {'updated_param': 'updated_value'},
+            'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}},
+        },
+        {'name': 'Updated just name'},
+        {'description': 'Updated just description'},
+        {'parameters': {'updated_param': 'Updated just parameters'}},
+        {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
+    ],
+)
+async def test_update_config(
+    updates: dict[str, Any],
+    initial_cmpconf: ConfigToolOutput,
+    mcp_client: Client,
+    keboola_project: ProjectDef,
+    keboola_client: KeboolaClient,
+):
+    """Tests that `update_config` updates a configuration with correct metadata."""
+    project_id = keboola_project.project_id
+    component_id = initial_cmpconf.component_id
+    configuration_id = initial_cmpconf.configuration_id
+    tool_result = await mcp_client.call_tool(
+        name='update_config',
+        arguments={
+            'change_description': 'Integration test update',
+            'component_id': component_id,
+            'configuration_id': configuration_id,
+            **updates,
+        },
+    )
+
+    # Check the tool's output
+    updated_config = ConfigToolOutput.model_validate(tool_result.structured_content)
+    assert updated_config.component_id == component_id
+    assert updated_config.configuration_id == configuration_id
+    assert updated_config.success is True
+    assert updated_config.timestamp is not None
+
+    expected_name = updates.get('name') or 'Initial Test Configuration'
+    expected_description = updates.get('description') or initial_cmpconf.description
+    assert updated_config.description == expected_description
+    assert frozenset(updated_config.links) == frozenset(
+        [
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {expected_name}',
+                url='https://connection.keboola.com/admin'
+                f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+            ),
+        ]
+    )
+
+    # Verify the configuration was updated
+    config_detail = await keboola_client.storage_client.configuration_detail(
+        component_id=updated_config.component_id, configuration_id=updated_config.configuration_id
+    )
+
+    assert config_detail['name'] == expected_name
+    assert config_detail['description'] == expected_description
+
+    config_data = config_detail.get('configuration')
+    assert isinstance(config_data, dict), f'Expecting dict, got: {type(config_data)}'
+
+    if (expected_parameters := updates.get('parameters')) is not None:
+        assert config_data['parameters'] == expected_parameters
+
+    if (expected_storage := updates.get('storage')) is not None:
+        # Storage API might return more keys than what we set, so we check subset
+        for k, v in expected_storage.items():
+            assert k in config_data['storage']
+            assert config_data['storage'][k] == v
+
+    current_version = config_detail['version']
+    assert isinstance(current_version, int), f'Expecting int, got: {type(current_version)}'
+    assert current_version == 2
+
+    # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
+    metadata = await keboola_client.storage_client.configuration_metadata_get(
+        component_id=updated_config.component_id, configuration_id=updated_config.configuration_id
+    )
+    assert isinstance(metadata, list), f'Expecting list, got: {type(metadata)}'
+
+    meta_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{current_version}'
+    meta_value = get_metadata_property(metadata, meta_key)
+    assert meta_value == 'true'
+    # Check that the original creation metadata is still there
+    assert get_metadata_property(metadata, MetadataField.CREATED_BY_MCP) == 'true'
 
 
 @pytest.mark.asyncio
@@ -431,150 +455,140 @@ async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], ke
         )
 
 
-@pytest.mark.asyncio
-async def test_update_config_row(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
-    """Tests that `update_config_row` updates a row configuration with correct metadata."""
-
-    # Use the first component from configs for testing
-    test_config = configs[0]
-    component_id = test_config.component_id
-
-    # Define root configuration test data
-    root_config_name = 'Root Configuration for Row Update Test'
-    root_config_description = 'Root configuration created for row update test'
-    root_config_parameters = {}
-    root_config_storage = {}
-
-    # Define initial row configuration test data
-    initial_row_name = 'Initial Row Configuration'
-    initial_row_description = 'Initial row configuration for update test'
-    initial_row_parameters = {'initial_row_param': 'initial_row_value'}
-    initial_row_storage = {}
-
-    # Define updated row configuration test data
-    updated_row_name = 'Updated Row Configuration'
-    updated_row_description = 'Updated row configuration by automated test'
-    updated_row_parameters = {'updated_row_param': 'updated_row_value'}
-    updated_row_storage = {}
-    change_description = 'Automated row test update'
-
-    client = KeboolaClient.from_state(mcp_context.session.state)
-
-    # First create a root configuration
-    root_config = await create_config(
-        ctx=mcp_context,
-        name=root_config_name,
-        description=root_config_description,
-        component_id=component_id,
-        parameters=root_config_parameters,
-        storage=root_config_storage,
+@pytest_asyncio.fixture
+async def initial_cmpconf_row(
+    initial_cmpconf: ConfigToolOutput, mcp_client: Client, keboola_client: KeboolaClient
+) -> ConfigToolOutput:
+    # Create initial row configuration test data
+    tool_result = await mcp_client.call_tool(
+        name='add_config_row',
+        arguments={
+            'name': 'Initial Test Row Configuration',
+            'description': 'Initial row configuration for update test',
+            'component_id': initial_cmpconf.component_id,
+            'configuration_id': initial_cmpconf.configuration_id,
+            'parameters': {'initial_row_param': 'initial_row_value'},
+            'storage': {},
+        },
     )
-    assert root_config.configuration_id is not None
+    return ConfigToolOutput.model_validate(tool_result.structured_content)
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'updates',
+    [
+        {
+            'name': 'Updated Row Configuration',
+            'description': 'Updated row configuration by automated test',
+            'parameters': {'updated_row_param': 'updated_row_value'},
+            'storage': {},
+        },
+        {'name': 'Updated just name'},
+        {'description': 'Updated just description'},
+        {'parameters': {'updated_row_param': 'Updated just parameters'}},
+        {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
+    ],
+)
+async def test_update_config_row(
+    updates: dict[str, Any],
+    initial_cmpconf_row: ConfigToolOutput,
+    mcp_client: Client,
+    keboola_project: ProjectDef,
+    keboola_client: KeboolaClient,
+):
+    """Tests that `update_config_row` updates a row configuration with correct metadata."""
     project_id = keboola_project.project_id
+    component_id = initial_cmpconf_row.component_id
+    configuration_id = initial_cmpconf_row.configuration_id
 
-    try:
-        # Create a row configuration
-        initial_row_config = await add_config_row(
-            ctx=mcp_context,
-            name=initial_row_name,
-            description=initial_row_description,
-            component_id=component_id,
-            configuration_id=root_config.configuration_id,
-            parameters=initial_row_parameters,
-            storage=initial_row_storage,
-        )
+    # Get the row ID from the configuration detail
+    config_detail = await keboola_client.storage_client.configuration_detail(
+        component_id=component_id, configuration_id=configuration_id
+    )
+    rows = config_detail['rows']
+    assert isinstance(rows, list)
+    assert len(rows) == 1
+    row_id = rows[0]['id']
 
-        # Get the row ID from the configuration detail
-        config_detail = await client.storage_client.configuration_detail(
-            component_id=component_id, configuration_id=initial_row_config.configuration_id
-        )
+    tool_result = await mcp_client.call_tool(
+        name='update_config_row',
+        arguments={
+            'change_description': 'Integration test update',
+            'component_id': component_id,
+            'configuration_id': configuration_id,
+            'configuration_row_id': row_id,
+            **updates,
+        },
+    )
 
-        rows = cast(list, config_detail['rows'])
-        assert len(rows) == 1
-        row_id = rows[0]['id']
+    # Check the tool's output
+    updated_row_config = ConfigToolOutput.model_validate(tool_result.structured_content)
+    assert updated_row_config.component_id == component_id
+    assert updated_row_config.configuration_id == configuration_id
+    assert updated_row_config.success is True
+    assert updated_row_config.timestamp is not None
 
-        # Update the row configuration
-        updated_row_config = await update_config_row(
-            ctx=mcp_context,
-            name=updated_row_name,
-            description=updated_row_description,
-            change_description=change_description,
-            component_id=component_id,
-            configuration_id=root_config.configuration_id,
-            configuration_row_id=row_id,
-            parameters=updated_row_parameters,
-            storage=updated_row_storage,
-        )
+    expected_row_name = updates.get('name') or 'Initial Test Row Configuration'
+    expected_row_description = updates.get('description') or initial_cmpconf_row.description
+    assert updated_row_config.description == expected_row_description
+    assert frozenset(updated_row_config.links) == frozenset(
+        [
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {expected_row_name}',
+                url='https://connection.keboola.com/admin'
+                f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+            ),
+        ]
+    )
 
-        # Test the ComponentToolResponse attributes
-        assert isinstance(updated_row_config, ConfigToolOutput)
-        assert updated_row_config.component_id == component_id
-        assert updated_row_config.configuration_id == root_config.configuration_id
-        assert updated_row_config.description == updated_row_description
-        assert updated_row_config.success is True
-        assert updated_row_config.timestamp is not None
-        assert frozenset(updated_row_config.links) == frozenset(
-            [
-                Link(
-                    type='ui-detail',
-                    title=f'Configuration: {updated_row_name}',
-                    url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
-                        + f'{root_config.configuration_id}'
-                    ),
-                ),
-                Link(
-                    type='ui-dashboard',
-                    title=f'{component_id} Configurations Dashboard',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
-                ),
-            ]
-        )
+    # Verify the row configuration was updated
+    row_config_detail = await keboola_client.storage_client.configuration_detail(
+        component_id=updated_row_config.component_id, configuration_id=updated_row_config.configuration_id
+    )
+    updated_rows = row_config_detail['rows']
+    assert isinstance(updated_rows, list), f'Expecting list, got: {type(updated_rows)}'
+    # Find the updated row
+    updated_row = next(filter(lambda x: x.get('id') == row_id, updated_rows), None)
+    assert updated_row, f'No row for row_id: {row_id}'
 
-        # Verify the row configuration was updated
-        updated_config_detail = await client.storage_client.configuration_detail(
-            component_id=component_id, configuration_id=updated_row_config.configuration_id
-        )
-        updated_rows = cast(list, updated_config_detail['rows'])
-        assert len(updated_rows) > 0
+    assert isinstance(updated_row, dict), f'Expecting dict, got: {type(updated_row)}'
+    assert updated_row['name'] == expected_row_name
+    assert updated_row['description'] == expected_row_description
 
-        # Find the updated row
-        updated_row = None
-        for row in updated_rows:
-            if isinstance(row, dict) and row.get('id') == row_id:
-                updated_row = row
-                break
+    row_config_data = updated_row['configuration']
+    assert isinstance(row_config_data, dict), f'Expecting dict, got: {type(row_config_data)}'
 
-        assert updated_row is not None
-        assert updated_row['name'] == updated_row_name
-        assert updated_row['description'] == updated_row_description
+    if (expected_row_parameters := updates.get('parameters')) is not None:
+        assert row_config_data['parameters'] == expected_row_parameters
 
-        # Verify the parameters and storage were updated correctly
-        updated_row_configuration_data = cast(dict, updated_row['configuration'])
-        assert updated_row_configuration_data['parameters'] == updated_row_parameters
-        assert updated_row_configuration_data['storage'] == updated_row_storage
+    if (expected_storage := updates.get('storage')) is not None:
+        # Storage API might return more keys than what we set, so we check subset
+        for k, v in expected_storage.items():
+            assert k in row_config_data['storage']
+            assert row_config_data['storage'][k] == v
 
-        current_row_config_version = updated_row['version']
+    current_version = config_detail['version']
+    assert isinstance(current_version, int), f'Expecting int, got: {type(current_version)}'
+    assert current_version == 2
 
-        # Verify the metadata - check that KBC.MCP.updatedBy.version.{version} is set to 'true'
-        metadata = await client.storage_client.configuration_metadata_get(
-            component_id=component_id, configuration_id=root_config.configuration_id
-        )
+    # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
+    metadata = await keboola_client.storage_client.configuration_metadata_get(
+        component_id=updated_row_config.component_id, configuration_id=updated_row_config.configuration_id
+    )
+    assert isinstance(metadata, list), f'Expecting list, got: {type(metadata)}'
 
-        assert isinstance(metadata, list)
-        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-        updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{current_row_config_version}'
-
-        assert updated_by_md_key in metadata_dict
-        assert metadata_dict[updated_by_md_key] == 'true'
-
-    finally:
-        await client.storage_client.configuration_delete(
-            component_id=component_id,
-            configuration_id=root_config.configuration_id,
-            skip_trash=True,
-        )
+    meta_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{current_version}'
+    meta_value = get_metadata_property(metadata, meta_key)
+    assert meta_value == 'true'
+    # Check that the original creation metadata is still there
+    assert get_metadata_property(metadata, MetadataField.CREATED_BY_MCP) == 'true'
 
 
 @pytest.mark.asyncio
@@ -697,190 +711,189 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         )
 
 
-@pytest.mark.asyncio
-async def test_update_sql_transformation(mcp_context: Context, keboola_project: ProjectDef):
-    """Tests that `update_sql_transformation` updates an existing SQL transformation correctly."""
-    # First, create an initial transformation
-    initial_name = 'Initial SQL Transformation'
-    initial_description = 'Initial SQL transformation for update test'
-
-    initial_sql_code_blocks = [
-        TransformationConfiguration.Parameters.Block.Code(
-            name='Initial transformation', sql_statements=['SELECT 1 as initial_column']
-        )
-    ]
-
-    initial_created_table_names = ['initial_output_table']
-
-    client = KeboolaClient.from_state(mcp_context.session.state)
-
-    # Create the initial transformation
-    created_transformation = await create_sql_transformation(
-        ctx=mcp_context,
-        name=initial_name,
-        description=initial_description,
-        sql_code_blocks=initial_sql_code_blocks,
-        created_table_names=initial_created_table_names,
+@pytest_asyncio.fixture
+async def initial_sqltrfm(
+    mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
+) -> AsyncGenerator[ConfigToolOutput, None]:
+    # Create the initial component configuration test data
+    tool_result = await mcp_client.call_tool(
+        name='create_sql_transformation',
+        arguments={
+            'name': 'Initial Test SQL Transformation',
+            'description': 'Initial SQL transformation for update test',
+            'sql_code_blocks': [{'name': 'Initial transformation', 'sql_statements': ['SELECT 1 as initial_column']}],
+            'created_table_names': ['initial_output_table'],
+        },
     )
-
-    project_id = keboola_project.project_id
-    sql_dialect = await get_sql_dialect(mcp_context)
-    sql_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-
     try:
-        # Now update the transformation
-        updated_description = 'Updated SQL transformation description'
-        change_description = 'Automated test update: modified SQL statements and output tables'
-
-        # Define updated parameters and storage
-        updated_parameters = TransformationConfiguration.Parameters(
-            blocks=[
-                TransformationConfiguration.Parameters.Block(
-                    name='Updated block',
-                    codes=[
-                        TransformationConfiguration.Parameters.Block.Code(
-                            name='Updated transformation',
-                            sql_statements=[
-                                'SELECT 1 as updated_column',
-                                'SELECT 2 as additional_column',
-                                'SELECT 3 as third_column',
-                            ],
-                        )
-                    ],
-                )
-            ]
-        )
-
-        updated_storage = {
-            'input': {'tables': [{'source': 'in.c-bucket.input_table', 'destination': 'input.csv'}]},
-            'output': {
-                'tables': [
-                    {'source': 'updated_output_table', 'destination': 'out.c-bucket.updated_output_table'},
-                    {'source': 'second_output_table', 'destination': 'out.c-bucket.second_output_table'},
-                ]
-            },
-        }
-
-        # Update the transformation
-        updated_transformation = await update_sql_transformation(
-            ctx=mcp_context,
-            configuration_id=created_transformation.configuration_id,
-            change_description=change_description,
-            parameters=updated_parameters,
-            storage=updated_storage,
-            updated_description=updated_description,
-            is_disabled=False,
-        )
-
-        # Verify the response structure
-        assert isinstance(updated_transformation, ConfigToolOutput)
-
-        assert updated_transformation.success is True
-        assert updated_transformation.timestamp is not None
-        assert updated_transformation.component_id == created_transformation.component_id
-        assert updated_transformation.configuration_id == created_transformation.configuration_id
-        assert updated_transformation.description == updated_description
-        assert frozenset(updated_transformation.links) == frozenset(
-            [
-                Link(
-                    type='ui-detail',
-                    title=f'Configuration: {initial_name}',
-                    url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}/'
-                        + f'{updated_transformation.configuration_id}'
-                    ),
-                ),
-                Link(
-                    type='ui-dashboard',
-                    title=f'{sql_component_id} Configurations Dashboard',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{sql_component_id}',
-                ),
-            ]
-        )
-
-        # Verify the updated configuration in the backend
-        config_detail = await client.storage_client.configuration_detail(
-            component_id=updated_transformation.component_id, configuration_id=updated_transformation.configuration_id
-        )
-
-        assert config_detail['description'] == updated_description
-        assert 'configuration' in config_detail
-
-        # Verify the updated configuration structure
-        configuration_data = cast(dict, config_detail['configuration'])
-        assert 'parameters' in configuration_data
-        assert 'storage' in configuration_data
-
-        # Verify the updated parameters
-        parameters = configuration_data['parameters']
-        assert 'blocks' in parameters
-        assert len(parameters['blocks']) == len(initial_sql_code_blocks)
-
-        block = parameters['blocks'][0]
-        assert block['name'] == updated_parameters.blocks[0].name
-        assert 'codes' in block
-        assert len(block['codes']) == len(updated_parameters.blocks[0].codes)
-
-        code = block['codes'][0]
-        assert code['name'] == updated_parameters.blocks[0].codes[0].name
-        assert 'script' in code
-        assert len(code['script']) == len(updated_parameters.blocks[0].codes[0].sql_statements)
-        assert code['script'][0] == updated_parameters.blocks[0].codes[0].sql_statements[0]
-        assert code['script'][1] == updated_parameters.blocks[0].codes[0].sql_statements[1]
-        assert code['script'][2] == updated_parameters.blocks[0].codes[0].sql_statements[2]
-
-        # Verify the updated storage configuration
-        storage = configuration_data['storage']
-        assert 'input' in storage
-        assert 'output' in storage
-
-        # Check input tables
-        assert 'tables' in storage['input']
-        assert len(storage['input']['tables']) == len(updated_storage['input']['tables'])
-        input_table = storage['input']['tables'][0]
-        assert input_table['source'] == updated_storage['input']['tables'][0]['source']
-        assert input_table['destination'] == updated_storage['input']['tables'][0]['destination']
-
-        # Check output tables
-        assert 'tables' in storage['output']
-        assert len(storage['output']['tables']) == len(updated_storage['output']['tables'])
-
-        output_table_1 = storage['output']['tables'][0]
-        assert output_table_1['source'] == updated_storage['output']['tables'][0]['source']
-        assert output_table_1['destination'] == updated_storage['output']['tables'][0]['destination']
-
-        output_table_2 = storage['output']['tables'][1]
-        assert output_table_2['source'] == updated_storage['output']['tables'][1]['source']
-        assert output_table_2['destination'] == updated_storage['output']['tables'][1]['destination']
-
-        # Verify the version was incremented
-        assert cast(int, config_detail['version']) == 2
-
-        # Verify the update metadata
-        metadata = await client.storage_client.configuration_metadata_get(
-            component_id=updated_transformation.component_id, configuration_id=updated_transformation.configuration_id
-        )
-
-        # Convert metadata list to dictionary for easier checking
-        assert isinstance(metadata, list)
-        metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-
-        # Check that original creation metadata is still there
-        assert MetadataField.CREATED_BY_MCP in metadata_dict
-        assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
-
-        # Check that update metadata was added
-        update_metadata_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{config_detail["version"]}'
-        assert update_metadata_key in metadata_dict
-        assert metadata_dict[update_metadata_key] == 'true'
-
+        yield ConfigToolOutput.model_validate(tool_result.structured_content)
     finally:
         # Clean up: Delete the configuration
-        await client.storage_client.configuration_delete(
-            component_id=created_transformation.component_id,
-            configuration_id=created_transformation.configuration_id,
+        await keboola_client.storage_client.configuration_delete(
+            component_id=tool_result.structured_content['component_id'],
+            configuration_id=tool_result.structured_content['configuration_id'],
             skip_trash=True,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'updates',
+    [
+        {
+            'updated_description': 'Updated SQL transformation description',
+            'parameters': {
+                'blocks': [
+                    {
+                        'name': 'Updated block',
+                        'codes': [
+                            {
+                                'name': 'Updated transformation',
+                                'sql_statements': [
+                                    'SELECT 1 as updated_column',
+                                    'SELECT 2 as additional_column',
+                                    'SELECT 3 as third_column',
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+            'storage': {
+                'input': {'tables': [{'source': 'in.c-bucket.input_table', 'destination': 'input.csv'}]},
+                'output': {
+                    'tables': [
+                        {'source': 'updated_output_table', 'destination': 'out.c-bucket.updated_output_table'},
+                        {'source': 'second_output_table', 'destination': 'out.c-bucket.second_output_table'},
+                    ]
+                },
+            },
+            'is_disabled': True,
+        },
+        {'updated_description': 'Updated SQL transformation description'},
+        {
+            'parameters': {
+                'blocks': [
+                    {
+                        'name': 'Updated block',
+                        'codes': [
+                            {
+                                'name': 'Updated transformation',
+                                'sql_statements': [
+                                    'SELECT 1 as updated_column',
+                                    'SELECT 2 as additional_column',
+                                    'SELECT 3 as third_column',
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        },
+        {
+            'storage': {
+                'input': {'tables': [{'source': 'in.c-bucket.input_table', 'destination': 'input.csv'}]},
+                'output': {
+                    'tables': [
+                        {'source': 'updated_output_table', 'destination': 'out.c-bucket.updated_output_table'},
+                        {'source': 'second_output_table', 'destination': 'out.c-bucket.second_output_table'},
+                    ]
+                },
+            }
+        },
+        {'is_disabled': True},
+    ],
+)
+async def test_update_sql_transformation(
+    updates: dict[str, Any],
+    initial_sqltrfm: ConfigToolOutput,
+    mcp_client: Client,
+    keboola_project: ProjectDef,
+    keboola_client: KeboolaClient,
+):
+    """Tests that `update_sql_transformation` updates an existing SQL transformation correctly."""
+    project_id = keboola_project.project_id
+    component_id = initial_sqltrfm.component_id
+    configuration_id = initial_sqltrfm.configuration_id
+    tool_result = await mcp_client.call_tool(
+        name='update_sql_transformation',
+        arguments={
+            'change_description': 'Integration test update',
+            'configuration_id': configuration_id,
+            **updates,
+        },
+    )
+
+    # Check the tool's output
+    updated_trfm = ConfigToolOutput.model_validate(tool_result.structured_content)
+
+    assert updated_trfm.component_id == component_id
+    assert updated_trfm.configuration_id == configuration_id
+    assert updated_trfm.success is True
+    assert updated_trfm.timestamp is not None
+
+    expected_name = updates.get('name') or 'Initial Test SQL Transformation'
+    expected_description = updates.get('updated_description') or initial_sqltrfm.description
+    assert updated_trfm.description == expected_description
+    assert frozenset(updated_trfm.links) == frozenset(
+        [
+            Link(
+                type='ui-detail',
+                title=f'Configuration: {expected_name}',
+                url='https://connection.keboola.com/admin'
+                f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+            ),
+            Link(
+                type='ui-dashboard',
+                title=f'{component_id} Configurations Dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+            ),
+        ]
+    )
+
+    # Verify the transformation was updated
+    trfm_detail = await keboola_client.storage_client.configuration_detail(
+        component_id=updated_trfm.component_id, configuration_id=updated_trfm.configuration_id
+    )
+
+    assert trfm_detail['name'] == expected_name
+    assert trfm_detail['description'] == expected_description
+
+    trfm_data = trfm_detail.get('configuration')
+    assert isinstance(trfm_data, dict), f'Expecting dict, got: {type(trfm_data)}'
+
+    actual_parameters = trfm_data.get('parameters')
+    assert isinstance(actual_parameters, dict), f'Expecting dict, got: {type(actual_parameters)}'
+    if (expected_parameters := updates.get('updated_parameters')) is not None:
+        assert isinstance(expected_description, TransformationConfiguration.Parameters)
+        assert actual_parameters == expected_parameters.model_dump()
+
+    actual_storage = trfm_data.get('storage')
+    assert isinstance(actual_storage, dict), f'Expecting dict, got: {type(actual_storage)}'
+    if (expected_storage := updates.get('storage')) is not None:
+        # Storage API might return more keys than what we set, so we check subset
+        for k, v in expected_storage.items():
+            assert k in trfm_data['storage']
+            assert trfm_data['storage'][k] == v
+
+    if (expected_is_disabled := updates.get('is_disabled')) is not None:
+        assert trfm_detail['isDisabled'] == expected_is_disabled
+
+    current_version = trfm_detail['version']
+    assert isinstance(current_version, int), f'Expecting int, got: {type(current_version)}'
+    assert current_version == 2
+
+    # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
+    metadata = await keboola_client.storage_client.configuration_metadata_get(
+        component_id=updated_trfm.component_id, configuration_id=updated_trfm.configuration_id
+    )
+    assert isinstance(metadata, list), f'Expecting list, got: {type(metadata)}'
+
+    meta_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{current_version}'
+    meta_value = get_metadata_property(metadata, meta_key)
+    assert meta_value == 'true'
+    # Check that the original creation metadata is still there
+    assert get_metadata_property(metadata, MetadataField.CREATED_BY_MCP) == 'true'
 
 
 @pytest.mark.asyncio

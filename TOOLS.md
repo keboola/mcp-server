@@ -284,14 +284,14 @@ CRITICAL SQL REQUIREMENTS:
 
 DIALECT-SPECIFIC REQUIREMENTS:
 * Snowflake: Use double quotes for identifiers: "column_name", "table_name"
-* BigQuery: Use backticks for identifiers: `column_name`, `table_name`  
+* BigQuery: Use backticks for identifiers: `column_name`, `table_name`
 * Never mix quoting styles within a single query
 
 TABLE AND COLUMN REFERENCES:
 * Always use fully qualified table names that include database name, schema name and table name
 * Get fully qualified table names using table information tools - use exact format shown
 * Snowflake format: "DATABASE"."SCHEMA"."TABLE"
-* BigQuery format: `project.dataset.table`
+* BigQuery format: `project`.`dataset`.`table`
 * Always use quoted column names when referring to table columns (exact quotes from table info)
 
 CTE (WITH CLAUSE) RULES:
@@ -397,6 +397,7 @@ EXAMPLES:
     },
     "storage": {
       "additionalProperties": true,
+      "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
       "title": "Storage",
       "type": "object"
@@ -462,6 +463,7 @@ EXAMPLES:
     },
     "storage": {
       "additionalProperties": true,
+      "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
       "title": "Storage",
       "type": "object"
@@ -863,13 +865,13 @@ EXAMPLES:
       "type": "string"
     },
     "name": {
-      "default": null,
+      "default": "",
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
       "title": "Name",
       "type": "string"
     },
     "description": {
-      "default": null,
+      "default": "",
       "description": "The detailed description of the component configuration explaining its purpose and functionality.",
       "title": "Description",
       "type": "string"
@@ -945,13 +947,13 @@ EXAMPLES:
       "type": "string"
     },
     "name": {
-      "default": null,
+      "default": "",
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
       "title": "Name",
       "type": "string"
     },
     "description": {
-      "default": null,
+      "default": "",
       "description": "The detailed description of the component configuration explaining its purpose and functionality.",
       "title": "Description",
       "type": "string"
@@ -1097,31 +1099,18 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Parameters"
-        },
-        {
-          "type": "null"
-        }
-      ],
+      "$ref": "#/$defs/Parameters",
       "default": null,
       "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
-      "title": "Parameters"
+      "title": "Parameters",
+      "type": "object"
     },
     "storage": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
+      "additionalProperties": true,
       "default": null,
       "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
-      "title": "Storage"
+      "title": "Storage",
+      "type": "object"
     },
     "updated_description": {
       "default": "",
@@ -1477,7 +1466,13 @@ EXAMPLES:
       "title": "Flow Type",
       "type": "string"
     },
+    "change_description": {
+      "description": "Description of changes made.",
+      "title": "Change Description",
+      "type": "string"
+    },
     "phases": {
+      "default": null,
       "description": "Updated list of phase definitions.",
       "items": {
         "additionalProperties": true,
@@ -1487,6 +1482,7 @@ EXAMPLES:
       "type": "array"
     },
     "tasks": {
+      "default": null,
       "description": "Updated list of task definitions.",
       "items": {
         "additionalProperties": true,
@@ -1495,43 +1491,22 @@ EXAMPLES:
       "title": "Tasks",
       "type": "array"
     },
-    "change_description": {
-      "description": "Description of changes made.",
-      "title": "Change Description",
+    "name": {
+      "default": "",
+      "description": "Updated flow name. Only updated if provided.",
+      "title": "Name",
       "type": "string"
     },
-    "name": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Updated flow name. Only updated if provided.",
-      "title": "Name"
-    },
     "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
+      "default": "",
       "description": "Updated flow description. Only updated if provided.",
-      "title": "Description"
+      "title": "Description",
+      "type": "string"
     }
   },
   "required": [
     "configuration_id",
     "flow_type",
-    "phases",
-    "tasks",
     "change_description"
   ],
   "type": "object"
