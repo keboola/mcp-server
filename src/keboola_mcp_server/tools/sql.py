@@ -52,16 +52,45 @@ async def query_data(
 ) -> Annotated[QueryDataOutput, Field(description='The query results with name and CSV data.')]:
     """
     Executes an SQL SELECT query to get the data from the underlying database.
-    * When constructing the SQL SELECT query make sure to check the SQL dialect
-      used by the Keboola project's underlying database.
-    * When referring to tables always use fully qualified table names that include the database name,
-      schema name and the table name.
-    * The fully qualified table name can be found in the table information, use a tool to get the information
-      about tables. The fully qualified table name can be found in the response from that tool.
-    * Always use quoted column names when referring to table columns. The quoted column names can also be found
-      in the response from the table information tool.
-    * When querying columns with categorical values, use the `query_data` tool to inspect distinct values
-      beforehand and ensure valid filtering.
+    
+    CRITICAL SQL REQUIREMENTS:
+    
+    * ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
+    * Do not include any comments in the SQL code
+    
+    DIALECT-SPECIFIC REQUIREMENTS:
+    * Snowflake: Use double quotes for identifiers: "column_name", "table_name"
+    * BigQuery: Use backticks for identifiers: `column_name`, `table_name`  
+    * Never mix quoting styles within a single query
+    
+    TABLE AND COLUMN REFERENCES:
+    * Always use fully qualified table names that include database name, schema name and table name
+    * Get fully qualified table names using table information tools - use exact format shown
+    * Snowflake format: "DATABASE"."SCHEMA"."TABLE"
+    * BigQuery format: `project`.`dataset`.`table`
+    * Always use quoted column names when referring to table columns (exact quotes from table info)
+    
+    CTE (WITH CLAUSE) RULES:
+    * ALL column references in main query MUST match exact case used in the CTE
+    * If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
+    * For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
+    * Define all column aliases explicitly in CTEs
+    * Quote identifiers in both CTE definition and references to preserve case
+    
+    FUNCTION COMPATIBILITY:
+    * Snowflake: Use LISTAGG instead of STRING_AGG
+    * Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
+    * Cast VARCHAR columns to appropriate types before using in date/numeric functions
+    
+    ERROR PREVENTION:
+    * Never pass empty strings ('') where numeric or date values are expected
+    * Use NULLIF or CASE statements to handle empty values
+    * Always use TRY_CAST or similar safe casting functions when converting data types
+    * Check for division by zero using NULLIF(denominator, 0)
+    
+    DATA VALIDATION:
+    * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
+    * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     result = await workspace_manager.execute_query(sql_query)
