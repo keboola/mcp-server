@@ -48,13 +48,11 @@ class TestServer:
             'query_data',
             'run_job',
             'search',
-            'update_bucket_description',
-            'update_column_description',
             'update_config',
             'update_config_row',
+            'update_description',
             'update_flow',
             'update_sql_transformation',
-            'update_table_description',
         ]
 
     @pytest.mark.asyncio

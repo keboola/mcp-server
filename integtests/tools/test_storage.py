@@ -17,9 +17,7 @@ from keboola_mcp_server.tools.storage import (
     get_table,
     list_buckets,
     list_tables,
-    update_bucket_description,
-    update_column_description,
-    update_table_description,
+    update_description,
 )
 
 LOG = logging.getLogger(__name__)
@@ -97,7 +95,12 @@ async def test_update_bucket_description(mcp_context: Context, buckets: list[Buc
     md_id: str | None = None
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
-        result = await update_bucket_description(bucket.bucket_id, 'New Description', mcp_context)
+        result = await update_description(
+            ctx=mcp_context,
+            item_type='bucket',
+            description='New Description',
+            bucket_id=bucket.bucket_id,
+        )
         assert isinstance(result, UpdateDescriptionOutput)
         assert result.description == 'New Description'
 
@@ -118,7 +121,12 @@ async def test_update_table_description(mcp_context: Context, tables: list[Table
     md_id: str | None = None
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
-        result = await update_table_description(table.table_id, 'New Description', mcp_context)
+        result = await update_description(
+            ctx=mcp_context,
+            item_type='table',
+            description='New Description',
+            table_id=table.table_id,
+        )
         assert isinstance(result, UpdateDescriptionOutput)
         assert result.description == 'New Description'
 
@@ -146,7 +154,13 @@ async def test_update_column_description(mcp_context: Context, tables: list[Tabl
     test_description = 'New Column Description'
 
     # Test the update_column_description function
-    result = await update_column_description(table.table_id, column_name, test_description, mcp_context)
+    result = await update_description(
+        ctx=mcp_context,
+        item_type='column',
+        description=test_description,
+        table_id=table.table_id,
+        column_name=column_name,
+    )
     LOG.error(result)
 
     # Verify the function returns expected result

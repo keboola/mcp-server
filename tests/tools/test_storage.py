@@ -20,9 +20,7 @@ from keboola_mcp_server.tools.storage import (
     get_table,
     list_buckets,
     list_tables,
-    update_bucket_description,
-    update_column_description,
-    update_table_description,
+    update_description,
 )
 from keboola_mcp_server.workspace import TableFqn, WorkspaceManager
 
@@ -382,10 +380,11 @@ async def test_update_bucket_description_success(
         return_value=mock_update_bucket_description_response,
     )
 
-    result = await update_bucket_description(
-        bucket_id='in.c-test.bucket-id',
-        description='Updated bucket description',
+    result = await update_description(
         ctx=mcp_context_client,
+        item_type='bucket',
+        description='Updated bucket description',
+        bucket_id='in.c-test.bucket-id',
     )
 
     assert isinstance(result, UpdateDescriptionOutput)
@@ -410,10 +409,11 @@ async def test_update_table_description_success(
         return_value=mock_update_table_description_response,
     )
 
-    result = await update_table_description(
-        table_id='in.c-test.test-table',
-        description='Updated table description',
+    result = await update_description(
         ctx=mcp_context_client,
+        item_type='table',
+        description='Updated table description',
+        table_id='in.c-test.test-table',
     )
 
     assert isinstance(result, UpdateDescriptionOutput)
@@ -438,11 +438,12 @@ async def test_update_column_description_success(
         return_value=mock_update_column_description_response,
     )
 
-    result = await update_column_description(
+    result = await update_description(
+        ctx=mcp_context_client,
+        item_type='column',
+        description='Updated column description',
         table_id='in.c-test.test-table',
         column_name='text',
-        description='Updated column description',
-        ctx=mcp_context_client,
     )
 
     assert isinstance(result, UpdateDescriptionOutput)
