@@ -8,9 +8,7 @@ This document provides details about the tools available in the Keboola MCP serv
 - [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
 - [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
 - [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
-- [update_bucket_description](#update_bucket_description): Updates the description for a given Keboola bucket.
-- [update_column_description](#update_column_description): Updates the description for a given column in a Keboola table.
-- [update_table_description](#update_table_description): Updates the description for a given Keboola table.
+- [update_description](#update_description): Updates the description for a Keboola storage item.
 
 ### SQL Tools
 - [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
@@ -154,98 +152,69 @@ Retrieves all tables in a specific bucket with their basic information.
 ```
 
 ---
-<a name="update_bucket_description"></a>
-## update_bucket_description
+<a name="update_description"></a>
+## update_description
 **Description**:
 
-Updates the description for a given Keboola bucket.
+Updates the description for a Keboola storage item.
+
+The tool supports three item types and validates the required identifiers based on the selected type:
+
+- item_type = "bucket": requires bucket_id
+- item_type = "table": requires table_id
+- item_type = "column": requires table_id and column_name
+
+Usage examples:
+- Update a bucket: item_type="bucket", bucket_id="in.c-my-bucket",
+  description="New bucket description"
+- Update a table: item_type="table", table_id="in.c-my-bucket.my-table",
+  description="New table description"
+- Update a column: item_type="column", table_id="in.c-my-bucket.my-table",
+  column_name="my_column", description="New column description"
+
+:return: The update result containing the stored description, timestamp, success flag, and optional links.
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "bucket_id": {
-      "description": "The ID of the bucket to update.",
-      "title": "Bucket Id",
+    "item_type": {
+      "description": "Type of the item to update. One of: bucket, table, column.",
+      "enum": [
+        "bucket",
+        "table",
+        "column"
+      ],
+      "title": "Item Type",
       "type": "string"
     },
     "description": {
-      "description": "The new description for the bucket.",
+      "description": "The new description to set for the specified item.",
       "title": "Description",
       "type": "string"
-    }
-  },
-  "required": [
-    "bucket_id",
-    "description"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="update_column_description"></a>
-## update_column_description
-**Description**:
-
-Updates the description for a given column in a Keboola table.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
+    },
+    "bucket_id": {
+      "default": "",
+      "description": "Bucket ID. Required when item_type is \"bucket\".",
+      "title": "Bucket Id",
+      "type": "string"
+    },
     "table_id": {
-      "description": "The ID of the table that contains the column.",
+      "default": "",
+      "description": "Table ID. Required when item_type is \"table\" or \"column\".",
       "title": "Table Id",
       "type": "string"
     },
     "column_name": {
-      "description": "The name of the column to update.",
+      "default": "",
+      "description": "Column name. Required when item_type is \"column\".",
       "title": "Column Name",
       "type": "string"
-    },
-    "description": {
-      "description": "The new description for the column.",
-      "title": "Description",
-      "type": "string"
     }
   },
   "required": [
-    "table_id",
-    "column_name",
-    "description"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="update_table_description"></a>
-## update_table_description
-**Description**:
-
-Updates the description for a given Keboola table.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "table_id": {
-      "description": "The ID of the table to update.",
-      "title": "Table Id",
-      "type": "string"
-    },
-    "description": {
-      "description": "The new description for the table.",
-      "title": "Description",
-      "type": "string"
-    }
-  },
-  "required": [
-    "table_id",
+    "item_type",
     "description"
   ],
   "type": "object"
