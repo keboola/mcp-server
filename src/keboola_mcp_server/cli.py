@@ -64,10 +64,15 @@ async def run_server(args: Optional[list[str]] = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
 
-    if parsed_args.log_config:
-        logging.config.fileConfig(parsed_args.log_config, disable_existing_loggers=False)
-    elif os.environ.get('LOG_CONFIG'):
-        logging.config.fileConfig(os.environ['LOG_CONFIG'], disable_existing_loggers=False)
+    log_config: pathlib.Path | None = parsed_args.log_config
+    if not log_config and os.environ.get('LOG_CONFIG'):
+        log_config = pathlib.Path(os.environ.get('LOG_CONFIG'))
+    if log_config and not log_config.is_file():
+        LOG.warning(f'Invalid log config file: {log_config}. Using default logging configuration.')
+        log_config = None
+
+    if log_config:
+        logging.config.fileConfig(log_config, disable_existing_loggers=False)
     else:
         logging.basicConfig(
             format='%(asctime)s %(name)s %(levelname)s: %(message)s',
@@ -92,9 +97,11 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
         else:
             await keboola_mcp_server.run_http_async(
+                show_banner=False,
                 transport=parsed_args.transport,
                 host=parsed_args.host,
                 port=parsed_args.port,
+                uvicorn_config={'log_config': log_config} if log_config else None,
                 # Adding ForwardSlashMiddleware in KeboolaMcpServer's constructor doesn't seem to have any effect.
                 # See https://github.com/jlowin/fastmcp/pull/896 for the related changes in the fastmcp==2.9.0 library.
                 middleware=[Middleware(ForwardSlashMiddleware)],
