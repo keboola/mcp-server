@@ -484,7 +484,7 @@ async def test_update_sql_transformation(
         configuration_id=mock_configuration['id'],
         change_description=new_change_description,
         configuration=expected_config,
-        updated_description=None,
+        updated_description='',
         is_disabled=False,
     )
 
@@ -675,7 +675,6 @@ async def test_update_config(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
-    mock_configuration: dict[str, Any],
     parameters: dict[str, Any] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
@@ -699,8 +698,14 @@ async def test_update_config(
         'version': 1,
     }
 
-    updated_configuration = mock_configuration.copy()
-    updated_configuration['version'] = 2
+    updated_name = 'Updated Configuration'
+    updated_description = 'Updated configuration description'
+    updated_configuration = {
+        **existing_configuration,
+        'name': updated_name,
+        'description': updated_description,
+        'version': 2,
+    }
 
     # Set up the mock for ai_service_client and storage_client
     keboola_client.ai_service_client = mocker.MagicMock()
@@ -709,15 +714,13 @@ async def test_update_config(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
-    name = 'Updated Configuration'
-    description = 'Updated configuration description'
     change_description = 'Test update'
 
     # Test the update_component_root_configuration tool
     result = await update_config(
         ctx=context,
-        name=name,
-        description=description,
+        name=updated_name,
+        description=updated_description,
         change_description=change_description,
         component_id=component_id,
         configuration_id=configuration_id,
@@ -728,7 +731,7 @@ async def test_update_config(
     assert isinstance(result, ConfigToolOutput)
     assert result.component_id == component_id
     assert result.configuration_id == configuration_id
-    assert result.description == description
+    assert result.description == updated_description
     assert result.success is True
     assert result.timestamp is not None
 
@@ -738,8 +741,8 @@ async def test_update_config(
         configuration_id=configuration_id,
         configuration=expected_config,
         change_description=change_description,
-        updated_name=name,
-        updated_description=description,
+        updated_name=updated_name,
+        updated_description=updated_description,
     )
 
 
@@ -783,7 +786,6 @@ async def test_update_config_row(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
-    mock_configuration: dict[str, Any],
     parameters: dict[str, Any] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
@@ -805,9 +807,14 @@ async def test_update_config_row(
         'version': 1,
     }
 
+    updated_name = 'Updated Row Configuration'
+    updated_description = 'Updated row configuration description'
     updated_row_configuration = {
-        'version': 2
-    }  # to signify that the version is the only field that is used from response
+        **existing_row_configuration,
+        'name': updated_name,
+        'description': updated_description,
+        'version': 2,
+    }
 
     # Set up the mock for ai_service_client and storage_client
     keboola_client.ai_service_client = mocker.MagicMock()
@@ -816,15 +823,13 @@ async def test_update_config_row(
     keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value=updated_row_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
-    name = 'Updated Row Configuration'
-    description = 'Updated row configuration description'
     change_description = 'Test row update'
 
     # Test the update_component_row_configuration tool
     result = await update_config_row(
         ctx=context,
-        name=name,
-        description=description,
+        name=updated_name,
+        description=updated_description,
         change_description=change_description,
         component_id=component_id,
         configuration_id=configuration_id,
@@ -836,7 +841,7 @@ async def test_update_config_row(
     assert isinstance(result, ConfigToolOutput)
     assert result.component_id == component_id
     assert result.configuration_id == configuration_id
-    assert result.description == description
+    assert result.description == updated_description
     assert result.success is True
     assert result.timestamp is not None
 
@@ -847,6 +852,6 @@ async def test_update_config_row(
         configuration_row_id=configuration_row_id,
         configuration=expected_config,
         change_description=change_description,
-        updated_name=name,
-        updated_description=description,
+        updated_name=updated_name,
+        updated_description=updated_description,
     )

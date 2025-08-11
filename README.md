@@ -324,37 +324,39 @@ What buckets and tables are in my Keboola project?
 
 | Category | Tool | Description |
 |----------|------|-------------|
-| **Project** | `get_project_info` | Gets structured information about your Keboola project |
-| **Storage** | `list_buckets` | Lists all storage buckets in your Keboola project |
-| | `get_bucket` | Retrieves detailed information about a specific bucket |
-| | `list_tables` | Returns all tables within a specific bucket |
-| | `get_table` | Provides detailed information for a specific table |
-| | `update_bucket_description` | Updates the description of a bucket |
-| | `update_column_description` | Updates the description for a given column in a table |
-| | `update_table_description` | Updates the description of a table |
-| **SQL** | `query_table` | Executes custom SQL queries against your data |
-| | `get_sql_dialect` | Identifies whether your workspace uses Snowflake or BigQuery SQL dialect |
-| **Component** | `create_config` | Creates a component configuration with custom parameters |
-| | `add_config_row` | Creates a component configuration row with custom parameters |
-| | `create_sql_transformation` | Creates an SQL transformation with custom queries |
-| | `find_component_id` | Returns list of component IDs that match the given query |
-| | `get_component` | Gets information about a specific component given its ID |
-| | `get_config` | Gets information about a specific component/transformation configuration |
-| | `get_config_examples` | Retrieves sample configuration examples for a specific component |
-| | `list_configs` | Retrieves configurations of components present in the project |
-| | `list_transformations` | Retrieves transformation configurations in the project |
-| | `update_config` | Updates a specific component configuration |
-| | `update_config_row` | Updates a specific component configuration row |
+| **Project** | `get_project_info` | Returns structured information about your Keboola project |
+| **Storage** | `get_bucket` | Gets detailed information about a specific bucket |
+| | `get_table` | Gets detailed information about a specific table, including DB identifier and columns |
+| | `list_buckets` | Retrieves all buckets in the project |
+| | `list_tables` | Retrieves all tables in a specific bucket |
+| | `update_description` | Updates description for a bucket, table, or column |
+| **SQL** | `get_sql_dialect` | Returns the SQL dialect used by the workspace |
+| | `query_data` | Executes a SELECT query against the underlying database |
+| **Component** | `add_config_row` | Creates a configuration row for a component configuration |
+| | `create_config` | Creates a root component configuration |
+| | `create_sql_transformation` | Creates an SQL transformation from one or more SQL code blocks |
+| | `find_component_id` | Finds component IDs matching a natural-language query |
+| | `get_component` | Retrieves details of a component by ID |
+| | `get_config` | Retrieves a specific component/transformation configuration |
+| | `get_config_examples` | Retrieves example configurations for a component |
+| | `list_configs` | Lists configurations in the project, optionally filtered |
+| | `list_transformations` | Lists transformation configurations in the project |
+| | `update_config` | Updates a root component configuration |
+| | `update_config_row` | Updates a component configuration row |
 | | `update_sql_transformation` | Updates an existing SQL transformation configuration |
-| **Job** | `retrieve_jobs` | Lists and filters jobs by status, component, or configuration |
-| | `get_job_detail` | Returns comprehensive details about a specific job |
-| | `start_job` | Triggers a component or transformation job to run |
-| **Flow** | `create_flow` | Creates a new flow configuration in Keboola |
-|  | `get_flow` | Gets detailed information about a specific flow configuration. |
-|  | `get_flow_schema` | Returns the JSON schema that defines the structure of Flow configurations |
-|  | `list_flows` | Retrieves flow configurations from the project |
-|  | `update_flow` | Updates an existing flow configuration in Keboola |
-| **Documentation** | `docs_query` | Searches Keboola documentation based on natural language queries |
+| **Flow** | `create_conditional_flow` | Creates a conditional flow (`keboola.flow`) |
+| | `create_flow` | Creates a legacy flow (`keboola.orchestrator`) |
+| | `get_flow` | Retrieves details of a specific flow configuration |
+| | `get_flow_examples` | Retrieves examples of valid flow configurations |
+| | `get_flow_schema` | Returns the JSON schema for the specified flow type |
+| | `list_flows` | Lists flow configurations in the project |
+| | `update_flow` | Updates an existing flow configuration |
+| **Jobs** | `get_job` | Retrieves detailed information about a specific job |
+| | `list_jobs` | Lists jobs with optional filtering, sorting, and pagination |
+| | `run_job` | Starts a job for a component or transformation |
+| **Documentation** | `docs_query` | Answers questions using Keboola documentation as the source |
+| **Other** | `create_oauth_url` | Generates an OAuth authorization URL for a component configuration |
+| | `search` | Searches for items in the project by name prefixes |
 
 ## Troubleshooting
 
@@ -402,6 +404,14 @@ In order to get these values, you need a dedicated Keboola project for integrati
 
 Update the `uv.lock` file if you have added or removed dependencies. Also consider updating the lock with newer dependency
 versions when creating a release (`uv lock --upgrade`).
+
+### Updating Tool Documentation
+
+When you make changes to any tool descriptions (docstrings in tool functions), you must regenerate the `TOOLS.md` documentation file to reflect these changes:
+
+```bash
+uv run python -m src.keboola_mcp_server.generate_tool_docs
+```
 
 ## Support and Feedback
 

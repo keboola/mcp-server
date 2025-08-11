@@ -29,7 +29,7 @@ component-related operations in the MCP server.
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Optional, Sequence, cast
+from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -202,7 +202,7 @@ async def list_transformations(
 async def get_component(
     ctx: Context,
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
-) -> Annotated[Component, Field(description='The component.')]:
+) -> Component:
     """
     Gets information about a specific component given its ID.
 
@@ -232,7 +232,7 @@ async def get_config(
         ),
     ],
     ctx: Context,
-) -> Annotated[Configuration, Field(description='The component/transformation and its configuration.')]:
+) -> Configuration:
     """
     Gets information about a specific component/transformation configuration.
 
@@ -403,25 +403,24 @@ async def update_sql_transformation(
         Field(description='Description of the changes made to the transformation configuration.'),
     ],
     parameters: Annotated[
-        TransformationConfiguration.Parameters | None,
+        TransformationConfiguration.Parameters,
         Field(
-            default=None,
             description=(
                 'The updated "parameters" part of the transformation configuration that contains the newly '
                 'applied settings and preserves all other existing settings. Only updated if provided.'
             ),
+            json_schema_extra={'type': 'object'},
         ),
-    ],
+    ] = None,
     storage: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any],
         Field(
-            default=None,
             description=(
                 'The updated "storage" part of the transformation configuration that contains the newly '
                 'applied settings and preserves all other existing settings. Only updated if provided.'
             ),
         ),
-    ],
+    ] = None,
     updated_description: Annotated[
         str,
         Field(
@@ -495,7 +494,7 @@ async def update_sql_transformation(
         configuration_id=configuration_id,
         configuration=updated_configuration,
         change_description=change_description,
-        updated_description=updated_description if updated_description else None,
+        updated_description=updated_description,
         is_disabled=is_disabled,
     )
 
@@ -508,8 +507,8 @@ async def update_sql_transformation(
 
     links = links_manager.get_configuration_links(
         component_id=sql_transformation_id,
-        configuration_id=str(configuration_id),
-        configuration_name=str(updated_raw_configuration.get('name', '')),
+        configuration_id=configuration_id,
+        configuration_name=updated_raw_configuration.get('name') or '',
     )
 
     LOG.info(
@@ -519,8 +518,8 @@ async def update_sql_transformation(
 
     return ConfigToolOutput(
         component_id=sql_transformation_id,
-        configuration_id=str(configuration_id),
-        description=updated_description or updated_raw_configuration.get('description', ''),
+        configuration_id=configuration_id,
+        description=updated_raw_configuration.get('description') or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -552,13 +551,12 @@ async def create_config(
     storage: Annotated[
         dict[str, Any],
         Field(
-            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
             ),
         ),
-    ],
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -659,13 +657,12 @@ async def add_config_row(
     storage: Annotated[
         dict[str, Any],
         Field(
-            default_factory=dict,
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined'
             ),
         ),
-    ],
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -759,23 +756,20 @@ async def update_config(
     name: Annotated[
         str,
         Field(
-            Optional[str],
             description='A short, descriptive name summarizing the purpose of the component configuration.',
         ),
-    ] = None,
+    ] = '',
     description: Annotated[
         str,
         Field(
-            Optional[str],
             description=(
                 'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
-    ] = None,
+    ] = '',
     parameters: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The component configuration parameters, adhering to the root_configuration_schema schema. '
                 'Only updated if provided.'
@@ -785,7 +779,6 @@ async def update_config(
     storage: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that are not row-based and have tables or file '
@@ -862,13 +855,13 @@ async def update_config(
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_name=name,
+        configuration_name=updated_raw_configuration.get('name') or '',
     )
 
     return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
-        description=description,
+        description=updated_raw_configuration.get('description') or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -890,23 +883,20 @@ async def update_config_row(
     name: Annotated[
         str,
         Field(
-            Optional[str],
             description='A short, descriptive name summarizing the purpose of the component configuration.',
         ),
-    ] = None,
+    ] = '',
     description: Annotated[
         str,
         Field(
-            Optional[str],
             description=(
                 'The detailed description of the component configuration explaining its purpose and functionality.'
             ),
         ),
-    ] = None,
+    ] = '',
     parameters: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The component row configuration parameters, adhering to the row_configuration_schema. '
                 'Only updated if provided.'
@@ -916,7 +906,6 @@ async def update_config_row(
     storage: Annotated[
         dict[str, Any],
         Field(
-            Optional[dict[str, Any]],
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined. '
@@ -996,13 +985,13 @@ async def update_config_row(
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_name=name,
+        configuration_name=updated_raw_configuration.get('name') or '',
     )
 
     return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
-        description=description,
+        description=updated_raw_configuration.get('description') or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,

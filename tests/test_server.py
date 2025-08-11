@@ -48,13 +48,11 @@ class TestServer:
             'query_data',
             'run_job',
             'search',
-            'update_bucket_description',
-            'update_column_description',
             'update_config',
             'update_config_row',
+            'update_description',
             'update_flow',
             'update_sql_transformation',
-            'update_table_description',
         ]
 
     @pytest.mark.asyncio
@@ -69,6 +67,34 @@ class TestServer:
 
         missing_descriptions.sort()
         assert not missing_descriptions, f'These tools have no description: {missing_descriptions}'
+
+    @pytest.mark.asyncio
+    async def test_tools_input_schema(self):
+        server = create_server(Config())
+        tools = await server.get_tools()
+
+        missing_properties: list[str] = []
+        missing_type: list[str] = []
+        missing_default: list[str] = []
+        for tool in tools.values():
+            properties = tool.parameters['properties']
+            if not properties:
+                missing_properties.append(tool.name)
+                continue
+
+            required = tool.parameters.get('required') or []
+            for prop_name, prop_def in properties.items():
+                if 'type' not in prop_def:
+                    missing_type.append(f'{tool.name}.{prop_name}')
+                if prop_name not in required and 'default' not in prop_def:
+                    missing_default.append(f'{tool.name}.{prop_name}')
+
+        missing_properties.sort()
+        assert missing_properties == ['get_project_info', 'get_sql_dialect', 'list_buckets']
+        missing_type.sort()
+        assert not missing_type, f'These tool params have no "type" info: {missing_type}'
+        missing_default.sort()
+        assert not missing_default, f'These tool params are optional, but have no default value: {missing_default}'
 
 
 @pytest.mark.asyncio

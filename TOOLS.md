@@ -8,9 +8,7 @@ This document provides details about the tools available in the Keboola MCP serv
 - [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
 - [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
 - [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
-- [update_bucket_description](#update_bucket_description): Updates the description for a given Keboola bucket.
-- [update_column_description](#update_column_description): Updates the description for a given column in a Keboola table.
-- [update_table_description](#update_table_description): Updates the description for a given Keboola table.
+- [update_description](#update_description): Updates the description for a Keboola storage item.
 
 ### SQL Tools
 - [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
@@ -154,98 +152,69 @@ Retrieves all tables in a specific bucket with their basic information.
 ```
 
 ---
-<a name="update_bucket_description"></a>
-## update_bucket_description
+<a name="update_description"></a>
+## update_description
 **Description**:
 
-Updates the description for a given Keboola bucket.
+Updates the description for a Keboola storage item.
+
+The tool supports three item types and validates the required identifiers based on the selected type:
+
+- item_type = "bucket": requires bucket_id
+- item_type = "table": requires table_id
+- item_type = "column": requires table_id and column_name
+
+Usage examples:
+- Update a bucket: item_type="bucket", bucket_id="in.c-my-bucket",
+  description="New bucket description"
+- Update a table: item_type="table", table_id="in.c-my-bucket.my-table",
+  description="New table description"
+- Update a column: item_type="column", table_id="in.c-my-bucket.my-table",
+  column_name="my_column", description="New column description"
+
+:return: The update result containing the stored description, timestamp, success flag, and optional links.
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "bucket_id": {
-      "description": "The ID of the bucket to update.",
-      "title": "Bucket Id",
+    "item_type": {
+      "description": "Type of the item to update. One of: bucket, table, column.",
+      "enum": [
+        "bucket",
+        "table",
+        "column"
+      ],
+      "title": "Item Type",
       "type": "string"
     },
     "description": {
-      "description": "The new description for the bucket.",
+      "description": "The new description to set for the specified item.",
       "title": "Description",
       "type": "string"
-    }
-  },
-  "required": [
-    "bucket_id",
-    "description"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="update_column_description"></a>
-## update_column_description
-**Description**:
-
-Updates the description for a given column in a Keboola table.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
+    },
+    "bucket_id": {
+      "default": "",
+      "description": "Bucket ID. Required when item_type is \"bucket\".",
+      "title": "Bucket Id",
+      "type": "string"
+    },
     "table_id": {
-      "description": "The ID of the table that contains the column.",
+      "default": "",
+      "description": "Table ID. Required when item_type is \"table\" or \"column\".",
       "title": "Table Id",
       "type": "string"
     },
     "column_name": {
-      "description": "The name of the column to update.",
+      "default": "",
+      "description": "Column name. Required when item_type is \"column\".",
       "title": "Column Name",
       "type": "string"
-    },
-    "description": {
-      "description": "The new description for the column.",
-      "title": "Description",
-      "type": "string"
     }
   },
   "required": [
-    "table_id",
-    "column_name",
-    "description"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="update_table_description"></a>
-## update_table_description
-**Description**:
-
-Updates the description for a given Keboola table.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "table_id": {
-      "description": "The ID of the table to update.",
-      "title": "Table Id",
-      "type": "string"
-    },
-    "description": {
-      "description": "The new description for the table.",
-      "title": "Description",
-      "type": "string"
-    }
-  },
-  "required": [
-    "table_id",
+    "item_type",
     "description"
   ],
   "type": "object"
@@ -276,16 +245,45 @@ Gets the name of the SQL dialect used by Keboola project's underlying database.
 **Description**:
 
 Executes an SQL SELECT query to get the data from the underlying database.
-* When constructing the SQL SELECT query make sure to check the SQL dialect
-  used by the Keboola project's underlying database.
-* When referring to tables always use fully qualified table names that include the database name,
-  schema name and the table name.
-* The fully qualified table name can be found in the table information, use a tool to get the information
-  about tables. The fully qualified table name can be found in the response from that tool.
-* Always use quoted column names when referring to table columns. The quoted column names can also be found
-  in the response from the table information tool.
-* When querying columns with categorical values, use the `query_data` tool to inspect distinct values
-  beforehand and ensure valid filtering.
+
+CRITICAL SQL REQUIREMENTS:
+
+* ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
+* Do not include any comments in the SQL code
+
+DIALECT-SPECIFIC REQUIREMENTS:
+* Snowflake: Use double quotes for identifiers: "column_name", "table_name"
+* BigQuery: Use backticks for identifiers: `column_name`, `table_name`
+* Never mix quoting styles within a single query
+
+TABLE AND COLUMN REFERENCES:
+* Always use fully qualified table names that include database name, schema name and table name
+* Get fully qualified table names using table information tools - use exact format shown
+* Snowflake format: "DATABASE"."SCHEMA"."TABLE"
+* BigQuery format: `project`.`dataset`.`table`
+* Always use quoted column names when referring to table columns (exact quotes from table info)
+
+CTE (WITH CLAUSE) RULES:
+* ALL column references in main query MUST match exact case used in the CTE
+* If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
+* For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
+* Define all column aliases explicitly in CTEs
+* Quote identifiers in both CTE definition and references to preserve case
+
+FUNCTION COMPATIBILITY:
+* Snowflake: Use LISTAGG instead of STRING_AGG
+* Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
+* Cast VARCHAR columns to appropriate types before using in date/numeric functions
+
+ERROR PREVENTION:
+* Never pass empty strings ('') where numeric or date values are expected
+* Use NULLIF or CASE statements to handle empty values
+* Always use TRY_CAST or similar safe casting functions when converting data types
+* Check for division by zero using NULLIF(denominator, 0)
+
+DATA VALIDATION:
+* When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
+* Ensure valid filtering by checking actual data values first
 
 
 **Input JSON Schema**:
@@ -368,6 +366,7 @@ EXAMPLES:
     },
     "storage": {
       "additionalProperties": true,
+      "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
       "title": "Storage",
       "type": "object"
@@ -433,6 +432,7 @@ EXAMPLES:
     },
     "storage": {
       "additionalProperties": true,
+      "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
       "title": "Storage",
       "type": "object"
@@ -834,13 +834,13 @@ EXAMPLES:
       "type": "string"
     },
     "name": {
-      "default": null,
+      "default": "",
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
       "title": "Name",
       "type": "string"
     },
     "description": {
-      "default": null,
+      "default": "",
       "description": "The detailed description of the component configuration explaining its purpose and functionality.",
       "title": "Description",
       "type": "string"
@@ -916,13 +916,13 @@ EXAMPLES:
       "type": "string"
     },
     "name": {
-      "default": null,
+      "default": "",
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
       "title": "Name",
       "type": "string"
     },
     "description": {
-      "default": null,
+      "default": "",
       "description": "The detailed description of the component configuration explaining its purpose and functionality.",
       "title": "Description",
       "type": "string"
@@ -1068,31 +1068,18 @@ EXAMPLES:
       "type": "string"
     },
     "parameters": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Parameters"
-        },
-        {
-          "type": "null"
-        }
-      ],
+      "$ref": "#/$defs/Parameters",
       "default": null,
       "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
-      "title": "Parameters"
+      "title": "Parameters",
+      "type": "object"
     },
     "storage": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
+      "additionalProperties": true,
       "default": null,
       "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
-      "title": "Storage"
+      "title": "Storage",
+      "type": "object"
     },
     "updated_description": {
       "default": "",
@@ -1448,7 +1435,13 @@ EXAMPLES:
       "title": "Flow Type",
       "type": "string"
     },
+    "change_description": {
+      "description": "Description of changes made.",
+      "title": "Change Description",
+      "type": "string"
+    },
     "phases": {
+      "default": null,
       "description": "Updated list of phase definitions.",
       "items": {
         "additionalProperties": true,
@@ -1458,6 +1451,7 @@ EXAMPLES:
       "type": "array"
     },
     "tasks": {
+      "default": null,
       "description": "Updated list of task definitions.",
       "items": {
         "additionalProperties": true,
@@ -1466,43 +1460,22 @@ EXAMPLES:
       "title": "Tasks",
       "type": "array"
     },
-    "change_description": {
-      "description": "Description of changes made.",
-      "title": "Change Description",
+    "name": {
+      "default": "",
+      "description": "Updated flow name. Only updated if provided.",
+      "title": "Name",
       "type": "string"
     },
-    "name": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Updated flow name. Only updated if provided.",
-      "title": "Name"
-    },
     "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
+      "default": "",
       "description": "Updated flow description. Only updated if provided.",
-      "title": "Description"
+      "title": "Description",
+      "type": "string"
     }
   },
   "required": [
     "configuration_id",
     "flow_type",
-    "phases",
-    "tasks",
     "change_description"
   ],
   "type": "object"

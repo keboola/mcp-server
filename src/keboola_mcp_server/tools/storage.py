@@ -2,13 +2,13 @@
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Mapping, Optional, cast
+from typing import Annotated, Any, Literal, Optional, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
-from keboola_mcp_server.client import JsonDict, KeboolaClient
+from keboola_mcp_server.client import JsonDict, KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
@@ -26,30 +26,9 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(FunctionTool.from_function(list_buckets, serializer=exclude_none_serializer))
     mcp.add_tool(FunctionTool.from_function(get_table, serializer=exclude_none_serializer))
     mcp.add_tool(FunctionTool.from_function(list_tables, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(update_bucket_description))
-    mcp.add_tool(FunctionTool.from_function(update_table_description, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(update_column_description, serializer=exclude_none_serializer))
+    mcp.add_tool(FunctionTool.from_function(update_description, serializer=exclude_none_serializer))
 
     LOG.info('Storage tools added to the MCP server.')
-
-
-def _get_metadata_property(metadata: list[Mapping[str, Any]], key: str, provider: str | None = None) -> Optional[Any]:
-    """
-    Gets the value of a metadata property based on the provided key and optional provider. If multiple metadata entries
-    exists with the same key, the most recent one is returned.
-
-    :param metadata: A list of metadata entries.
-    :param key: The metadata property key to search for.
-    :param provider: Specifies the metadata provider name to filter by.
-
-    :return: The value of the most recent matching metadata entry if found, or None otherwise.
-    """
-    filtered = [
-        m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
-    ]
-    # TODO: ideally we should first convert the timestamps to UTC
-    filtered.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
-    return filtered[0].get('value') if filtered else None
 
 
 def _extract_description(values: dict[str, Any]) -> Optional[str]:
@@ -57,7 +36,7 @@ def _extract_description(values: dict[str, Any]) -> Optional[str]:
     if description := values.get('description'):
         return description
     else:
-        return _get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
+        return get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
 
 
 class BucketDetail(BaseModel):
@@ -228,9 +207,9 @@ async def get_table(
     column_info = []
     for col_name in raw_columns:
         col_meta = raw_column_metadata.get(col_name, [])
-        native_type: str | None = _get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
+        native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
         if native_type:
-            raw_nullable = _get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
+            raw_nullable = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
             nullable = raw_nullable.lower() in ['1', 'yes', 'true']
         else:
             # default values for untyped columns
@@ -278,63 +257,75 @@ async def list_tables(
 
 
 @tool_errors()
-async def update_bucket_description(
-    bucket_id: Annotated[str, Field(description='The ID of the bucket to update.')],
-    description: Annotated[str, Field(description='The new description for the bucket.')],
+async def update_description(
     ctx: Context,
+    item_type: Annotated[
+        Literal['bucket', 'table', 'column'],
+        Field(description='Type of the item to update. One of: bucket, table, column.'),
+    ],
+    description: Annotated[str, Field(description='The new description to set for the specified item.')],
+    bucket_id: Annotated[str, Field(default='', description='Bucket ID. Required when item_type is "bucket".')] = '',
+    table_id: Annotated[
+        str, Field(default='', description='Table ID. Required when item_type is "table" or "column".')
+    ] = '',
+    column_name: Annotated[
+        str, Field(default='', description='Column name. Required when item_type is "column".')
+    ] = '',
 ) -> Annotated[
     UpdateDescriptionOutput,
-    Field(description='The response object of the Bucket description update.'),
+    Field(description='The response object for the description update.'),
 ]:
-    """Updates the description for a given Keboola bucket."""
+    """
+    Updates the description for a Keboola storage item.
+
+    The tool supports three item types and validates the required identifiers based on the selected type:
+
+    - item_type = "bucket": requires bucket_id
+    - item_type = "table": requires table_id
+    - item_type = "column": requires table_id and column_name
+
+    Usage examples:
+    - Update a bucket: item_type="bucket", bucket_id="in.c-my-bucket",
+      description="New bucket description"
+    - Update a table: item_type="table", table_id="in.c-my-bucket.my-table",
+      description="New table description"
+    - Update a column: item_type="column", table_id="in.c-my-bucket.my-table",
+      column_name="my_column", description="New column description"
+
+    :return: The update result containing the stored description, timestamp, success flag, and optional links.
+    """
     client = KeboolaClient.from_state(ctx.session.state)
-    links_manger = await ProjectLinksManager.from_client(client)
 
-    response = await client.storage_client.bucket_metadata_update(
-        bucket_id=bucket_id,
-        metadata={MetadataField.DESCRIPTION: description},
-    )
+    if item_type == 'bucket':
+        if not bucket_id:
+            raise ValueError('bucket_id is required when item_type is "bucket"')
+        links_manger = await ProjectLinksManager.from_client(client)
+        response = await client.storage_client.bucket_metadata_update(
+            bucket_id=bucket_id,
+            metadata={MetadataField.DESCRIPTION: description},
+        )
 
-    description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
-    links = [links_manger.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)]
+        description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
+        links = [links_manger.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)]
+        return UpdateDescriptionOutput.model_validate(description_entry | {'links': links})
 
-    return UpdateDescriptionOutput.model_validate(description_entry | {'links': links})
+    if item_type == 'table':
+        if not table_id:
+            raise ValueError('table_id is required when item_type is "table"')
+        response = await client.storage_client.table_metadata_update(
+            table_id=table_id,
+            metadata={MetadataField.DESCRIPTION: description},
+            columns_metadata={},
+        )
+        raw_metadata = cast(list[JsonDict], response.get('metadata', []))
+        description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
+        return UpdateDescriptionOutput.model_validate(description_entry)
 
-
-@tool_errors()
-async def update_table_description(
-    table_id: Annotated[str, Field(description='The ID of the table to update.')],
-    description: Annotated[str, Field(description='The new description for the table.')],
-    ctx: Context,
-) -> Annotated[
-    UpdateDescriptionOutput,
-    Field(description='The response object of the Table description update.'),
-]:
-    """Updates the description for a given Keboola table."""
-    client = KeboolaClient.from_state(ctx.session.state)
-    response = await client.storage_client.table_metadata_update(
-        table_id=table_id,
-        metadata={MetadataField.DESCRIPTION: description},
-        columns_metadata={},
-    )
-    raw_metadata = cast(list[JsonDict], response.get('metadata', []))
-    description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
-
-    return UpdateDescriptionOutput.model_validate(description_entry)
-
-
-@tool_errors()
-async def update_column_description(
-    table_id: Annotated[str, Field(description='The ID of the table that contains the column.')],
-    column_name: Annotated[str, Field(description='The name of the column to update.')],
-    description: Annotated[str, Field(description='The new description for the column.')],
-    ctx: Context,
-) -> Annotated[
-    UpdateDescriptionOutput,
-    Field(description='The response object of the column description update.'),
-]:
-    """Updates the description for a given column in a Keboola table."""
-    client = KeboolaClient.from_state(ctx.session.state)
+    # item_type == 'column'
+    if not table_id:
+        raise ValueError('table_id is required when item_type is "column"')
+    if not column_name:
+        raise ValueError('column_name is required when item_type is "column"')
 
     response = await client.storage_client.table_metadata_update(
         table_id=table_id,
@@ -346,5 +337,4 @@ async def update_column_description(
     description_entry = next(
         entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION
     )
-
     return UpdateDescriptionOutput.model_validate(description_entry)

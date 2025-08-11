@@ -5,13 +5,14 @@ import logging
 import math
 import os
 from datetime import datetime
-from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, Union, cast
+from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, TypeVar, Union, cast
 
 import httpx
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 LOG = logging.getLogger(__name__)
 
+T = TypeVar('T')
 JsonPrimitive = Union[int, float, str, bool, None]
 JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
 JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
@@ -41,6 +42,29 @@ ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 CONDITIONAL_FLOW_COMPONENT_ID = 'keboola.flow'
 FlowType = Literal['keboola.flow', 'keboola.orchestrator']
 FLOW_TYPES: Sequence[FlowType] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID)
+
+
+def get_metadata_property(
+    metadata: list[Mapping[str, Any]], key: str, provider: str | None = None, default: T | None = None
+) -> Optional[T]:
+    """
+    Gets the value of a metadata property based on the provided key and optional provider. If multiple metadata entries
+    exist with the same key, the most recent one is returned.
+
+    :param metadata: A list of metadata entries.
+    :param key: The metadata property key to search for.
+    :param provider: Specifies the metadata provider name to filter by.
+    :param default: The default value to return if the metadata property is not found.
+
+    :return: The value of the most recent matching metadata entry if found, or None otherwise.
+    """
+    filtered = [
+        m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
+    ]
+    # TODO: ideally we should first convert the timestamps to UTC
+    filtered.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+    value = filtered[0].get('value') if filtered else None
+    return value if value is not None else default
 
 
 class KeboolaClient:
