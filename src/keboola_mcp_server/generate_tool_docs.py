@@ -5,9 +5,10 @@ import re
 import sys
 from collections import defaultdict
 from operator import attrgetter
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Optional
 
 from fastmcp.tools import Tool
+from mcp.types import ToolAnnotations
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.server import create_server
@@ -79,14 +80,25 @@ class ToolDocumentationGenerator:
             if not (tools := tools_by_category[category]):
                 continue
 
-            f.write(f'\n### {category.name}\n')
+            f.write(f'\n### [{category.name}](#{self._generate_anchor(category.name)})\n')
             for tool in sorted(tools, key=attrgetter('name')):
                 anchor = self._generate_anchor(tool.name)
                 first_sentence = self._get_first_sentence(tool.description)
                 f.write(f'- [{tool.name}](#{anchor}): {first_sentence}\n')
         f.write('\n---\n')
 
-    def _get_first_sentence(self, text: str) -> str:
+    def _get_annotations(self, annotations: Optional[ToolAnnotations]) -> str:
+        if annotations is None:
+            return ''
+        str_annotations = []
+        if annotations.readOnlyHint:
+            str_annotations.append('read-only')
+        else:
+            str_annotations.append('destructive' if annotations.destructiveHint else 'non-destructive')
+            str_annotations.append('idempotent' if annotations.idempotentHint else 'non-idempotent')
+        return f'`{", ".join(str_annotations)}`'
+
+    def _get_first_sentence(self, text: Optional[str]) -> str:
         """Extracts the first sentence from the given text."""
         if not text:
             return 'No description available.'
@@ -111,6 +123,8 @@ class ToolDocumentationGenerator:
                 anchor = self._generate_anchor(tool.name)
                 f.write(f'<a name="{anchor}"></a>\n')
                 f.write(f'## {tool.name}\n')
+                annotations = self._get_annotations(tool.annotations)
+                f.write(f'**Annotations**: {annotations}\n\n')
                 f.write(f'**Description**:\n\n{tool.description}\n\n')
                 self._write_json_schema(f, tool)
                 f.write('\n---\n')
