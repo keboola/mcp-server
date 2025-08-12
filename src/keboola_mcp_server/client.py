@@ -40,6 +40,7 @@ ItemType = Literal[
 
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 CONDITIONAL_FLOW_COMPONENT_ID = 'keboola.flow'
+DATA_APP_COMPONENT_ID = 'keboola.data-apps'
 FlowType = Literal['keboola.flow', 'keboola.orchestrator']
 FLOW_TYPES: Sequence[FlowType] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID)
 
