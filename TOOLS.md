@@ -65,7 +65,7 @@ potentially narrowed down by item type, limited and paginated.
 ## get_bucket
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `storage`**Description**:
 
 Gets detailed information about a specific bucket.
 
@@ -92,7 +92,7 @@ Gets detailed information about a specific bucket.
 ## get_table
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `storage`**Description**:
 
 Gets detailed information about a specific table including its DB identifier and column information.
 
@@ -119,7 +119,7 @@ Gets detailed information about a specific table including its DB identifier and
 ## list_buckets
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `storage`**Description**:
 
 Retrieves information about all buckets in the project.
 
@@ -137,7 +137,7 @@ Retrieves information about all buckets in the project.
 ## list_tables
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `storage`**Description**:
 
 Retrieves all tables in a specific bucket with their basic information.
 
@@ -164,7 +164,7 @@ Retrieves all tables in a specific bucket with their basic information.
 ## update_description
 **Annotations**: `destructive, idempotent`
 
-**Description**:
+**Tags**: `storage`**Description**:
 
 Updates the description for a Keboola storage item.
 
@@ -238,7 +238,7 @@ Usage examples:
 ## get_sql_dialect
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `sql`**Description**:
 
 Gets the name of the SQL dialect used by Keboola project's underlying database.
 
@@ -256,7 +256,7 @@ Gets the name of the SQL dialect used by Keboola project's underlying database.
 ## query_data
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `sql`**Description**:
 
 Executes an SQL SELECT query to get the data from the underlying database.
 
@@ -330,7 +330,7 @@ DATA VALIDATION:
 ## add_config_row
 **Annotations**: `non-destructive, non-idempotent`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Creates a component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
@@ -404,7 +404,7 @@ EXAMPLES:
 ## create_config
 **Annotations**: `non-destructive, non-idempotent`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 
@@ -471,7 +471,7 @@ EXAMPLES:
 ## create_sql_transformation
 **Annotations**: `non-destructive, non-idempotent`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and a list of created table names.
@@ -574,7 +574,7 @@ EXAMPLES:
 ## find_component_id
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `search`**Description**:
 
 Returns list of component IDs that match the given query.
 
@@ -608,7 +608,7 @@ EXAMPLES:
 ## get_component
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Gets information about a specific component given its ID.
 
@@ -646,7 +646,7 @@ EXAMPLES:
 ## get_config
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Gets information about a specific component/transformation configuration.
 
@@ -688,7 +688,7 @@ EXAMPLES:
 ## get_config_examples
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Retrieves sample configuration examples for a specific component.
 
@@ -723,7 +723,7 @@ EXAMPLES:
 ## list_configs
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Retrieves configurations of components present in the project,
 optionally filtered by component types or specific component IDs.
@@ -785,7 +785,7 @@ EXAMPLES:
 ## list_transformations
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
 
@@ -828,7 +828,7 @@ EXAMPLES:
 ## update_config
 **Annotations**: `destructive, idempotent`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Updates a specific root component configuration using given by component ID, and configuration ID.
 
@@ -908,7 +908,7 @@ EXAMPLES:
 ## update_config_row
 **Annotations**: `destructive, idempotent`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Updates a specific component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
@@ -993,7 +993,7 @@ EXAMPLES:
 ## update_sql_transformation
 **Annotations**: `destructive, idempotent`
 
-**Description**:
+**Tags**: `components`**Description**:
 
 Updates an existing SQL transformation configuration, optionally updating the description and disabling the
 configuration.
@@ -1147,7 +1147,7 @@ EXAMPLES:
 ## create_conditional_flow
 **Annotations**: `non-destructive, non-idempotent`
 
-**Description**:
+**Tags**: `flows`**Description**:
 
 Creates a new **conditional flow** configuration in Keboola.
 
@@ -1215,7 +1215,7 @@ USE CASES:
 ## create_flow
 **Annotations**: `non-destructive, non-idempotent`
 
-**Description**:
+**Tags**: `flows`**Description**:
 
 Creates a new flow configuration in Keboola.
 A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
@@ -1295,7 +1295,7 @@ EXAMPLES:
 ## get_flow
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `flows`**Description**:
 
 Gets detailed information about a specific flow configuration.
 
@@ -1322,7 +1322,7 @@ Gets detailed information about a specific flow configuration.
 ## get_flow_examples
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `flows`**Description**:
 
 Retrieves examples of valid flow configurations.
 
@@ -1358,7 +1358,7 @@ CONSIDERATIONS:
 ## get_flow_schema
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `flows`**Description**:
 
 Returns the JSON schema for the given flow type in markdown format.
 `keboola.flow` = conditional flows
@@ -1398,7 +1398,7 @@ Usage:
 ## list_flows
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `flows`**Description**:
 
 Retrieves flow configurations from the project. Optionally filtered by IDs.
 
@@ -1426,7 +1426,7 @@ Retrieves flow configurations from the project. Optionally filtered by IDs.
 ## update_flow
 **Annotations**: `destructive, idempotent`
 
-**Description**:
+**Tags**: `flows`**Description**:
 
 Updates an existing flow configuration in Keboola.
 
@@ -1541,7 +1541,7 @@ EXAMPLES:
 ## get_job
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `jobs`**Description**:
 
 Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
 results, and any relevant metadata.
@@ -1572,7 +1572,7 @@ EXAMPLES:
 ## list_jobs
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `jobs`**Description**:
 
 Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
 filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
@@ -1672,7 +1672,7 @@ EXAMPLES:
 ## run_job
 **Annotations**: `non-destructive, non-idempotent`
 
-**Description**:
+**Tags**: `jobs`**Description**:
 
 Starts a new job for a given component or transformation.
 
@@ -1707,7 +1707,7 @@ Starts a new job for a given component or transformation.
 ## docs_query
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `docs`**Description**:
 
 Answers a question using the Keboola documentation as a source.
 
@@ -1736,7 +1736,7 @@ Answers a question using the Keboola documentation as a source.
 ## create_oauth_url
 **Annotations**: `non-destructive, non-idempotent`
 
-**Description**:
+**Tags**: `oauth`**Description**:
 
 Generates an OAuth authorization URL for a Keboola component configuration.
 
@@ -1775,7 +1775,7 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 ## get_project_info
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `project`**Description**:
 
 Return structured project information pulled from multiple endpoints.
 
@@ -1793,7 +1793,7 @@ Return structured project information pulled from multiple endpoints.
 ## search
 **Annotations**: `read-only`
 
-**Description**:
+**Tags**: `search`**Description**:
 
 Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
 potentially narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.
