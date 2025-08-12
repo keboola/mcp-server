@@ -3,18 +3,18 @@ This document provides details about the tools available in the Keboola MCP serv
 
 ## Index
 
-### Storage Tools
+### [Storage Tools](#storage-tools)
 - [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
 - [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
 - [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
 - [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
 - [update_description](#update_description): Updates the description for a Keboola storage item.
 
-### SQL Tools
+### [SQL Tools](#sql-tools)
 - [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
 - [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
 
-### Component Tools
+### [Component Tools](#component-tools)
 - [add_config_row](#add_config_row): Creates a component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -33,7 +33,7 @@ component ID, configuration JSON, and description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
 configuration.
 
-### Flow Tools
+### [Flow Tools](#flow-tools)
 - [create_conditional_flow](#create_conditional_flow): Creates a new **conditional flow** configuration in Keboola.
 - [create_flow](#create_flow): Creates a new flow configuration in Keboola.
 - [get_flow](#get_flow): Gets detailed information about a specific flow configuration.
@@ -42,17 +42,17 @@ configuration.
 - [list_flows](#list_flows): Retrieves flow configurations from the project.
 - [update_flow](#update_flow): Updates an existing flow configuration in Keboola.
 
-### Jobs Tools
+### [Jobs Tools](#jobs-tools)
 - [get_job](#get_job): Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
 results, and any relevant metadata.
 - [list_jobs](#list_jobs): Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
 filtering.
 - [run_job](#run_job): Starts a new job for a given component or transformation.
 
-### Documentation Tools
+### [Documentation Tools](#documentation-tools)
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
-### Other Tools
+### [Other Tools](#other-tools)
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
 - [search](#search): Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
@@ -63,6 +63,8 @@ potentially narrowed down by item type, limited and paginated.
 # Storage Tools
 <a name="get_bucket"></a>
 ## get_bucket
+**Annotations**: `read-only`
+
 **Description**:
 
 Gets detailed information about a specific bucket.
@@ -88,6 +90,8 @@ Gets detailed information about a specific bucket.
 ---
 <a name="get_table"></a>
 ## get_table
+**Annotations**: `read-only`
+
 **Description**:
 
 Gets detailed information about a specific table including its DB identifier and column information.
@@ -113,6 +117,8 @@ Gets detailed information about a specific table including its DB identifier and
 ---
 <a name="list_buckets"></a>
 ## list_buckets
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves information about all buckets in the project.
@@ -129,6 +135,8 @@ Retrieves information about all buckets in the project.
 ---
 <a name="list_tables"></a>
 ## list_tables
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves all tables in a specific bucket with their basic information.
@@ -154,6 +162,8 @@ Retrieves all tables in a specific bucket with their basic information.
 ---
 <a name="update_description"></a>
 ## update_description
+**Annotations**: `destructive, idempotent`
+
 **Description**:
 
 Updates the description for a Keboola storage item.
@@ -226,6 +236,8 @@ Usage examples:
 # SQL Tools
 <a name="get_sql_dialect"></a>
 ## get_sql_dialect
+**Annotations**: `read-only`
+
 **Description**:
 
 Gets the name of the SQL dialect used by Keboola project's underlying database.
@@ -242,6 +254,8 @@ Gets the name of the SQL dialect used by Keboola project's underlying database.
 ---
 <a name="query_data"></a>
 ## query_data
+**Annotations**: `read-only`
+
 **Description**:
 
 Executes an SQL SELECT query to get the data from the underlying database.
@@ -314,6 +328,8 @@ DATA VALIDATION:
 # Component Tools
 <a name="add_config_row"></a>
 ## add_config_row
+**Annotations**: `non-destructive, non-idempotent`
+
 **Description**:
 
 Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -386,6 +402,8 @@ EXAMPLES:
 ---
 <a name="create_config"></a>
 ## create_config
+**Annotations**: `non-destructive, non-idempotent`
+
 **Description**:
 
 Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -451,6 +469,8 @@ EXAMPLES:
 ---
 <a name="create_sql_transformation"></a>
 ## create_sql_transformation
+**Annotations**: `non-destructive, non-idempotent`
+
 **Description**:
 
 Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -552,6 +572,8 @@ EXAMPLES:
 ---
 <a name="find_component_id"></a>
 ## find_component_id
+**Annotations**: `read-only`
+
 **Description**:
 
 Returns list of component IDs that match the given query.
@@ -584,6 +606,8 @@ EXAMPLES:
 ---
 <a name="get_component"></a>
 ## get_component
+**Annotations**: `read-only`
+
 **Description**:
 
 Gets information about a specific component given its ID.
@@ -620,6 +644,8 @@ EXAMPLES:
 ---
 <a name="get_config"></a>
 ## get_config
+**Annotations**: `read-only`
+
 **Description**:
 
 Gets information about a specific component/transformation configuration.
@@ -660,6 +686,8 @@ EXAMPLES:
 ---
 <a name="get_config_examples"></a>
 ## get_config_examples
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves sample configuration examples for a specific component.
@@ -693,6 +721,8 @@ EXAMPLES:
 ---
 <a name="list_configs"></a>
 ## list_configs
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves configurations of components present in the project,
@@ -753,6 +783,8 @@ EXAMPLES:
 ---
 <a name="list_transformations"></a>
 ## list_transformations
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
@@ -794,6 +826,8 @@ EXAMPLES:
 ---
 <a name="update_config"></a>
 ## update_config
+**Annotations**: `destructive, idempotent`
+
 **Description**:
 
 Updates a specific root component configuration using given by component ID, and configuration ID.
@@ -872,6 +906,8 @@ EXAMPLES:
 ---
 <a name="update_config_row"></a>
 ## update_config_row
+**Annotations**: `destructive, idempotent`
+
 **Description**:
 
 Updates a specific component configuration row in the specified configuration_id, using the specified name,
@@ -955,6 +991,8 @@ EXAMPLES:
 ---
 <a name="update_sql_transformation"></a>
 ## update_sql_transformation
+**Annotations**: `destructive, idempotent`
+
 **Description**:
 
 Updates an existing SQL transformation configuration, optionally updating the description and disabling the
@@ -1107,6 +1145,8 @@ EXAMPLES:
 # Flow Tools
 <a name="create_conditional_flow"></a>
 ## create_conditional_flow
+**Annotations**: `non-destructive, non-idempotent`
+
 **Description**:
 
 Creates a new **conditional flow** configuration in Keboola.
@@ -1173,6 +1213,8 @@ USE CASES:
 ---
 <a name="create_flow"></a>
 ## create_flow
+**Annotations**: `non-destructive, non-idempotent`
+
 **Description**:
 
 Creates a new flow configuration in Keboola.
@@ -1251,6 +1293,8 @@ EXAMPLES:
 ---
 <a name="get_flow"></a>
 ## get_flow
+**Annotations**: `read-only`
+
 **Description**:
 
 Gets detailed information about a specific flow configuration.
@@ -1276,6 +1320,8 @@ Gets detailed information about a specific flow configuration.
 ---
 <a name="get_flow_examples"></a>
 ## get_flow_examples
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves examples of valid flow configurations.
@@ -1310,6 +1356,8 @@ CONSIDERATIONS:
 ---
 <a name="get_flow_schema"></a>
 ## get_flow_schema
+**Annotations**: `read-only`
+
 **Description**:
 
 Returns the JSON schema for the given flow type in markdown format.
@@ -1348,6 +1396,8 @@ Usage:
 ---
 <a name="list_flows"></a>
 ## list_flows
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves flow configurations from the project. Optionally filtered by IDs.
@@ -1374,6 +1424,8 @@ Retrieves flow configurations from the project. Optionally filtered by IDs.
 ---
 <a name="update_flow"></a>
 ## update_flow
+**Annotations**: `destructive, idempotent`
+
 **Description**:
 
 Updates an existing flow configuration in Keboola.
@@ -1487,6 +1539,8 @@ EXAMPLES:
 # Jobs Tools
 <a name="get_job"></a>
 ## get_job
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
@@ -1516,6 +1570,8 @@ EXAMPLES:
 ---
 <a name="list_jobs"></a>
 ## list_jobs
+**Annotations**: `read-only`
+
 **Description**:
 
 Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
@@ -1614,6 +1670,8 @@ EXAMPLES:
 ---
 <a name="run_job"></a>
 ## run_job
+**Annotations**: `non-destructive, non-idempotent`
+
 **Description**:
 
 Starts a new job for a given component or transformation.
@@ -1647,6 +1705,8 @@ Starts a new job for a given component or transformation.
 # Documentation Tools
 <a name="docs_query"></a>
 ## docs_query
+**Annotations**: `read-only`
+
 **Description**:
 
 Answers a question using the Keboola documentation as a source.
@@ -1674,6 +1734,8 @@ Answers a question using the Keboola documentation as a source.
 # Other Tools
 <a name="create_oauth_url"></a>
 ## create_oauth_url
+**Annotations**: `non-destructive, non-idempotent`
+
 **Description**:
 
 Generates an OAuth authorization URL for a Keboola component configuration.
@@ -1711,6 +1773,8 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 ---
 <a name="get_project_info"></a>
 ## get_project_info
+**Annotations**: `read-only`
+
 **Description**:
 
 Return structured project information pulled from multiple endpoints.
@@ -1727,6 +1791,8 @@ Return structured project information pulled from multiple endpoints.
 ---
 <a name="search"></a>
 ## search
+**Annotations**: `read-only`
+
 **Description**:
 
 Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
