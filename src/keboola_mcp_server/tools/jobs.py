@@ -4,6 +4,7 @@ from typing import Annotated, Any, Literal, Optional, Union
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.client import KeboolaClient
@@ -19,9 +20,29 @@ LOG = logging.getLogger(__name__)
 
 def add_job_tools(mcp: KeboolaMcpServer) -> None:
     """Add job tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(get_job))
-    mcp.add_tool(FunctionTool.from_function(list_jobs, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(run_job))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_job,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_jobs,
+            serializer=exclude_none_serializer,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            run_job,
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+            ),
+        )
+    )
 
     LOG.info('Job tools added to the MCP server.')
 

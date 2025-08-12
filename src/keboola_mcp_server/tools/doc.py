@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.client import KeboolaClient
@@ -13,12 +14,13 @@ LOG = logging.getLogger(__name__)
 
 def add_doc_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    doc_tools = [
-        docs_query,
-    ]
-    for tool in doc_tools:
-        LOG.info(f'Adding tool {tool.__name__} to the MCP server.')
-        mcp.add_tool(FunctionTool.from_function(tool))
+    LOG.info(f'Adding tool {docs_query.__name__} to the MCP server.')
+    mcp.add_tool(
+        FunctionTool.from_function(
+            docs_query,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
 
     LOG.info('Doc tools initialized.')
 

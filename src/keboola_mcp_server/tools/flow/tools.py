@@ -8,6 +8,7 @@ from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from keboola_mcp_server import resources
@@ -49,13 +50,61 @@ LOG = logging.getLogger(__name__)
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(create_flow))
-    mcp.add_tool(FunctionTool.from_function(create_conditional_flow))
-    mcp.add_tool(FunctionTool.from_function(list_flows, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(update_flow))
-    mcp.add_tool(FunctionTool.from_function(get_flow))
-    mcp.add_tool(FunctionTool.from_function(get_flow_examples))
-    mcp.add_tool(FunctionTool.from_function(get_flow_schema))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_flow,
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+            ),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_conditional_flow,
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+            ),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_flows,
+            serializer=exclude_none_serializer,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_flow,
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
+            ),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_flow,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_flow_examples,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_flow_schema,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
 
     LOG.info('Flow tools initialized.')
 

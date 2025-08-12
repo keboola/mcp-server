@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal, Optional, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.client import JsonDict, KeboolaClient, get_metadata_property
@@ -22,11 +23,44 @@ TOOL_GROUP_NAME = 'STORAGE'
 
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(get_bucket))
-    mcp.add_tool(FunctionTool.from_function(list_buckets, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(get_table, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(list_tables, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(update_description, serializer=exclude_none_serializer))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_bucket,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_buckets,
+            serializer=exclude_none_serializer,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_table,
+            serializer=exclude_none_serializer,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_tables,
+            serializer=exclude_none_serializer,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_description,
+            serializer=exclude_none_serializer,
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
+            ),
+        )
+    )
 
     LOG.info('Storage tools added to the MCP server.')
 

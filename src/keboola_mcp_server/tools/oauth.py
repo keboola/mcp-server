@@ -6,6 +6,7 @@ from urllib.parse import urlencode, urlunsplit
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from keboola_mcp_server.client import KeboolaClient
@@ -19,7 +20,16 @@ TOOL_GROUP_NAME = 'OAUTH'
 
 def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
     """Adds OAuth tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(create_oauth_url))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_oauth_url,
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+            ),
+        )
+    )
     LOG.info('OAuth tools added to the MCP server.')
 
 
