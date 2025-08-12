@@ -2,6 +2,7 @@ import gzip
 import json
 import logging
 import math
+import os
 import secrets
 import time
 from http.client import HTTPException
@@ -23,6 +24,16 @@ from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull,
 from pydantic import AnyHttpUrl, AnyUrl
 
 LOG = logging.getLogger(__name__)
+_OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
+
+
+def _log_debug(msg: str) -> None:
+    """
+    Logs the message at the DEBUG level if the environment variable KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL is set.
+    Use this function for logging sensitive information. It logs nothing by default.
+    """
+    if _OAUTH_LOG_ALL:
+        LOG.debug(msg)
 
 
 class _OAuthClientInformationFull(OAuthClientInformationFull):
@@ -224,7 +235,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 )
 
             data = response.json()
-            LOG.debug(f'[handle_oauth_callback] OAuth server response: {data}')
+            _log_debug(f'[handle_oauth_callback] OAuth server response: {data}')
 
             if 'error' in data:
                 LOG.error(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
@@ -280,7 +291,7 @@ class SimpleOAuthProvider(OAuthProvider):
         auth_code = _ExtendedAuthorizationCode.model_validate(
             auth_code_raw | {'redirect_uri': AnyUrl(auth_code_raw['redirect_uri'])}
         )
-        LOG.debug(
+        _log_debug(
             f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
             f'auth_code={auth_code}'
         )
@@ -310,7 +321,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :raises HTTPException: If the OAuth server response indicates an error.
         """
-        LOG.debug(
+        _log_debug(
             f'[exchange_authorization_code] authorization_code={authorization_code}, ' f'client_id={client.client_id}'
         )
         # Check that we get the instance loaded by load_authorization_code() function.
@@ -351,7 +362,7 @@ class SimpleOAuthProvider(OAuthProvider):
             scope=' '.join(access_token.scopes),
         )
 
-        LOG.debug(
+        _log_debug(
             f'[exchange_authorization_code] access_token={access_token}, refresh_token={refresh_token},'
             f'oauth_token={oauth_token}'
         )
@@ -374,7 +385,7 @@ class SimpleOAuthProvider(OAuthProvider):
             return None
 
         proxy_token = ProxyAccessToken.model_validate(access_token_raw)
-        LOG.debug(f'[load_access_token] token={token}, proxy_token={proxy_token}')
+        _log_debug(f'[load_access_token] token={token}, proxy_token={proxy_token}')
 
         # Log the expired authorization code.
         # The mcp library itself performs the check and returns a proper response, but no logs.
@@ -404,7 +415,7 @@ class SimpleOAuthProvider(OAuthProvider):
             return None
 
         proxy_token = ProxyRefreshToken.model_validate(refresh_token_raw)
-        LOG.debug(f'[load_refresh_token] token={refresh_token}, proxy_token={proxy_token}')
+        _log_debug(f'[load_refresh_token] token={refresh_token}, proxy_token={proxy_token}')
 
         # Log the expired authorization code.
         # The mcp library itself performs the check and returns a proper response, but no logs.
@@ -436,7 +447,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :raises HTTPException: If the OAuth server response indicates an error.
         """
-        LOG.debug(
+        _log_debug(
             f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, ' f'scopes={scopes}'
         )
 
@@ -465,7 +476,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 )
 
             data = response.json()
-            LOG.debug(f'[exchange_refresh_token] OAuth server response: {data}')
+            _log_debug(f'[exchange_refresh_token] OAuth server response: {data}')
 
             if 'error' in data:
                 LOG.exception(f'[exchange_refresh_token] Error when refreshing token: data={data}')
@@ -507,7 +518,7 @@ class SimpleOAuthProvider(OAuthProvider):
             scope=' '.join(access_token.scopes),
         )
 
-        LOG.debug(
+        _log_debug(
             f'[exchange_refresh_token] access_token={access_token}, refresh_token={refresh_token}, '
             f'oauth_token={oauth_token}'
         )
@@ -524,7 +535,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :param token: The token to be revoked.
         :param token_type_hint: An optional hint about the type of the token.
         """
-        LOG.debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
+        _log_debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
         # This is no-op as we don't store the tokens.
 
     def _read_oauth_tokens(self, data: dict[str, Any], scopes: list[str]) -> tuple[AccessToken, RefreshToken]:
@@ -590,7 +601,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 )
 
             data = response.json()
-            LOG.debug(f'[_create_sapi_token] Storage API response: {data}')
+            _log_debug(f'[_create_sapi_token] Storage API response: {data}')
 
             return data['token']
 
