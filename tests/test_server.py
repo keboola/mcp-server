@@ -11,6 +11,15 @@ from keboola_mcp_server.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
+from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
+from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
+from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
+from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
+from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
+from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG
+from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
+from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
+from keboola_mcp_server.tools.storage import STORAGE_TOOLS_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -235,13 +244,14 @@ async def test_keboola_injection_and_lifespan(
 
 
 @pytest.mark.asyncio
-async def test_tool_annotations():
+async def test_tool_annotations_and_tags():
     """
     Test that the tool annotations are properly set.
     """
     server = create_server(Config())
     tools = await server.get_tools()
     for tool in tools.values():
+        assert tool.tags is not None, f'{tool.name} has no tags'
         assert tool.annotations is not None, f'{tool.name} has no annotations'
         assert tool.annotations.readOnlyHint is not None, f'{tool.name} has no readOnlyHint'
         assert tool.annotations.destructiveHint is not None, f'{tool.name} has no destructiveHint'
@@ -253,52 +263,52 @@ async def test_tool_annotations():
 @pytest.mark.parametrize(
     'tool_info',
     [
-        # (tool_name, expected_readonly, expected_destructive, expected_idempotent)
+        # (tool_name, expected_readonly, expected_destructive, expected_idempotent, tags)
         (
             # components
-            ('get_component', True, False, False),
-            ('get_config', True, False, False),
-            ('list_configs', True, False, False),
-            ('get_config_examples', True, False, False),
-            ('create_config', False, False, False),
-            ('update_config', False, True, True),
-            ('add_config_row', False, False, False),
-            ('update_config_row', False, True, True),
-            ('list_transformations', True, False, False),
-            ('create_sql_transformation', False, False, False),
-            ('update_sql_transformation', False, True, True),
+            ('get_component', True, False, False, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('get_config', True, False, False, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('list_configs', True, False, False, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('get_config_examples', True, False, False, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('create_config', False, False, False, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('update_config', False, True, True, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('add_config_row', False, False, False, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('update_config_row', False, True, True, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('list_transformations', True, False, False, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('create_sql_transformation', False, False, False, {f'{COMPONENT_TOOLS_TAG}'}),
+            ('update_sql_transformation', False, True, True, {f'{COMPONENT_TOOLS_TAG}'}),
             # storage
-            ('get_bucket', True, False, False),
-            ('list_buckets', True, False, False),
-            ('get_table', True, False, False),
-            ('list_tables', True, False, False),
-            ('update_description', False, True, True),
+            ('get_bucket', True, False, False, {f'{STORAGE_TOOLS_TAG}'}),
+            ('list_buckets', True, False, False, {f'{STORAGE_TOOLS_TAG}'}),
+            ('get_table', True, False, False, {f'{STORAGE_TOOLS_TAG}'}),
+            ('list_tables', True, False, False, {f'{STORAGE_TOOLS_TAG}'}),
+            ('update_description', False, True, True, {f'{STORAGE_TOOLS_TAG}'}),
             # flows
-            ('create_flow', False, False, False),
-            ('create_conditional_flow', False, False, False),
-            ('list_flows', True, False, False),
-            ('update_flow', False, True, True),
-            ('get_flow', True, False, False),
-            ('get_flow_examples', True, False, False),
-            ('get_flow_schema', True, False, False),
+            ('create_flow', False, False, False, {f'{FLOW_TOOLS_TAG}'}),
+            ('create_conditional_flow', False, False, False, {f'{FLOW_TOOLS_TAG}'}),
+            ('list_flows', True, False, False, {f'{FLOW_TOOLS_TAG}'}),
+            ('update_flow', False, True, True, {f'{FLOW_TOOLS_TAG}'}),
+            ('get_flow', True, False, False, {f'{FLOW_TOOLS_TAG}'}),
+            ('get_flow_examples', True, False, False, {f'{FLOW_TOOLS_TAG}'}),
+            ('get_flow_schema', True, False, False, {f'{FLOW_TOOLS_TAG}'}),
             # sql
-            ('query_data', True, False, False),
-            ('get_sql_dialect', True, False, False),
+            ('query_data', True, False, False, {f'{SQL_TOOLS_TAG}'}),
+            ('get_sql_dialect', True, False, False, {f'{SQL_TOOLS_TAG}'}),
             # jobs
-            ('get_job', True, False, False),
-            ('list_jobs', True, False, False),
-            ('run_job', False, False, False),
+            ('get_job', True, False, False, {f'{JOB_TOOLS_TAG}'}),
+            ('list_jobs', True, False, False, {f'{JOB_TOOLS_TAG}'}),
+            ('run_job', False, False, False, {f'{JOB_TOOLS_TAG}'}),
             # project/doc/search
-            ('get_project_info', True, False, False),
-            ('docs_query', True, False, False),
-            ('search', True, False, False),
-            ('find_component_id', True, False, False),
+            ('get_project_info', True, False, False, {f'{PROJECT_TOOLS_TAG}'}),
+            ('docs_query', True, False, False, {f'{DOC_TOOLS_TAG}'}),
+            ('search', True, False, False, {f'{SEARCH_TOOLS_TAG}'}),
+            ('find_component_id', True, False, False, {f'{SEARCH_TOOLS_TAG}'}),
             # oauth
-            ('create_oauth_url', False, False, False),
+            ('create_oauth_url', False, False, False, {f'{OAUTH_TOOLS_TAG}'}),
         ),
     ],
 )
-async def test_tool_annotations_values(tool_info: list[tuple[str, bool, bool, bool]]) -> None:
+async def test_tool_annotations_tags_values(tool_info: list[tuple[str, bool, bool, bool, set[str]]]) -> None:
     """
     Test that the tool annotations are having the expected values.
     """
@@ -308,7 +318,7 @@ async def test_tool_annotations_values(tool_info: list[tuple[str, bool, bool, bo
     def normalize(value: Any) -> bool:
         return False if value is None else bool(value)
 
-    for tool_name, expected_readonly, expected_destructive, expected_idempotent in tool_info:
+    for tool_name, expected_readonly, expected_destructive, expected_idempotent, tags in tool_info:
         assert tool_name in tools, f'Missing tool registered: {tool_name}'
         tool = tools[tool_name]
         assert tool.annotations is not None, f'{tool_name} has no annotations'
@@ -317,3 +327,5 @@ async def test_tool_annotations_values(tool_info: list[tuple[str, bool, bool, bo
             normalize(tool.annotations.destructiveHint) is expected_destructive
         ), f'{tool_name}.destructiveHint mismatch'
         assert normalize(tool.annotations.idempotentHint) is expected_idempotent, f'{tool_name}.idempotentHint mismatch'
+
+        assert tool.tags == tags, f'{tool_name} tags mismatch'
