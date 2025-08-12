@@ -232,3 +232,88 @@ async def test_keboola_injection_and_lifespan(
         result = await client.call_tool('assessed_function', {'param': 'value'})
         assert isinstance(result.content[0], TextContent)
         assert result.content[0].text == 'value'
+
+
+@pytest.mark.asyncio
+async def test_tool_annotations():
+    """
+    Test that the tool annotations are properly set.
+    """
+    server = create_server(Config())
+    tools = await server.get_tools()
+    for tool in tools.values():
+        assert tool.annotations is not None, f'{tool.name} has no annotations'
+        assert tool.annotations.readOnlyHint is not None, f'{tool.name} has no readOnlyHint'
+        assert tool.annotations.destructiveHint is not None, f'{tool.name} has no destructiveHint'
+        if tool.annotations.readOnlyHint is False:  # if the tool is not read-only, it must have an idempotentHint value
+            assert tool.annotations.idempotentHint is not None, f'{tool.name} has no idempotentHint'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'tool_info',
+    [
+        # (tool_name, expected_readonly, expected_destructive, expected_idempotent)
+        (
+            # components
+            ('get_component', True, False, False),
+            ('get_config', True, False, False),
+            ('list_configs', True, False, False),
+            ('get_config_examples', True, False, False),
+            ('create_config', False, False, False),
+            ('update_config', False, True, True),
+            ('add_config_row', False, False, False),
+            ('update_config_row', False, True, True),
+            ('list_transformations', True, False, False),
+            ('create_sql_transformation', False, False, False),
+            ('update_sql_transformation', False, True, True),
+            # storage
+            ('get_bucket', True, False, False),
+            ('list_buckets', True, False, False),
+            ('get_table', True, False, False),
+            ('list_tables', True, False, False),
+            ('update_description', False, True, True),
+            # flows
+            ('create_flow', False, False, False),
+            ('create_conditional_flow', False, False, False),
+            ('list_flows', True, False, False),
+            ('update_flow', False, True, True),
+            ('get_flow', True, False, False),
+            ('get_flow_examples', True, False, False),
+            ('get_flow_schema', True, False, False),
+            # sql
+            ('query_data', True, False, False),
+            ('get_sql_dialect', True, False, False),
+            # jobs
+            ('get_job', True, False, False),
+            ('list_jobs', True, False, False),
+            ('run_job', False, False, False),
+            # project/doc/search
+            ('get_project_info', True, False, False),
+            ('docs_query', True, False, False),
+            ('search', True, False, False),
+            ('find_component_id', True, False, False),
+            # oauth
+            ('create_oauth_url', False, False, False),
+        ),
+    ],
+)
+async def test_tool_annotations_values(tool_info: list[tuple[str, bool, bool, bool]]) -> None:
+    """
+    Test that the tool annotations are having the expected values.
+    """
+    server = create_server(Config())
+    tools = await server.get_tools()
+
+    def normalize(value: Any) -> bool:
+        return False if value is None else bool(value)
+
+    for tool_name, expected_readonly, expected_destructive, expected_idempotent in tool_info:
+        assert tool_name in tools, f'Missing tool registered: {tool_name}'
+        tool = tools[tool_name]
+        assert tool.annotations is not None, f'{tool_name} has no annotations'
+        assert normalize(tool.annotations.readOnlyHint) is expected_readonly, f'{tool_name}.readOnlyHint mismatch'
+        assert (
+            normalize(tool.annotations.destructiveHint) is expected_destructive
+        ), f'{tool_name}.destructiveHint mismatch'
+        assert normalize(tool.annotations.idempotentHint) is expected_idempotent, f'{tool_name}.idempotentHint mismatch'
