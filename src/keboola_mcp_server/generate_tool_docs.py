@@ -79,7 +79,6 @@ class ToolDocumentationGenerator:
         for category in self._categorizer.get_categories():
             if not (tools := tools_by_category[category]):
                 continue
-
             f.write(f'\n### [{category.name}](#{self._generate_anchor(category.name)})\n')
             for tool in sorted(tools, key=attrgetter('name')):
                 anchor = self._generate_anchor(tool.name)
@@ -89,7 +88,7 @@ class ToolDocumentationGenerator:
 
     def _get_annotations(self, annotations: Optional[ToolAnnotations]) -> str:
         if annotations is None:
-            return ''
+            return '-'
         str_annotations = []
         if annotations.readOnlyHint:
             str_annotations.append('read-only')
@@ -97,6 +96,9 @@ class ToolDocumentationGenerator:
             str_annotations.append('destructive' if annotations.destructiveHint else 'non-destructive')
             str_annotations.append('idempotent' if annotations.idempotentHint else 'non-idempotent')
         return f'`{", ".join(str_annotations)}`'
+
+    def _get_tags(self, tags: set[str]) -> str:
+        return f'`{", ".join(tags)}`' if tags else '-'
 
     def _get_first_sentence(self, text: Optional[str]) -> str:
         """Extracts the first sentence from the given text."""
@@ -125,6 +127,8 @@ class ToolDocumentationGenerator:
                 f.write(f'## {tool.name}\n')
                 annotations = self._get_annotations(tool.annotations)
                 f.write(f'**Annotations**: {annotations}\n\n')
+                tags = self._get_tags(tool.tags)
+                f.write(f'**Tags**: {tags}')
                 f.write(f'**Description**:\n\n{tool.description}\n\n')
                 self._write_json_schema(f, tool)
                 f.write('\n---\n')
