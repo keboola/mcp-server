@@ -90,7 +90,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :param jwt_secret: The secret key for encoding and decoding JWT tokens.
         """
         super().__init__(
-            issuer_url=mcp_server_url,
+            base_url=mcp_server_url,
             client_registration_options=ClientRegistrationOptions(enabled=True),
         )
 
