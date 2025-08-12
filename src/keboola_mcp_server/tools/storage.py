@@ -18,7 +18,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
-TOOL_GROUP_NAME = 'STORAGE'
+STORAGE_TOOLS_TAG = 'storage'
 
 
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
@@ -27,6 +27,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             get_bucket,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -34,6 +35,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
             list_buckets,
             serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -41,6 +43,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
             get_table,
             serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -48,6 +51,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
             list_tables,
             serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -59,6 +63,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
                 destructiveHint=True,
                 idempotentHint=True,
             ),
+            tags={STORAGE_TOOLS_TAG},
         )
     )
 

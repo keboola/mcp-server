@@ -14,6 +14,8 @@ from keboola_mcp_server.mcp import KeboolaMcpServer, exclude_none_serializer
 
 LOG = logging.getLogger(__name__)
 
+JOB_TOOLS_TAG = 'jobs'
+
 
 # Add jobs tools to MCP SERVER ##################################
 
@@ -24,6 +26,7 @@ def add_job_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             get_job,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={JOB_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -31,6 +34,7 @@ def add_job_tools(mcp: KeboolaMcpServer) -> None:
             list_jobs,
             serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={JOB_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -41,6 +45,7 @@ def add_job_tools(mcp: KeboolaMcpServer) -> None:
                 destructiveHint=False,
                 idempotentHint=False,
             ),
+            tags={JOB_TOOLS_TAG},
         )
     )
 

@@ -13,6 +13,8 @@ from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
+SQL_TOOLS_TAG = 'sql'
+
 
 class QueryDataOutput(BaseModel):
     """Output model for SQL query results."""
@@ -27,12 +29,14 @@ def add_sql_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             query_data,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={SQL_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_sql_dialect,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={SQL_TOOLS_TAG},
         )
     )
     LOG.info('SQL tools added to the MCP server.')

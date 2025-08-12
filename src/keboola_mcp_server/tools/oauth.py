@@ -15,7 +15,7 @@ from keboola_mcp_server.mcp import KeboolaMcpServer
 
 LOG = logging.getLogger(__name__)
 
-TOOL_GROUP_NAME = 'OAUTH'
+OAUTH_TOOLS_TAG = 'oauth'
 
 
 def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
@@ -28,6 +28,7 @@ def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
                 destructiveHint=False,
                 idempotentHint=False,
             ),
+            tags={OAUTH_TOOLS_TAG},
         )
     )
     LOG.info('OAuth tools added to the MCP server.')

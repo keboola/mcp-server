@@ -71,6 +71,8 @@ from keboola_mcp_server.tools.validation import (
 
 LOG = logging.getLogger(__name__)
 
+COMPONENT_TOOLS_TAG = 'components'
+
 
 # ============================================================================
 # TOOL REGISTRATION
@@ -83,12 +85,14 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_component,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_config,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
         )
     )
@@ -96,12 +100,14 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             list_configs,
             serializer=exclude_none_serializer,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_config_examples,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
         )
     )
@@ -110,6 +116,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_config,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(
                 readOnlyHint=False,
                 destructiveHint=False,
@@ -120,6 +127,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_config,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(
                 readOnlyHint=False,
                 destructiveHint=True,
@@ -130,6 +138,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             add_config_row,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(
                 readOnlyHint=False,
                 destructiveHint=False,
@@ -140,6 +149,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_config_row,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(
                 readOnlyHint=False,
                 destructiveHint=True,
@@ -153,12 +163,14 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             list_transformations,
             serializer=exclude_none_serializer,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             create_sql_transformation,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(
                 readOnlyHint=False,
                 destructiveHint=False,
@@ -169,6 +181,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_sql_transformation,
+            tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(
                 readOnlyHint=False,
                 destructiveHint=True,

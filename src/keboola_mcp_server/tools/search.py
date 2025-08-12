@@ -16,6 +16,7 @@ LOG = logging.getLogger(__name__)
 SEARCH_TOOL_NAME = 'search'
 MAX_GLOBAL_SEARCH_LIMIT = 100
 DEFAULT_GLOBAL_SEARCH_LIMIT = 50
+SEARCH_TOOLS_TAG = 'search'
 
 
 def add_search_tools(mcp: FastMCP) -> None:
@@ -25,6 +26,7 @@ def add_search_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             find_component_id,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={SEARCH_TOOLS_TAG},
         )
     )
     LOG.info(f'Adding tool {search.__name__} to the MCP server.')
@@ -33,6 +35,7 @@ def add_search_tools(mcp: FastMCP) -> None:
             search,
             name=SEARCH_TOOL_NAME,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={SEARCH_TOOLS_TAG},
         )
     )
 

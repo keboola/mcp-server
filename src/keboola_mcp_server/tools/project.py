@@ -14,6 +14,8 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
+PROJECT_TOOLS_TAG = 'project'
+
 
 def add_project_tools(mcp: FastMCP) -> None:
     """Add project tools to the MCP server."""
@@ -23,6 +25,7 @@ def add_project_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             get_project_info,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={PROJECT_TOOLS_TAG},
         )
     )
 

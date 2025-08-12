@@ -11,6 +11,8 @@ from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)
 
+DOC_TOOLS_TAG = 'docs'
+
 
 def add_doc_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
@@ -19,6 +21,7 @@ def add_doc_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             docs_query,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={DOC_TOOLS_TAG},
         )
     )
 

@@ -47,6 +47,8 @@ from keboola_mcp_server.tools.validation import validate_flow_configuration_agai
 
 LOG = logging.getLogger(__name__)
 
+FLOW_TOOLS_TAG = 'flows'
+
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
@@ -58,6 +60,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
                 destructiveHint=False,
                 idempotentHint=False,
             ),
+            tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -68,6 +71,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
                 destructiveHint=False,
                 idempotentHint=False,
             ),
+            tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -75,6 +79,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
             list_flows,
             serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
@@ -85,24 +90,28 @@ def add_flow_tools(mcp: FastMCP) -> None:
                 destructiveHint=True,
                 idempotentHint=True,
             ),
+            tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_flow,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_flow_examples,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_flow_schema,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            tags={FLOW_TOOLS_TAG},
         )
     )
 
