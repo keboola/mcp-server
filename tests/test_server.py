@@ -265,7 +265,7 @@ async def test_tool_annotations_and_tags():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('tool_name', 'expected_readonly', 'expected_destructive', 'expected_idempotent', 'tags'),
-    (
+    [
         # components
         ('get_component', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('get_config', True, None, None, {COMPONENT_TOOLS_TAG}),
@@ -306,7 +306,7 @@ async def test_tool_annotations_and_tags():
         ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
         # oauth
         ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
-    ),
+    ],
 )
 async def test_tool_annotations_tags_values(
     tool_name: str,
