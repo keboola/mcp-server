@@ -1,4 +1,8 @@
+import json
+import subprocess
+import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
@@ -232,3 +236,34 @@ async def test_keboola_injection_and_lifespan(
         result = await client.call_tool('assessed_function', {'param': 'value'})
         assert isinstance(result.content[0], TextContent)
         assert result.content[0].text == 'value'
+
+
+def test_json_logging(mocker):
+    log_config_file = Path(__file__).parent.parent / 'logging-json.conf'
+    assert log_config_file.is_file(), f'No logging config file found at {log_config_file.absolute()}'
+
+    # start the MCP server process with json logging
+    p = subprocess.Popen(
+        ['python', '-m', 'keboola_mcp_server', '--transport', 'sse', '--log-config', log_config_file.absolute()],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    # give the server time to fully start
+    time.sleep(5)
+
+    # kill the server and capture streams
+    p.kill()
+    stdout, stderr = p.communicate()
+
+    # there is only one handler (the root one) in logging-json.conf which sends messages to stdout
+    assert stderr == ''
+
+    # all messages should be JSON-formatted, including those logged by FastMCP loggers
+    fastmcp_startup_message: dict[str, Any] | None = None
+    for line in stdout.splitlines():
+        message = json.loads(line)
+        if message['message'].startswith('Starting MCP server') and message['name'].startswith('FastMCP.fastmcp'):
+            fastmcp_startup_message = message
+
+    assert fastmcp_startup_message is not None

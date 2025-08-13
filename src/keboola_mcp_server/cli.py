@@ -72,7 +72,11 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         log_config = None
 
     if log_config:
-        logging.config.fileConfig(log_config, disable_existing_loggers=False)
+        logging.config.fileConfig(log_config, disable_existing_loggers=True)
+        # disarm the 'FastMCP' logger; there is no legitimate way to configure this in fastmcp
+        fastmcp_logger = logging.getLogger('FastMCP')
+        fastmcp_logger.handlers.clear()
+        fastmcp_logger.propagate = True
     else:
         logging.basicConfig(
             format='%(asctime)s %(name)s %(levelname)s: %(message)s',
