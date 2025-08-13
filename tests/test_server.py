@@ -260,10 +260,14 @@ def test_json_logging(mocker):
     assert stderr == ''
 
     # all messages should be JSON-formatted, including those logged by FastMCP loggers
+    top_names: set[str] = set()
     fastmcp_startup_message: dict[str, Any] | None = None
     for line in stdout.splitlines():
         message = json.loads(line)
-        if message['message'].startswith('Starting MCP server') and message['name'].startswith('FastMCP.fastmcp'):
+        name = message['name']
+        if message['message'].startswith('Starting MCP server') and name.startswith('FastMCP.fastmcp'):
             fastmcp_startup_message = message
+        top_names.add(name.split('.')[0])
 
+    assert sorted(top_names) == ['FastMCP', 'keboola_mcp_server', 'uvicorn']
     assert fastmcp_startup_message is not None
