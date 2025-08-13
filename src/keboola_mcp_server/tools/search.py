@@ -25,7 +25,7 @@ def add_search_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             find_component_id,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={SEARCH_TOOLS_TAG},
         )
     )
@@ -34,7 +34,7 @@ def add_search_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             search,
             name=SEARCH_TOOL_NAME,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={SEARCH_TOOLS_TAG},
         )
     )

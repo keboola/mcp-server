@@ -28,14 +28,14 @@ def add_sql_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             query_data,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={SQL_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_sql_dialect,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={SQL_TOOLS_TAG},
         )
     )

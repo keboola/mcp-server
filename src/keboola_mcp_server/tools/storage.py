@@ -26,7 +26,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_bucket,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -34,7 +34,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             list_buckets,
             serializer=exclude_none_serializer,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -42,7 +42,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             get_table,
             serializer=exclude_none_serializer,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -50,7 +50,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             list_tables,
             serializer=exclude_none_serializer,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -58,11 +58,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             update_description,
             serializer=exclude_none_serializer,
-            annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=True,
-                idempotentHint=True,
-            ),
+            annotations=ToolAnnotations(destructiveHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
     )

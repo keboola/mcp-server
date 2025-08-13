@@ -52,25 +52,10 @@ FLOW_TOOLS_TAG = 'flows'
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    mcp.add_tool(
-        FunctionTool.from_function(
-            create_flow,
-            annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=False,
-                idempotentHint=False,
-            ),
-            tags={FLOW_TOOLS_TAG},
-        )
-    )
+    mcp.add_tool(FunctionTool.from_function(create_flow, tags={FLOW_TOOLS_TAG}))
     mcp.add_tool(
         FunctionTool.from_function(
             create_conditional_flow,
-            annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=False,
-                idempotentHint=False,
-            ),
             tags={FLOW_TOOLS_TAG},
         )
     )
@@ -78,39 +63,35 @@ def add_flow_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             list_flows,
             serializer=exclude_none_serializer,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             update_flow,
-            annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=True,
-                idempotentHint=True,
-            ),
+            annotations=ToolAnnotations(destructiveHint=True),
             tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_flow,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_flow_examples,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_flow_schema,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )
     )

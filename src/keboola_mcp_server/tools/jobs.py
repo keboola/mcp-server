@@ -25,7 +25,7 @@ def add_job_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_job,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={JOB_TOOLS_TAG},
         )
     )
@@ -33,18 +33,14 @@ def add_job_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             list_jobs,
             serializer=exclude_none_serializer,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={JOB_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             run_job,
-            annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=False,
-                idempotentHint=False,
-            ),
+            annotations=ToolAnnotations(destructiveHint=True),
             tags={JOB_TOOLS_TAG},
         )
     )

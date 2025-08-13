@@ -12,6 +12,15 @@ from mcp.types import ToolAnnotations
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.server import create_server
+from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
+from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
+from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
+from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
+from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
+from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG
+from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
+from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
+from keboola_mcp_server.tools.storage import STORAGE_TOOLS_TAG
 
 LOG = logging.getLogger(__name__)
 
@@ -19,86 +28,93 @@ LOG = logging.getLogger(__name__)
 class ToolCategory:
     """Encapsulates rules for categorizing tools based on their name."""
 
-    def __init__(self, name: str, pattern: re.Pattern):
+    def __init__(self, name: str, tag: str):
         self.name = name
-        self._pattern = pattern
+        self.tag = tag
 
-    def matches(self, tool_name: str) -> bool:
-        """Checks if the tool name matches any of the categorization rules."""
-        return self._pattern.search(tool_name) is not None
+    def matches(self, tool_tag: str | Iterable[str]) -> bool:
+        """Checks if the category matches the tool tag, extended to check existance in the lists of tags."""
+        tool_tags = [tool_tag] if isinstance(tool_tag, str) else tool_tag
+        return self.tag in tool_tags
+
+    def __str__(self):
+        return self.name
 
 
-class ToolCategorizer:
-    """Handles categorizing tools based on defined rules."""
-
-    def __init__(self):
-        self._categories: list[ToolCategory] = []
-
-    def add_category(self, category: ToolCategory):
-        self._categories.append(category)
-
-    def get_tool_category(self, tool_name: str) -> ToolCategory:
-        """Categorize a tool based on its name."""
-        for category in self._categories:
-            if category.matches(tool_name):
-                return category
-        raise ValueError(f'Tool {tool_name} does not match any category.')
-
-    def get_categories(self) -> Iterable[ToolCategory]:
-        yield from self._categories
+OTHER_CATEGORY = ToolCategory('Other Tools', 'other')
 
 
 class ToolDocumentationGenerator:
     """Generates documentation for tools."""
 
-    def __init__(self, tools: list[Tool], categorizer: ToolCategorizer, output_path: str = 'TOOLS.md'):
+    def __init__(self, tools: list[Tool], categories: list[ToolCategory], output_path: str = 'TOOLS.md'):
         self._tools = tools
-        self._categorizer = categorizer
+        self._categories = categories
         self._output_path = output_path
+        self._categorizer = self._group_tools(categories or self._categories)
 
-    def generate(self):
+    def generate(self, categories: list[ToolCategory] | None = None):
+        self._categorizer = self._group_tools(categories) if categories else self._categorizer
         with open(self._output_path, mode='w', encoding='utf-8') as f:
             self._write_header(f)
             self._write_index(f)
             self._write_tool_details(f)
 
-    def _group_tools(self) -> Mapping[ToolCategory, list[Tool]]:
+    def _group_tools(self, categories: list[ToolCategory]) -> Mapping[ToolCategory, list[Tool]]:
+        assert categories, 'Categories are required'
         tools_by_category: dict[ToolCategory, list[Tool]] = defaultdict(list)
         for tool in self._tools:
-            category = self._categorizer.get_tool_category(tool.name)
-            tools_by_category[category].append(tool)
+            has_category = False
+            for category in categories:
+                if category.matches(list(tool.tags)):
+                    # We assume that the category we search for is unique per tool tags and exclusive to other
+                    # categories
+                    if not has_category:
+                        has_category = True
+                        LOG.info(f'Tool {tool.name} has category: {category}')
+                        tools_by_category[category].append(tool)
+                    else:
+                        LOG.warning(f'Tool {tool.name} has multiple main mutually exclusive categories: {tool.tags}')
+            if not has_category:
+                LOG.info(f'Tool {tool.name} has no category, adding to: {OTHER_CATEGORY}')
+                tools_by_category[OTHER_CATEGORY].append(tool)
         return tools_by_category
 
     def _write_header(self, f):
+        LOG.info(f'Writing header to {self._output_path}')
         f.write('# Tools Documentation\n')
         f.write('This document provides details about the tools available in the Keboola MCP server.\n\n')
 
     def _write_index(self, f):
+        LOG.info(f'Writing index to {self._output_path}')
         f.write('## Index\n')
-        tools_by_category = self._group_tools()
-        for category in self._categorizer.get_categories():
-            if not (tools := tools_by_category[category]):
-                continue
-            f.write(f'\n### [{category.name}](#{self._generate_anchor(category.name)})\n')
-            for tool in sorted(tools, key=attrgetter('name')):
-                anchor = self._generate_anchor(tool.name)
-                first_sentence = self._get_first_sentence(tool.description)
-                f.write(f'- [{tool.name}](#{anchor}): {first_sentence}\n')
+        for category in sorted(self._categories, key=lambda category: category.name):
+            if tools := self._categorizer[category]:
+                LOG.info(f'Writing category {category} and its tools ({len(tools)}) to {self._output_path}')
+
+                f.write(f'\n### {category}\n')
+                for tool in sorted(tools, key=attrgetter('name')):
+                    anchor = self._generate_anchor(tool.name)
+                    first_sentence = self._get_first_sentence(tool.description)
+                    f.write(f'- [{tool.name}](#{anchor}): {first_sentence}\n')
+            else:
+                LOG.warning(f'Category {category} has no tools')
         f.write('\n---\n')
 
     def _get_annotations(self, annotations: Optional[ToolAnnotations]) -> str:
         if annotations is None:
-            return '-'
+            return ''
         str_annotations = []
         if annotations.readOnlyHint:
             str_annotations.append('read-only')
-        else:
-            str_annotations.append('destructive' if annotations.destructiveHint else 'non-destructive')
-            str_annotations.append('idempotent' if annotations.idempotentHint else 'non-idempotent')
-        return f'`{", ".join(str_annotations)}`'
+        if annotations.destructiveHint:
+            str_annotations.append('destructive')
+        if annotations.idempotentHint:
+            str_annotations.append('idempotent')
+        return f'`{", ".join(sorted(str_annotations))}`'
 
     def _get_tags(self, tags: set[str]) -> str:
-        return f'`{", ".join(tags)}`' if tags else '-'
+        return f'`{", ".join(sorted(tags))}`' if tags else ''
 
     def _get_first_sentence(self, text: Optional[str]) -> str:
         """Extracts the first sentence from the given text."""
@@ -115,9 +131,10 @@ class ToolDocumentationGenerator:
         return anchor
 
     def _write_tool_details(self, f):
-        tools_by_category = self._group_tools()
-        for category in self._categorizer.get_categories():
-            if not (tools := tools_by_category[category]):
+        LOG.info(f'Writing tool details to {self._output_path}')
+        for category in self._categorizer:
+            if not (tools := self._categorizer[category]):
+                LOG.warning(f'Category {category} has no tools')
                 continue
 
             f.write(f'\n# {category.name}\n')
@@ -128,7 +145,7 @@ class ToolDocumentationGenerator:
                 annotations = self._get_annotations(tool.annotations)
                 f.write(f'**Annotations**: {annotations}\n\n')
                 tags = self._get_tags(tool.tags)
-                f.write(f'**Tags**: {tags}')
+                f.write(f'**Tags**: {tags}\n\n')
                 f.write(f'**Description**:\n\n{tool.description}\n\n')
                 self._write_json_schema(f, tool)
                 f.write('\n---\n')
@@ -141,29 +158,6 @@ class ToolDocumentationGenerator:
             f.write('\n```\n')
         else:
             f.write('No JSON schema available for this tool.\n')
-
-
-def setup_tool_categorizer():
-    """Set up categories for tool categorization."""
-    categorizer = ToolCategorizer()
-
-    categorizer.add_category(
-        ToolCategory(
-            'Storage Tools',
-            re.compile(
-                r'(bucket_|_bucket|buckets|table_|_table|tables|column_|_column|columns|update_description)',
-                re.IGNORECASE,
-            ),
-        )
-    )
-    categorizer.add_category(ToolCategory('SQL Tools', re.compile(r'(dialect|query_)', re.IGNORECASE)))
-    categorizer.add_category(ToolCategory('Component Tools', re.compile(r'(component|transformation|config)')))
-    categorizer.add_category(ToolCategory('Flow Tools', re.compile(r'flow')))
-    categorizer.add_category(ToolCategory('Jobs Tools', re.compile(r'job', re.IGNORECASE)))
-    categorizer.add_category(ToolCategory('Documentation Tools', re.compile(r'docs', re.IGNORECASE)))
-    categorizer.add_category(ToolCategory('Other Tools', re.compile(r'.+', re.IGNORECASE)))
-
-    return categorizer
 
 
 async def generate_docs() -> None:
@@ -184,9 +178,20 @@ async def generate_docs() -> None:
     try:
         mcp = create_server(config)
         tools = await mcp.get_tools()
-        categorizer = setup_tool_categorizer()
-        doc_gen = ToolDocumentationGenerator(list(tools.values()), categorizer)
-        doc_gen.generate()
+        categories = [
+            ToolCategory('Storage Tools', STORAGE_TOOLS_TAG),
+            ToolCategory('SQL Tools', SQL_TOOLS_TAG),
+            ToolCategory('Component Tools', COMPONENT_TOOLS_TAG),
+            ToolCategory('Flow Tools', FLOW_TOOLS_TAG),
+            ToolCategory('Jobs Tools', JOB_TOOLS_TAG),
+            ToolCategory('Documentation Tools', DOC_TOOLS_TAG),
+            ToolCategory('Search Tools', SEARCH_TOOLS_TAG),
+            ToolCategory('OAuth Tools', OAUTH_TOOLS_TAG),
+            ToolCategory('Project Tools', PROJECT_TOOLS_TAG),
+            # OTHER_CATEGORY
+        ]
+        doc_gen = ToolDocumentationGenerator(list(tools.values()), categories)
+        doc_gen.generate(categories)
     except Exception as e:
         LOG.exception(f'Failed to generate documentation: {e}')
         sys.exit(1)

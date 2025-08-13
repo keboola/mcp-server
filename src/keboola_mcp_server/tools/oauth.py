@@ -23,11 +23,7 @@ def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_oauth_url,
-            annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=False,
-                idempotentHint=False,
-            ),
+            annotations=ToolAnnotations(destructiveHint=True),
             tags={OAUTH_TOOLS_TAG},
         )
     )

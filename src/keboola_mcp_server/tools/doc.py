@@ -20,7 +20,7 @@ def add_doc_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             docs_query,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={DOC_TOOLS_TAG},
         )
     )
