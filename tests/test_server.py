@@ -256,8 +256,11 @@ async def test_tool_annotations_and_tags():
             if tool.annotations.readOnlyHint:
                 assert tool.annotations.destructiveHint is None, f'{tool.name} has destructiveHint'
                 assert tool.annotations.idempotentHint is None, f'{tool.name} has idempotentHint'
-            if tool.annotations.destructiveHint:
+            elif tool.annotations.destructiveHint:
                 assert tool.annotations.readOnlyHint is None, f'{tool.name} has readOnlyHint'
+            elif tool.annotations.destructiveHint is False:
+                assert tool.annotations.destructiveHint is not None, f'{tool.name} does not have destructiveHint'
+                assert tool.annotations.idempotentHint is None, f'{tool.name} has idempotentHint'
             if tool.annotations.idempotentHint:
                 assert tool.annotations.readOnlyHint is None, f'{tool.name} has readOnlyHint'
 
@@ -271,12 +274,12 @@ async def test_tool_annotations_and_tags():
         ('get_config', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('list_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('get_config_examples', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('create_config', None, None, None, {COMPONENT_TOOLS_TAG}),
+        ('create_config', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_config', None, True, None, {COMPONENT_TOOLS_TAG}),
-        ('add_config_row', None, None, None, {COMPONENT_TOOLS_TAG}),
+        ('add_config_row', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_config_row', None, True, None, {COMPONENT_TOOLS_TAG}),
         ('list_transformations', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('create_sql_transformation', None, None, None, {COMPONENT_TOOLS_TAG}),
+        ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG}),
         # storage
         ('get_bucket', True, None, None, {STORAGE_TOOLS_TAG}),
@@ -285,8 +288,8 @@ async def test_tool_annotations_and_tags():
         ('list_tables', True, None, None, {STORAGE_TOOLS_TAG}),
         ('update_description', None, True, None, {STORAGE_TOOLS_TAG}),
         # flows
-        ('create_flow', None, None, None, {FLOW_TOOLS_TAG}),
-        ('create_conditional_flow', None, None, None, {FLOW_TOOLS_TAG}),
+        ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
+        ('create_conditional_flow', None, False, None, {FLOW_TOOLS_TAG}),
         ('list_flows', True, None, None, {FLOW_TOOLS_TAG}),
         ('update_flow', None, True, None, {FLOW_TOOLS_TAG}),
         ('get_flow', True, None, None, {FLOW_TOOLS_TAG}),

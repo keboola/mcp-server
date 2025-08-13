@@ -67,7 +67,7 @@ potentially narrowed down by item type, limited and paginated.
 # Component Tools
 <a name="add_config_row"></a>
 ## add_config_row
-**Annotations**: 
+**Annotations**: ``
 
 **Tags**: `components`
 
@@ -143,7 +143,7 @@ EXAMPLES:
 ---
 <a name="create_config"></a>
 ## create_config
-**Annotations**: 
+**Annotations**: ``
 
 **Tags**: `components`
 
@@ -212,7 +212,7 @@ EXAMPLES:
 ---
 <a name="create_sql_transformation"></a>
 ## create_sql_transformation
-**Annotations**: 
+**Annotations**: ``
 
 **Tags**: `components`
 
@@ -903,7 +903,7 @@ Answers a question using the Keboola documentation as a source.
 # Flow Tools
 <a name="create_conditional_flow"></a>
 ## create_conditional_flow
-**Annotations**: 
+**Annotations**: ``
 
 **Tags**: `flows`
 
@@ -973,7 +973,7 @@ USE CASES:
 ---
 <a name="create_flow"></a>
 ## create_flow
-**Annotations**: 
+**Annotations**: ``
 
 **Tags**: `flows`
 

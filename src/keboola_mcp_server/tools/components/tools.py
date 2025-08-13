@@ -113,7 +113,13 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     )
 
     # Configuration management tools
-    mcp.add_tool(FunctionTool.from_function(create_config, tags={COMPONENT_TOOLS_TAG}))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
     mcp.add_tool(
         FunctionTool.from_function(
             update_config,
@@ -125,6 +131,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             add_config_row,
             tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
         )
     )
     mcp.add_tool(
@@ -148,6 +155,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             create_sql_transformation,
             tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
         )
     )
     mcp.add_tool(

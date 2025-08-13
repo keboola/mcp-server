@@ -52,11 +52,18 @@ FLOW_TOOLS_TAG = 'flows'
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(create_flow, tags={FLOW_TOOLS_TAG}))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_flow,
+            tags={FLOW_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
     mcp.add_tool(
         FunctionTool.from_function(
             create_conditional_flow,
             tags={FLOW_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
         )
     )
     mcp.add_tool(
