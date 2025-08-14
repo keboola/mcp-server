@@ -25,23 +25,33 @@ class DataAppResponse(BaseModel):
     desired_state: str = Field(
         validation_alias=AliasChoices('desiredState', 'desired_state'), description='The desired state'
     )
-    last_request_timestamp: str = Field(
+    last_request_timestamp: Optional[str] = Field(
         validation_alias=AliasChoices('lastRequestTimestamp', 'last_request_timestamp'),
+        default=None,
         description='The last request timestamp',
     )
-    last_start_timestamp: str = Field(
+    last_start_timestamp: Optional[str] = Field(
         validation_alias=AliasChoices('lastStartTimestamp', 'last_start_timestamp'),
+        default=None,
         description='The last start timestamp',
     )
-    url: str = Field(validation_alias=AliasChoices('url', 'url'), description='The URL of the running data app')
+    url: Optional[str] = Field(
+        validation_alias=AliasChoices('url', 'url'), description='The URL of the running data app', default=None
+    )
     auto_suspend_after_seconds: int = Field(
         validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),
         description='The auto suspend after seconds',
     )
-    size: Optional[str] = Field(validation_alias=AliasChoices('size', 'size'), description='The size of the data app')
+    size: Optional[str] = Field(
+        validation_alias=AliasChoices('size', 'size'), description='The size of the data app', default=None
+    )
 
 
 class DataAppConfig(BaseModel):
+    """
+    The simplified data app config model, which is used for creating a data app within the mcp server.
+    """
+
     class Parameters(BaseModel):
         class DataApp(BaseModel):
             slug: str = Field(description='The slug of the data app')
@@ -54,9 +64,13 @@ class DataAppConfig(BaseModel):
             serialization_alias='autoSuspendAfterSeconds',
             description='The auto suspend after seconds',
         )
-        data_app: DataApp = Field(description='The data app sub config', serialization_alias='dataApp')
+        data_app: DataApp = Field(
+            description='The data app sub config',
+            serialization_alias='dataApp',
+            validation_alias=AliasChoices('dataApp', 'data_app'),
+        )
         id: Optional[str] = Field(description='The id of the data app', default=None)
-        script: Optional[list[str]] = Field(description='The script of the data app', default=None)
+        script: Optional[str] = Field(description='The script of the data app', default=None)
         packages: Optional[list[str]] = Field(
             description='The python packages needed to be installed in the data app', default=None
         )
@@ -84,7 +98,7 @@ class AsyncDataScienceClient(KeboolaServiceClient):
 
     @property
     def base_api_url(self) -> str:
-        return self.raw_client.base_api_url.split('/apps')[0]
+        return self.raw_client.base_api_url
 
     @classmethod
     def create(
@@ -103,7 +117,7 @@ class AsyncDataScienceClient(KeboolaServiceClient):
         """
         return cls(
             raw_client=RawKeboolaClient(
-                base_api_url=f'{root_url}/apps',
+                base_api_url=f'{root_url}',
                 api_token=token,
                 headers=headers,
             )
@@ -116,7 +130,7 @@ class AsyncDataScienceClient(KeboolaServiceClient):
         :param data_app_id: The ID of the data app
         :return: The data app
         """
-        response = await self.raw_client.get(endpoint=data_app_id)
+        response = await self.raw_client.get(endpoint=f'apps/{data_app_id}')
         return DataAppResponse.model_validate(response)
 
     async def create_data_app(
@@ -125,18 +139,22 @@ class AsyncDataScienceClient(KeboolaServiceClient):
         description: str,
         parameters: dict[str, Any],
         authorization: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> DataAppResponse:
         """
         Create a data app.
-
-        :param data_app_id: The ID of the data app
+        :param name: The name of the data app
+        :param description: The description of the data app
+        :param parameters: The parameters of the data app
+        :param authorization: The authorization of the data app
         :return: The data app
         """
+        # Validate the parameters and authorization
         _params = DataAppConfig.Parameters.model_validate(parameters).model_dump(exclude_none=True, by_alias=True)
         _authorization = DataAppConfig.Authorization.model_validate(authorization).model_dump(
             exclude_none=True, by_alias=True
         )
-        params = {
+        data = {
+            'branchId': None,
             'name': name,
             'type': 'streamlit',
             'description': description,
@@ -145,5 +163,5 @@ class AsyncDataScienceClient(KeboolaServiceClient):
                 'authorization': _authorization,
             },
         }
-        response = await self.raw_client.post('', params=params)
-        return response
+        response = await self.raw_client.post('apps', data=data)
+        return DataAppResponse.model_validate(response)

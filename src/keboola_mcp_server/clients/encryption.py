@@ -1,6 +1,6 @@
 from typing import Any, Optional
 
-from keboola_mcp_server.clients.base import JsonStruct, KeboolaServiceClient, RawKeboolaClient
+from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 
 
 class AsyncEncryptionClient(KeboolaServiceClient):
@@ -15,7 +15,7 @@ class AsyncEncryptionClient(KeboolaServiceClient):
 
     @property
     def base_api_url(self) -> str:
-        return self.raw_client.base_api_url.split('/apps')[0]
+        return self.raw_client.base_api_url
 
     @classmethod
     def create(
@@ -25,7 +25,7 @@ class AsyncEncryptionClient(KeboolaServiceClient):
         headers: dict[str, Any] | None = None,
     ) -> 'AsyncEncryptionClient':
         """
-        Creates an AsyncStorageClient from a Keboola Storage API token.
+        Creates an AsyncEncryptionClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token
@@ -41,13 +41,19 @@ class AsyncEncryptionClient(KeboolaServiceClient):
         )
 
     async def encrypt(
-        self, value: Any, component_id: str, project_id: str, config_id: Optional[str] = None
-    ) -> JsonStruct:
+        self, value: Any, project_id: str, component_id: Optional[str] = None, config_id: Optional[str] = None
+    ) -> Any:
         """
-        Get a data app by its ID.
+        Encrypt a value using the encryption service, returns encrypted value.
+        if value is a dict, values whose keys start with '#' are encrypted.
+        if value is a str, it is encrypted.
+        if value contains already encrypted values, they are returned as is.
 
-        :param data_app_id: The ID of the data app
-        :return: The data app
+        :param value: The value to encrypt
+        :param project_id: The project ID
+        :param component_id: The component ID (optional)
+        :param config_id: The config ID (optional)
+        :return: The encrypted value, same type as input
         """
         response = await self.raw_client.post(
             endpoint='encrypt',
