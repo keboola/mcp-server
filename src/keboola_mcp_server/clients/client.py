@@ -5,18 +5,21 @@ import logging
 import math
 import os
 from datetime import datetime
-from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, TypeVar, Union, cast
+from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, TypeVar, cast
 
-import httpx
 from pydantic import AliasChoices, BaseModel, Field, field_validator
+
+from keboola_mcp_server.clients.base import (
+    JsonDict,
+    JsonList,
+    KeboolaServiceClient,
+    RawKeboolaClient,
+)
+from keboola_mcp_server.clients.data_science import AsyncDataScienceClient
 
 LOG = logging.getLogger(__name__)
 
 T = TypeVar('T')
-JsonPrimitive = Union[int, float, str, bool, None]
-JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
-JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
-JsonStruct = Union[JsonDict, JsonList]
 
 ComponentResource = Literal['configuration', 'rows', 'state']
 StorageEventType = Literal['info', 'success', 'warn', 'error']
@@ -77,6 +80,7 @@ class KeboolaClient:
     _PREFIX_STORAGE_API_URL = 'connection.'
     _PREFIX_QUEUE_API_URL = 'https://queue.'
     _PREFIX_AISERVICE_API_URL = 'https://ai.'
+    _PREFIX_DATA_SCIENCE_API_URL = 'https://data-science.'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'KeboolaClient':
@@ -103,6 +107,9 @@ class KeboolaClient:
         # and add the prefix for the queue API https://queue.REGION.keboola.com
         queue_api_url = f'{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
         ai_service_api_url = f'{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
+        data_science_api_url = (
+            f'{self._PREFIX_DATA_SCIENCE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
+        )
 
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else storage_api_token
@@ -114,6 +121,9 @@ class KeboolaClient:
         )
         self.ai_service_client = AIServiceClient.create(
             root_url=ai_service_api_url, token=self.token, headers=self._get_headers()
+        )
+        self.data_science_client = AsyncDataScienceClient.create(
+            root_url=data_science_api_url, token=self.token, headers=self._get_headers()
         )
 
     @classmethod
@@ -135,255 +145,6 @@ class KeboolaClient:
         :return: Additional headers for the requests, namely the user agent.
         """
         return {'User-Agent': cls._get_user_agent()}
-
-
-class RawKeboolaClient:
-    """
-    Raw async client for Keboola services.
-
-    Implements the basic HTTP methods (GET, POST, PUT, DELETE)
-    and can be used to implement high-level functions in clients for individual services.
-    """
-
-    def __init__(
-        self,
-        base_api_url: str,
-        api_token: str,
-        headers: dict[str, Any] | None = None,
-        timeout: httpx.Timeout | None = None,
-    ) -> None:
-        self.base_api_url = base_api_url
-        self.headers = {
-            'Content-Type': 'application/json',
-            'Accept-encoding': 'gzip',
-        }
-        if api_token.startswith('Bearer '):
-            self.headers['Authorization'] = api_token
-        else:
-            self.headers['X-StorageAPI-Token'] = api_token
-        self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
-        if headers:
-            self.headers.update(headers)
-
-    @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
-        """
-        Checks the HTTP response status code and raises an exception with a detailed message. The message will
-        include "error" and "exceptionId" fields if they are present in the response.
-        """
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            message_parts = [str(e)]
-
-            try:
-                error_data = response.json()
-                if error_msg := error_data.get('error'):
-                    message_parts.append(f'API error: {error_msg}')
-                if exception_id := error_data.get('exceptionId'):
-                    message_parts.append(f'Exception ID: {exception_id}')
-                    message_parts.append('When contacting Keboola support please provide the exception ID.')
-
-            except ValueError:
-                try:
-                    if response.text:
-                        message_parts.append(f'API error: {response.text}')
-                except Exception:
-                    pass  # should never get here
-
-            raise httpx.HTTPStatusError('\n'.join(message_parts), request=response.request, response=response) from e
-
-    async def get(
-        self,
-        endpoint: str,
-        params: dict[str, Any] | None = None,
-        headers: dict[str, Any] | None = None,
-    ) -> JsonStruct:
-        """
-        Makes a GET request to the service API.
-
-        :param endpoint: API endpoint to call
-        :param params: Query parameters for the request
-        :param headers: Additional headers for the request
-        :return: API response as dictionary
-        """
-        headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(
-                f'{self.base_api_url}/{endpoint}',
-                params=params,
-                headers=headers,
-            )
-            self._raise_for_status(response)
-            return cast(JsonStruct, response.json())
-
-    async def post(
-        self,
-        endpoint: str,
-        data: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-        headers: dict[str, Any] | None = None,
-    ) -> JsonStruct:
-        """
-        Makes a POST request to the service API.
-
-        :param endpoint: API endpoint to call
-        :param data: Request payload
-        :param params: Query parameters for the request
-        :param headers: Additional headers for the request
-        :return: API response as dictionary
-        """
-        headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f'{self.base_api_url}/{endpoint}',
-                params=params,
-                headers=headers,
-                json=data or {},
-            )
-            self._raise_for_status(response)
-            return cast(JsonStruct, response.json())
-
-    async def put(
-        self,
-        endpoint: str,
-        data: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-        headers: dict[str, Any] | None = None,
-    ) -> JsonStruct:
-        """
-        Makes a PUT request to the service API.
-
-        :param endpoint: API endpoint to call
-        :param data: Request payload
-        :param params: Query parameters for the request
-        :param headers: Additional headers for the request
-        :return: API response as dictionary
-        """
-        headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.put(
-                f'{self.base_api_url}/{endpoint}',
-                params=params,
-                headers=headers,
-                json=data or {},
-            )
-            self._raise_for_status(response)
-            return cast(JsonStruct, response.json())
-
-    async def delete(
-        self,
-        endpoint: str,
-        headers: dict[str, Any] | None = None,
-    ) -> JsonStruct | None:
-        """
-        Makes a DELETE request to the service API.
-
-        :param endpoint: API endpoint to call
-        :param headers: Additional headers for the request
-        :return: API response as dictionary
-        """
-        headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.delete(
-                f'{self.base_api_url}/{endpoint}',
-                headers=headers,
-            )
-            self._raise_for_status(response)
-
-            if response.content:
-                return cast(JsonStruct, response.json())
-
-            return None
-
-
-class KeboolaServiceClient:
-    """
-    Base class for Keboola service clients.
-
-    Implements the basic HTTP methods (GET, POST, PUT, DELETE)
-    and is used as a base class for clients for individual services.
-    """
-
-    def __init__(self, raw_client: RawKeboolaClient) -> None:
-        """
-        Creates a client instance.
-
-        The inherited classes should implement the `create` method
-        rather than overriding this constructor.
-
-        :param raw_client: The raw client to use
-        """
-        self.raw_client = raw_client
-
-    @classmethod
-    def create(cls, root_url: str, token: str) -> 'KeboolaServiceClient':
-        """
-        Creates a KeboolaServiceClient from a Keboola Storage API token.
-
-        :param root_url: The root URL of the service API
-        :param token: The Keboola Storage API token
-        :return: A new instance of KeboolaServiceClient
-        """
-        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
-
-    async def get(
-        self,
-        endpoint: str,
-        params: Optional[dict[str, Any]] = None,
-    ) -> JsonStruct:
-        """
-        Makes a GET request to the service API.
-
-        :param endpoint: API endpoint to call
-        :param params: Query parameters for the request
-        :return: API response as dictionary
-        """
-        return await self.raw_client.get(endpoint=endpoint, params=params)
-
-    async def post(
-        self,
-        endpoint: str,
-        data: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
-    ) -> JsonStruct:
-        """
-        Makes a POST request to the service API.
-
-        :param endpoint: API endpoint to call
-        :param data: Request payload
-        :param params: Query parameters for the request
-        :return: API response as dictionary
-        """
-        return await self.raw_client.post(endpoint=endpoint, data=data, params=params)
-
-    async def put(
-        self,
-        endpoint: str,
-        data: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
-    ) -> JsonStruct:
-        """
-        Makes a PUT request to the service API.
-
-        :param endpoint: API endpoint to call
-        :param data: Request payload
-        :param params: Query parameters for the request
-        :return: API response as dictionary
-        """
-        return await self.raw_client.put(endpoint=endpoint, data=data, params=params)
-
-    async def delete(
-        self,
-        endpoint: str,
-    ) -> JsonStruct | None:
-        """
-        Makes a DELETE request to the service API.
-
-        :param endpoint: API endpoint to call
-        :return: API response as dictionary
-        """
-        return await self.raw_client.delete(endpoint=endpoint)
 
 
 class GlobalSearchResponse(BaseModel):
