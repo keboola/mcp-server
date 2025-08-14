@@ -3,7 +3,7 @@ from fastmcp import Context
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 
-from keboola_mcp_server.client import (
+from keboola_mcp_server.clients.client import (
     AIServiceClient,
     AsyncStorageClient,
     JobsQueueClient,

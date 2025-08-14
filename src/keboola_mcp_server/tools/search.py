@@ -7,7 +7,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import GlobalSearchResponse, ItemType, KeboolaClient, SuggestedComponent
+from keboola_mcp_server.clients.client import GlobalSearchResponse, ItemType, KeboolaClient, SuggestedComponent
 from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)

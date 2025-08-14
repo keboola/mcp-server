@@ -3,7 +3,7 @@ import logging
 import pytest
 
 from integtests.conftest import ProjectDef, TableDef
-from keboola_mcp_server.client import AsyncStorageClient, GlobalSearchResponse, KeboolaClient
+from keboola_mcp_server.clients.client import AsyncStorageClient, GlobalSearchResponse, KeboolaClient
 
 LOG = logging.getLogger(__name__)
 

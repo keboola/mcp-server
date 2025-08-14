@@ -9,7 +9,7 @@ from fastmcp import Context
 from fastmcp.utilities.types import find_kwarg_by_type
 from pydantic import BaseModel
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.mcp import ServerState, get_http_request_or_none
 
 LOG = logging.getLogger(__name__)

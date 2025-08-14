@@ -7,7 +7,7 @@ from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
@@ -150,7 +150,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     os_mock.environ = envs
 
     mocker.patch(
-        'keboola_mcp_server.client.AsyncStorageClient.verify_token',
+        'keboola_mcp_server.clients.client.AsyncStorageClient.verify_token',
         return_value={'owner': {'features': ['global-search', 'waii-integration', 'hide-conditional-flows']}},
     )
 
@@ -204,7 +204,7 @@ async def test_keboola_injection_and_lifespan(
 
     mocker.patch('keboola_mcp_server.server.os.environ', os_environ_params)
     mocker.patch(
-        'keboola_mcp_server.client.AsyncStorageClient.verify_token',
+        'keboola_mcp_server.clients.client.AsyncStorageClient.verify_token',
         return_value={'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}},
     )
 

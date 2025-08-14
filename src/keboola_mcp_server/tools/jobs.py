@@ -6,7 +6,7 @@ from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, exclude_none_serializer

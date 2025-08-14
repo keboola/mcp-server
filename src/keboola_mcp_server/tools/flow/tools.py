@@ -11,7 +11,7 @@ from fastmcp.tools import FunctionTool
 from pydantic import Field
 
 from keboola_mcp_server import resources
-from keboola_mcp_server.client import (
+from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     ORCHESTRATOR_COMPONENT_ID,
     CreateConfigurationAPIResponse,
