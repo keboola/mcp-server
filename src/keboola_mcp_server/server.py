@@ -5,10 +5,11 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Callable
+from typing import Callable, Literal
 
 from fastmcp import FastMCP
 from pydantic import AliasChoices, BaseModel, Field
+from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
@@ -84,11 +85,75 @@ def create_keboola_lifespan(
     return keboola_lifespan
 
 
-def create_server(config: Config, add_custom_routes: bool = True) -> FastMCP:
+class CustomRoutes:
+    """Routes which are not part of the MCP protocol."""
+
+    def __init__(self, server_state: ServerState, oauth_provider: SimpleOAuthProvider | None = None) -> None:
+        self.server_state = server_state
+        self.oauth_provider = oauth_provider
+
+    async def get_status(self, _rq: Request) -> Response:
+        """Checks the service is up and running."""
+        resp = StatusApiResp(status='ok')
+        return JSONResponse(resp.model_dump(by_alias=True))
+
+    async def get_info(self, _rq: Request) -> Response:
+        """Returns basic information about the service."""
+        resp = ServiceInfoApiResp(
+            app_version=self.server_state.app_version,
+            server_version=self.server_state.server_version,
+            mcp_library_version=self.server_state.mcp_library_version,
+            fastmcp_library_version=self.server_state.fastmcp_library_version,
+        )
+        return JSONResponse(resp.model_dump(by_alias=True))
+
+    async def oauth_callback_handler(self, request: Request) -> Response:
+        """Handle GitHub OAuth callback."""
+        code = request.query_params.get('code')
+        state = request.query_params.get('state')
+
+        if not code or not state:
+            raise HTTPException(400, 'Missing code or state parameter')
+
+        try:
+            assert self.oauth_provider  # this must have been set if we are handling OAuth callbacks
+            redirect_uri = await self.oauth_provider.handle_oauth_callback(code, state)
+            return RedirectResponse(status_code=302, url=redirect_uri)
+        except HTTPException:
+            raise
+        except Exception as e:
+            LOG.exception(f'Failed to handle OAuth callback: {e}')
+            return JSONResponse(status_code=500, content={'message': f'Unexpected error: {e}'})
+
+    def add_to_mcp(self, mcp: FastMCP) -> None:
+        """Add custom routes to an MCP server.
+
+        :param mcp: MCP server instance.
+        """
+        mcp.custom_route('/', methods=['GET'])(self.get_info)
+        mcp.custom_route('/health-check', methods=['GET'])(self.get_status)
+        mcp.custom_route('/oauth/callback', methods=['GET'])(self.oauth_callback_handler)
+
+    def add_to_starlette(self, app: Starlette) -> None:
+        """Add custom routes to a Starlette app.
+
+        :param app: Starlette app instance.
+        """
+        app.add_route('/', self.get_info, methods=['GET'])
+        app.add_route('/health-check', self.get_status, methods=['GET'])
+        app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
+
+
+def create_server(
+    config: Config, custom_routes_handling: Literal['add', 'return'] | None = 'add'
+) -> FastMCP | tuple[FastMCP, CustomRoutes]:
     """Create and configure the MCP server.
 
     :param config: Server configuration.
-    :param add_custom_routes: Add custom routes (health check etc.) to the server.
+    :param custom_routes_handling: Add custom routes (health check etc.) to the server. If 'add',
+        the routes are added to the MCP server instance. If 'return', the routes are returned as a CustomRoutes
+        instance. If None, no custom routes are added. The 'return' mode is a workaround for the 'http-compat'
+        mode, where we need to add the custom routes to the parent app.
     :return: Configured FastMCP server instance.
     """
     config = config.replace_by(os.environ)
@@ -131,8 +196,11 @@ def create_server(config: Config, add_custom_routes: bool = True) -> FastMCP:
         middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware()],
     )
 
-    if add_custom_routes:
-        _add_custom_routes(mcp, server_state=server_state, oauth_provider=oauth_provider)
+    if custom_routes_handling:
+        custom_routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    if custom_routes_handling == 'add':
+        custom_routes.add_to_mcp(mcp)
 
     add_component_tools(mcp)
     add_doc_tools(mcp)
@@ -145,44 +213,7 @@ def create_server(config: Config, add_custom_routes: bool = True) -> FastMCP:
     add_storage_tools(mcp)
     add_keboola_prompts(mcp)
 
-    return mcp
-
-
-def _add_custom_routes(
-    mcp: FastMCP, server_state: ServerState, oauth_provider: SimpleOAuthProvider | None = None
-) -> None:
-    @mcp.custom_route('/health-check', methods=['GET'])
-    async def get_status(_rq: Request) -> Response:
-        """Checks the service is up and running."""
-        resp = StatusApiResp(status='ok')
-        return JSONResponse(resp.model_dump(by_alias=True))
-
-    @mcp.custom_route('/', methods=['GET'])
-    async def get_info(_rq: Request) -> Response:
-        """Returns basic information about the service."""
-        resp = ServiceInfoApiResp(
-            app_version=server_state.app_version,
-            server_version=server_state.server_version,
-            mcp_library_version=server_state.mcp_library_version,
-            fastmcp_library_version=server_state.fastmcp_library_version,
-        )
-        return JSONResponse(resp.model_dump(by_alias=True))
-
-    @mcp.custom_route('/oauth/callback', methods=['GET'])
-    async def oauth_callback_handler(request: Request) -> Response:
-        """Handle GitHub OAuth callback."""
-        code = request.query_params.get('code')
-        state = request.query_params.get('state')
-
-        if not code or not state:
-            raise HTTPException(400, 'Missing code or state parameter')
-
-        try:
-            assert oauth_provider  # this must have been set if we are handling OAuth callbacks
-            redirect_uri = await oauth_provider.handle_oauth_callback(code, state)
-            return RedirectResponse(status_code=302, url=redirect_uri)
-        except HTTPException:
-            raise
-        except Exception as e:
-            LOG.exception(f'Failed to handle OAuth callback: {e}')
-            return JSONResponse(status_code=500, content={'message': f'Unexpected error: {e}'})
+    if custom_routes_handling != 'return':
+        return mcp
+    else:
+        return mcp, custom_routes
