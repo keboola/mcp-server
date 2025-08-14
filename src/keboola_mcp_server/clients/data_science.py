@@ -46,6 +46,7 @@ class DataAppConfig(BaseModel):
         class DataApp(BaseModel):
             slug: str = Field(description='The slug of the data app')
             streamlit: dict[str, str] = Field(description='The streamlit config.toml file')
+            secrets: Optional[dict[str, str]] = Field(description='The secrets of the data app', default=None)
 
         size: str = Field(description='The size of the data app')
         auto_suspend_after_seconds: int = Field(
@@ -75,10 +76,9 @@ class AsyncDataScienceClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient) -> None:
         """
-        Creates an AsyncStorageClient from a RawKeboolaClient and a branch id.
+        Creates an AsyncDataScienceClient from a RawKeboolaClient and a branch id.
 
         :param raw_client: The raw client to use
-        :param branch_id: The id of the branch
         """
         super().__init__(raw_client=raw_client)
 
@@ -94,14 +94,12 @@ class AsyncDataScienceClient(KeboolaServiceClient):
         headers: dict[str, Any] | None = None,
     ) -> 'AsyncDataScienceClient':
         """
-        Creates an AsyncStorageClient from a Keboola Storage API token.
+        Creates an AsyncDataScienceClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token
-        :param version: The version of the API to use (default: 'v2')
-        :param branch_id: The id of the branch
         :param headers: Additional headers for the requests
-        :return: A new instance of AsyncStorageClient
+        :return: A new instance of AsyncDataScienceClient
         """
         return cls(
             raw_client=RawKeboolaClient(

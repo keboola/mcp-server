@@ -1,7 +1,5 @@
 from typing import Any, Optional
 
-from pydantic import AliasChoices, BaseModel, Field
-
 from keboola_mcp_server.clients.base import JsonStruct, KeboolaServiceClient, RawKeboolaClient
 
 

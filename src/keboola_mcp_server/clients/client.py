@@ -16,6 +16,7 @@ from keboola_mcp_server.clients.base import (
     RawKeboolaClient,
 )
 from keboola_mcp_server.clients.data_science import AsyncDataScienceClient
+from keboola_mcp_server.clients.encryption import AsyncEncryptionClient
 
 LOG = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class KeboolaClient:
     _PREFIX_QUEUE_API_URL = 'https://queue.'
     _PREFIX_AISERVICE_API_URL = 'https://ai.'
     _PREFIX_DATA_SCIENCE_API_URL = 'https://data-science.'
+    _PREFIX_ENCRYPTION_API_URL = 'https://encryption.'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'KeboolaClient':
@@ -110,6 +112,9 @@ class KeboolaClient:
         data_science_api_url = (
             f'{self._PREFIX_DATA_SCIENCE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
         )
+        encryption_api_url = (
+            f'{self._PREFIX_ENCRYPTION_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
+        )
 
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else storage_api_token
@@ -124,6 +129,9 @@ class KeboolaClient:
         )
         self.data_science_client = AsyncDataScienceClient.create(
             root_url=data_science_api_url, token=self.token, headers=self._get_headers()
+        )
+        self.encryption_client = AsyncEncryptionClient.create(
+            root_url=encryption_api_url, token=self.token, headers=self._get_headers()
         )
 
     @classmethod
