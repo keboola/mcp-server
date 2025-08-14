@@ -66,7 +66,7 @@ def create_keboola_lifespan(
         Manage Keboola server lifecycle
 
         This method is called when the server starts, initializes the server state and returns it within a
-        context manager. The lifespan state is accessible accross the whole server as well as within the tools as
+        context manager. The lifespan state is accessible across the whole server as well as within the tools as
         `context.life_span`. When the server shuts down, it cleans up the server state.
 
         :param server: FastMCP server instance
@@ -76,7 +76,7 @@ def create_keboola_lifespan(
             ... = ctx.request_context.life_span.config # ctx.life_span is type of ServerState
 
         Ideas:
-        - it could handle OAuth token, client access, Reddis database connection for storing sessions, access
+        - it could handle OAuth token, client access, Redis database connection for storing sessions, access
         to the Relational DB, etc.
         """
         yield server_state
@@ -84,10 +84,11 @@ def create_keboola_lifespan(
     return keboola_lifespan
 
 
-def create_server(config: Config) -> FastMCP:
+def create_server(config: Config, add_custom_routes: bool = True) -> FastMCP:
     """Create and configure the MCP server.
 
     :param config: Server configuration.
+    :param add_custom_routes: Add custom routes (health check etc.) to the server.
     :return: Configured FastMCP server instance.
     """
     config = config.replace_by(os.environ)
@@ -130,6 +131,26 @@ def create_server(config: Config) -> FastMCP:
         middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware()],
     )
 
+    if add_custom_routes:
+        _add_custom_routes(mcp, server_state=server_state, oauth_provider=oauth_provider)
+
+    add_component_tools(mcp)
+    add_doc_tools(mcp)
+    add_flow_tools(mcp)
+    add_job_tools(mcp)
+    add_oauth_tools(mcp)
+    add_project_tools(mcp)
+    add_search_tools(mcp)
+    add_sql_tools(mcp)
+    add_storage_tools(mcp)
+    add_keboola_prompts(mcp)
+
+    return mcp
+
+
+def _add_custom_routes(
+    mcp: FastMCP, server_state: ServerState, oauth_provider: SimpleOAuthProvider | None = None
+) -> None:
     @mcp.custom_route('/health-check', methods=['GET'])
     async def get_status(_rq: Request) -> Response:
         """Checks the service is up and running."""
@@ -165,16 +186,3 @@ def create_server(config: Config) -> FastMCP:
         except Exception as e:
             LOG.exception(f'Failed to handle OAuth callback: {e}')
             return JSONResponse(status_code=500, content={'message': f'Unexpected error: {e}'})
-
-    add_component_tools(mcp)
-    add_doc_tools(mcp)
-    add_flow_tools(mcp)
-    add_job_tools(mcp)
-    add_oauth_tools(mcp)
-    add_project_tools(mcp)
-    add_search_tools(mcp)
-    add_sql_tools(mcp)
-    add_storage_tools(mcp)
-    add_keboola_prompts(mcp)
-
-    return mcp

@@ -26,7 +26,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         '--transport',
-        choices=['stdio', 'sse', 'streamable-http'],
+        choices=['stdio', 'sse', 'streamable-http', 'http-compat'],
         default='stdio',
         help='Transport to use for MCP communication',
     )
@@ -95,6 +95,46 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             if config.oauth_client_id or config.oauth_client_secret:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
+        elif parsed_args.transport == 'http-compat':
+            # Compatibility mode to support both Streamable-HTTP and SSE transports.
+            # SSE transport is deprecated and will be removed in the future.
+
+            from contextlib import asynccontextmanager
+
+            import uvicorn
+            from starlette.applications import Starlette
+
+            mcp_server = create_server(config)
+            mcp_server_sse = create_server(config, add_custom_routes=False)
+            http_app = mcp_server.streamable_http_app(path='/', middleware=[Middleware(ForwardSlashMiddleware)])
+            sse_app = mcp_server_sse.sse_app(path='/', middleware=[Middleware(ForwardSlashMiddleware)])
+
+            @asynccontextmanager
+            async def lifespan(app: Starlette):
+                async with http_app.lifespan(app):
+                    async with sse_app.lifespan(app):
+                        yield
+
+            app = Starlette(lifespan=lifespan)
+            app.mount('/mcp', http_app)  # serves /mcp/ endpoints
+            app.mount('/sse', sse_app)  # serves /sse/ and /messages
+
+            config = uvicorn.Config(
+                app,
+                host=parsed_args.host,
+                port=parsed_args.port,
+                log_config=log_config,
+                timeout_graceful_shutdown=0,
+                lifespan='on',
+            )
+            server = uvicorn.Server(config)
+            LOG.info(
+                f'Starting MCP server with Streamable-HTTP and SSE transports'
+                f' on http://{parsed_args.host}:{parsed_args.port}/'
+            )
+
+            await server.serve()
+
         else:
             await keboola_mcp_server.run_http_async(
                 show_banner=False,
