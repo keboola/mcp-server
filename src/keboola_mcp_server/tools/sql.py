@@ -5,12 +5,15 @@ from typing import Annotated
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
+
+SQL_TOOLS_TAG = 'sql'
 
 
 class QueryDataOutput(BaseModel):
@@ -22,8 +25,20 @@ class QueryDataOutput(BaseModel):
 
 def add_sql_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(query_data))
-    mcp.add_tool(FunctionTool.from_function(get_sql_dialect))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            query_data,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={SQL_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_sql_dialect,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={SQL_TOOLS_TAG},
+        )
+    )
     LOG.info('SQL tools added to the MCP server.')
 
 
