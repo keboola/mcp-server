@@ -7,7 +7,7 @@ from fastmcp import Client, FastMCP
 from mcp.server.fastmcp import Context
 
 from integtests.conftest import ConfigDef, ProjectDef
-from keboola_mcp_server.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.server import create_server

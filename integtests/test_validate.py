@@ -16,7 +16,7 @@ from typing import cast
 import jsonschema
 import pytest
 
-from keboola_mcp_server.client import ComponentAPIResponse, JsonDict, KeboolaClient
+from keboola_mcp_server.clients.client import ComponentAPIResponse, JsonDict, KeboolaClient
 from keboola_mcp_server.tools.components.model import Component
 from keboola_mcp_server.tools.validation import KeboolaParametersValidator
 

@@ -5,7 +5,7 @@ from typing import Any, Mapping
 import pytest
 from mcp.server.fastmcp import Context
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.oauth import create_oauth_url
 
 

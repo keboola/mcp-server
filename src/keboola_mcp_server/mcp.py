@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.workspace import WorkspaceManager

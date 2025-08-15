@@ -28,7 +28,7 @@ from typing import Optional, Sequence, Union, cast, get_args
 from httpx import HTTPStatusError
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import ComponentAPIResponse, ConfigurationAPIResponse, JsonDict, KeboolaClient
+from keboola_mcp_server.clients.client import ComponentAPIResponse, ConfigurationAPIResponse, JsonDict, KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components.model import (
     AllComponentTypes,

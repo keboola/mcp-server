@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 import httpx
 import pytest
 
-from keboola_mcp_server.client import KeboolaClient, RawKeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient, RawKeboolaClient
 
 
 @pytest.fixture

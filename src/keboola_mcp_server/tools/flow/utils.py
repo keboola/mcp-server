@@ -5,7 +5,7 @@ import logging
 from importlib import resources
 from typing import Any, Mapping, Sequence
 
-from keboola_mcp_server.client import (
+from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     FLOW_TYPES,
     ORCHESTRATOR_COMPONENT_ID,

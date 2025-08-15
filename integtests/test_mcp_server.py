@@ -6,7 +6,7 @@ from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import Configuration
