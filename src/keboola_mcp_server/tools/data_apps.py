@@ -490,7 +490,7 @@ def _get_secrets(client: KeboolaClient, workspace_id: str) -> dict[str, Any]:
     encrypted_token = Fernet(key).encrypt(client.token.encode()).decode()
     seed = base64.urlsafe_b64encode(salt).decode()  # convert bytes to string
     return {
-        'STORAGE_API_TOKEN': encrypted_token,
+        '#STORAGE_API_TOKEN': encrypted_token,
         'WORKSPACE_ID': workspace_id,
         'STORAGE_API_URL': client.storage_client.base_api_url,
         '#CRYPTO_SEED': seed,
