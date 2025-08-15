@@ -209,11 +209,11 @@ class _WspInfo:
 
     @staticmethod
     def from_sapi_info(sapi_wsp_info: Mapping[str, Any]) -> '_WspInfo':
-        _id = sapi_wsp_info.get('id')
-        backend = sapi_wsp_info.get('connection', {}).get('backend')
-        _schema = sapi_wsp_info.get('connection', {}).get('schema')
-        credentials = sapi_wsp_info.get('connection', {}).get('user')
-        readonly = sapi_wsp_info.get('readOnlyStorageAccess')
+        _id = sapi_wsp_info['id']
+        backend = sapi_wsp_info['connection']['backend']
+        _schema = sapi_wsp_info['connection']['schema']
+        credentials = sapi_wsp_info['connection']['user']
+        readonly = sapi_wsp_info['readOnlyStorageAccess']
         return _WspInfo(id=_id, schema=_schema, backend=backend, credentials=credentials, readonly=readonly)
 
 
@@ -422,3 +422,7 @@ class WorkspaceManager:
     async def get_sql_dialect(self) -> str:
         workspace = await self._get_workspace()
         return workspace.get_sql_dialect()
+
+    async def get_workspace_id(self) -> int:
+        workspace = await self._get_workspace()
+        return workspace.id
