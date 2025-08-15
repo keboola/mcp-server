@@ -54,9 +54,12 @@ filtering.
 
 ### Other Tools
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
+- [get_data_app](#get_data_app): Gets a data app details and provides navigation links.
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
+- [manage_data_app](#manage_data_app): Deploys or stops a data app in the Keboola workspace integration.
 - [search](#search): Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
 potentially narrowed down by item type, limited and paginated.
+- [sync_data_app](#sync_data_app): Creates or updates a Streamlit data app in Keboola workspace integration.
 
 ---
 
@@ -1709,6 +1712,31 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 ```
 
 ---
+<a name="get_data_app"></a>
+## get_data_app
+**Description**:
+
+Gets a data app details and provides navigation links.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_id": {
+      "description": "The ID of the data app configuration.",
+      "title": "Configuration Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="get_project_info"></a>
 ## get_project_info
 **Description**:
@@ -1720,6 +1748,41 @@ Return structured project information pulled from multiple endpoints.
 ```json
 {
   "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="manage_data_app"></a>
+## manage_data_app
+**Description**:
+
+Deploys or stops a data app in the Keboola workspace integration.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "action": {
+      "description": "The action to perform.",
+      "enum": [
+        "deploy",
+        "stop"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the data app configuration.",
+      "title": "Configuration Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "action",
+    "configuration_id"
+  ],
   "type": "object"
 }
 ```
@@ -1785,6 +1848,74 @@ Considerations:
   },
   "required": [
     "name_prefixes"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="sync_data_app"></a>
+## sync_data_app
+**Description**:
+
+Creates or updates a Streamlit data app in Keboola workspace integration.
+
+Considerations:
+- The `source_code` parameter must be a complete and runnable Streamlit app.
+It must include a placeholder `{QUERY_DATA_FUNCTION}` where the `query_data` function will be injected.
+This function accepts a SQL query string and returns a pandas DataFrame with the results from the workspace.
+- Always use `query_data(sql_query)` to retrieve data from the workspace.
+- Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
+`query_data` tool to inspect the data in the workspace before creating the data app.
+- If you're updating an existing data app, provide the `config_id` parameter. In this case, all existing parameters
+must either be preserved or explicitly updated.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "Name of the data app.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "Description of the data app.",
+      "title": "Description",
+      "type": "string"
+    },
+    "source_code": {
+      "description": "Complete Python/Streamlit source code for the data app.",
+      "title": "Source Code",
+      "type": "string"
+    },
+    "packages": {
+      "description": "Python packages used in the source code necessary to be installed.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Packages",
+      "type": "array"
+    },
+    "authorization_required": {
+      "default": false,
+      "description": "Whether the data app is authorized using simple password or not.",
+      "title": "Authorization Required",
+      "type": "boolean"
+    },
+    "config_id": {
+      "default": null,
+      "description": "The ID of existing data app configuration when updating, otherwise None.",
+      "title": "Config Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "source_code",
+    "packages"
   ],
   "type": "object"
 }
