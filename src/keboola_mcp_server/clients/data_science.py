@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -70,7 +70,7 @@ class DataAppConfig(BaseModel):
             validation_alias=AliasChoices('dataApp', 'data_app'),
         )
         id: Optional[str] = Field(description='The id of the data app', default=None)
-        script: Optional[str] = Field(description='The script of the data app', default=None)
+        script: Optional[list[str]] = Field(description='The script of the data app', default=None)
         packages: Optional[list[str]] = Field(
             description='The python packages needed to be installed in the data app', default=None
         )
@@ -130,8 +130,41 @@ class AsyncDataScienceClient(KeboolaServiceClient):
         :param data_app_id: The ID of the data app
         :return: The data app
         """
-        response = await self.raw_client.get(endpoint=f'apps/{data_app_id}')
+        response = await self.get(endpoint=f'apps/{data_app_id}')
         return DataAppResponse.model_validate(response)
+
+    async def deploy_data_app(self, data_app_id: str, config_version: str) -> DataAppResponse:
+        """
+        Deploy a data app by its ID.
+
+        :param data_app_id: The ID of the data app
+        :param config_version: The version of the config to deploy
+        :return: The data app
+        """
+        data = {
+            'desiredState': 'running',
+            'configVersion': config_version,
+            'restartIfRunning': True,
+            'updateDependencies': True,
+        }
+        response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
+        return DataAppResponse.model_validate(response)
+
+    async def suspend_data_app(self, data_app_id: str) -> DataAppResponse:
+        """
+        Suspend a data app by its ID.
+        """
+        data = {'desiredState': 'stopped'}
+        response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
+        return DataAppResponse.model_validate(response)
+
+    async def get_data_app_password(self, data_app_id: str) -> str:
+        """
+        Get the password for a data app by its ID.
+        """
+        response = await self.get(endpoint=f'apps/{data_app_id}/password')
+        assert isinstance(response, dict)
+        return cast(str, response['password'])
 
     async def create_data_app(
         self,
@@ -163,5 +196,5 @@ class AsyncDataScienceClient(KeboolaServiceClient):
                 'authorization': _authorization,
             },
         }
-        response = await self.raw_client.post('apps', data=data)
+        response = await self.post(endpoint='apps', data=data)
         return DataAppResponse.model_validate(response)
