@@ -418,7 +418,7 @@ def _contains_placeholder_named(s: str, placeholder_name: str) -> bool:
 
 def _is_authorized(authorization: dict[str, Any]) -> bool:
     try:
-        return authorization['app_proxy']['auth_rules'] == [{'id': 'simpleAuth', 'type': 'password'}]
+        return authorization['app_proxy']['auth_providers'] == [{'id': 'simpleAuth', 'type': 'password'}]
     except Exception:
         return False
 
@@ -466,7 +466,7 @@ def _inject_query_to_source_code(source_code: str) -> str:
         source_code = source_code.split('### GENERATED_CODE ###')[1].split('### END_OF_GENERATED_CODE ###')[1]
         return imports + '\n\n' + _QUERY_DATA_FUNCTION_CODE + '\n\n' + source_code
     elif _contains_placeholder_named(source_code, 'QUERY_DATA_FUNCTION'):
-        return source_code.format(QUERY_DATA_FUNCTION=_QUERY_DATA_FUNCTION_CODE) + '\n\n' + source_code
+        return source_code.format(QUERY_DATA_FUNCTION=_QUERY_DATA_FUNCTION_CODE)
     else:
         return _QUERY_DATA_FUNCTION_CODE + '\n\n' + source_code
 
