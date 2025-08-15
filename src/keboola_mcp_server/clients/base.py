@@ -167,6 +167,33 @@ class RawKeboolaClient:
 
             return None
 
+    async def patch(
+        self,
+        endpoint: str,
+        data: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
+        headers: Optional[dict[str, Any]] = None,
+    ) -> JsonStruct:
+        """
+        Makes a PATCH request to the service API.
+
+        :param endpoint: API endpoint to call
+        :param data: Request payload
+        :param params: Query parameters for the request
+        :param headers: Additional headers for the request
+        :return: API response as dictionary
+        """
+        headers = self.headers | (headers or {})
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.patch(
+                f'{self.base_api_url}/{endpoint}',
+                params=params,
+                headers=headers,
+                json=data or {},
+            )
+            self._raise_for_status(response)
+            return cast(JsonStruct, response.json())
+
 
 class KeboolaServiceClient:
     """
@@ -255,3 +282,19 @@ class KeboolaServiceClient:
         :return: API response as dictionary
         """
         return await self.raw_client.delete(endpoint=endpoint)
+
+    async def patch(
+        self,
+        endpoint: str,
+        data: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
+    ) -> JsonStruct:
+        """
+        Makes a PATCH request to the service API.
+
+        :param endpoint: API endpoint to call
+        :param data: Request payload
+        :param params: Query parameters for the request
+        :return: API response as dictionary
+        """
+        return await self.raw_client.patch(endpoint=endpoint, data=data, params=params)
