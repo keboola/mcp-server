@@ -3,24 +3,12 @@ This document provides details about the tools available in the Keboola MCP serv
 
 ## Index
 
-### Storage Tools
-- [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
-- [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
-- [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
-- [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
-- [update_description](#update_description): Updates the description for a Keboola storage item.
-
-### SQL Tools
-- [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
-- [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
-
 ### Component Tools
 - [add_config_row](#add_config_row): Creates a component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and a list of created table names.
-- [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
 - [get_component](#get_component): Gets information about a specific component given its ID.
 - [get_config](#get_config): Gets information about a specific component/transformation configuration.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
@@ -32,6 +20,9 @@ optionally filtered by component types or specific component IDs.
 component ID, configuration JSON, and description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
 configuration.
+
+### Documentation Tools
+- [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
 ### Flow Tools
 - [create_conditional_flow](#create_conditional_flow): Creates a new **conditional flow** configuration in Keboola.
@@ -49,271 +40,37 @@ results, and any relevant metadata.
 filtering.
 - [run_job](#run_job): Starts a new job for a given component or transformation.
 
-### Documentation Tools
-- [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
-
-### Other Tools
+### OAuth Tools
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
+
+### Project Tools
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
+
+### SQL Tools
+- [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
+- [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
+
+### Search Tools
+- [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
 - [search](#search): Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
 potentially narrowed down by item type, limited and paginated.
 
----
-
-# Storage Tools
-<a name="get_bucket"></a>
-## get_bucket
-**Description**:
-
-Gets detailed information about a specific bucket.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "title": "Bucket Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "bucket_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="get_table"></a>
-## get_table
-**Description**:
-
-Gets detailed information about a specific table including its DB identifier and column information.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "table_id": {
-      "description": "Unique ID of the table.",
-      "title": "Table Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "table_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="list_buckets"></a>
-## list_buckets
-**Description**:
-
-Retrieves information about all buckets in the project.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
-<a name="list_tables"></a>
-## list_tables
-**Description**:
-
-Retrieves all tables in a specific bucket with their basic information.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "title": "Bucket Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "bucket_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="update_description"></a>
-## update_description
-**Description**:
-
-Updates the description for a Keboola storage item.
-
-The tool supports three item types and validates the required identifiers based on the selected type:
-
-- item_type = "bucket": requires bucket_id
-- item_type = "table": requires table_id
-- item_type = "column": requires table_id and column_name
-
-Usage examples:
-- Update a bucket: item_type="bucket", bucket_id="in.c-my-bucket",
-  description="New bucket description"
-- Update a table: item_type="table", table_id="in.c-my-bucket.my-table",
-  description="New table description"
-- Update a column: item_type="column", table_id="in.c-my-bucket.my-table",
-  column_name="my_column", description="New column description"
-
-:return: The update result containing the stored description, timestamp, success flag, and optional links.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "item_type": {
-      "description": "Type of the item to update. One of: bucket, table, column.",
-      "enum": [
-        "bucket",
-        "table",
-        "column"
-      ],
-      "title": "Item Type",
-      "type": "string"
-    },
-    "description": {
-      "description": "The new description to set for the specified item.",
-      "title": "Description",
-      "type": "string"
-    },
-    "bucket_id": {
-      "default": "",
-      "description": "Bucket ID. Required when item_type is \"bucket\".",
-      "title": "Bucket Id",
-      "type": "string"
-    },
-    "table_id": {
-      "default": "",
-      "description": "Table ID. Required when item_type is \"table\" or \"column\".",
-      "title": "Table Id",
-      "type": "string"
-    },
-    "column_name": {
-      "default": "",
-      "description": "Column name. Required when item_type is \"column\".",
-      "title": "Column Name",
-      "type": "string"
-    }
-  },
-  "required": [
-    "item_type",
-    "description"
-  ],
-  "type": "object"
-}
-```
-
----
-
-# SQL Tools
-<a name="get_sql_dialect"></a>
-## get_sql_dialect
-**Description**:
-
-Gets the name of the SQL dialect used by Keboola project's underlying database.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
-<a name="query_data"></a>
-## query_data
-**Description**:
-
-Executes an SQL SELECT query to get the data from the underlying database.
-
-CRITICAL SQL REQUIREMENTS:
-
-* ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
-* Do not include any comments in the SQL code
-
-DIALECT-SPECIFIC REQUIREMENTS:
-* Snowflake: Use double quotes for identifiers: "column_name", "table_name"
-* BigQuery: Use backticks for identifiers: `column_name`, `table_name`
-* Never mix quoting styles within a single query
-
-TABLE AND COLUMN REFERENCES:
-* Always use fully qualified table names that include database name, schema name and table name
-* Get fully qualified table names using table information tools - use exact format shown
-* Snowflake format: "DATABASE"."SCHEMA"."TABLE"
-* BigQuery format: `project`.`dataset`.`table`
-* Always use quoted column names when referring to table columns (exact quotes from table info)
-
-CTE (WITH CLAUSE) RULES:
-* ALL column references in main query MUST match exact case used in the CTE
-* If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
-* For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
-* Define all column aliases explicitly in CTEs
-* Quote identifiers in both CTE definition and references to preserve case
-
-FUNCTION COMPATIBILITY:
-* Snowflake: Use LISTAGG instead of STRING_AGG
-* Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
-* Cast VARCHAR columns to appropriate types before using in date/numeric functions
-
-ERROR PREVENTION:
-* Never pass empty strings ('') where numeric or date values are expected
-* Use NULLIF or CASE statements to handle empty values
-* Always use TRY_CAST or similar safe casting functions when converting data types
-* Check for division by zero using NULLIF(denominator, 0)
-
-DATA VALIDATION:
-* When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
-* Ensure valid filtering by checking actual data values first
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "sql_query": {
-      "description": "SQL SELECT query to run.",
-      "title": "Sql Query",
-      "type": "string"
-    },
-    "query_name": {
-      "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
-      "title": "Query Name",
-      "type": "string"
-    }
-  },
-  "required": [
-    "sql_query",
-    "query_name"
-  ],
-  "type": "object"
-}
-```
+### Storage Tools
+- [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
+- [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
+- [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
+- [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
+- [update_description](#update_description): Updates the description for a Keboola storage item.
 
 ---
 
 # Component Tools
 <a name="add_config_row"></a>
 ## add_config_row
+**Annotations**: 
+
+**Tags**: `components`
+
 **Description**:
 
 Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -386,6 +143,10 @@ EXAMPLES:
 ---
 <a name="create_config"></a>
 ## create_config
+**Annotations**: 
+
+**Tags**: `components`
+
 **Description**:
 
 Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -451,6 +212,10 @@ EXAMPLES:
 ---
 <a name="create_sql_transformation"></a>
 ## create_sql_transformation
+**Annotations**: 
+
+**Tags**: `components`
+
 **Description**:
 
 Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -550,40 +315,12 @@ EXAMPLES:
 ```
 
 ---
-<a name="find_component_id"></a>
-## find_component_id
-**Description**:
-
-Returns list of component IDs that match the given query.
-
-USAGE:
-- Use when you want to find the component for a specific purpose.
-
-EXAMPLES:
-- user_input: `I am looking for a salesforce extractor component`
-    - returns a list of component IDs that match the query, ordered by relevance/best match.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "query": {
-      "description": "Natural language query to find the requested component.",
-      "title": "Query",
-      "type": "string"
-    }
-  },
-  "required": [
-    "query"
-  ],
-  "type": "object"
-}
-```
-
----
 <a name="get_component"></a>
 ## get_component
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
 Gets information about a specific component given its ID.
@@ -620,6 +357,10 @@ EXAMPLES:
 ---
 <a name="get_config"></a>
 ## get_config
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
 Gets information about a specific component/transformation configuration.
@@ -660,6 +401,10 @@ EXAMPLES:
 ---
 <a name="get_config_examples"></a>
 ## get_config_examples
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
 Retrieves sample configuration examples for a specific component.
@@ -693,6 +438,10 @@ EXAMPLES:
 ---
 <a name="list_configs"></a>
 ## list_configs
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
 Retrieves configurations of components present in the project,
@@ -753,6 +502,10 @@ EXAMPLES:
 ---
 <a name="list_transformations"></a>
 ## list_transformations
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
 Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
@@ -794,6 +547,10 @@ EXAMPLES:
 ---
 <a name="update_config"></a>
 ## update_config
+**Annotations**: `destructive`
+
+**Tags**: `components`
+
 **Description**:
 
 Updates a specific root component configuration using given by component ID, and configuration ID.
@@ -872,6 +629,10 @@ EXAMPLES:
 ---
 <a name="update_config_row"></a>
 ## update_config_row
+**Annotations**: `destructive`
+
+**Tags**: `components`
+
 **Description**:
 
 Updates a specific component configuration row in the specified configuration_id, using the specified name,
@@ -955,6 +716,10 @@ EXAMPLES:
 ---
 <a name="update_sql_transformation"></a>
 ## update_sql_transformation
+**Annotations**: `destructive`
+
+**Tags**: `components`
+
 **Description**:
 
 Updates an existing SQL transformation configuration, optionally updating the description and disabling the
@@ -1104,9 +869,44 @@ EXAMPLES:
 
 ---
 
+# Documentation Tools
+<a name="docs_query"></a>
+## docs_query
+**Annotations**: `read-only`
+
+**Tags**: `docs`
+
+**Description**:
+
+Answers a question using the Keboola documentation as a source.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "query": {
+      "description": "Natural language query to search for in the documentation.",
+      "title": "Query",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "type": "object"
+}
+```
+
+---
+
 # Flow Tools
 <a name="create_conditional_flow"></a>
 ## create_conditional_flow
+**Annotations**: 
+
+**Tags**: `flows`
+
 **Description**:
 
 Creates a new **conditional flow** configuration in Keboola.
@@ -1173,6 +973,10 @@ USE CASES:
 ---
 <a name="create_flow"></a>
 ## create_flow
+**Annotations**: 
+
+**Tags**: `flows`
+
 **Description**:
 
 Creates a new flow configuration in Keboola.
@@ -1251,6 +1055,10 @@ EXAMPLES:
 ---
 <a name="get_flow"></a>
 ## get_flow
+**Annotations**: `read-only`
+
+**Tags**: `flows`
+
 **Description**:
 
 Gets detailed information about a specific flow configuration.
@@ -1276,6 +1084,10 @@ Gets detailed information about a specific flow configuration.
 ---
 <a name="get_flow_examples"></a>
 ## get_flow_examples
+**Annotations**: `read-only`
+
+**Tags**: `flows`
+
 **Description**:
 
 Retrieves examples of valid flow configurations.
@@ -1310,6 +1122,10 @@ CONSIDERATIONS:
 ---
 <a name="get_flow_schema"></a>
 ## get_flow_schema
+**Annotations**: `read-only`
+
+**Tags**: `flows`
+
 **Description**:
 
 Returns the JSON schema for the given flow type in markdown format.
@@ -1348,6 +1164,10 @@ Usage:
 ---
 <a name="list_flows"></a>
 ## list_flows
+**Annotations**: `read-only`
+
+**Tags**: `flows`
+
 **Description**:
 
 Retrieves flow configurations from the project. Optionally filtered by IDs.
@@ -1374,6 +1194,10 @@ Retrieves flow configurations from the project. Optionally filtered by IDs.
 ---
 <a name="update_flow"></a>
 ## update_flow
+**Annotations**: `destructive`
+
+**Tags**: `flows`
+
 **Description**:
 
 Updates an existing flow configuration in Keboola.
@@ -1487,6 +1311,10 @@ EXAMPLES:
 # Jobs Tools
 <a name="get_job"></a>
 ## get_job
+**Annotations**: `read-only`
+
+**Tags**: `jobs`
+
 **Description**:
 
 Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
@@ -1516,6 +1344,10 @@ EXAMPLES:
 ---
 <a name="list_jobs"></a>
 ## list_jobs
+**Annotations**: `read-only`
+
+**Tags**: `jobs`
+
 **Description**:
 
 Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
@@ -1614,6 +1446,10 @@ EXAMPLES:
 ---
 <a name="run_job"></a>
 ## run_job
+**Annotations**: `destructive`
+
+**Tags**: `jobs`
+
 **Description**:
 
 Starts a new job for a given component or transformation.
@@ -1644,36 +1480,13 @@ Starts a new job for a given component or transformation.
 
 ---
 
-# Documentation Tools
-<a name="docs_query"></a>
-## docs_query
-**Description**:
-
-Answers a question using the Keboola documentation as a source.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "query": {
-      "description": "Natural language query to search for in the documentation.",
-      "title": "Query",
-      "type": "string"
-    }
-  },
-  "required": [
-    "query"
-  ],
-  "type": "object"
-}
-```
-
----
-
-# Other Tools
+# OAuth Tools
 <a name="create_oauth_url"></a>
 ## create_oauth_url
+**Annotations**: `destructive`
+
+**Tags**: `oauth`
+
 **Description**:
 
 Generates an OAuth authorization URL for a Keboola component configuration.
@@ -1709,8 +1522,14 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 ```
 
 ---
+
+# Project Tools
 <a name="get_project_info"></a>
 ## get_project_info
+**Annotations**: `read-only`
+
+**Tags**: `project`
+
 **Description**:
 
 Return structured project information pulled from multiple endpoints.
@@ -1725,8 +1544,50 @@ Return structured project information pulled from multiple endpoints.
 ```
 
 ---
+
+# Search Tools
+<a name="find_component_id"></a>
+## find_component_id
+**Annotations**: `read-only`
+
+**Tags**: `search`
+
+**Description**:
+
+Returns list of component IDs that match the given query.
+
+USAGE:
+- Use when you want to find the component for a specific purpose.
+
+EXAMPLES:
+- user_input: `I am looking for a salesforce extractor component`
+    - returns a list of component IDs that match the query, ordered by relevance/best match.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "query": {
+      "description": "Natural language query to find the requested component.",
+      "title": "Query",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="search"></a>
 ## search
+**Annotations**: `read-only`
+
+**Tags**: `search`
+
 **Description**:
 
 Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
@@ -1785,6 +1646,285 @@ Considerations:
   },
   "required": [
     "name_prefixes"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# SQL Tools
+<a name="get_sql_dialect"></a>
+## get_sql_dialect
+**Annotations**: `read-only`
+
+**Tags**: `sql`
+
+**Description**:
+
+Gets the name of the SQL dialect used by Keboola project's underlying database.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="query_data"></a>
+## query_data
+**Annotations**: `read-only`
+
+**Tags**: `sql`
+
+**Description**:
+
+Executes an SQL SELECT query to get the data from the underlying database.
+
+CRITICAL SQL REQUIREMENTS:
+
+* ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
+* Do not include any comments in the SQL code
+
+DIALECT-SPECIFIC REQUIREMENTS:
+* Snowflake: Use double quotes for identifiers: "column_name", "table_name"
+* BigQuery: Use backticks for identifiers: `column_name`, `table_name`
+* Never mix quoting styles within a single query
+
+TABLE AND COLUMN REFERENCES:
+* Always use fully qualified table names that include database name, schema name and table name
+* Get fully qualified table names using table information tools - use exact format shown
+* Snowflake format: "DATABASE"."SCHEMA"."TABLE"
+* BigQuery format: `project`.`dataset`.`table`
+* Always use quoted column names when referring to table columns (exact quotes from table info)
+
+CTE (WITH CLAUSE) RULES:
+* ALL column references in main query MUST match exact case used in the CTE
+* If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
+* For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
+* Define all column aliases explicitly in CTEs
+* Quote identifiers in both CTE definition and references to preserve case
+
+FUNCTION COMPATIBILITY:
+* Snowflake: Use LISTAGG instead of STRING_AGG
+* Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
+* Cast VARCHAR columns to appropriate types before using in date/numeric functions
+
+ERROR PREVENTION:
+* Never pass empty strings ('') where numeric or date values are expected
+* Use NULLIF or CASE statements to handle empty values
+* Always use TRY_CAST or similar safe casting functions when converting data types
+* Check for division by zero using NULLIF(denominator, 0)
+
+DATA VALIDATION:
+* When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
+* Ensure valid filtering by checking actual data values first
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "sql_query": {
+      "description": "SQL SELECT query to run.",
+      "title": "Sql Query",
+      "type": "string"
+    },
+    "query_name": {
+      "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
+      "title": "Query Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sql_query",
+    "query_name"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# Storage Tools
+<a name="get_bucket"></a>
+## get_bucket
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Gets detailed information about a specific bucket.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "bucket_id": {
+      "description": "Unique ID of the bucket.",
+      "title": "Bucket Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bucket_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_table"></a>
+## get_table
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Gets detailed information about a specific table including its DB identifier and column information.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "table_id": {
+      "description": "Unique ID of the table.",
+      "title": "Table Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "table_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="list_buckets"></a>
+## list_buckets
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Retrieves information about all buckets in the project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="list_tables"></a>
+## list_tables
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Retrieves all tables in a specific bucket with their basic information.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "bucket_id": {
+      "description": "Unique ID of the bucket.",
+      "title": "Bucket Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bucket_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="update_description"></a>
+## update_description
+**Annotations**: `destructive`
+
+**Tags**: `storage`
+
+**Description**:
+
+Updates the description for a Keboola storage item.
+
+The tool supports three item types and validates the required identifiers based on the selected type:
+
+- item_type = "bucket": requires bucket_id
+- item_type = "table": requires table_id
+- item_type = "column": requires table_id and column_name
+
+Usage examples:
+- Update a bucket: item_type="bucket", bucket_id="in.c-my-bucket",
+  description="New bucket description"
+- Update a table: item_type="table", table_id="in.c-my-bucket.my-table",
+  description="New table description"
+- Update a column: item_type="column", table_id="in.c-my-bucket.my-table",
+  column_name="my_column", description="New column description"
+
+:return: The update result containing the stored description, timestamp, success flag, and optional links.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "item_type": {
+      "description": "Type of the item to update. One of: bucket, table, column.",
+      "enum": [
+        "bucket",
+        "table",
+        "column"
+      ],
+      "title": "Item Type",
+      "type": "string"
+    },
+    "description": {
+      "description": "The new description to set for the specified item.",
+      "title": "Description",
+      "type": "string"
+    },
+    "bucket_id": {
+      "default": "",
+      "description": "Bucket ID. Required when item_type is \"bucket\".",
+      "title": "Bucket Id",
+      "type": "string"
+    },
+    "table_id": {
+      "default": "",
+      "description": "Table ID. Required when item_type is \"table\" or \"column\".",
+      "title": "Table Id",
+      "type": "string"
+    },
+    "column_name": {
+      "default": "",
+      "description": "Column name. Required when item_type is \"column\".",
+      "title": "Column Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "item_type",
+    "description"
   ],
   "type": "object"
 }
