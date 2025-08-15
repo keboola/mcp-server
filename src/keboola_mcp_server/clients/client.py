@@ -594,6 +594,25 @@ class AsyncStorageClient(KeboolaServiceClient):
         endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}'
         return cast(JsonDict, await self.get(endpoint=endpoint))
 
+    async def configuration_versions(self, component_id: str, config_id: str) -> list[JsonDict]:
+        """
+        Retrieves details of a specific configuration version.
+        """
+        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/versions'
+        return cast(list[JsonDict], await self.get(endpoint=endpoint))
+
+    async def configuration_version_latest(self, component_id: str, config_id: str) -> int:
+        """
+        Retrieves details of the last configuration version.
+        """
+        versions = await self.configuration_versions(component_id, config_id)
+        latest_version = 0
+        for data in versions:
+            assert isinstance(data, dict) and isinstance(data['version'], int)
+            if latest_version is None or data['version'] > latest_version:
+                latest_version = data['version']
+        return latest_version
+
     async def job_detail(self, job_id: str | int) -> JsonDict:
         """
         NOTE: To get info for regular jobs, use the Job Queue API.
