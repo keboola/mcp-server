@@ -608,7 +608,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         versions = await self.configuration_versions(component_id, config_id)
         latest_version = 0
         for data in versions:
-            assert isinstance(data, dict) and isinstance(data['version'], int)
+            assert isinstance(data, dict)
+            assert isinstance(data['version'], int)
             if latest_version is None or data['version'] > latest_version:
                 latest_version = data['version']
         return latest_version
