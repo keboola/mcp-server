@@ -114,12 +114,10 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             http_app = mcp_server.http_app(
                 path='/',
                 transport='streamable-http',
-                middleware=[Middleware(ForwardSlashMiddleware)],
             )
             sse_app = mcp_server.http_app(
                 path='/',
                 transport='sse',
-                middleware=[Middleware(ForwardSlashMiddleware)],
             )
 
             @asynccontextmanager
@@ -128,7 +126,10 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                     async with sse_app.lifespan(app):
                         yield
 
-            app = Starlette(lifespan=lifespan)
+            app = Starlette(
+                middleware=[Middleware(ForwardSlashMiddleware)],
+                lifespan=lifespan
+            )
             app.mount('/mcp', http_app)
             app.mount('/sse', sse_app)  # serves /sse/ and /messages
             custom_routes.add_to_starlette(app)
