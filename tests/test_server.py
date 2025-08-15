@@ -253,7 +253,7 @@ def test_json_logging(mocker):
     time.sleep(5)
 
     # kill the server and capture streams
-    p.kill()
+    p.terminate()
     stdout, stderr = p.communicate()
 
     # there is only one handler (the root one) in logging-json.conf which sends messages to stdout
