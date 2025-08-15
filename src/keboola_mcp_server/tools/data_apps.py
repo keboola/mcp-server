@@ -29,7 +29,21 @@ def add_data_app_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             sync_data_app,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_data_app,
+            tags={DATA_APP_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            manage_data_app,
+            tags={DATA_APP_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
         )
     )
     LOG.info('Data app tools initialized.')
