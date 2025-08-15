@@ -8,6 +8,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Callable, Literal
 
 from fastmcp import FastMCP
+from mcp.server.auth.routes import create_auth_routes
 from pydantic import AliasChoices, BaseModel, Field
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
@@ -132,7 +133,8 @@ class CustomRoutes:
         """
         mcp.custom_route('/', methods=['GET'])(self.get_info)
         mcp.custom_route('/health-check', methods=['GET'])(self.get_status)
-        mcp.custom_route('/oauth/callback', methods=['GET'])(self.oauth_callback_handler)
+        if self.oauth_provider:
+            mcp.custom_route('/oauth/callback', methods=['GET'])(self.oauth_callback_handler)
 
     def add_to_starlette(self, app: Starlette) -> None:
         """Add custom routes to a Starlette app.
@@ -141,7 +143,17 @@ class CustomRoutes:
         """
         app.add_route('/', self.get_info, methods=['GET'])
         app.add_route('/health-check', self.get_status, methods=['GET'])
-        app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
+        if self.oauth_provider:
+            app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
+            auth_routes = create_auth_routes(
+                self.oauth_provider,
+                self.oauth_provider.issuer_url,
+                self.oauth_provider.service_documentation_url,
+                self.oauth_provider.client_registration_options,
+                self.oauth_provider.revocation_options,
+            )
+            for route in auth_routes:
+                app.add_route(route.path, route.endpoint, methods=route.methods)
 
 
 def create_server(

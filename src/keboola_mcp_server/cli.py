@@ -53,8 +53,8 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         '--accept-secrets-in-url',
         action='store_true',
         help='(NOT RECOMMENDED) Read Storage API token and other configuration parameters from the query part '
-             'of the MCP server URL. Please note that the URL query parameters are not secure '
-             'for sending sensitive information.',
+        'of the MCP server URL. Please note that the URL query parameters are not secure '
+        'for sending sensitive information.',
     )
     parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
 
