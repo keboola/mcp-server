@@ -51,14 +51,14 @@ class ToolDocumentationGenerator:
         self._tools = tools
         self._categories = categories
         self._output_path = output_path
-        self._categorizer = self._group_tools(categories or self._categories)
+        self._categorizer = None
 
-    def generate(self, categories: list[ToolCategory] | None = None):
-        self._categorizer = self._group_tools(categories) if categories else self._categorizer
+    def generate(self):
+        self._categorizer = self._group_tools(self._categories)
         with open(self._output_path, mode='w', encoding='utf-8') as f:
             self._write_header(f)
-            self._write_index(f)
-            self._write_tool_details(f)
+            self._write_index(f, self._categorizer)
+            self._write_tool_details(f, self._categorizer)
 
     def _group_tools(self, categories: list[ToolCategory]) -> Mapping[ToolCategory, list[Tool]]:
         assert categories, 'Categories are required'
@@ -85,11 +85,11 @@ class ToolDocumentationGenerator:
         f.write('# Tools Documentation\n')
         f.write('This document provides details about the tools available in the Keboola MCP server.\n\n')
 
-    def _write_index(self, f):
+    def _write_index(self, f, categorizer: Mapping[ToolCategory, list[Tool]]):
         LOG.info(f'Writing index to {self._output_path}')
         f.write('## Index\n')
-        for category in sorted(self._categories, key=lambda category: category.name):
-            if tools := self._categorizer[category]:
+        for category in sorted(categorizer, key=attrgetter('name')):
+            if tools := categorizer[category]:
                 LOG.info(f'Writing category {category} and its tools ({len(tools)}) to {self._output_path}')
 
                 f.write(f'\n### {category}\n')
@@ -111,7 +111,7 @@ class ToolDocumentationGenerator:
             str_annotations.append('destructive')
         if annotations.idempotentHint:
             str_annotations.append('idempotent')
-        return f'`{", ".join(sorted(str_annotations))}`'
+        return f'`{", ".join(sorted(str_annotations))}`' if str_annotations else ''
 
     def _get_tags(self, tags: set[str]) -> str:
         return f'`{", ".join(sorted(tags))}`' if tags else ''
@@ -130,10 +130,10 @@ class ToolDocumentationGenerator:
         anchor = re.sub(r'\s+', '-', anchor)
         return anchor
 
-    def _write_tool_details(self, f):
+    def _write_tool_details(self, f, categorizer: Mapping[ToolCategory, list[Tool]]):
         LOG.info(f'Writing tool details to {self._output_path}')
-        for category in self._categorizer:
-            if not (tools := self._categorizer[category]):
+        for category in categorizer:
+            if not (tools := categorizer[category]):
                 LOG.warning(f'Category {category} has no tools')
                 continue
 
@@ -191,7 +191,7 @@ async def generate_docs() -> None:
             # OTHER_CATEGORY
         ]
         doc_gen = ToolDocumentationGenerator(list(tools.values()), categories)
-        doc_gen.generate(categories)
+        doc_gen.generate()
     except Exception as e:
         LOG.exception(f'Failed to generate documentation: {e}')
         sys.exit(1)

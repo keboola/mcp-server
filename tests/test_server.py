@@ -263,7 +263,6 @@ async def test_tool_annotations_and_tags():
             elif tool.annotations.destructiveHint:
                 assert tool.annotations.readOnlyHint is None, f'{tool.name} has readOnlyHint'
             elif tool.annotations.destructiveHint is False:
-                assert tool.annotations.destructiveHint is not None, f'{tool.name} does not have destructiveHint'
                 assert tool.annotations.idempotentHint is None, f'{tool.name} has idempotentHint'
             if tool.annotations.idempotentHint:
                 assert tool.annotations.readOnlyHint is None, f'{tool.name} has readOnlyHint'
