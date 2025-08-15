@@ -174,7 +174,12 @@ class SessionStateMiddleware(fmw.Middleware):
                 raise ValueError('Storage API token is not provided.')
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
-            client = KeboolaClient(config.storage_token, config.storage_api_url, bearer_token=config.bearer_token)
+            client = KeboolaClient(
+                storage_api_url=config.storage_api_url,
+                storage_api_token=config.storage_token,
+                bearer_token=config.bearer_token,
+                branch_id=config.branch_id,
+            )
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
         except Exception as e:

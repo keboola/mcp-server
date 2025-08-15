@@ -17,6 +17,8 @@ class Config:
     """The URL to the Storage API."""
     storage_token: Optional[str] = field(default=None, metadata={'aliases': ['storage_api_token']})
     """The token to access the storage API using the MCP tools."""
+    branch_id: Optional[str] = None
+    """The branch ID to access the storage API using the MCP tools."""
     workspace_schema: Optional[str] = None
     """Workspace schema to access the buckets, tables and execute sql queries."""
     accept_secrets_in_url: Optional[bool] = None

@@ -83,13 +83,17 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
-    def __init__(self, storage_api_token: str, storage_api_url: str, bearer_token: str | None = None) -> None:
+    def __init__(
+            self, *, storage_api_url: str, storage_api_token: str, bearer_token: str | None = None,
+            branch_id: str | None = None
+    ) -> None:
         """
         Initialize the client.
 
         :param storage_api_token: Keboola Storage API token
         :param storage_api_url: Keboola Storage API URL
         :param bearer_token: The access token issued by Keboola OAuth server
+        :param branch_id: Keboola branch ID
         """
         self.token = storage_api_token
         # Ensure the base URL has a scheme
@@ -106,7 +110,7 @@ class KeboolaClient:
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else storage_api_token
         self.storage_client = AsyncStorageClient.create(
-            root_url=storage_api_url, token=bearer_or_sapi_token, headers=self._get_headers()
+            root_url=storage_api_url, token=bearer_or_sapi_token, branch_id=branch_id, headers=self._get_headers()
         )
         self.jobs_queue_client = JobsQueueClient.create(
             root_url=queue_api_url, token=self.token, headers=self._get_headers()
@@ -315,17 +319,6 @@ class KeboolaServiceClient:
         """
         self.raw_client = raw_client
 
-    @classmethod
-    def create(cls, root_url: str, token: str) -> 'KeboolaServiceClient':
-        """
-        Creates a KeboolaServiceClient from a Keboola Storage API token.
-
-        :param root_url: The root URL of the service API
-        :param token: The Keboola Storage API token
-        :return: A new instance of KeboolaServiceClient
-        """
-        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
-
     async def get(
         self,
         endpoint: str,
@@ -427,7 +420,7 @@ class GlobalSearchResponse(BaseModel):
 
 class AsyncStorageClient(KeboolaServiceClient):
 
-    def __init__(self, raw_client: RawKeboolaClient, branch_id: str = 'default') -> None:
+    def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
         """
         Creates an AsyncStorageClient from a RawKeboolaClient and a branch id.
 
@@ -435,7 +428,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param branch_id: The id of the branch
         """
         super().__init__(raw_client=raw_client)
-        self._branch_id: str = branch_id
+        self._branch_id: str = branch_id or 'default'
 
     @property
     def branch_id(self) -> str:
@@ -448,10 +441,11 @@ class AsyncStorageClient(KeboolaServiceClient):
     @classmethod
     def create(
         cls,
+        *,
         root_url: str,
         token: str,
         version: str = 'v2',
-        branch_id: str = 'default',
+        branch_id: str | None = None ,
         headers: dict[str, Any] | None = None,
     ) -> 'AsyncStorageClient':
         """
@@ -832,7 +826,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param job_id: The id of the job
         :return: Job details as dictionary
         """
-        return cast(JsonDict, await self.get(endpoint=f'jobs/{job_id}'))
+        return cast(JsonDict, await self.get(endpoint=f'jobs/{job_id}'))  # TODO: no branch support
 
     async def global_search(
         self,
@@ -854,11 +848,15 @@ class AsyncStorageClient(KeboolaServiceClient):
         params: dict[str, Any] = {
             'query': query,
             'projectIds[]': [await self.project_id()],
-            'branchTypes[]': 'production',
             'types[]': types,
             'limit': limit,
             'offset': offset,
         }
+        if self.branch_id == 'default':
+            params['branchTypes[]'] = 'production'
+        else:
+            params['branchTypes[]'] = 'development'
+            params['branchIds[]'] = self.branch_id
         params = {k: v for k, v in params.items() if v}
         raw_resp = await self.get(endpoint='global-search', params=params)
         return GlobalSearchResponse.model_validate(raw_resp)
@@ -921,6 +919,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
 
+    # TODO: no branch support
     async def trigger_event(
         self,
         message: str,
