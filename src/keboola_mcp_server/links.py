@@ -4,7 +4,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
-    DATA_APP_COMPONENT_ID,
     FlowType,
     KeboolaClient,
 )
@@ -114,7 +113,7 @@ class ProjectLinksManager:
 
     def get_data_app_password_link(self, configuration_id: str) -> Link:
         return Link.detail(
-            title=f'Data App Password Link (click on "OPEN DATA APP" to see the password)',
+            title='Data App Password Link (click on "OPEN DATA APP" to see the password)',
             url=self._url(f'data-apps/{configuration_id}'),
         )
 
