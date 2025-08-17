@@ -1,4 +1,6 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keboola/mcp-server)
+
+[![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/keboola/keboola-mcp-server)](https://archestra.ai/mcp-catalog/keboola__keboola-mcp-server)
 [![smithery badge](https://smithery.ai/badge/keboola-mcp-server)](https://smithery.ai/server/keboola-mcp-server)
 
 
