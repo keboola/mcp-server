@@ -1,6 +1,7 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
 import logging
+from collections import defaultdict
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, cast
 
@@ -68,10 +69,9 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
 
 def _extract_description(values: dict[str, Any]) -> Optional[str]:
     """Extracts the description from values or metadata."""
-    if description := values.get('description'):
-        return description
-    else:
-        return get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
+    if not (description := values.get('description')):
+        description = get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
+    return description or None
 
 
 class BucketDetail(BaseModel):
@@ -83,7 +83,7 @@ class BucketDetail(BaseModel):
         serialization_alias='displayName',
     )
     description: Optional[str] = Field(None, description='Description of the bucket.')
-    stage: Optional[str] = Field(None, description='Stage of the bucket (in for input stage, out for output stage).')
+    stage: str = Field(description='Stage of the bucket (in for input stage, out for output stage).')
     created: str = Field(description='Creation timestamp of the bucket.')
     data_size_bytes: Optional[int] = Field(
         None,
@@ -213,14 +213,36 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
     links_manager = await ProjectLinksManager.from_client(client)
 
     raw_bucket_data = await client.storage_client.bucket_list(include=['metadata'])
-    production_branch_raw_buckets = [
-        bucket
-        for bucket in raw_bucket_data
-        if not (any(meta.get('key') == MetadataField.FAKE_DEVELOPMENT_BRANCH for meta in bucket.get('metadata', [])))
-    ]  # filter out buckets from "Fake development branches"
+
+    # group by buckets by the ID of a branch that they belong to
+    buckets_by_branch: dict[str | None, list[JsonDict]] = defaultdict(list)
+    for bucket in raw_bucket_data:
+        bucket_branch_id = get_metadata_property(bucket.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        bucket_branch_id = bucket_branch_id or None
+        buckets_by_branch[bucket_branch_id].append(bucket)
+
+    print(f'[list_buckets] buckets_by_branch={buckets_by_branch}')
+
+    buckets: list[JsonDict] = []
+    if client.branch_id:
+        # add the dev branch buckets and collect the IDs of their production branch equivalents
+        id_prefix = f'c-{client.branch_id}-'
+        hidden_bucket_ids: set[str] = set()
+        for b in buckets_by_branch.get(client.branch_id, []):
+            buckets.append(b)
+            hidden_bucket_ids.add(b['id'].replace(id_prefix, 'c-'))
+
+        # add the production branch buckets that are not "shaded" by their dev branch equivalent
+        for b in buckets_by_branch.get(None, []):
+            if b['id'] not in hidden_bucket_ids:
+                buckets.append(b)
+    else:
+        buckets += buckets_by_branch.get(None, [])
+
+    print(f'[list_buckets] buckets={buckets}')
 
     return ListBucketsOutput(
-        buckets=[BucketDetail.model_validate(bucket) for bucket in production_branch_raw_buckets],
+        buckets=[BucketDetail.model_validate(bucket) for bucket in buckets],
         links=[links_manager.get_bucket_dashboard_link()],
     )
 
