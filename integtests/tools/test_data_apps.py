@@ -12,7 +12,6 @@ from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.data_apps import (
     DetailDataAppOutput,
     ListDataAppOutput,
-    ManageDataAppOutput,
     SyncDataAppOutput,
 )
 
