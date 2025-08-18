@@ -1,4 +1,8 @@
+import json
+import subprocess
+import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
@@ -11,6 +15,15 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
+from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
+from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
+from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
+from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
+from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
+from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG
+from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
+from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
+from keboola_mcp_server.tools.storage import STORAGE_TOOLS_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -235,3 +248,135 @@ async def test_keboola_injection_and_lifespan(
         result = await client.call_tool('assessed_function', {'param': 'value'})
         assert isinstance(result.content[0], TextContent)
         assert result.content[0].text == 'value'
+
+
+@pytest.mark.asyncio
+async def test_tool_annotations_and_tags():
+    """
+    Test that the tool annotations are properly set.
+    """
+    server = create_server(Config())
+    tools = await server.get_tools()
+    for tool in tools.values():
+        assert tool.tags is not None, f'{tool.name} has no tags'
+        if tool.annotations is not None:
+            if tool.annotations.readOnlyHint:
+                assert tool.annotations.destructiveHint is None, f'{tool.name} has destructiveHint'
+                assert tool.annotations.idempotentHint is None, f'{tool.name} has idempotentHint'
+            elif tool.annotations.destructiveHint:
+                assert tool.annotations.readOnlyHint is None, f'{tool.name} has readOnlyHint'
+            elif tool.annotations.destructiveHint is False:
+                assert tool.annotations.idempotentHint is None, f'{tool.name} has idempotentHint'
+            if tool.annotations.idempotentHint:
+                assert tool.annotations.readOnlyHint is None, f'{tool.name} has readOnlyHint'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('tool_name', 'expected_readonly', 'expected_destructive', 'expected_idempotent', 'tags'),
+    [
+        # components
+        ('get_component', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('get_config', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('list_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('get_config_examples', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('create_config', None, False, None, {COMPONENT_TOOLS_TAG}),
+        ('update_config', None, True, None, {COMPONENT_TOOLS_TAG}),
+        ('add_config_row', None, False, None, {COMPONENT_TOOLS_TAG}),
+        ('update_config_row', None, True, None, {COMPONENT_TOOLS_TAG}),
+        ('list_transformations', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
+        ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG}),
+        # storage
+        ('get_bucket', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('list_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('get_table', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('list_tables', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('update_description', None, True, None, {STORAGE_TOOLS_TAG}),
+        # flows
+        ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
+        ('create_conditional_flow', None, False, None, {FLOW_TOOLS_TAG}),
+        ('list_flows', True, None, None, {FLOW_TOOLS_TAG}),
+        ('update_flow', None, True, None, {FLOW_TOOLS_TAG}),
+        ('get_flow', True, None, None, {FLOW_TOOLS_TAG}),
+        ('get_flow_examples', True, None, None, {FLOW_TOOLS_TAG}),
+        ('get_flow_schema', True, None, None, {FLOW_TOOLS_TAG}),
+        # sql
+        ('query_data', True, None, None, {SQL_TOOLS_TAG}),
+        ('get_sql_dialect', True, None, None, {SQL_TOOLS_TAG}),
+        # jobs
+        ('get_job', True, None, None, {JOB_TOOLS_TAG}),
+        ('list_jobs', True, None, None, {JOB_TOOLS_TAG}),
+        ('run_job', None, True, None, {JOB_TOOLS_TAG}),
+        # project/doc/search
+        ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
+        ('docs_query', True, None, None, {DOC_TOOLS_TAG}),
+        ('search', True, None, None, {SEARCH_TOOLS_TAG}),
+        ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
+        # oauth
+        ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
+    ],
+)
+async def test_tool_annotations_tags_values(
+    tool_name: str,
+    expected_readonly: bool | None,
+    expected_destructive: bool | None,
+    expected_idempotent: bool | None,
+    tags: set[str],
+) -> None:
+    """
+    Test that the tool annotations are having the expected values.
+    """
+    server = create_server(Config())
+    tools = await server.get_tools()
+
+    # check tool registration
+    assert tool_name in tools, f'Missing tool registered: {tool_name}'
+
+    # check annotations
+    tool = tools[tool_name]
+    if all(exp_val is None for exp_val in (expected_readonly, expected_destructive, expected_idempotent)):
+        assert tool.annotations is None, f'{tool_name} has annotations'
+    else:
+        assert tool.annotations is not None, f'{tool_name} has no annotations'
+        assert tool.annotations.readOnlyHint is expected_readonly, f'{tool_name}.readOnlyHint mismatch'
+        assert tool.annotations.destructiveHint is expected_destructive, f'{tool_name}.destructiveHint mismatch'
+        assert tool.annotations.idempotentHint is expected_idempotent, f'{tool_name}.idempotentHint mismatch'
+
+    # check tags
+    assert tool.tags == tags, f'{tool_name} tags mismatch'
+
+
+def test_json_logging(mocker):
+    log_config_file = Path(__file__).parent.parent / 'logging-json.conf'
+    assert log_config_file.is_file(), f'No logging config file found at {log_config_file.absolute()}'
+
+    # start the MCP server process with json logging
+    p = subprocess.Popen(
+        ['python', '-m', 'keboola_mcp_server', '--transport', 'sse', '--log-config', log_config_file.absolute()],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    # give the server time to fully start
+    time.sleep(5)
+
+    # kill the server and capture streams
+    p.terminate()
+    stdout, stderr = p.communicate()
+
+    # there is only one handler (the root one) in logging-json.conf which sends messages to stdout
+    assert stderr == ''
+
+    # all messages should be JSON-formatted, including those logged by FastMCP loggers
+    top_names: set[str] = set()
+    fastmcp_startup_message: dict[str, Any] | None = None
+    for line in stdout.splitlines():
+        message = json.loads(line)
+        name = message['name']
+        if message['message'].startswith('Starting MCP server') and name.startswith('FastMCP.fastmcp'):
+            fastmcp_startup_message = message
+        top_names.add(name.split('.')[0])
+
+    assert sorted(top_names) == ['FastMCP', 'keboola_mcp_server', 'uvicorn']
+    assert fastmcp_startup_message is not None
