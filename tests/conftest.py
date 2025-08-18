@@ -3,13 +3,11 @@ from fastmcp import Context
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 
-from keboola_mcp_server.clients.client import (
-    AIServiceClient,
-    AsyncStorageClient,
-    JobsQueueClient,
-    KeboolaClient,
-    RawKeboolaClient,
-)
+from keboola_mcp_server.clients.ai_service import AIServiceClient
+from keboola_mcp_server.clients.base import RawKeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager

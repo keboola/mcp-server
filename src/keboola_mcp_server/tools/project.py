@@ -6,7 +6,8 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.clients.client import JsonDict, KeboolaClient
+from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
