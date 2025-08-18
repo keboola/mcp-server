@@ -1,9 +1,11 @@
 import base64
 import os
-from hashlib import sha256
 from typing import cast
 
 from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.data_apps import (
@@ -57,9 +59,9 @@ def test_inject_query_to_source_code_when_already_included():
 def test_inject_query_to_source_code_with_markers():
     src = (
         'import pandas as pd\n\n'
-        '### GENERATED_CODE ###\n'
+        '### INJECTED_CODE ###\n'
         '# will be replaced\n'
-        '### END_OF_GENERATED_CODE ###\n\n'
+        '### END_OF_INJECTED_CODE ###\n\n'
         "print('hello')\n"
     )
     result = _inject_query_to_source_code(src)
@@ -142,37 +144,49 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
     assert new['parameters']['dataApp']['secrets']['KEEP'] == 'x'
     assert new['authorization'] == _get_authorization(False)
 
-# FOR NOW IT IS SKIPPED I NEED TO FIX THE ENCRYPTION
-# def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
-#     # Deterministic salt
-#     salt = os.urandom(32)
-#     mocker.patch('keboola_mcp_server.tools.data_apps.os.urandom', return_value=salt)
 
-#     class _StorageClient:
-#         base_api_url = 'https://example.com'
+def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
+    # Deterministic salt
+    # salt = os.urandom(32)
+    # expected_seed = base64.urlsafe_b64encode(salt).decode()
+    # mocker.patch('keboola_mcp_server.tools.data_apps.os.urandom', return_value=salt)
 
-#     class _Client:
-#         token = 'TOKEN123'
-#         storage_client = _StorageClient()
+    class _StorageClient:
+        base_api_url = 'https://example.com'
+        branch_id = 'bid123'
 
-#     workspace_id = 'wid-456'
+    class _Client:
+        token = 'TOKEN123'
+        storage_client = _StorageClient()
 
-#     secrets = _get_secrets(cast(KeboolaClient, _Client()), workspace_id)
+    workspace_id = 'wid-1234'
 
-#     assert set(secrets.keys()) == {
-#         '#STORAGE_API_TOKEN',
-#         'WORKSPACE_ID',
-#         'STORAGE_API_URL',
-#         '#CRYPTO_SEED',
-#     }
-#     assert secrets['WORKSPACE_ID'] == workspace_id
-#     assert secrets['STORAGE_API_URL'] == 'https://example.com'
+    secrets = _get_secrets(cast(KeboolaClient, _Client()), workspace_id)
 
-#     # The seed corresponds to the salt we provided
-#     expected_seed = base64.urlsafe_b64encode(salt).decode()
-#     assert secrets['#CRYPTO_SEED'] == expected_seed
+    assert set(secrets.keys()) == {
+        'BRANCH_ID',
+        'WORKSPACE_ID',
+        'STORAGE_API_URL',
+        '#STORAGE_API_TOKEN',
+        '#SAPI_RANDOM_SEED',
+    }
+    assert secrets['BRANCH_ID'] == 'bid123'
+    assert secrets['WORKSPACE_ID'] == 'wid-1234'
+    assert secrets['STORAGE_API_URL'] == 'https://example.com'
 
-#     # And the token can be decrypted using derived key
-#     key = base64.urlsafe_b64encode(sha256(workspace_id.encode() + salt).digest())
-#     decrypted = Fernet(key).decrypt(secrets['#STORAGE_API_TOKEN'].encode()).decode()
-#     assert decrypted == 'TOKEN123'
+    # Get the seed (decode it)
+    seed = base64.urlsafe_b64decode(secrets['#SAPI_RANDOM_SEED'].encode())
+    # Get the encrypted token (decode it)
+    encrypted_token = base64.urlsafe_b64decode(secrets['#STORAGE_API_TOKEN'].encode())
+    # Derive the key from the seed
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,  # Fernet requires 32-byte keys
+        salt=workspace_id.encode("utf-8"),
+        iterations=390000,
+        backend=default_backend()
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(seed))
+    # Decrypt the token
+    decrypted_token = Fernet(key).decrypt(encrypted_token).decode()
+    assert decrypted_token == 'TOKEN123'

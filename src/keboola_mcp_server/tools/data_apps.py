@@ -525,7 +525,7 @@ def query_data(query: str) -> pd.DataFrame:
         algorithm=hashes.SHA256(),
         length=32,  # Fernet requires 32-byte keys
         salt=wid.encode("utf-8"),
-        iterations=390000,  # recommended by cryptography.io
+        iterations=390000,
         backend=default_backend()
     )
     key = base64.urlsafe_b64encode(kdf.derive(random_seed))
