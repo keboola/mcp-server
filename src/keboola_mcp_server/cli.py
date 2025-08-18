@@ -96,8 +96,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             if config.oauth_client_id or config.oauth_client_secret:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
-        # elif parsed_args.transport == 'http-compat':
-        else:
+        elif parsed_args.transport == 'http-compat':
             # Compatibility mode to support both Streamable-HTTP and SSE transports.
             # SSE transport is deprecated and will be removed in the future.
             # Supporting both transports is implemented by creating a parent app and mounting
@@ -150,18 +149,18 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
             await server.serve()
 
-        # else:
-        #     keboola_mcp_server: FastMCP = create_server(config)
-        #     await keboola_mcp_server.run_http_async(
-        #         show_banner=False,
-        #         transport=parsed_args.transport,
-        #         host=parsed_args.host,
-        #         port=parsed_args.port,
-        #         uvicorn_config={'log_config': log_config} if log_config else None,
-        #         # Adding ForwardSlashMiddleware in KeboolaMcpServer's constructor doesn't seem to have any effect.
-        #        # See https://github.com/jlowin/fastmcp/pull/896 for the related changes in the fastmcp==2.9.0 library.
-        #         middleware=[Middleware(ForwardSlashMiddleware)],
-        #     )
+        else:
+            keboola_mcp_server: FastMCP = create_server(config)
+            await keboola_mcp_server.run_http_async(
+                show_banner=False,
+                transport=parsed_args.transport,
+                host=parsed_args.host,
+                port=parsed_args.port,
+                uvicorn_config={'log_config': log_config} if log_config else None,
+                # Adding ForwardSlashMiddleware in KeboolaMcpServer's constructor doesn't seem to have any effect.
+                # See https://github.com/jlowin/fastmcp/pull/896 for the related changes in the fastmcp==2.9.0 library.
+                middleware=[Middleware(ForwardSlashMiddleware)],
+            )
     except Exception as e:
         LOG.exception(f'Server failed: {e}')
         sys.exit(1)
