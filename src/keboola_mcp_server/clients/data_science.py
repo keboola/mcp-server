@@ -1,8 +1,12 @@
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
+
+LOG = logging.getLogger(__name__)
 
 
 class DataAppResponse(BaseModel):
@@ -84,6 +88,7 @@ class DataAppConfig(BaseModel):
 
     parameters: Parameters = Field(description='The parameters of the data app')
     authorization: Authorization = Field(description='The authorization of the data app')
+    storage: dict[str, Any] = Field(description='The storage of the data app', default_factory=dict)
 
 
 class AsyncDataScienceClient(KeboolaServiceClient):
@@ -198,3 +203,51 @@ class AsyncDataScienceClient(KeboolaServiceClient):
         }
         response = await self.post(endpoint='apps', data=data)
         return DataAppResponse.model_validate(response)
+
+    async def delete_data_app(self, data_app_id: str) -> None:
+        """
+        Delete a data app by its ID.
+        """
+        await self.delete(endpoint=f'apps/{data_app_id}')
+
+    async def list_data_apps(self, limit: int = 100, offset: int = 0) -> list[DataAppResponse]:
+        """
+        List all data apps.
+        """
+        response = await self.get(endpoint='apps', params={'limit': limit, 'offset': offset})
+        return [DataAppResponse.model_validate(app) for app in response]
+
+    async def tail_app_logs(self, app_id: str, since: Optional[str] = None, *, lines: Optional[int] = None) -> str:
+        """
+        Tail application logs. Either `since` or `lines` must be provided but not both at the same time, otherwise it
+        uses the `lines` parameter. In case when none of the parameters are provided, it uses the `lines` parameter with
+        the last 100 lines.
+        :param app_id: ID of the app.
+        :param since: ISO-8601 timestamp with nanoseconds.
+                      E.g: since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        :param lines: Number of log lines from the end. Defaults to 100.
+        :return: Logs as plain text.
+        :raise requests.HTTPError: For non-200 status codes.
+        """
+        if since and lines:
+            LOG.warning(
+                'You cannot use both "since" and "lines" query parameters together. Using the "lines" parameter.'
+            )
+            since = None
+
+        elif not since and not lines:
+            LOG.info(
+                'No "since" or "lines" query parameters provided. Using "lines" with the last 100 lines as default.'
+            )
+            lines = 100
+
+        if lines:
+            lines = max(lines, 1)  # Ensure lines is at least 1
+            params = {'lines': lines}
+        elif since:
+            params = {'since': since}
+        else:
+            raise ValueError('Either "since" or "lines" must be provided.')
+
+        response = await self.get_text(endpoint=f'apps/{app_id}/logs/tail', params=params)
+        return cast(str, response)
