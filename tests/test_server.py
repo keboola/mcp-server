@@ -45,7 +45,7 @@ class TestServer:
             'get_component',
             'get_config',
             'get_config_examples',
-            'get_data_app',
+            'get_data_apps',
             'get_flow',
             'get_flow_examples',
             'get_flow_schema',
