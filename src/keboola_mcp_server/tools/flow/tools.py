@@ -12,14 +12,14 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from keboola_mcp_server import resources
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     ORCHESTRATOR_COMPONENT_ID,
-    CreateConfigurationAPIResponse,
     FlowType,
-    JsonDict,
     KeboolaClient,
 )
+from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import exclude_none_serializer
@@ -204,7 +204,7 @@ async def create_flow(
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     tool_response = FlowToolResponse(
         id=api_config.id,
-        description=api_config.description,
+        description=api_config.description or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
@@ -268,7 +268,7 @@ async def create_conditional_flow(
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     tool_response = FlowToolResponse(
         id=api_config.id,
-        description=api_config.description,
+        description=api_config.description or '',
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
