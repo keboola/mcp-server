@@ -4,7 +4,8 @@ import pytest
 from fastmcp import Context
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
-from keboola_mcp_server.clients.client import KeboolaClient, SuggestedComponent
+from keboola_mcp_server.clients.ai_service import SuggestedComponent
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.search import GlobalSearchOutput, find_component_id, search
 
 LOG = logging.getLogger(__name__)

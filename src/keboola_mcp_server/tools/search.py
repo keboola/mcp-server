@@ -8,7 +8,9 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.clients.client import GlobalSearchResponse, ItemType, KeboolaClient, SuggestedComponent
+from keboola_mcp_server.clients.ai_service import SuggestedComponent
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import GlobalSearchResponse, ItemType
 from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)

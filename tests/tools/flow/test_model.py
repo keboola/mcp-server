@@ -1,6 +1,7 @@
 from typing import Any
 
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, APIFlowResponse
+from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowConfiguration,

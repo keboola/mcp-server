@@ -3,7 +3,8 @@ import logging
 import pytest
 
 from integtests.conftest import ProjectDef, TableDef
-from keboola_mcp_server.clients.client import AsyncStorageClient, GlobalSearchResponse, KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient, GlobalSearchResponse
 
 LOG = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class TestAsyncStorageClient:
         assert ret.by_project == {}
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Writing to the global search index takes too long, making the test unstable.')
     async def test_global_search_with_results(self, storage_client: AsyncStorageClient, tables: list[TableDef]):
         search_for_name = 'test'
         is_global_search_enabled = await storage_client.is_enabled('global-search')

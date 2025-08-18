@@ -15,8 +15,9 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, ConfigurationAPIResponse, KeboolaClient
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import DataAppResponse
+from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.workspace import WorkspaceManager
 
