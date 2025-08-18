@@ -17,7 +17,7 @@ dependencies = [
     "jsonschema ~= 4.23",
     "pyjwt ~= 2.10",
     "json-log-formatter ~= 1.0",
-    "cryptography" ~= 45.0",
+    "cryptography ~= 45.0",
 ]
 [project.optional-dependencies]
 codestyle = [
