@@ -44,8 +44,10 @@ filtering.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
-- [get_data_app](#get_data_app): Gets a data app details and provides navigation links.
-- [manage_data_app](#manage_data_app): Deploys or stops a data app in the Keboola workspace integration.
+- [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
+providing its configuration IDs.
+- [manage_data_app](#manage_data_app): Deploys a data app or stops running data app in the Keboola workspace integration given the action and config
+id.
 - [sync_data_app](#sync_data_app): Creates or updates a Streamlit data app in Keboola workspace integration.
 
 ### Project Tools
@@ -875,30 +877,48 @@ EXAMPLES:
 ---
 
 # Other Tools
-<a name="get_data_app"></a>
-## get_data_app
+<a name="get_data_apps"></a>
+## get_data_apps
 **Annotations**: `read-only`
 
 **Tags**: `data-app`
 
 **Description**:
 
-Gets a data app details and provides navigation links.
+Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
+providing its configuration IDs.
+
+Considerations:
+- if configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
+- if no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "configuration_id": {
-      "description": "The ID of the data app configuration.",
-      "title": "Configuration Id",
-      "type": "string"
+    "configuration_ids": {
+      "default": [],
+      "description": "The IDs of the data app configurations.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Configuration Ids",
+      "type": "array"
+    },
+    "limit": {
+      "default": 100,
+      "description": "The limit of the data apps to fetch.",
+      "title": "Limit",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "The offset of the data apps to fetch.",
+      "title": "Offset",
+      "type": "integer"
     }
   },
-  "required": [
-    "configuration_id"
-  ],
   "type": "object"
 }
 ```
@@ -912,7 +932,8 @@ Gets a data app details and provides navigation links.
 
 **Description**:
 
-Deploys or stops a data app in the Keboola workspace integration.
+Deploys a data app or stops running data app in the Keboola workspace integration given the action and config
+id.
 
 
 **Input JSON Schema**:
