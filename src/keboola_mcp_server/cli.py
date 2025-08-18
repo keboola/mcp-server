@@ -8,6 +8,7 @@ import pathlib
 import sys
 from typing import Optional
 
+from fastmcp import FastMCP
 from starlette.middleware import Middleware
 
 from keboola_mcp_server.config import Config
@@ -26,7 +27,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         '--transport',
-        choices=['stdio', 'sse', 'streamable-http'],
+        choices=['stdio', 'sse', 'streamable-http', 'http-compat'],
         default='stdio',
         help='Transport to use for MCP communication',
     )
@@ -90,12 +91,66 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
     try:
         # Create and run the server
-        keboola_mcp_server = create_server(config)
         if parsed_args.transport == 'stdio':
+            keboola_mcp_server: FastMCP = create_server(config)
             if config.oauth_client_id or config.oauth_client_secret:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
+        elif parsed_args.transport == 'http-compat':
+            # Compatibility mode to support both Streamable-HTTP and SSE transports.
+            # SSE transport is deprecated and will be removed in the future.
+            # Supporting both transports is implemented by creating a parent app and mounting
+            # two apps (SSE and Streamable-HTTP) to it. The custom routes (like health check)
+            # are added to the parent app. We use local imports here due to temporary nature of this code.
+
+            from contextlib import asynccontextmanager
+
+            import uvicorn
+            from starlette.applications import Starlette
+
+            mcp_server, custom_routes = create_server(config, custom_routes_handling='return')
+
+            http_app = mcp_server.http_app(
+                path='/',
+                transport='streamable-http',
+            )
+            sse_app = mcp_server.http_app(
+                path='/',
+                transport='sse',
+            )
+
+            @asynccontextmanager
+            async def lifespan(app: Starlette):
+                async with http_app.lifespan(app):
+                    async with sse_app.lifespan(app):
+                        yield
+
+            app = Starlette(
+                middleware=[Middleware(ForwardSlashMiddleware)],
+                lifespan=lifespan
+            )
+            app.mount('/mcp', http_app)
+            app.mount('/sse', sse_app)  # serves /sse/ and /messages
+            custom_routes.add_to_starlette(app)
+
+            config = uvicorn.Config(
+                app,
+                host=parsed_args.host,
+                port=parsed_args.port,
+                log_config=log_config,
+                timeout_graceful_shutdown=0,
+                lifespan='on',
+            )
+            server = uvicorn.Server(config)
+            LOG.info(
+                f'Starting MCP server with Streamable-HTTP and SSE transports'
+                f' on http://{parsed_args.host}:{parsed_args.port}/'
+            )
+
+            await server.serve()
+
         else:
+            keboola_mcp_server: FastMCP = create_server(config)
             await keboola_mcp_server.run_http_async(
                 show_banner=False,
                 transport=parsed_args.transport,
