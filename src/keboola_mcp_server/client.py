@@ -6,6 +6,7 @@ import math
 import os
 from datetime import datetime
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, TypeVar, Union, cast
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from pydantic import AliasChoices, BaseModel, Field, field_validator
@@ -71,11 +72,6 @@ class KeboolaClient:
     """Class holding clients for Keboola APIs: Storage API, Job Queue API, and AI Service."""
 
     STATE_KEY = 'sapi_client'
-    # Prefixes for the storage and queue API URLs, we do not use http:// or https:// here since we split the storage
-    # api url by `connection` word
-    _PREFIX_STORAGE_API_URL = 'connection.'
-    _PREFIX_QUEUE_API_URL = 'https://queue.'
-    _PREFIX_AISERVICE_API_URL = 'https://ai.'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'KeboolaClient':
@@ -84,8 +80,12 @@ class KeboolaClient:
         return instance
 
     def __init__(
-            self, *, storage_api_url: str, storage_api_token: str, bearer_token: str | None = None,
-            branch_id: str | None = None
+        self,
+        *,
+        storage_api_url: str,
+        storage_api_token: str,
+        bearer_token: str | None = None,
+        branch_id: str | None = None,
     ) -> None:
         """
         Initialize the client.
@@ -95,29 +95,57 @@ class KeboolaClient:
         :param bearer_token: The access token issued by Keboola OAuth server
         :param branch_id: Keboola branch ID
         """
-        self.token = storage_api_token
-        # Ensure the base URL has a scheme
-        if not storage_api_url.startswith(('http://', 'https://')):
-            storage_api_url = f'https://{storage_api_url}'
+        self._token = storage_api_token
+        self._branch_id = branch_id
 
-        # Construct the queue API URL from the storage API URL expecting the following format:
-        # https://connection.REGION.keboola.com
-        # Remove the prefix from the storage API URL https://connection.REGION.keboola.com -> REGION.keboola.com
-        # and add the prefix for the queue API https://queue.REGION.keboola.com
-        queue_api_url = f'{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
-        ai_service_api_url = f'{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
+        sapi_url_parsed = urlparse(storage_api_url)
+        if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
+            raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
+
+        hostname_suffix = sapi_url_parsed.hostname.split('connection.')[1]
+        self._storage_api_url = urlunparse(('https', f'connection.{hostname_suffix}', '', '', '', ''))
+        queue_api_url = urlunparse(('https', f'queue.{hostname_suffix}', '', '', '', ''))
+        ai_service_api_url = urlunparse(('https', f'ai.{hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
-        bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else storage_api_token
-        self.storage_client = AsyncStorageClient.create(
-            root_url=storage_api_url, token=bearer_or_sapi_token, branch_id=branch_id, headers=self._get_headers()
+        bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
+        self._storage_client = AsyncStorageClient.create(
+            root_url=self._storage_api_url, token=bearer_or_sapi_token, branch_id=branch_id, headers=self._get_headers()
         )
-        self.jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url, token=self.token, headers=self._get_headers()
+        self._jobs_queue_client = JobsQueueClient.create(
+            root_url=queue_api_url, token=self._token, headers=self._get_headers()
         )
-        self.ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self.token, headers=self._get_headers()
+        self._ai_service_client = AIServiceClient.create(
+            root_url=ai_service_api_url, token=self._token, headers=self._get_headers()
         )
+
+    @property
+    def storage_api_url(self) -> str:
+        return self._storage_api_url
+
+    @property
+    def token(self) -> str:
+        return self._token
+
+    @property
+    def branch_id(self) -> str | None:
+        """
+        Gets ID of the Keboola branch that the MCP server is bound to or None if it's bound
+        to the main/production branch.
+        """
+        return self._branch_id
+
+    @property
+    def storage_client(self) -> 'AsyncStorageClient':
+        return self._storage_client
+
+    @property
+    def jobs_queue_client(self) -> 'JobsQueueClient':
+        return self._jobs_queue_client
+
+    @property
+    def ai_service_client(self) -> 'AIServiceClient':
+        return self._ai_service_client
 
     @classmethod
     def _get_user_agent(cls) -> str:
@@ -430,14 +458,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         super().__init__(raw_client=raw_client)
         self._branch_id: str = branch_id or 'default'
 
-    @property
-    def branch_id(self) -> str:
-        return self._branch_id
-
-    @property
-    def base_api_url(self) -> str:
-        return self.raw_client.base_api_url.split('/v2')[0]
-
     @classmethod
     def create(
         cls,
@@ -445,7 +465,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         root_url: str,
         token: str,
         version: str = 'v2',
-        branch_id: str | None = None ,
+        branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
     ) -> 'AsyncStorageClient':
         """
@@ -454,7 +474,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token
         :param version: The version of the API to use (default: 'v2')
-        :param branch_id: The id of the branch
+        :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests
         :return: A new instance of AsyncStorageClient
         """
@@ -473,7 +493,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :return: Branch metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
         """
-        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self.branch_id}/metadata'))
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self._branch_id}/metadata'))
 
     async def branch_metadata_update(self, metadata: dict[str, Any]) -> list[JsonDict]:
         """
@@ -485,7 +505,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         payload = {
             'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
         }
-        return cast(list[JsonDict], await self.post(endpoint=f'branch/{self.branch_id}/metadata', data=payload))
+        return cast(list[JsonDict], await self.post(endpoint=f'branch/{self._branch_id}/metadata', data=payload))
 
     async def bucket_detail(self, bucket_id: str) -> JsonDict:
         """
@@ -566,7 +586,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param component_id: The id of the component
         :return: Component details as a dictionary
         """
-        return cast(JsonDict, await self.get(endpoint=f'branch/{self.branch_id}/components/{component_id}'))
+        return cast(JsonDict, await self.get(endpoint=f'branch/{self._branch_id}/components/{component_id}'))
 
     async def component_list(
         self, component_type: str, include: list[ComponentResource] | None = None
@@ -579,7 +599,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             Available resources: configuration, rows and state.
         :return: List of components as dictionary
         """
-        endpoint = f'branch/{self.branch_id}/components'
+        endpoint = f'branch/{self._branch_id}/components'
         params = {'componentType': component_type}
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
@@ -603,7 +623,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :return: The SAPI call response - created configuration or raise an error.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs'
 
         payload = {
             'name': name,
@@ -622,7 +642,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             (Technically it means the API endpoint is called twice.)
         :raises httpx.HTTPStatusError: If the (component_id, configuration_id) is not found.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
         await self.delete(endpoint=endpoint)
         if skip_trash:
             await self.delete(endpoint=endpoint)
@@ -640,7 +660,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             raise ValueError(f"Invalid component_id '{component_id}'.")
         if not isinstance(configuration_id, str) or configuration_id == '':
             raise ValueError(f"Invalid configuration_id '{configuration_id}'.")
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
 
         return cast(JsonDict, await self.get(endpoint=endpoint))
 
@@ -654,7 +674,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         if not isinstance(component_id, str) or component_id == '':
             raise ValueError(f"Invalid component_id '{component_id}'.")
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs'
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
@@ -666,7 +686,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_id: The id of the configuration.
         :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
     async def configuration_metadata_update(
@@ -683,7 +703,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param metadata: The metadata to update.
         :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
         payload = {
             'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
         }
@@ -713,7 +733,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param is_disabled: Whether the configuration should be disabled.
         :return: The SAPI call response - updated configuration or raise an error.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
 
         payload = {
             'configuration': configuration,
@@ -757,7 +777,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
+                endpoint=f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/rows',
                 data=payload,
             ),
         )
@@ -800,7 +820,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.put(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}'
+                endpoint=f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}'
                 f'/rows/{configuration_row_id}',
                 data=payload,
             ),
@@ -815,7 +835,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_row_id: The id of the configuration row.
         :return: Configuration row details.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}'
         return cast(JsonDict, await self.get(endpoint=endpoint))
 
     async def job_detail(self, job_id: str | int) -> JsonDict:
@@ -852,11 +872,11 @@ class AsyncStorageClient(KeboolaServiceClient):
             'limit': limit,
             'offset': offset,
         }
-        if self.branch_id == 'default':
+        if self._branch_id == 'default':
             params['branchTypes[]'] = 'production'
         else:
             params['branchTypes[]'] = 'development'
-            params['branchIds[]'] = self.branch_id
+            params['branchIds[]'] = self._branch_id
         params = {k: v for k, v in params.items() if v}
         raw_resp = await self.get(endpoint='global-search', params=params)
         return GlobalSearchResponse.model_validate(raw_resp)
@@ -986,7 +1006,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/workspaces',
+                endpoint=f'branch/{self._branch_id}/workspaces',
                 params={'async': async_run},
                 data={
                     'readOnlyStorageAccess': read_only_storage_access,
@@ -1003,7 +1023,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param workspace_id: The id of the workspace
         :return: Workspace details as dictionary
         """
-        return cast(JsonDict, await self.get(endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}'))
+        return cast(JsonDict, await self.get(endpoint=f'branch/{self._branch_id}/workspaces/{workspace_id}'))
 
     async def workspace_query(self, workspace_id: int, query: str) -> JsonDict:
         """
@@ -1016,7 +1036,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}/query',
+                endpoint=f'branch/{self._branch_id}/workspaces/{workspace_id}/query',
                 data={'query': query},
             ),
         )
@@ -1027,7 +1047,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :return: List of workspaces
         """
-        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self.branch_id}/workspaces'))
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self._branch_id}/workspaces'))
 
     async def verify_token(self) -> JsonDict:
         """
@@ -1087,17 +1107,32 @@ class JobsQueueClient(KeboolaServiceClient):
     Async client for Keboola Job Queue API.
     """
 
+    def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
+        """
+        Creates a JobsQueueClient from a RawKeboolaClient and a branch id.
+
+        :param raw_client: The raw client to use
+        :param branch_id: The id of the branch
+        """
+        super().__init__(raw_client=raw_client)
+        self._branch_id: str = branch_id
+
     @classmethod
-    def create(cls, root_url: str, token: str, headers: dict[str, Any] | None = None) -> 'JobsQueueClient':
+    def create(
+        cls, root_url: str, token: str, branch_id: str | None = None, headers: dict[str, Any] | None = None
+    ) -> 'JobsQueueClient':
         """
         Creates a JobsQueue client.
 
         :param root_url: Root url of API. e.g. "https://queue.keboola.com/".
-        :param token: A key for the Storage API. Can be found in the storage console.
+        :param token: The Keboola Storage API token
+        :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests.
         :return: A new instance of JobsQueueClient.
         """
-        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers))
+        return cls(
+            raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers), branch_id=branch_id
+        )
 
     async def get_job_detail(self, job_id: str) -> JsonDict:
         """
@@ -1132,6 +1167,7 @@ class JobsQueueClient(KeboolaServiceClient):
         :return: Dictionary containing matching jobs.
         """
         params = {
+            'branchId': self._branch_id,
             'componentId': component_id,
             'configId': config_id,
             'status': status,

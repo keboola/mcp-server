@@ -136,7 +136,7 @@ class MetadataField:
     # expected value: 'true'
     UPDATED_BY_MCP_PREFIX = 'KBC.MCP.updatedBy.version.'
 
-    # Brnach filtering works only for "fake development branches"
+    # Branch filtering works only for "fake development branches"
     FAKE_DEVELOPMENT_BRANCH = 'KBC.createdBy.branch.id'
 
     # Data type metadata fields
