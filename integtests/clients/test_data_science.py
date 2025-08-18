@@ -1,6 +1,5 @@
 import logging
 
-import httpx
 import pytest
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
