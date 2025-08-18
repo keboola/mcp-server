@@ -3,10 +3,13 @@ import logging
 import os
 import re
 import string
-from hashlib import sha256
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional, Sequence, cast
 
+import httpx
 from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
@@ -29,12 +32,12 @@ def add_data_app_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             sync_data_app,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
+            annotations=ToolAnnotations(destructiveHint=True),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
-            get_data_app,
+            get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
         )
@@ -43,7 +46,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             manage_data_app,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            annotations=ToolAnnotations(destructiveHint=False),
         )
     )
     LOG.info('Data app tools initialized.')
@@ -79,30 +82,54 @@ class DataAppSummary(BaseModel):
         )
 
 
+class DeploymentInfo(BaseModel):
+    """A deployment info of a data app."""
+
+    version: str = Field(description='The version of the data app deployment.')
+    state: str = Field(description='The state of the data app deployment.')
+    url: Optional[str] = Field(description='The URL of the running data app deployment.', default=None)
+    last_request_timestamp: Optional[str] = Field(
+        description='The last request timestamp of the data app deployment.', default=None
+    )
+    last_start_timestamp: Optional[str] = Field(
+        description='The last start timestamp of the data app deployment.', default=None
+    )
+    logs: list[str] = Field(description='The latest 100 logs of the data app deployment.', default_factory=list)
+
+
 class DataApp(DataAppSummary):
     """A data app used for detail views."""
 
     name: str = Field(description='The name of the data app.')
-    parameters: dict[str, Any] = Field(description='The parameters of the data app.')
-    packages: list[str] = Field(
-        description='Python packages used in the source code necessary to be installed.', default_factory=list
-    )
+    description: Optional[str] = Field(description='The description of the data app.', default=None)
     is_authorized: bool = Field(description='Whether the data app is authorized using simple password or not.')
+    parameters: dict[str, Any] = Field(description='The parameters of the data app.')
     authorization: dict[str, Any] = Field(description='The authorization of the data app.')
     storage: dict[str, Any] = Field(
         description='The storage input/output mapping of the data app.', default_factory=dict
     )
+    deployment_info: Optional[DeploymentInfo] = Field(description='The deployment info of the data app.', default=None)
 
     @classmethod
     def from_api_responses(
-        cls, api_response: DataAppResponse, api_configuration: ConfigurationAPIResponse
+        cls, api_response: DataAppResponse, api_configuration: ConfigurationAPIResponse, logs: list[str]
     ) -> 'DataApp':
         parameters = api_configuration.configuration.get('parameters', {})
-        packages = parameters.pop('packages', [])
         authorization = api_configuration.configuration.get('authorization', {})
         storage = api_configuration.configuration.get('storage', {})
+        deployment_info = (
+            None
+            if not logs
+            else DeploymentInfo(
+                version=api_response.config_version,
+                state=api_response.state,
+                url=api_response.url or 'not yet available',
+                last_request_timestamp=api_response.last_request_timestamp,
+                last_start_timestamp=api_response.last_start_timestamp,
+                logs=logs,
+            )
+        )
         return cls(
-            name=api_configuration.name,
             component_id=api_response.component_id,
             configuration_id=api_configuration.configuration_id,
             data_app_id=api_response.id,
@@ -113,11 +140,13 @@ class DataApp(DataAppSummary):
             type=api_response.type,
             deployment_url=api_response.url,
             auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
+            name=api_configuration.name,
+            description=api_configuration.description,
             parameters=parameters,
-            packages=packages,
             authorization=authorization,
             storage=storage,
             is_authorized=_is_authorized(authorization),
+            deployment_info=deployment_info,
         )
 
     def to_summary(self) -> DataAppSummary:
@@ -150,11 +179,24 @@ class ManageDataAppOutput(BaseModel):
     links: list[Link] = Field(description='Deployment links for the data app.')
 
 
-class GetDataAppOutput(BaseModel):
-    """Output of the get_data_app tool."""
+class DetailDataAppOutput(BaseModel):
+    """Output of the get_data_apps tool. When config_ids provided."""
 
     data_app: DataApp = Field(description='The data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
+
+
+class ListDataAppOutput(BaseModel):
+    """Output of the get_data_apps tool. When no config_ids provided."""
+
+    data_apps: list[DataAppSummary] = Field(description='The data apps in the project.')
+    links: list[Link] = Field(description='Navigation links for the web interface.')
+
+
+class ListDataAppDetailsOutput(BaseModel):
+    """Output of the get_data_apps tool. When config_ids provided."""
+
+    data_apps: list[DetailDataAppOutput] = Field(description='The detailed data apps in the project.')
 
 
 async def sync_data_app(
@@ -170,7 +212,7 @@ async def sync_data_app(
     ] = False,
     config_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise None.')
-    ] = None,
+    ] = None,  # type: ignore
 ) -> Annotated[SyncDataAppOutput, Field(description='The created or updated data app.')]:
     """Creates or updates a Streamlit data app in Keboola workspace integration.
 
@@ -240,20 +282,43 @@ async def sync_data_app(
         )
 
 
-async def get_data_app(
-    ctx: Context, configuration_id: Annotated[str, Field(description='The ID of the data app configuration.')]
-) -> Annotated[GetDataAppOutput, Field(description='The data app.')]:
-    """Gets a data app details and provides navigation links."""
+async def get_data_apps(
+    ctx: Context,
+    configuration_ids: Annotated[Sequence[str], Field(description='The IDs of the data app configurations.')] = tuple(),
+    limit: Annotated[int, Field(description='The limit of the data apps to fetch.')] = 100,
+    offset: Annotated[int, Field(description='The offset of the data apps to fetch.')] = 0,
+) -> Annotated[ListDataAppOutput | list[DetailDataAppOutput], Field(description='The data apps.')]:
+    """Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
+    providing its configuration IDs.
+
+    Considerations:
+    - if configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
+    - if no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+    """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-    links = links_manager.get_data_app_links(
-        configuration_id=data_app.configuration_id,
-        configuration_name=data_app.name,
-        deployment_link=data_app.deployment_url,
-        include_password_link=data_app.is_authorized,
-    )
-    return GetDataAppOutput(data_app=data_app, links=links)
+
+    if configuration_ids:
+        # Get details of the data apps by their configuration IDs
+        data_app_details: list[DetailDataAppOutput] = []
+        for configuration_id in configuration_ids:
+            data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+            links = links_manager.get_data_app_links(
+                configuration_id=data_app.configuration_id,
+                configuration_name=data_app.name,
+                deployment_link=data_app.deployment_url,
+                include_password_link=data_app.is_authorized,
+            )
+            data_app_details.append(DetailDataAppOutput(data_app=data_app, links=links))
+        return data_app_details
+    else:
+        # List all data apps in the project
+        data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
+        links = [links_manager.get_data_app_dashboard_link()]
+        return ListDataAppOutput(
+            data_apps=[DataAppSummary.from_api_response(data_app) for data_app in data_apps],
+            links=links,
+        )
 
 
 async def manage_data_app(
@@ -261,7 +326,9 @@ async def manage_data_app(
     action: Annotated[Literal['deploy', 'stop'], Field(description='The action to perform.')],
     configuration_id: Annotated[str, Field(description='The ID of the data app configuration.')],
 ) -> Annotated[ManageDataAppOutput, Field(description='The created or updated data app.')]:
-    """Deploys or stops a data app in the Keboola workspace integration."""
+    """Deploys a data app or stops running data app in the Keboola workspace integration given the action and config
+    id.
+    """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
@@ -373,7 +440,8 @@ async def _fetch_data_app(
         api_config = ConfigurationAPIResponse.model_validate(
             raw_data_app_config | {'component_id': DATA_APP_COMPONENT_ID}
         )
-        return DataApp.from_api_responses(data_app_science, api_config)
+        logs = await _fetch_logs(client, data_app_id)
+        return DataApp.from_api_responses(data_app_science, api_config, logs)
     elif configuration_id:
         raw_configuration = await client.storage_client.configuration_detail(
             component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
@@ -381,11 +449,23 @@ async def _fetch_data_app(
         api_config = ConfigurationAPIResponse.model_validate(
             raw_configuration | {'component_id': DATA_APP_COMPONENT_ID}
         )
-        data_app_id = api_config.configuration['parameters']['id']
+        data_app_id = cast(str, api_config.configuration['parameters']['id'])
         data_app_science = await client.data_science_client.get_data_app(data_app_id)
-        return DataApp.from_api_responses(data_app_science, api_config)
+        logs = await _fetch_logs(client, data_app_id)
+        return DataApp.from_api_responses(data_app_science, api_config, logs)
     else:
         raise ValueError('Either data_app_id or configuration_id must be provided.')
+
+
+async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:
+    """Fetches the logs of a data app if it is running otherwise returns empty list."""
+    try:
+        str_logs = await client.data_science_client.tail_app_logs(data_app_id)
+        logs = str_logs.split('\n')
+        return logs
+    except httpx.HTTPStatusError as e:
+        LOG.warning(f'Failed to fetch logs for data app ({data_app_id}), returning empty list: {e}')
+        return []
 
 
 def _get_authorization(auth_required: bool) -> dict[str, Any]:
@@ -418,32 +498,42 @@ def _contains_placeholder_named(s: str, placeholder_name: str) -> bool:
 
 def _is_authorized(authorization: dict[str, Any]) -> bool:
     try:
-        return authorization['app_proxy']['auth_providers'] == [{'id': 'simpleAuth', 'type': 'password'}]
+        return any(auth_rule['auth_required'] for auth_rule in authorization['app_proxy']['auth_rules'])
     except Exception:
         return False
 
 
 _QUERY_DATA_FUNCTION_CODE = """
-#### GENERATED_CODE ####
+#### INJECTED_CODE ####
 #### QUERY DATA FUNCTION ####
 import base64
 import os
-from hashlib import sha256
 import httpx
 import pandas as pd
 from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
 def query_data(query: str) -> pd.DataFrame:
-    seed = os.environ.get('CRYPTO_SEED')
-    salt = base64.urlsafe_b64decode(seed.encode())  # convert string back to bytes
+    bid = os.environ.get('BRANCH_ID')
     wid = os.environ.get('WORKSPACE_ID')
-    key = base64.urlsafe_b64encode(sha256(wid.encode() + salt).digest())
-    decoded_token = Fernet(key).decrypt(os.environ.get('STORAGE_API_TOKEN').encode()).decode()
+    random_seed = base64.urlsafe_b64decode(os.environ.get('SAPI_RANDOM_SEED').encode())
+    encrypted_token = base64.urlsafe_b64decode(os.environ.get('STORAGE_API_TOKEN').encode())
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,  # Fernet requires 32-byte keys
+        salt=wid.encode("utf-8"),
+        iterations=390000,  # recommended by cryptography.io
+        backend=default_backend()
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(random_seed))
+    decoded_token = Fernet(key).decrypt(encrypted_token).decode()
     base_url = os.environ.get('STORAGE_API_URL')
     with httpx.Client() as client:
         response = client.post(
-            f'{base_url}/v2/storage/branch/default/workspaces/{wid}/query',
+            f'{base_url}/v2/storage/branch/{bid}/workspaces/{wid}/query',
             json={'query': query},
             headers={'X-StorageAPI-Token': decoded_token},
         )
@@ -460,10 +550,10 @@ def _inject_query_to_source_code(source_code: str) -> str:
     """
     if _QUERY_DATA_FUNCTION_CODE in source_code:
         return source_code
-    if '### GENERATED_CODE ###' in source_code and '### END_OF_GENERATED_CODE ###' in source_code:
+    if '### INJECTED_CODE ###' in source_code and '### END_OF_INJECTED_CODE ###' in source_code:
         # get the first and the last part before and after generated code and inject the query_data function
-        imports = source_code.split('### GENERATED_CODE ###')[0]
-        source_code = source_code.split('### GENERATED_CODE ###')[1].split('### END_OF_GENERATED_CODE ###')[1]
+        imports = source_code.split('### INJECTED_CODE ###')[0]
+        source_code = source_code.split('### INJECTED_CODE ###')[1].split('### END_OF_INJECTED_CODE ###')[1]
         return imports + '\n\n' + _QUERY_DATA_FUNCTION_CODE + '\n\n' + source_code
     elif _contains_placeholder_named(source_code, 'QUERY_DATA_FUNCTION'):
         return source_code.format(QUERY_DATA_FUNCTION=_QUERY_DATA_FUNCTION_CODE)
@@ -485,13 +575,20 @@ def _get_secrets(client: KeboolaClient, workspace_id: str) -> dict[str, Any]:
     :param workspace_id: The ID of the workspace
     :return: The secrets
     """
-    salt = os.urandom(32)
-    key = base64.urlsafe_b64encode(sha256(workspace_id.encode() + salt).digest())
-    encrypted_token = Fernet(key).encrypt(client.token.encode()).decode()
-    seed = base64.urlsafe_b64encode(salt).decode()  # convert bytes to string
+    random_seed = os.urandom(32)
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,  # Fernet requires 32-byte keys
+        salt=workspace_id.encode('utf-8'),
+        iterations=390000,
+        backend=default_backend(),
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(random_seed))
+    encrypted_token = Fernet(key).encrypt(client.token.encode())
     return {
-        '#STORAGE_API_TOKEN': encrypted_token,
         'WORKSPACE_ID': workspace_id,
         'STORAGE_API_URL': client.storage_client.base_api_url,
-        '#CRYPTO_SEED': seed,
+        'BRANCH_ID': client.storage_client.branch_id,
+        '#STORAGE_API_TOKEN': base64.urlsafe_b64encode(encrypted_token).decode('utf-8'),
+        '#SAPI_RANDOM_SEED': base64.urlsafe_b64encode(random_seed).decode('utf-8'),
     }
