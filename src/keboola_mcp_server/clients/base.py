@@ -88,6 +88,30 @@ class RawKeboolaClient:
             self._raise_for_status(response)
             return cast(JsonStruct, response.json())
 
+    async def get_text(
+        self,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Makes a GET request to the service API.
+
+        :param endpoint: API endpoint to call
+        :param params: Query parameters for the request
+        :param headers: Additional headers for the request
+        :return: API response as dictionary
+        """
+        headers = self.headers | (headers or {})
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(
+                f'{self.base_api_url}/{endpoint}',
+                params=params,
+                headers=headers,
+            )
+            self._raise_for_status(response)
+            return cast(str, response.text)
+
     async def post(
         self,
         endpoint: str,
@@ -238,6 +262,20 @@ class KeboolaServiceClient:
         :return: API response as dictionary
         """
         return await self.raw_client.get(endpoint=endpoint, params=params)
+
+    async def get_text(
+        self,
+        endpoint: str,
+        params: Optional[dict[str, Any]] = None,
+    ) -> str:
+        """
+        Makes a GET request to the service API.
+
+        :param endpoint: API endpoint to call
+        :param params: Query parameters for the request
+        :return: API response as text
+        """
+        return await self.raw_client.get_text(endpoint=endpoint, params=params)
 
     async def post(
         self,
