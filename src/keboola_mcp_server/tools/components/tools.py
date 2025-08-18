@@ -34,6 +34,7 @@ from typing import Annotated, Any, Sequence, cast
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from keboola_mcp_server.clients.client import ConfigurationAPIResponse, JsonDict, KeboolaClient
@@ -70,6 +71,8 @@ from keboola_mcp_server.tools.validation import (
 
 LOG = logging.getLogger(__name__)
 
+COMPONENT_TOOLS_TAG = 'components'
+
 
 # ============================================================================
 # TOOL REGISTRATION
@@ -79,21 +82,89 @@ LOG = logging.getLogger(__name__)
 def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
     # Component/Configuration discovery tools
-    mcp.add_tool(FunctionTool.from_function(get_component))
-    mcp.add_tool(FunctionTool.from_function(get_config))
-    mcp.add_tool(FunctionTool.from_function(list_configs, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(get_config_examples))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_component,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_configs,
+            serializer=exclude_none_serializer,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_config_examples,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
 
     # Configuration management tools
-    mcp.add_tool(FunctionTool.from_function(create_config))
-    mcp.add_tool(FunctionTool.from_function(update_config))
-    mcp.add_tool(FunctionTool.from_function(add_config_row))
-    mcp.add_tool(FunctionTool.from_function(update_config_row))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            add_config_row,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_config_row,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
 
     # SQL transformation tools
-    mcp.add_tool(FunctionTool.from_function(list_transformations, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
-    mcp.add_tool(FunctionTool.from_function(update_sql_transformation))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_transformations,
+            serializer=exclude_none_serializer,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_sql_transformation,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_sql_transformation,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
 
     LOG.info('Component tools added to the MCP server.')
 
