@@ -61,6 +61,11 @@ class TestConfig:
                 {'storage_token': None, 'workspace_schema': 'bar'},
                 Config(workspace_schema='bar'),
             ),
+            (Config(branch_id='foo'), {'branch-id': ''}, Config()),
+            (Config(branch_id='foo'), {'branch-id': 'none'}, Config()),
+            (Config(branch_id='foo'), {'branch-id': 'Null'}, Config()),
+            (Config(branch_id='foo'), {'branch-id': 'Default'}, Config()),
+            (Config(branch_id='foo'), {'branch-id': 'pRoDuCtIoN'}, Config()),
         ],
     )
     def test_replace_by(self, orig: Config, d: Mapping[str, str], expected: Config) -> None:
@@ -68,8 +73,9 @@ class TestConfig:
 
     def test_defaults(self) -> None:
         config = Config()
-        assert config.storage_token is None
         assert config.storage_api_url is None
+        assert config.storage_token is None
+        assert config.branch_id is None
         assert config.workspace_schema is None
         assert config.accept_secrets_in_url is None
 

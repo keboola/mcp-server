@@ -47,6 +47,9 @@ class Config:
                 value = f'https://{value}'
                 object.__setattr__(self, f.name, value)
 
+        if self.branch_id is not None and self.branch_id.lower() in ['', 'none', 'null', 'default', 'production']:
+            object.__setattr__(self, 'branch_id', None)
+
     @staticmethod
     def _normalize(name: str) -> str:
         """Removes dashes and underscores from the input string and turns it into lowercase."""
