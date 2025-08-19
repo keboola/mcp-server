@@ -98,18 +98,6 @@ class DataAppConfig(BaseModel):
 
 class DataScienceClient(KeboolaServiceClient):
 
-    def __init__(self, raw_client: RawKeboolaClient) -> None:
-        """
-        Creates an DataScienceClient from a RawKeboolaClient.
-
-        :param raw_client: The raw client to use
-        """
-        super().__init__(raw_client=raw_client)
-
-    @property
-    def base_api_url(self) -> str:
-        return self.raw_client.base_api_url
-
     @classmethod
     def create(
         cls,
@@ -143,19 +131,28 @@ class DataScienceClient(KeboolaServiceClient):
         response = await self.get(endpoint=f'apps/{data_app_id}')
         return DataAppResponse.model_validate(response)
 
-    async def deploy_data_app(self, data_app_id: str, config_version: str) -> DataAppResponse:
+    async def deploy_data_app(
+        self,
+        data_app_id: str,
+        config_version: str,
+        *,
+        restart_if_running: bool = True,
+        update_dependencies: bool = True,
+    ) -> DataAppResponse:
         """
         Deploy a data app by its ID.
 
         :param data_app_id: The ID of the data app
         :param config_version: The version of the config to deploy
+        :param restart_if_running: Whether to restart the data app if it is already running
+        :param update_dependencies: Whether to update the dependencies of the data app
         :return: The data app
         """
         data = {
             'desiredState': 'running',
             'configVersion': config_version,
-            'restartIfRunning': True,
-            'updateDependencies': True,
+            'restartIfRunning': restart_if_running,
+            'updateDependencies': update_dependencies,
         }
         response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
         return DataAppResponse.model_validate(response)
@@ -182,31 +179,23 @@ class DataScienceClient(KeboolaServiceClient):
         self,
         name: str,
         description: str,
-        parameters: dict[str, Any],
-        authorization: dict[str, Any],
+        configuration: DataAppConfig,
+        branch_id: Optional[str] = None,
     ) -> DataAppResponse:
         """
-        Create a data app.
+        Create a data app from a simplified config used in the MCP server.
         :param name: The name of the data app
         :param description: The description of the data app
-        :param parameters: The parameters of the data app
-        :param authorization: The authorization of the data app
+        :param configuration: The simplified configuration of the data app
+        :param branch_id: The branch ID of the data app
         :return: The data app
         """
-        # Validate the parameters and authorization
-        _params = DataAppConfig.Parameters.model_validate(parameters).model_dump(exclude_none=True, by_alias=True)
-        _authorization = DataAppConfig.Authorization.model_validate(authorization).model_dump(
-            exclude_none=True, by_alias=True
-        )
         data = {
-            'branchId': None,
+            'branchId': branch_id,
             'name': name,
             'type': 'streamlit',
             'description': description,
-            'config': {
-                'parameters': _params,
-                'authorization': _authorization,
-            },
+            'config': configuration.model_dump(exclude_none=True, by_alias=True),
         }
         response = await self.post(endpoint='apps', data=data)
         return DataAppResponse.model_validate(response)
@@ -237,7 +226,8 @@ class DataScienceClient(KeboolaServiceClient):
         In case when none of the parameters are provided, it uses the `lines` parameter with
         the last 100 lines.
         :param app_id: ID of the app.
-        :param since: ISO-8601 timestamp with nanoseconds as a datetime object.
+        :param since: ISO-8601 timestamp with nanoseconds as a datetime object
+                      Providing microseconds is enough, nanoseconds are not supported via datetime
                       E.g: since = datetime.now(timezone.utc) - timedelta(days=1)
         :param lines: Number of log lines from the end. Defaults to 100.
         :return: Logs as plain text.
@@ -247,14 +237,14 @@ class DataScienceClient(KeboolaServiceClient):
         """
         if since and lines:
             raise ValueError('You cannot use both "since" and "lines" query parameters together.')
-        elif not since and not lines:
+        elif since is None and lines is None:
             raise ValueError('Either "since" or "lines" must be provided.')
 
-        if lines:
+        if lines is not None:
             lines = max(lines, 1)  # Ensure lines is at least 1
             params = {'lines': lines}
-        elif since:
-            iso_since = since.isoformat(timespec='nanoseconds')
+        elif since is not None:
+            iso_since = since.isoformat(timespec='microseconds')
             params = {'since': iso_since}
         else:
             raise ValueError('Either "since" or "lines" must be provided.')
