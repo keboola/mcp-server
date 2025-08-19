@@ -125,7 +125,7 @@ class KeboolaClient:
             root_url=self._storage_api_url, token=bearer_or_sapi_token, branch_id=branch_id, headers=self._get_headers()
         )
         self._jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url, token=self._token, headers=self._get_headers()
+            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._get_headers()
         )
         self._ai_service_client = AIServiceClient.create(
             root_url=ai_service_api_url, token=self._token, headers=self._get_headers()
@@ -1127,7 +1127,7 @@ class JobsQueueClient(KeboolaServiceClient):
         :param branch_id: The id of the branch
         """
         super().__init__(raw_client=raw_client)
-        self._branch_id: str = branch_id
+        self._branch_id = branch_id
 
     @classmethod
     def create(
