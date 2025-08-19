@@ -61,13 +61,13 @@ from keboola_mcp_server.tools.components.utils import (
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
 )
-from keboola_mcp_server.tools.sql import get_sql_dialect
 from keboola_mcp_server.tools.validation import (
     validate_root_parameters_configuration,
     validate_root_storage_configuration,
     validate_row_parameters_configuration,
     validate_row_storage_configuration,
 )
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -417,7 +417,7 @@ async def create_sql_transformation(
 
     # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
-    sql_dialect = await get_sql_dialect(ctx)
+    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
@@ -536,7 +536,8 @@ async def update_sql_transformation(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
+    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
     current_config = await client.storage_client.configuration_detail(

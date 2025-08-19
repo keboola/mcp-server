@@ -5,7 +5,7 @@ from io import StringIO
 import pytest
 from mcp.server.fastmcp import Context
 
-from keboola_mcp_server.tools.sql import QueryDataOutput, get_sql_dialect, query_data
+from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.tools.storage import get_table, list_buckets, list_tables
 
 LOG = logging.getLogger(__name__)
@@ -14,9 +14,6 @@ LOG = logging.getLogger(__name__)
 @pytest.mark.asyncio
 async def test_query_data(mcp_context: Context):
     """Tests basic functionality of SQL tools: get_sql_dialect and query_data."""
-
-    dialect = await get_sql_dialect(ctx=mcp_context)
-    assert dialect in ['Snowflake', 'Bigquery']
 
     buckets_listing = await list_buckets(ctx=mcp_context)
 

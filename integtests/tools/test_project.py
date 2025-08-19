@@ -15,6 +15,7 @@ async def test_get_project_info(mcp_context: Context, keboola_project) -> None:
     assert isinstance(result.organization_id, (str, int))
     assert isinstance(result.project_description, str)
     assert isinstance(result.sql_dialect, str)
+    assert result.sql_dialect in {'Snowflake', 'BigQuery'}
     assert isinstance(result.links, list)
     assert result.links, 'Links list should not be empty.'
     for link in result.links:
