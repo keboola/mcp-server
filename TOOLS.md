@@ -47,6 +47,7 @@ filtering.
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
 
 ### SQL Tools
+- [detect_anomalies](#detect_anomalies): Performs anomaly detection on time-series data using Z-score analysis.
 - [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
 - [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
 
@@ -1654,6 +1655,94 @@ Considerations:
 ---
 
 # SQL Tools
+<a name="detect_anomalies"></a>
+## detect_anomalies
+**Annotations**: `read-only`
+
+**Tags**: `sql`
+
+**Description**:
+
+Performs anomaly detection on time-series data using Z-score analysis.
+
+This tool analyzes a numeric column over time to identify statistical anomalies using the Z-score method.
+It aggregates data by the specified time window, calculates statistical measures, and identifies periods
+where values significantly deviate from the norm.
+
+CRITICAL SQL REQUIREMENTS:
+* ALWAYS check the SQL dialect first using get_sql_dialect tool before using this tool
+* Use proper quoting for table and column names based on the SQL dialect
+* Snowflake: Use double quotes: "column_name", "table_name" 
+* BigQuery: Use backticks: `column_name`, `table_name`
+
+TABLE AND COLUMN REQUIREMENTS:
+* table_name must be fully qualified (database.schema.table)
+* numeric_column must contain numeric data (will be cast to NUMBER/NUMERIC)
+* date_column must contain date/timestamp data (will be parsed with TRY_TO_TIMESTAMP/similar)
+* Empty strings and null values are automatically handled
+
+OUTPUT INTERPRETATION:
+* Z-score > threshold: HIGH_ANOMALY (unusually high values)
+* Z-score < -threshold: LOW_ANOMALY (unusually low values)  
+* |Z-score| > threshold * 0.75: WARNING level
+* Otherwise: NORMAL
+
+PARAMETERS:
+* time_window: Granularity for time-based aggregation
+* anomaly_threshold: Higher values = fewer anomalies detected (more conservative)
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "table_name": {
+      "description": "Fully qualified table name (e.g., \"DATABASE\".\"SCHEMA\".\"TABLE\" for Snowflake or `project`.`dataset`.`table` for BigQuery)",
+      "title": "Table Name",
+      "type": "string"
+    },
+    "numeric_column": {
+      "description": "The numeric column to analyze for anomalies",
+      "title": "Numeric Column",
+      "type": "string"
+    },
+    "date_column": {
+      "description": "The date/timestamp column to use for time-based grouping",
+      "title": "Date Column",
+      "type": "string"
+    },
+    "time_window": {
+      "description": "Time window for aggregating data",
+      "enum": [
+        "DAY",
+        "WEEK",
+        "MONTH",
+        "QUARTER",
+        "YEAR"
+      ],
+      "title": "Time Window",
+      "type": "string"
+    },
+    "anomaly_threshold": {
+      "default": 2.5,
+      "description": "Z-score threshold for detecting anomalies (typically 2.5 or 3.0)",
+      "maximum": 5.0,
+      "minimum": 1.0,
+      "title": "Anomaly Threshold",
+      "type": "number"
+    }
+  },
+  "required": [
+    "table_name",
+    "numeric_column",
+    "date_column",
+    "time_window"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="get_sql_dialect"></a>
 ## get_sql_dialect
 **Annotations**: `read-only`

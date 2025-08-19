@@ -6,7 +6,7 @@ from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
 from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.tools.sql import QueryDataOutput, get_sql_dialect, query_data
+from keboola_mcp_server.tools.sql import AnomalyDetectionOutput, QueryDataOutput, detect_anomalies, get_sql_dialect, query_data
 from keboola_mcp_server.workspace import (
     QueryResult,
     SqlSelectData,
@@ -278,3 +278,146 @@ class TestWorkspaceManagerBigQuery:
         m = WorkspaceManager.from_state(context.session.state)
         result = await m.execute_query(query)
         assert result == expected
+# ============================================================================
+# ANOMALY DETECTION TESTS
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('table_name', 'numeric_column', 'date_column', 'time_window', 'anomaly_threshold', 'dialect', 'mock_result', 'expected_summary_contains'),
+    [
+        (
+            '"DB"."SCHEMA"."TABLE"',
+            '"value"',
+            '"created_at"',
+            'DAY',
+            2.5,
+            'Snowflake',
+            QueryResult(
+                status='ok',
+                data=SqlSelectData(
+                    columns=['time_period', 'record_count', 'total_value', 'avg_value', 'min_value', 'max_value', 'mean_value', 'stddev_value', 'z_score', 'abs_z_score', 'anomaly_status', 'anomaly_direction'],
+                    rows=[
+                        {'time_period': '2024-01-03', 'record_count': 10, 'total_value': 1000, 'avg_value': 100, 'min_value': 90, 'max_value': 110, 'mean_value': 950, 'stddev_value': 150, 'z_score': 3.333, 'abs_z_score': 3.333, 'anomaly_status': 'ANOMALY', 'anomaly_direction': 'HIGH_ANOMALY'},
+                        {'time_period': '2024-01-02', 'record_count': 10, 'total_value': 950, 'avg_value': 95, 'min_value': 85, 'max_value': 105, 'mean_value': 950, 'stddev_value': 150, 'z_score': 0.000, 'abs_z_score': 0.000, 'anomaly_status': 'NORMAL', 'anomaly_direction': 'NORMAL'},
+                        {'time_period': '2024-01-01', 'record_count': 10, 'total_value': 800, 'avg_value': 80, 'min_value': 70, 'max_value': 90, 'mean_value': 950, 'stddev_value': 150, 'z_score': -1.000, 'abs_z_score': 1.000, 'anomaly_status': 'NORMAL', 'anomaly_direction': 'NORMAL'},
+                    ]
+                )
+            ),
+            ['Total day periods analyzed: 3', 'Anomaly periods: 1', 'Normal periods: 2']
+        ),
+        (
+            '`project`.`dataset`.`table`',
+            '`amount`',
+            '`timestamp`',
+            'WEEK',
+            3.0,
+            'BigQuery',
+            QueryResult(
+                status='ok',
+                data=SqlSelectData(
+                    columns=['time_period', 'record_count', 'total_value', 'avg_value', 'min_value', 'max_value', 'mean_value', 'stddev_value', 'z_score', 'abs_z_score', 'anomaly_status', 'anomaly_direction'],
+                    rows=[
+                        {'time_period': '2024-01-08', 'record_count': 50, 'total_value': 5000, 'avg_value': 100, 'min_value': 80, 'max_value': 120, 'mean_value': 4500, 'stddev_value': 400, 'z_score': 1.250, 'abs_z_score': 1.250, 'anomaly_status': 'NORMAL', 'anomaly_direction': 'NORMAL'},
+                        {'time_period': '2024-01-01', 'record_count': 50, 'total_value': 4500, 'avg_value': 90, 'min_value': 70, 'max_value': 110, 'mean_value': 4500, 'stddev_value': 400, 'z_score': 0.000, 'abs_z_score': 0.000, 'anomaly_status': 'NORMAL', 'anomaly_direction': 'NORMAL'},
+                    ]
+                )
+            ),
+            ['Total week periods analyzed: 2', 'Anomaly periods: 0', 'Normal periods: 2']
+        )
+    ]
+)
+async def test_detect_anomalies(
+    table_name: str,
+    numeric_column: str, 
+    date_column: str,
+    time_window: str,
+    anomaly_threshold: float,
+    dialect: str,
+    mock_result: QueryResult,
+    expected_summary_contains: list[str],
+    mcp_context_client: Context,
+    mocker
+):
+    """Test the detect_anomalies function with various parameters and dialects."""
+    workspace_manager = mocker.AsyncMock(WorkspaceManager)
+    workspace_manager.get_sql_dialect.return_value = dialect
+    workspace_manager.execute_query.return_value = mock_result
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+
+    result = await detect_anomalies(table_name, numeric_column, date_column, time_window, mcp_context_client, anomaly_threshold)
+    
+    assert isinstance(result, AnomalyDetectionOutput)
+    assert result.query_name == f'Anomaly Detection: {numeric_column} by {time_window} (threshold={anomaly_threshold})'
+    assert len(result.csv_data) > 0
+    assert result.summary
+    
+    # Check that expected content appears in summary
+    for expected_text in expected_summary_contains:
+        assert expected_text in result.summary
+    
+    # Verify the SQL query was constructed with proper dialect functions
+    workspace_manager.execute_query.assert_called_once()
+    executed_query = workspace_manager.execute_query.call_args[0][0]
+    
+    if dialect.lower() == 'snowflake':
+        assert 'TRY_TO_TIMESTAMP' in executed_query
+        assert '::NUMBER' in executed_query
+    elif dialect.lower() == 'bigquery':
+        assert 'SAFE.PARSE_TIMESTAMP' in executed_query
+        assert '::NUMERIC' in executed_query
+
+
+@pytest.mark.asyncio
+async def test_detect_anomalies_error_handling(mcp_context_client: Context, mocker):
+    """Test that detect_anomalies handles SQL execution errors properly."""
+    workspace_manager = mocker.AsyncMock(WorkspaceManager)
+    workspace_manager.get_sql_dialect.return_value = 'Snowflake'
+    workspace_manager.execute_query.return_value = QueryResult(status='error', message='Table not found')
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+
+    with pytest.raises(ValueError, match='Failed to run anomaly detection query, error: Table not found'):
+        await detect_anomalies('"DB"."SCHEMA"."TABLE"', '"value"', '"date"', 'DAY', mcp_context_client)
+
+
+@pytest.mark.asyncio
+async def test_detect_anomalies_empty_data(mcp_context_client: Context, mocker):
+    """Test detect_anomalies with empty result set."""
+    workspace_manager = mocker.AsyncMock(WorkspaceManager)
+    workspace_manager.get_sql_dialect.return_value = 'Snowflake'
+    workspace_manager.execute_query.return_value = QueryResult(
+        status='ok',
+        data=SqlSelectData(columns=['time_period'], rows=[])
+    )
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+
+    result = await detect_anomalies('"DB"."SCHEMA"."TABLE"', '"value"', '"date"', 'DAY', mcp_context_client)
+    
+    assert isinstance(result, AnomalyDetectionOutput)
+    assert result.summary == 'No data found for anomaly analysis.'
+
+
+@pytest.mark.asyncio
+async def test_detect_anomalies_default_parameters(mcp_context_client: Context, mocker):
+    """Test detect_anomalies uses default anomaly threshold when not specified."""
+    workspace_manager = mocker.AsyncMock(WorkspaceManager)
+    workspace_manager.get_sql_dialect.return_value = 'Snowflake'
+    workspace_manager.execute_query.return_value = QueryResult(
+        status='ok',
+        data=SqlSelectData(
+            columns=['time_period', 'anomaly_status'],
+            rows=[{'time_period': '2024-01-01', 'anomaly_status': 'NORMAL'}]
+        )
+    )
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+
+    # Call without specifying anomaly_threshold (should default to 2.5)
+    result = await detect_anomalies('"DB"."SCHEMA"."TABLE"', '"value"', '"date"', 'DAY', mcp_context_client)
+    
+    assert isinstance(result, AnomalyDetectionOutput)
+    assert '(threshold=2.5)' in result.query_name
+    
+    # Verify the SQL query contains the default threshold value 2.5
+    executed_query = workspace_manager.execute_query.call_args[0][0]
+    assert '2.5' in executed_query
