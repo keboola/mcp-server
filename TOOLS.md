@@ -976,7 +976,7 @@ id.
 Creates or updates a Streamlit data app in Keboola workspace integration.
 
 Considerations:
-- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder 
+- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
 `{QUERY_DATA_FUNCTION}` where the `query_data` function will be injected. This function accepts a string of SQL
 query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
 - Always use `query_data(sql_query)` to retrieve data from the workspace.
