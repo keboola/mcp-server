@@ -221,8 +221,6 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
         bucket_branch_id = bucket_branch_id or None
         buckets_by_branch[bucket_branch_id].append(bucket)
 
-    print(f'[list_buckets] buckets_by_branch={buckets_by_branch}')
-
     buckets: list[JsonDict] = []
     if client.branch_id:
         # add the dev branch buckets and collect the IDs of their production branch equivalents
@@ -238,8 +236,6 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
                 buckets.append(b)
     else:
         buckets += buckets_by_branch.get(None, [])
-
-    print(f'[list_buckets] buckets={buckets}')
 
     return ListBucketsOutput(
         buckets=[BucketDetail.model_validate(bucket) for bucket in buckets],
