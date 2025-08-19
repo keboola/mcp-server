@@ -1,9 +1,11 @@
 import logging
+from typing import AsyncGenerator
 
 import pytest
+import pytest_asyncio
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.clients.data_science import DataAppResponse, DataScienceClient
+from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppResponse, DataScienceClient
 
 LOG = logging.getLogger(__name__)
 
@@ -43,63 +45,72 @@ def ds_client(keboola_client: KeboolaClient) -> DataScienceClient:
     return keboola_client.data_science_client
 
 
+@pytest_asyncio.fixture
+async def initial_data_app(ds_client: DataScienceClient, unique_id: str) -> AsyncGenerator[DataAppResponse, None]:
+    data_app: DataAppResponse | None = None
+    try:
+        slug = f'test-app-{unique_id}'
+        config = DataAppConfig.model_validate(
+            {'parameters': _minimal_parameters(slug), 'authorization': _public_access_authorization()}
+        )
+        data_app = await ds_client.create_data_app(
+            name=f'IntegTest {slug}',
+            description='Created by integration tests',
+            configuration=config,
+        )
+        assert isinstance(data_app, DataAppResponse)
+        yield data_app
+    finally:
+        if data_app:
+            for _ in range(2):  # Delete configuration 2 times (from storage and then from temporal bin)
+                try:
+                    await ds_client.delete_data_app(data_app.id)
+                except Exception as e:
+                    LOG.exception(f'Failed to delete data app: {e}')
+                    pass
+
+
 @pytest.mark.asyncio
 async def test_create_and_fetch_data_app(
-    ds_client: DataScienceClient, unique_id: str, keboola_client: KeboolaClient
+    ds_client: DataScienceClient, initial_data_app: DataAppResponse, keboola_client: KeboolaClient
 ) -> None:
     """Test creating a data app and fetching it from detail and list endpoints"""
-    slug = f'test-app-{unique_id}'
-    created: DataAppResponse = await ds_client.create_data_app(
-        name=f'IntegTest {slug}',
-        description='Created by integration tests',
-        parameters=_minimal_parameters(slug),
-        authorization=_public_access_authorization(),
+    # Check if the created data app is valid
+    created = initial_data_app
+    assert isinstance(created, DataAppResponse)
+    assert created.id
+    assert created.type == 'streamlit'
+    assert created.component_id == DATA_APP_COMPONENT_ID
+
+    # Deploy the data app
+    response = await ds_client.deploy_data_app(created.id, created.config_version)
+    assert response.id == created.id
+
+    # Fetch the data app from data science
+    fethced_ds = await ds_client.get_data_app(created.id)
+    assert fethced_ds.id == created.id
+    assert fethced_ds.type == created.type
+    assert fethced_ds.component_id == created.component_id
+    assert fethced_ds.project_id == created.project_id
+    assert fethced_ds.config_id == created.config_id
+    assert fethced_ds.config_version == created.config_version
+
+    # Fetch the data app config from storage
+    fetched_s = await keboola_client.storage_client.configuration_detail(
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id=created.config_id,
     )
 
-    try:
-        # Check if the created data app is valid
-        assert isinstance(created, DataAppResponse)
-        assert created.id
-        assert created.type == 'streamlit'
-        assert created.component_id == DATA_APP_COMPONENT_ID
+    # check if the data app ids are the same (data app from data science and config from storage)
+    assert 'configuration' in fetched_s
+    assert isinstance(fetched_s['configuration'], dict)
+    assert 'parameters' in fetched_s['configuration']
+    assert isinstance(fetched_s['configuration']['parameters'], dict)
+    assert 'id' in fetched_s['configuration']['parameters']
+    assert fethced_ds.id == fetched_s['configuration']['parameters']['id']
 
-        # Deploy the data app
-        response = await ds_client.deploy_data_app(created.id, created.config_version)
-        assert response.id == created.id
-
-        # Fetch the data app from data science
-        fethced_ds = await ds_client.get_data_app(created.id)
-        assert fethced_ds.id == created.id
-        assert fethced_ds.type == created.type
-        assert fethced_ds.component_id == created.component_id
-        assert fethced_ds.project_id == created.project_id
-        assert fethced_ds.config_id == created.config_id
-        assert fethced_ds.config_version == created.config_version
-
-        # Fetch the data app config from storage
-        fetched_s = await keboola_client.storage_client.configuration_detail(
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=created.config_id,
-        )
-
-        # check if the data app ids are the same (data app from data science and config from storage)
-        assert 'configuration' in fetched_s
-        assert isinstance(fetched_s['configuration'], dict)
-        assert 'parameters' in fetched_s['configuration']
-        assert isinstance(fetched_s['configuration']['parameters'], dict)
-        assert 'id' in fetched_s['configuration']['parameters']
-        assert fethced_ds.id == fetched_s['configuration']['parameters']['id']
-
-        # Fetch the all data apps and check if the created data app is in the list
-        data_apps = await ds_client.list_data_apps()
-        assert isinstance(data_apps, list)
-        assert len(data_apps) > 0
-        assert any(app.id == created.id for app in data_apps)
-
-    finally:
-        for _ in range(2):  # Delete configuration 2 times (from storage and then from temporal bin)
-            try:
-                await ds_client.delete_data_app(created.id)
-            except Exception as e:
-                LOG.exception(f'Failed to delete data app: {e}')
-                pass
+    # Fetch the all data apps and check if the created data app is in the list
+    data_apps = await ds_client.list_data_apps()
+    assert isinstance(data_apps, list)
+    assert len(data_apps) > 0
+    assert any(app.id == created.id for app in data_apps)
