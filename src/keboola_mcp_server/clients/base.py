@@ -19,19 +19,20 @@ class RawKeboolaClient:
     def __init__(
         self,
         base_api_url: str,
-        api_token: str,
+        api_token: Optional[str],
         headers: dict[str, Any] | None = None,
         timeout: httpx.Timeout | None = None,
     ) -> None:
         self.base_api_url = base_api_url
         self.headers = {
             'Content-Type': 'application/json',
-            'Accept-encoding': 'gzip',
+            'Accept-Encoding': 'gzip',
         }
-        if api_token.startswith('Bearer '):
-            self.headers['Authorization'] = api_token
-        else:
-            self.headers['X-StorageAPI-Token'] = api_token
+        if api_token:
+            if api_token.startswith('Bearer '):
+                self.headers['Authorization'] = api_token
+            else:
+                self.headers['X-StorageAPI-Token'] = api_token
         self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
         if headers:
             self.headers.update(headers)
@@ -239,12 +240,12 @@ class KeboolaServiceClient:
         self.raw_client = raw_client
 
     @classmethod
-    def create(cls, root_url: str, token: str) -> 'KeboolaServiceClient':
+    def create(cls, root_url: str, token: Optional[str]) -> 'KeboolaServiceClient':
         """
         Creates a KeboolaServiceClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
-        :param token: The Keboola Storage API token
+        :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :return: A new instance of KeboolaServiceClient
         """
         return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))

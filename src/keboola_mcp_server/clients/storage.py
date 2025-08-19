@@ -297,7 +297,7 @@ class AsyncStorageClient(KeboolaServiceClient):
     def create(
         cls,
         root_url: str,
-        token: str,
+        token: Optional[str],
         version: str = 'v2',
         branch_id: str = 'default',
         headers: dict[str, Any] | None = None,
@@ -306,7 +306,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         Creates an AsyncStorageClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
-        :param token: The Keboola Storage API token
+        :param token: The Keboola Storage API token, If None, the client will not send any authorization header.
         :param version: The version of the API to use (default: 'v2')
         :param branch_id: The id of the branch
         :param headers: Additional headers for the requests

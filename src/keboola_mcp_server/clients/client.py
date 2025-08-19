@@ -107,8 +107,9 @@ class KeboolaClient:
         self.data_science_client = AsyncDataScienceClient.create(
             root_url=data_science_api_url, token=self.token, headers=self._get_headers()
         )
+        # The encryption service does not require an authorization header, so we pass None as the token
         self.encryption_client = AsyncEncryptionClient.create(
-            root_url=encryption_api_url, token=self.token, headers=self._get_headers()
+            root_url=encryption_api_url, token=None, headers=self._get_headers()
         )
 
     @classmethod

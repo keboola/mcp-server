@@ -9,12 +9,13 @@ class JobsQueueClient(KeboolaServiceClient):
     """
 
     @classmethod
-    def create(cls, root_url: str, token: str, headers: dict[str, Any] | None = None) -> 'JobsQueueClient':
+    def create(cls, root_url: str, token: Optional[str], headers: dict[str, Any] | None = None) -> 'JobsQueueClient':
         """
         Creates a JobsQueue client.
 
         :param root_url: Root url of API. e.g. "https://queue.keboola.com/".
-        :param token: A key for the Storage API. Can be found in the storage console.
+        :param token: A key for the Storage API. Can be found in the storage console. If None, the client will not send
+        any authorization header.
         :param headers: Additional headers for the requests.
         :return: A new instance of JobsQueueClient.
         """

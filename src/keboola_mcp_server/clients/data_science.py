@@ -108,14 +108,14 @@ class AsyncDataScienceClient(KeboolaServiceClient):
     def create(
         cls,
         root_url: str,
-        token: str,
+        token: Optional[str],
         headers: dict[str, Any] | None = None,
     ) -> 'AsyncDataScienceClient':
         """
         Creates an AsyncDataScienceClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
-        :param token: The Keboola Storage API token
+        :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :param headers: Additional headers for the requests
         :return: A new instance of AsyncDataScienceClient
         """

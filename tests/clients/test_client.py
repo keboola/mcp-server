@@ -192,7 +192,7 @@ class TestAsyncStorageClient:
                 params=None,
                 headers={
                     'Content-Type': 'application/json',
-                    'Accept-encoding': 'gzip',
+                    'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
                     'User-Agent': f'Keboola MCP Server/{version} app_env=local',
                 },
@@ -277,7 +277,7 @@ class TestAsyncStorageClient:
                 params=None,
                 headers={
                     'Content-Type': 'application/json',
-                    'Accept-encoding': 'gzip',
+                    'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
                     'User-Agent': f'Keboola MCP Server/{version} app_env=local',
                 },
