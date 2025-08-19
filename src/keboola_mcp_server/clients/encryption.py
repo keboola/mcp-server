@@ -7,10 +7,6 @@ EncValue = str | JsonDict
 
 class EncryptionClient(KeboolaServiceClient):
 
-    @property
-    def base_api_url(self) -> str:
-        return self.raw_client.base_api_url
-
     @classmethod
     def create(
         cls,
