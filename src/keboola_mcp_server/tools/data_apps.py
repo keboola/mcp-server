@@ -15,7 +15,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.clients.data_science import DataAppResponse
+from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
@@ -240,9 +240,9 @@ async def sync_data_app(
         updated_config = _update_existing_data_app_config(
             existing_config, name, source_code, packages, authorization_required, secrets
         )
-        updated_config = await client.encryption_client.encrypt(
+        updated_config = cast(dict[str, Any], await client.encryption_client.encrypt(
             updated_config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
-        )
+        ))
         _ = await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
@@ -272,8 +272,9 @@ async def sync_data_app(
         config = await client.encryption_client.encrypt(
             config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
         )
+        validated_config = DataAppConfig.model_validate(config)
         data_app_science = await client.data_science_client.create_data_app(
-            name, description, config['parameters'], config['authorization']
+            name, description, configuration=validated_config
         )
         await set_cfg_creation_metadata(
             client=client,
@@ -415,9 +416,8 @@ def _update_existing_data_app_config(
     new_config['parameters']['dataApp']['slug'] = (
         _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
     )
-    new_config['parameters']['script'] = [source_code] or existing_config['parameters']['script']
-    new_packages = packages or existing_config['parameters'].get('packages', [])
-    new_config['parameters']['packages'] = list(set(new_packages + _DEFAULT_PACKAGES))
+    new_config['parameters']['script'] = [source_code] if source_code else existing_config['parameters']['script']
+    new_config['parameters']['packages'] = list(set(packages + _DEFAULT_PACKAGES))
     new_config['parameters']['dataApp']['secrets'] = {**secrets, **existing_config['parameters']['dataApp']['secrets']}
     new_config['authorization'] = _get_authorization(authorize_with_password)
     return new_config
@@ -468,11 +468,11 @@ async def _fetch_data_app(
 async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:
     """Fetches the logs of a data app if it is running otherwise returns empty list."""
     try:
-        str_logs = await client.data_science_client.tail_app_logs(data_app_id)
+        str_logs = await client.data_science_client.tail_app_logs(data_app_id, since=None, lines=100)
         logs = str_logs.split('\n')
         return logs
-    except httpx.HTTPStatusError as e:
-        LOG.warning(f'Failed to fetch logs for data app ({data_app_id}), returning empty list: {e}')
+    except httpx.HTTPStatusError:
+        # The data app is not running, return empty list
         return []
 
 
