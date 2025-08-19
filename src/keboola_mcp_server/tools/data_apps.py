@@ -20,6 +20,7 @@ from keboola_mcp_server.clients.data_science import DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -250,6 +251,12 @@ async def sync_data_app(
             updated_name=name,
             updated_description=description,
         )
+        await set_cfg_update_metadata(
+            client=client,
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            configuration_version=int(data_app.config_version),
+        )
         data_app_science = await client.data_science_client.get_data_app(data_app.data_app_id)
         links = links_manager.get_data_app_links(
             configuration_id=data_app_science.config_id,
@@ -267,6 +274,11 @@ async def sync_data_app(
         )
         data_app_science = await client.data_science_client.create_data_app(
             name, description, config['parameters'], config['authorization']
+        )
+        await set_cfg_creation_metadata(
+            client=client,
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=data_app_science.config_id,
         )
         links = links_manager.get_data_app_links(
             configuration_id=data_app_science.config_id,
@@ -331,11 +343,8 @@ async def manage_data_app(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
-        version = await client.storage_client.configuration_version_latest(
-            component_id=DATA_APP_COMPONENT_ID, config_id=configuration_id
-        )
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(version))
+        _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(data_app.config_version))
         data_app = await _fetch_data_app(client, configuration_id=None, data_app_id=data_app.data_app_id)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
