@@ -248,7 +248,7 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
     if 'global-search' in token_info['owner'].get('fetaures', []):
         # Give the global search time to catch up on the changes done in the testing project.
         # See https://help.keboola.com/management/global-search/#limitations for moe info.
-        time.sleep(5)
+        time.sleep(10)
 
     LOG.info(f'Test setup for project {project_id} complete')
     yield ProjectDef(project_id=project_id, buckets=buckets, tables=tables, configs=configs)
