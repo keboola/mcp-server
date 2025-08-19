@@ -122,7 +122,7 @@ class DataApp(DataAppSummary):
     ) -> 'DataApp':
         parameters = api_configuration.configuration.get('parameters', {})
         authorization = api_configuration.configuration.get('authorization', {})
-        storage = api_configuration.configuration.get('storage', {})
+        storage = api_configuration.configuration.get('storage', {}) or {}
         deployment_info = (
             None
             if not logs
@@ -153,6 +153,7 @@ class DataApp(DataAppSummary):
             storage=storage,
             is_authorized=_is_authorized(authorization),
             deployment_info=deployment_info,
+            links=[],
         )
 
     def add_links(self, links: list[Link]) -> None:
@@ -240,9 +241,12 @@ async def sync_data_app(
         updated_config = _update_existing_data_app_config(
             existing_config, name, source_code, packages, authorization_required, secrets
         )
-        updated_config = cast(dict[str, Any], await client.encryption_client.encrypt(
-            updated_config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
-        ))
+        updated_config = cast(
+            dict[str, Any],
+            await client.encryption_client.encrypt(
+                updated_config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
+            ),
+        )
         _ = await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
