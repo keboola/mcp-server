@@ -1,17 +1,11 @@
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
-from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
+from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
+
+EncValue = str | JsonDict
 
 
 class EncryptionClient(KeboolaServiceClient):
-
-    def __init__(self, raw_client: RawKeboolaClient) -> None:
-        """
-        Creates an EncryptionClient from a RawKeboolaClient.
-
-        :param raw_client: The raw client to use
-        """
-        super().__init__(raw_client=raw_client)
 
     @property
     def base_api_url(self) -> str:
@@ -41,8 +35,13 @@ class EncryptionClient(KeboolaServiceClient):
         )
 
     async def encrypt(
-        self, value: Any, project_id: Optional[str], component_id: Optional[str] = None, config_id: Optional[str] = None
-    ) -> Any:
+        self,
+        value: EncValue,
+        *,
+        project_id: Optional[str] = None,
+        component_id: Optional[str] = None,
+        config_id: Optional[str] = None,
+    ) -> EncValue:
         """
         Encrypt a value using the encryption service, returns encrypted value. Parameters are optional and the ciphers
         created by the service are dependent on those parameters when decrypting. Decryption is done automatically
@@ -60,7 +59,7 @@ class EncryptionClient(KeboolaServiceClient):
         """
         if component_id and project_id is None:
             raise ValueError('project_id is required if component_id is provided')
-        if config_id and not component_id:
+        if config_id and component_id is None:
             raise ValueError('component_id is required if config_id is provided')
 
         params = {
@@ -72,6 +71,6 @@ class EncryptionClient(KeboolaServiceClient):
         response = await self.raw_client.post(
             endpoint='encrypt',
             params=params,
-            data=value,
+            data=cast(dict[str, Any], value),
         )
-        return response
+        return cast(EncValue, response)
