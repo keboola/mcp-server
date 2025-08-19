@@ -297,12 +297,12 @@ async def test_get_bucket(
         Link(
             type='ui-detail',
             title=f'Bucket: {expected_bucket["name"]}',
-            url=f'test://api.keboola.com/admin/projects/69420/storage/{bucket_id}',
+            url=f'https://connection.test.keboola.com/admin/projects/69420/storage/{bucket_id}',
         ),
         Link(
             type='ui-dashboard',
             title='Buckets in the project',
-            url='test://api.keboola.com/admin/projects/69420/storage',
+            url='https://connection.test.keboola.com/admin/projects/69420/storage',
         ),
     }
 
@@ -411,12 +411,13 @@ async def test_list_buckets(
                     Link(
                         type='ui-detail',
                         title='Table: test-table',
-                        url='test://api.keboola.com/admin/projects/69420/storage/in.c-test/table/test-table',
+                        url='https://connection.test.keboola.com'
+                        '/admin/projects/69420/storage/in.c-test/table/test-table',
                     ),
                     Link(
                         type='ui-detail',
                         title='Bucket: in.c-test',
-                        url='test://api.keboola.com/admin/projects/69420/storage/in.c-test',
+                        url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-test',
                     ),
                 ],
             ),
@@ -442,12 +443,13 @@ async def test_list_buckets(
                     Link(
                         type='ui-detail',
                         title='Table: test-table',
-                        url='test://api.keboola.com/admin/projects/69420/storage/in.c-test/table/test-table',
+                        url='https://connection.test.keboola.com'
+                        '/admin/projects/69420/storage/in.c-test/table/test-table',
                     ),
                     Link(
                         type='ui-detail',
                         title='Bucket: in.c-test',
-                        url='test://api.keboola.com/admin/projects/69420/storage/in.c-test',
+                        url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-test',
                     ),
                 ],
             ),

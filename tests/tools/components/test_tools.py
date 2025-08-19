@@ -243,14 +243,14 @@ async def test_get_config(
             type='ui-detail',
             title=f'Configuration: {mock_configuration["name"]}',
             url=(
-                f'test://api.keboola.com/admin/projects/69420/components/'
+                f'https://connection.test.keboola.com/admin/projects/69420/components/'
                 f'{mock_component["id"]}/{mock_configuration["id"]}'
             ),
         ),
         Link(
             type='ui-dashboard',
             title=f'{mock_component["id"]} Configurations Dashboard',
-            url=f'test://api.keboola.com/admin/projects/69420/components/{mock_component["id"]}',
+            url=f'https://connection.test.keboola.com/admin/projects/69420/components/{mock_component["id"]}',
         ),
     }
 

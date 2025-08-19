@@ -19,7 +19,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 def keboola_client(mocker) -> KeboolaClient:
     """Creates mocked `KeboolaClient` instance with mocked sub-clients."""
     client = mocker.MagicMock(KeboolaClient)
-    client.storage_api_url = 'test://api.keboola.com'  # TODO: this violates the checks in KeboolaClient constructor
+    client.storage_api_url = 'https://connection.test.keboola.com'
     client.branch_id = None
     client.with_branch_id.return_value = client
 
