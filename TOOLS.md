@@ -889,8 +889,9 @@ Lists summaries of data apps in the project given the limit and offset or gets d
 providing its configuration IDs.
 
 Considerations:
-- if configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
-- if no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+- If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
+- If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+- Data App details contain configurations, deployment info along with logs and links to the data app dashboard.
 
 
 **Input JSON Schema**:
@@ -975,14 +976,15 @@ id.
 Creates or updates a Streamlit data app in Keboola workspace integration.
 
 Considerations:
-- The `source_code` parameter must be a complete and runnable Streamlit app.
-It must include a placeholder `{QUERY_DATA_FUNCTION}` where the `query_data` function will be injected.
-This function accepts a SQL query string and returns a pandas DataFrame with the results from the workspace.
+- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder 
+`{QUERY_DATA_FUNCTION}` where the `query_data` function will be injected. This function accepts a string of SQL
+query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
 - Always use `query_data(sql_query)` to retrieve data from the workspace.
 - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
 `query_data` tool to inspect the data in the workspace before creating the data app.
 - If you're updating an existing data app, provide the `config_id` parameter. In this case, all existing parameters
-must either be preserved or explicitly updated.
+must either be preserved or explicitly updated. If the data app is deployed, it needs to be redeployed to apply the
+changes.
 
 
 **Input JSON Schema**:
@@ -1018,10 +1020,10 @@ must either be preserved or explicitly updated.
       "title": "Authorization Required",
       "type": "boolean"
     },
-    "config_id": {
+    "configuration_id": {
       "default": null,
       "description": "The ID of existing data app configuration when updating, otherwise None.",
-      "title": "Config Id",
+      "title": "Configuration Id",
       "type": "string"
     }
   },
