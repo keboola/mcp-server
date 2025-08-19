@@ -215,10 +215,10 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
     raw_bucket_data = await client.storage_client.bucket_list(include=['metadata'])
 
     # group by buckets by the ID of a branch that they belong to
-    buckets_by_branch: dict[str | None, list[JsonDict]] = defaultdict(list)
+    buckets_by_branch: dict[str, list[JsonDict]] = defaultdict(list)
     for bucket in raw_bucket_data:
         bucket_branch_id = get_metadata_property(bucket.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-        bucket_branch_id = bucket_branch_id or None
+        bucket_branch_id = bucket_branch_id or '__PROD__'
         buckets_by_branch[bucket_branch_id].append(bucket)
 
     buckets: list[JsonDict] = []
@@ -231,11 +231,11 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
             hidden_bucket_ids.add(b['id'].replace(id_prefix, 'c-'))
 
         # add the production branch buckets that are not "shaded" by their dev branch equivalent
-        for b in buckets_by_branch.get(None, []):
+        for b in buckets_by_branch.get('__PROD__', []):
             if b['id'] not in hidden_bucket_ids:
                 buckets.append(b)
     else:
-        buckets += buckets_by_branch.get(None, [])
+        buckets += buckets_by_branch.get('__PROD__', [])
 
     return ListBucketsOutput(
         buckets=[BucketDetail.model_validate(bucket) for bucket in buckets],
