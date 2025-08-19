@@ -5,6 +5,12 @@ import pytest
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 
 
+def test_client_does_not_send_authorization_headers(keboola_client: KeboolaClient) -> None:
+    """Check that the encryption client does not send any authorization headers."""
+    assert 'Authorization' not in keboola_client.encryption_client.raw_client.headers
+    assert 'X-StorageAPI-Token' not in keboola_client.encryption_client.raw_client.headers
+
+
 @pytest.mark.asyncio
 async def test_encrypt_string_not_equal(keboola_client: KeboolaClient) -> None:
     project_id = await keboola_client.storage_client.project_id()
