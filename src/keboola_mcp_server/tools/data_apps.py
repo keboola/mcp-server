@@ -110,10 +110,15 @@ class DataApp(DataAppSummary):
         description='The storage input/output mapping of the data app.', default_factory=dict
     )
     deployment_info: Optional[DeploymentInfo] = Field(description='The deployment info of the data app.', default=None)
+    links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
     @classmethod
     def from_api_responses(
-        cls, api_response: DataAppResponse, api_configuration: ConfigurationAPIResponse, logs: list[str]
+        cls,
+        api_response: DataAppResponse,
+        api_configuration: ConfigurationAPIResponse,
+        logs: list[str],
+        links: list[Link],
     ) -> 'DataApp':
         parameters = api_configuration.configuration.get('parameters', {})
         authorization = api_configuration.configuration.get('authorization', {})
@@ -148,7 +153,11 @@ class DataApp(DataAppSummary):
             storage=storage,
             is_authorized=_is_authorized(authorization),
             deployment_info=deployment_info,
+            links=links,
         )
+
+    def add_links(self, links: list[Link]) -> None:
+        self.links.extend(links)
 
     def to_summary(self) -> DataAppSummary:
         return DataAppSummary(
@@ -180,24 +189,10 @@ class ManageDataAppOutput(BaseModel):
     links: list[Link] = Field(description='Deployment links for the data app.')
 
 
-class DetailDataAppOutput(BaseModel):
-    """Output of the get_data_apps tool. When config_ids provided."""
+class GetDataAppsOutput(BaseModel):
+    """Output of the get_data_apps tool. Serves for both DataAppSummary and DataApp outputs."""
 
-    data_app: DataApp = Field(description='The data app.')
-    links: list[Link] = Field(description='Navigation links for the web interface.')
-
-
-class ListDataAppOutput(BaseModel):
-    """Output of the get_data_apps tool. When no config_ids provided."""
-
-    data_apps: list[DataAppSummary] = Field(description='The data apps in the project.')
-    links: list[Link] = Field(description='Navigation links for the web interface.')
-
-
-class ListDataAppDetailsOutput(BaseModel):
-    """Output of the get_data_apps tool. When config_ids provided."""
-
-    data_apps: list[DetailDataAppOutput] = Field(description='The detailed data apps in the project.')
+    data_apps: Sequence[DataAppSummary] = Field(description='The data apps in the project.')
 
 
 async def sync_data_app(
@@ -288,7 +283,7 @@ async def get_data_apps(
     configuration_ids: Annotated[Sequence[str], Field(description='The IDs of the data app configurations.')] = tuple(),
     limit: Annotated[int, Field(description='The limit of the data apps to fetch.')] = 100,
     offset: Annotated[int, Field(description='The offset of the data apps to fetch.')] = 0,
-) -> Annotated[ListDataAppOutput | list[DetailDataAppOutput], Field(description='The data apps.')]:
+) -> Annotated[GetDataAppsOutput, Field(description='The data apps.')]:
     """Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
     providing its configuration IDs.
 
@@ -301,7 +296,7 @@ async def get_data_apps(
 
     if configuration_ids:
         # Get details of the data apps by their configuration IDs
-        data_app_details: list[DetailDataAppOutput] = []
+        data_app_details: list[DataApp] = []
         for configuration_id in configuration_ids:
             data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
             links = links_manager.get_data_app_links(
@@ -310,15 +305,15 @@ async def get_data_apps(
                 deployment_link=data_app.deployment_url,
                 include_password_link=data_app.is_authorized,
             )
-            data_app_details.append(DetailDataAppOutput(data_app=data_app, links=links))
-        return data_app_details
+            data_app.add_links(links)
+            data_app_details.append(data_app)
+        return GetDataAppsOutput(data_apps=data_app_details)
     else:
         # List all data apps in the project
         data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
         links = [links_manager.get_data_app_dashboard_link()]
-        return ListDataAppOutput(
+        return GetDataAppsOutput(
             data_apps=[DataAppSummary.from_api_response(data_app) for data_app in data_apps],
-            links=links,
         )
 
 
