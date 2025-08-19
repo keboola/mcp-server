@@ -889,8 +889,9 @@ Lists summaries of data apps in the project given the limit and offset or gets d
 providing its configuration IDs.
 
 Considerations:
-- if configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
-- if no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+- If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
+- If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+- Data App details contain configurations, deployment info along with logs and links to the data app dashboard.
 
 
 **Input JSON Schema**:
@@ -1018,10 +1019,10 @@ must either be preserved or explicitly updated.
       "title": "Authorization Required",
       "type": "boolean"
     },
-    "config_id": {
+    "configuration_id": {
       "default": null,
       "description": "The ID of existing data app configuration when updating, otherwise None.",
-      "title": "Config Id",
+      "title": "Configuration Id",
       "type": "string"
     }
   },
