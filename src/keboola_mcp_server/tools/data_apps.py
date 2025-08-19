@@ -2,7 +2,6 @@ import base64
 import logging
 import os
 import re
-import string
 from typing import Annotated, Any, Literal, Optional, Sequence, cast
 
 import httpx
@@ -495,6 +494,7 @@ def _get_authorization(auth_required: bool) -> dict[str, Any]:
 
 def _get_data_app_slug(name: str) -> str:
     return re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-'))
+
 
 def _is_authorized(authorization: dict[str, Any]) -> bool:
     try:
