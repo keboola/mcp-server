@@ -96,12 +96,12 @@ class RawKeboolaClient:
         headers: dict[str, Any] | None = None,
     ) -> str:
         """
-        Makes a GET request to the service API.
+        Makes a GET request to the service API and returns the response as text.
 
         :param endpoint: API endpoint to call
         :param params: Query parameters for the request
         :param headers: Additional headers for the request
-        :return: API response as dictionary
+        :return: API response as text
         """
         headers = self.headers | (headers or {})
         async with httpx.AsyncClient(timeout=self.timeout) as client:
