@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
+from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -118,7 +119,6 @@ class DataApp(DataAppSummary):
         api_response: DataAppResponse,
         api_configuration: ConfigurationAPIResponse,
         logs: list[str],
-        links: list[Link],
     ) -> 'DataApp':
         parameters = api_configuration.configuration.get('parameters', {})
         authorization = api_configuration.configuration.get('authorization', {})
@@ -153,7 +153,6 @@ class DataApp(DataAppSummary):
             storage=storage,
             is_authorized=_is_authorized(authorization),
             deployment_info=deployment_info,
-            links=links,
         )
 
     def add_links(self, links: list[Link]) -> None:
@@ -192,9 +191,10 @@ class ManageDataAppOutput(BaseModel):
 class GetDataAppsOutput(BaseModel):
     """Output of the get_data_apps tool. Serves for both DataAppSummary and DataApp outputs."""
 
-    data_apps: Sequence[DataAppSummary] = Field(description='The data apps in the project.')
+    data_apps: Sequence[DataAppSummary | DataApp] = Field(description='The data apps in the project.')
 
 
+@tool_errors()
 async def sync_data_app(
     ctx: Context,
     name: Annotated[str, Field(description='Name of the data app.')],
@@ -206,7 +206,7 @@ async def sync_data_app(
     authorization_required: Annotated[
         bool, Field(description='Whether the data app is authorized using simple password or not.')
     ] = False,
-    config_id: Annotated[
+    configuration_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise None.')
     ] = None,  # type: ignore
 ) -> Annotated[SyncDataAppOutput, Field(description='The created or updated data app.')]:
@@ -228,9 +228,9 @@ async def sync_data_app(
     project_id = await client.storage_client.project_id()
     source_code = _inject_query_to_source_code(source_code)
     secrets = _get_secrets(client, str(await workspace_manager.get_workspace_id()))
-    if config_id:
+    if configuration_id:
         # Update existing data app
-        data_app = await _fetch_data_app(client, configuration_id=config_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         existing_config = {
             'parameters': data_app.parameters,
             'authorization': data_app.authorization,
@@ -244,7 +244,7 @@ async def sync_data_app(
         )
         _ = await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=config_id,
+            configuration_id=configuration_id,
             configuration=updated_config,
             change_description='Updated data app',
             updated_name=name,
@@ -278,6 +278,7 @@ async def sync_data_app(
         )
 
 
+@tool_errors()
 async def get_data_apps(
     ctx: Context,
     configuration_ids: Annotated[Sequence[str], Field(description='The IDs of the data app configurations.')] = tuple(),
@@ -288,8 +289,9 @@ async def get_data_apps(
     providing its configuration IDs.
 
     Considerations:
-    - if configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
-    - if no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+    - If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
+    - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+    - Data App details contain configurations, deployment info along with logs and links to the data app dashboard.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -317,6 +319,7 @@ async def get_data_apps(
         )
 
 
+@tool_errors()
 async def manage_data_app(
     ctx: Context,
     action: Annotated[Literal['deploy', 'stop'], Field(description='The action to perform.')],
@@ -484,14 +487,6 @@ def _get_authorization(auth_required: bool) -> dict[str, Any]:
 def _get_data_app_slug(name: str) -> str:
     return re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-'))
 
-
-def _contains_placeholder_named(s: str, placeholder_name: str) -> bool:
-    for _, field_name, _, _ in string.Formatter().parse(s):
-        if field_name == placeholder_name:
-            return True
-    return False
-
-
 def _is_authorized(authorization: dict[str, Any]) -> bool:
     try:
         return any(auth_rule['auth_required'] for auth_rule in authorization['app_proxy']['auth_rules'])
@@ -551,8 +546,8 @@ def _inject_query_to_source_code(source_code: str) -> str:
         imports = source_code.split('### INJECTED_CODE ###')[0]
         source_code = source_code.split('### INJECTED_CODE ###')[1].split('### END_OF_INJECTED_CODE ###')[1]
         return imports + '\n\n' + _QUERY_DATA_FUNCTION_CODE + '\n\n' + source_code
-    elif _contains_placeholder_named(source_code, 'QUERY_DATA_FUNCTION'):
-        return source_code.format(QUERY_DATA_FUNCTION=_QUERY_DATA_FUNCTION_CODE)
+    elif '{QUERY_DATA_FUNCTION}' in source_code:
+        return source_code.replace('{QUERY_DATA_FUNCTION}', _QUERY_DATA_FUNCTION_CODE)
     else:
         return _QUERY_DATA_FUNCTION_CODE + '\n\n' + source_code
 
