@@ -21,6 +21,7 @@ def keboola_client(mocker) -> KeboolaClient:
     client = mocker.MagicMock(KeboolaClient)
     client.storage_api_url = 'test://api.keboola.com'  # TODO: this violates the checks in KeboolaClient constructor
     client.branch_id = None
+    client.with_branch_id.return_value = client
 
     # Mock API clients
     client.storage_client = mocker.MagicMock(AsyncStorageClient)

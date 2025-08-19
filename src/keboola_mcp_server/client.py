@@ -79,6 +79,17 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
+    def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
+        if branch_id == self.branch_id:
+            return self
+        else:
+            return KeboolaClient(
+                storage_api_url=self.storage_api_url,
+                storage_api_token=self.token,
+                bearer_token=self._bearer_token,
+                branch_id=branch_id,
+            )
+
     def __init__(
         self,
         *,
@@ -96,6 +107,7 @@ class KeboolaClient:
         :param branch_id: Keboola branch ID
         """
         self._token = storage_api_token
+        self._bearer_token = bearer_token
         self._branch_id = branch_id
 
         sapi_url_parsed = urlparse(storage_api_url)

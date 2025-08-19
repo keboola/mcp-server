@@ -228,7 +228,9 @@ class WorkspaceManager:
         return instance
 
     def __init__(self, client: KeboolaClient, workspace_schema: str | None = None):
-        self._client = client
+        # We use the read-only workspace with access to all project data which lives in the production branch.
+        # Hence we need KeboolaClient bound to the production/default branch.
+        self._client = client.with_branch_id(None)
         self._workspace_schema = workspace_schema
         self._workspace: _Workspace | None = None
         self._table_fqn_cache: dict[str, TableFqn] = {}
