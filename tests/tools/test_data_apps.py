@@ -1,5 +1,4 @@
 import base64
-import os
 from typing import cast
 
 from cryptography.fernet import Fernet
@@ -11,7 +10,6 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.data_apps import (
     _QUERY_DATA_FUNCTION_CODE,
     _build_data_app_config,
-    _contains_placeholder_named,
     _get_authorization,
     _get_data_app_slug,
     _get_secrets,
@@ -25,12 +23,6 @@ def test_get_data_app_slug():
     assert _get_data_app_slug('My Cool App') == 'my-cool-app'
     assert _get_data_app_slug('App 123') == 'app-123'
     assert _get_data_app_slug('Weird!@# Name$$$') == 'weird-name'
-
-
-def test_contains_placeholder_named():
-    assert _contains_placeholder_named('Hello {NAME}', 'NAME') is True
-    assert _contains_placeholder_named('Hello {OTHER}', 'NAME') is False
-    assert _contains_placeholder_named('Hello {}', 'NAME') is False
 
 
 def test_get_authorization_mapping():
@@ -182,9 +174,9 @@ def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,  # Fernet requires 32-byte keys
-        salt=workspace_id.encode("utf-8"),
+        salt=workspace_id.encode('utf-8'),
         iterations=390000,
-        backend=default_backend()
+        backend=default_backend(),
     )
     key = base64.urlsafe_b64encode(kdf.derive(seed))
     # Decrypt the token
