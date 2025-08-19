@@ -6,8 +6,8 @@ import os
 from typing import Any, Literal, Mapping, Optional, Sequence, TypeVar
 
 from keboola_mcp_server.clients.ai_service import AIServiceClient
-from keboola_mcp_server.clients.data_science import AsyncDataScienceClient
-from keboola_mcp_server.clients.encryption import AsyncEncryptionClient
+from keboola_mcp_server.clients.data_science import DataScienceClient
+from keboola_mcp_server.clients.encryption import EncryptionClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 
@@ -104,11 +104,11 @@ class KeboolaClient:
         self.ai_service_client = AIServiceClient.create(
             root_url=ai_service_api_url, token=self.token, headers=self._get_headers()
         )
-        self.data_science_client = AsyncDataScienceClient.create(
+        self.data_science_client = DataScienceClient.create(
             root_url=data_science_api_url, token=self.token, headers=self._get_headers()
         )
         # The encryption service does not require an authorization header, so we pass None as the token
-        self.encryption_client = AsyncEncryptionClient.create(
+        self.encryption_client = EncryptionClient.create(
             root_url=encryption_api_url, token=None, headers=self._get_headers()
         )
 

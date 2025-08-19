@@ -3,11 +3,11 @@ from typing import Any, Optional
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 
 
-class AsyncEncryptionClient(KeboolaServiceClient):
+class EncryptionClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient) -> None:
         """
-        Creates an AsyncEncryptionClient from a RawKeboolaClient.
+        Creates an EncryptionClient from a RawKeboolaClient.
 
         :param raw_client: The raw client to use
         """
@@ -23,14 +23,14 @@ class AsyncEncryptionClient(KeboolaServiceClient):
         root_url: str,
         token: Optional[str] = None,
         headers: dict[str, Any] | None = None,
-    ) -> 'AsyncEncryptionClient':
+    ) -> 'EncryptionClient':
         """
-        Creates an AsyncEncryptionClient from a Keboola Storage API token.
+        Creates an EncryptionClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :param headers: Additional headers for the requests
-        :return: A new instance of AsyncEncryptionClient
+        :return: A new instance of EncryptionClient
         """
         return cls(
             raw_client=RawKeboolaClient(

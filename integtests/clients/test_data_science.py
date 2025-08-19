@@ -3,7 +3,7 @@ import logging
 import pytest
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.clients.data_science import AsyncDataScienceClient, DataAppResponse
+from keboola_mcp_server.clients.data_science import DataAppResponse, DataScienceClient
 
 LOG = logging.getLogger(__name__)
 
@@ -39,13 +39,13 @@ def _public_access_authorization() -> dict[str, object]:
 
 
 @pytest.fixture
-def ds_client(keboola_client: KeboolaClient) -> AsyncDataScienceClient:
+def ds_client(keboola_client: KeboolaClient) -> DataScienceClient:
     return keboola_client.data_science_client
 
 
 @pytest.mark.asyncio
 async def test_create_and_fetch_data_app(
-    ds_client: AsyncDataScienceClient, unique_id: str, keboola_client: KeboolaClient
+    ds_client: DataScienceClient, unique_id: str, keboola_client: KeboolaClient
 ) -> None:
     """Test creating a data app and fetching it from detail and list endpoints"""
     slug = f'test-app-{unique_id}'

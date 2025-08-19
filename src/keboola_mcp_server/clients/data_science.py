@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import Any, Optional, cast
 
 from pydantic import AliasChoices, BaseModel, Field
@@ -58,7 +59,12 @@ class DataAppConfig(BaseModel):
     class Parameters(BaseModel):
         class DataApp(BaseModel):
             slug: str = Field(description='The slug of the data app')
-            streamlit: dict[str, str] = Field(description='The streamlit config.toml file')
+            streamlit: dict[str, str] = Field(
+                description=(
+                    'The streamlit configuration, expected to have a key with TOML file name and the value with the '
+                    'file content'
+                )
+            )
             secrets: Optional[dict[str, str]] = Field(description='The secrets of the data app', default=None)
 
         size: str = Field(description='The size of the data app')
@@ -90,11 +96,11 @@ class DataAppConfig(BaseModel):
     storage: dict[str, Any] = Field(description='The storage of the data app', default_factory=dict)
 
 
-class AsyncDataScienceClient(KeboolaServiceClient):
+class DataScienceClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient) -> None:
         """
-        Creates an AsyncDataScienceClient from a RawKeboolaClient and a branch id.
+        Creates an DataScienceClient from a RawKeboolaClient.
 
         :param raw_client: The raw client to use
         """
@@ -110,18 +116,18 @@ class AsyncDataScienceClient(KeboolaServiceClient):
         root_url: str,
         token: Optional[str],
         headers: dict[str, Any] | None = None,
-    ) -> 'AsyncDataScienceClient':
+    ) -> 'DataScienceClient':
         """
-        Creates an AsyncDataScienceClient from a Keboola Storage API token.
+        Creates an DataScienceClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :param headers: Additional headers for the requests
-        :return: A new instance of AsyncDataScienceClient
+        :return: A new instance of DataScienceClient
         """
         return cls(
             raw_client=RawKeboolaClient(
-                base_api_url=f'{root_url}',
+                base_api_url=root_url,
                 api_token=token,
                 headers=headers,
             )
@@ -156,7 +162,9 @@ class AsyncDataScienceClient(KeboolaServiceClient):
 
     async def suspend_data_app(self, data_app_id: str) -> DataAppResponse:
         """
-        Suspend a data app by its ID.
+        Suspend a data app by setting its desired state to 'stopped'.
+        :param data_app_id: data app ID to suspend
+        :return: Updated data app response with new state
         """
         data = {'desiredState': 'stopped'}
         response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
@@ -206,6 +214,7 @@ class AsyncDataScienceClient(KeboolaServiceClient):
     async def delete_data_app(self, data_app_id: str) -> None:
         """
         Delete a data app by its ID.
+        :param data_app_id: ID of the data app to delete
         """
         await self.delete(endpoint=f'apps/{data_app_id}')
 
@@ -216,35 +225,37 @@ class AsyncDataScienceClient(KeboolaServiceClient):
         response = await self.get(endpoint='apps', params={'limit': limit, 'offset': offset})
         return [DataAppResponse.model_validate(app) for app in response]
 
-    async def tail_app_logs(self, app_id: str, since: Optional[str] = None, *, lines: Optional[int] = None) -> str:
+    async def tail_app_logs(
+        self,
+        app_id: str,
+        *,
+        since: Optional[datetime],
+        lines: Optional[int],
+    ) -> str:
         """
-        Tail application logs. Either `since` or `lines` must be provided but not both at the same time, otherwise it
-        uses the `lines` parameter. In case when none of the parameters are provided, it uses the `lines` parameter with
+        Tail application logs. Either `since` or `lines` must be provided but not both at the same time.
+        In case when none of the parameters are provided, it uses the `lines` parameter with
         the last 100 lines.
         :param app_id: ID of the app.
-        :param since: ISO-8601 timestamp with nanoseconds.
-                      E.g: since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        :param since: ISO-8601 timestamp with nanoseconds as a datetime object.
+                      E.g: since = datetime.now(timezone.utc) - timedelta(days=1)
         :param lines: Number of log lines from the end. Defaults to 100.
         :return: Logs as plain text.
-        :raise requests.HTTPError: For non-200 status codes.
+        :raise ValueError: If both "since" and "lines" are provided.
+        :raise ValueError: If neither "since" nor "lines" are provided.
+        :raise httpx.HTTPStatusError: For non-200 status codes.
         """
         if since and lines:
-            LOG.warning(
-                'You cannot use both "since" and "lines" query parameters together. Using the "lines" parameter.'
-            )
-            since = None
-
+            raise ValueError('You cannot use both "since" and "lines" query parameters together.')
         elif not since and not lines:
-            LOG.info(
-                'No "since" or "lines" query parameters provided. Using "lines" with the last 100 lines as default.'
-            )
-            lines = 100
+            raise ValueError('Either "since" or "lines" must be provided.')
 
         if lines:
             lines = max(lines, 1)  # Ensure lines is at least 1
             params = {'lines': lines}
         elif since:
-            params = {'since': since}
+            iso_since = since.isoformat(timespec='nanoseconds')
+            params = {'since': iso_since}
         else:
             raise ValueError('Either "since" or "lines" must be provided.')
 
