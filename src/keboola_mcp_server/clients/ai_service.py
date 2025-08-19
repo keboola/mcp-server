@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 from pydantic import BaseModel, Field
 
@@ -36,12 +36,12 @@ class AIServiceClient(KeboolaServiceClient):
     """Async client for Keboola AI Service."""
 
     @classmethod
-    def create(cls, root_url: str, token: str, headers: dict[str, Any] | None = None) -> 'AIServiceClient':
+    def create(cls, root_url: str, token: Optional[str], headers: dict[str, Any] | None = None) -> 'AIServiceClient':
         """
         Creates an AIServiceClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the AI service API.
-        :param token: The Keboola Storage API token.
+        :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :param headers: Additional headers for the requests.
         :return: A new instance of AIServiceClient.
         """
