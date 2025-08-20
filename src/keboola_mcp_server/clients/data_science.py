@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -15,9 +15,7 @@ class DataAppResponse(BaseModel):
     component_id: str = Field(
         validation_alias=AliasChoices('componentId', 'component_id'), description='The component ID'
     )
-    branch_id: Optional[str] = Field(
-        validation_alias=AliasChoices('branchId', 'branch_id'), description='The branch ID'
-    )
+    branch_id: str | None = Field(validation_alias=AliasChoices('branchId', 'branch_id'), description='The branch ID')
     config_id: str = Field(
         validation_alias=AliasChoices('configId', 'config_id'), description='The component config ID'
     )
@@ -29,24 +27,24 @@ class DataAppResponse(BaseModel):
     desired_state: str = Field(
         validation_alias=AliasChoices('desiredState', 'desired_state'), description='The desired state'
     )
-    last_request_timestamp: Optional[str] = Field(
+    last_request_timestamp: str | None = Field(
         validation_alias=AliasChoices('lastRequestTimestamp', 'last_request_timestamp'),
         default=None,
         description='The last request timestamp',
     )
-    last_start_timestamp: Optional[str] = Field(
+    last_start_timestamp: str | None = Field(
         validation_alias=AliasChoices('lastStartTimestamp', 'last_start_timestamp'),
         default=None,
         description='The last start timestamp',
     )
-    url: Optional[str] = Field(
+    url: str | None = Field(
         validation_alias=AliasChoices('url', 'url'), description='The URL of the running data app', default=None
     )
     auto_suspend_after_seconds: int = Field(
         validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),
         description='The auto suspend after seconds',
     )
-    size: Optional[str] = Field(
+    size: str | None = Field(
         validation_alias=AliasChoices('size', 'size'), description='The size of the data app', default=None
     )
 
@@ -65,7 +63,7 @@ class DataAppConfig(BaseModel):
                     'file content'
                 )
             )
-            secrets: Optional[dict[str, str]] = Field(description='The secrets of the data app', default=None)
+            secrets: dict[str, str] | None = Field(description='The secrets of the data app', default=None)
 
         size: str = Field(description='The size of the data app')
         auto_suspend_after_seconds: int = Field(
@@ -78,9 +76,9 @@ class DataAppConfig(BaseModel):
             serialization_alias='dataApp',
             validation_alias=AliasChoices('dataApp', 'data_app'),
         )
-        id: Optional[str] = Field(description='The id of the data app', default=None)
-        script: Optional[list[str]] = Field(description='The script of the data app', default=None)
-        packages: Optional[list[str]] = Field(
+        id: str | None = Field(description='The id of the data app', default=None)
+        script: list[str] | None = Field(description='The script of the data app', default=None)
+        packages: list[str] | None = Field(
             description='The python packages needed to be installed in the data app', default=None
         )
 
@@ -102,7 +100,7 @@ class DataScienceClient(KeboolaServiceClient):
     def create(
         cls,
         root_url: str,
-        token: Optional[str],
+        token: str | None,
         headers: dict[str, Any] | None = None,
     ) -> 'DataScienceClient':
         """
@@ -180,7 +178,7 @@ class DataScienceClient(KeboolaServiceClient):
         name: str,
         description: str,
         configuration: DataAppConfig,
-        branch_id: Optional[str] = None,
+        branch_id: str | None = None,
     ) -> DataAppResponse:
         """
         Create a data app from a simplified config used in the MCP server.
@@ -218,8 +216,8 @@ class DataScienceClient(KeboolaServiceClient):
         self,
         app_id: str,
         *,
-        since: Optional[datetime],
-        lines: Optional[int],
+        since: datetime | None,
+        lines: int | None,
     ) -> str:
         """
         Tail application logs. Either `since` or `lines` must be provided but not both at the same time.
