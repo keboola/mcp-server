@@ -32,7 +32,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
 
     mcp.add_tool(
         FunctionTool.from_function(
-            sync_data_app,
+            modify_data_app,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )
@@ -195,7 +195,7 @@ class GetDataAppsOutput(BaseModel):
 
 
 @tool_errors()
-async def sync_data_app(
+async def modify_data_app(
     ctx: Context,
     name: Annotated[str, Field(description='Name of the data app.')],
     description: Annotated[str, Field(description='Description of the data app.')],
@@ -207,21 +207,20 @@ async def sync_data_app(
         bool, Field(description='Whether the data app is authorized using simple password or not.')
     ] = False,
     configuration_id: Annotated[
-        str, Field(description='The ID of existing data app configuration when updating, otherwise None.')
-    ] = None,  # type: ignore
+        str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
+    ] = '',
 ) -> Annotated[SyncDataAppOutput, Field(description='The created or updated data app.')]:
     """Creates or updates a Streamlit data app in Keboola workspace integration.
 
     Considerations:
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
-    `{QUERY_DATA_FUNCTION}` where the `query_data` function will be injected. This function accepts a string of SQL
+    `{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function accepts a string of SQL
     query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
-    - Always use `query_data(sql_query)` to retrieve data from the workspace.
     - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
-    `query_data` tool to inspect the data in the workspace before creating the data app.
-    - If you're updating an existing data app, provide the `config_id` parameter. In this case, all existing parameters
-    must either be preserved or explicitly updated. If the data app is deployed, it needs to be redeployed to apply the
-    changes.
+    `query_data` tool to inspect the data in the workspace before using it in the data app.
+    - If you're updating an existing data app, provide the `configuration_id` parameter. In this case, all existing
+    parameters must either be preserved or explicitly updated. If the data app is deployed, it needs to be redeployed
+    to apply the changes.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
@@ -267,6 +266,7 @@ async def sync_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=name,
             deployment_link=data_app.deployment_url,
+            is_authorized=data_app.is_authorized,
         )
         return SyncDataAppOutput(action='updated', data_app=data_app.to_summary(), links=links)
     else:
@@ -288,6 +288,7 @@ async def sync_data_app(
             configuration_id=data_app_resp.config_id,
             configuration_name=name,
             deployment_link=data_app_resp.url,
+            is_authorized=authorization_required,
         )
         return SyncDataAppOutput(
             action='created', data_app=DataAppSummary.from_api_response(data_app_resp), links=links
@@ -321,7 +322,7 @@ async def get_data_apps(
                 configuration_id=data_app.configuration_id,
                 configuration_name=data_app.name,
                 deployment_link=data_app.deployment_url,
-                include_password_link=data_app.is_authorized,
+                is_authorized=data_app.is_authorized,
             )
             logs = await _fetch_logs(client, data_app.data_app_id)
             data_app_details.append(data_app.with_links(links).with_logs(logs))
@@ -355,7 +356,7 @@ async def manage_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
-            include_password_link=data_app.is_authorized,
+            is_authorized=data_app.is_authorized,
         )
         return ManageDataAppOutput(action='deployed', links=links)
     elif action == 'stop':
@@ -366,7 +367,7 @@ async def manage_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=None,
-            include_password_link=data_app.is_authorized,
+            is_authorized=data_app.is_authorized,
         )
         return ManageDataAppOutput(action='stopped', links=links)
     else:
@@ -541,7 +542,10 @@ def query_data(query: str) -> pd.DataFrame:
             headers={'X-StorageAPI-Token': decoded_token},
         )
         response.raise_for_status()
-        return pd.DataFrame(response.json()['data']['rows'])
+        response_json = response.json()
+        if response_json.get('status') == 'error':
+            raise ValueError(f'Error when executing query "{query}": {response_json.get("message")}.')
+        return pd.DataFrame(response_json['data']['rows'])
 
 #### END_OF_INJECTED_CODE ####
 """
