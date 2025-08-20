@@ -118,30 +118,17 @@ class DataApp(DataAppSummary):
         cls,
         api_response: DataAppResponse,
         api_configuration: ConfigurationAPIResponse,
-        logs: list[str],
     ) -> 'DataApp':
-        parameters = api_configuration.configuration.get('parameters', {})
-        authorization = api_configuration.configuration.get('authorization', {})
+        parameters = api_configuration.configuration.get('parameters', {}) or {}
+        authorization = api_configuration.configuration.get('authorization', {}) or {}
         storage = api_configuration.configuration.get('storage', {}) or {}
-        deployment_info = (
-            None
-            if not logs
-            else DeploymentInfo(
-                version=api_response.config_version,
-                state=api_response.state,
-                url=api_response.url or 'not yet available',
-                last_request_timestamp=api_response.last_request_timestamp,
-                last_start_timestamp=api_response.last_start_timestamp,
-                logs=logs,
-            )
-        )
         return cls(
-            component_id=api_response.component_id,
+            component_id=api_configuration.component_id,
             configuration_id=api_configuration.configuration_id,
             data_app_id=api_response.id,
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
-            config_version=api_response.config_version,
+            config_version=str(api_configuration.version),
             state=api_response.state,
             type=api_response.type,
             deployment_url=api_response.url,
@@ -152,12 +139,23 @@ class DataApp(DataAppSummary):
             authorization=authorization,
             storage=storage,
             is_authorized=_is_authorized(authorization),
-            deployment_info=deployment_info,
+            deployment_info=None,
             links=[],
         )
 
-    def add_links(self, links: list[Link]) -> None:
-        self.links.extend(links)
+    def with_links(self, links: list[Link]) -> 'DataApp':
+        self.links = links
+        return self
+
+    def with_logs(self, logs: list[str]) -> 'DataApp':
+        if logs:
+            self.deployment_info = DeploymentInfo(
+                version=self.config_version,
+                state=self.state,
+                url=self.deployment_url,
+                logs=logs,
+            )
+        return self
 
     def to_summary(self) -> DataAppSummary:
         return DataAppSummary(
@@ -193,6 +191,7 @@ class GetDataAppsOutput(BaseModel):
     """Output of the get_data_apps tool. Serves for both DataAppSummary and DataApp outputs."""
 
     data_apps: Sequence[DataAppSummary | DataApp] = Field(description='The data apps in the project.')
+    links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
 
 @tool_errors()
@@ -227,9 +226,11 @@ async def sync_data_app(
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
+
     project_id = await client.storage_client.project_id()
     source_code = _inject_query_to_source_code(source_code)
     secrets = _get_secrets(client, str(await workspace_manager.get_workspace_id()))
+
     if configuration_id:
         # Update existing data app
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
@@ -247,29 +248,27 @@ async def sync_data_app(
                 updated_config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
             ),
         )
-        _ = await client.storage_client.configuration_update(
+        await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration=updated_config,
-            change_description='Updated data app',
+            change_description='Change Data App',
             updated_name=name,
             updated_description=description,
         )
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         await set_cfg_update_metadata(
             client=client,
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration_version=int(data_app.config_version),
         )
-        data_app_science = await client.data_science_client.get_data_app(data_app.data_app_id)
         links = links_manager.get_data_app_links(
-            configuration_id=data_app_science.config_id,
+            configuration_id=data_app.configuration_id,
             configuration_name=name,
-            deployment_link=data_app_science.url,
+            deployment_link=data_app.deployment_url,
         )
-        return SyncDataAppOutput(
-            action='updated', data_app=DataAppSummary.from_api_response(data_app_science), links=links
-        )
+        return SyncDataAppOutput(action='updated', data_app=data_app.to_summary(), links=links)
     else:
         # Create new data app
         config = _build_data_app_config(name, source_code, packages, authorization_required, secrets)
@@ -277,21 +276,21 @@ async def sync_data_app(
             config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
         )
         validated_config = DataAppConfig.model_validate(config)
-        data_app_science = await client.data_science_client.create_data_app(
+        data_app_resp = await client.data_science_client.create_data_app(
             name, description, configuration=validated_config
         )
         await set_cfg_creation_metadata(
             client=client,
             component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=data_app_science.config_id,
+            configuration_id=data_app_resp.config_id,
         )
         links = links_manager.get_data_app_links(
-            configuration_id=data_app_science.config_id,
+            configuration_id=data_app_resp.config_id,
             configuration_name=name,
-            deployment_link=data_app_science.url,
+            deployment_link=data_app_resp.url,
         )
         return SyncDataAppOutput(
-            action='created', data_app=DataAppSummary.from_api_response(data_app_science), links=links
+            action='created', data_app=DataAppSummary.from_api_response(data_app_resp), links=links
         )
 
 
@@ -324,8 +323,8 @@ async def get_data_apps(
                 deployment_link=data_app.deployment_url,
                 include_password_link=data_app.is_authorized,
             )
-            data_app.add_links(links)
-            data_app_details.append(data_app)
+            logs = await _fetch_logs(client, data_app.data_app_id)
+            data_app_details.append(data_app.with_links(links).with_logs(logs))
         return GetDataAppsOutput(data_apps=data_app_details)
     else:
         # List all data apps in the project
@@ -333,6 +332,7 @@ async def get_data_apps(
         links = [links_manager.get_data_app_dashboard_link()]
         return GetDataAppsOutput(
             data_apps=[DataAppSummary.from_api_response(data_app) for data_app in data_apps],
+            links=links,
         )
 
 
@@ -452,8 +452,7 @@ async def _fetch_data_app(
         api_config = ConfigurationAPIResponse.model_validate(
             raw_data_app_config | {'component_id': DATA_APP_COMPONENT_ID}
         )
-        logs = await _fetch_logs(client, data_app_id)
-        return DataApp.from_api_responses(data_app_science, api_config, logs)
+        return DataApp.from_api_responses(data_app_science, api_config)
     elif configuration_id:
         raw_configuration = await client.storage_client.configuration_detail(
             component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
@@ -463,8 +462,7 @@ async def _fetch_data_app(
         )
         data_app_id = cast(str, api_config.configuration['parameters']['id'])
         data_app_science = await client.data_science_client.get_data_app(data_app_id)
-        logs = await _fetch_logs(client, data_app_id)
-        return DataApp.from_api_responses(data_app_science, api_config, logs)
+        return DataApp.from_api_responses(data_app_science, api_config)
     else:
         raise ValueError('Either data_app_id or configuration_id must be provided.')
 
