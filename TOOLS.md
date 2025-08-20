@@ -46,9 +46,11 @@ filtering.
 ### Other Tools
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing its configuration IDs.
-- [manage_data_app](#manage_data_app): Deploys a data app or stops running data app in the Keboola workspace integration given the action and config
-id.
-- [sync_data_app](#sync_data_app): Creates or updates a Streamlit data app in Keboola workspace integration.
+- [manage_data_app](#manage_data_app): Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
+- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data
+
+Considerations:
+- The `source_code` parameter must be a complete and runnable Streamlit app.
 
 ### Project Tools
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
@@ -881,7 +883,7 @@ EXAMPLES:
 ## get_data_apps
 **Annotations**: `read-only`
 
-**Tags**: `data-app`
+**Tags**: `data-apps`
 
 **Description**:
 
@@ -929,12 +931,11 @@ Considerations:
 ## manage_data_app
 **Annotations**: 
 
-**Tags**: `data-app`
+**Tags**: `data-apps`
 
 **Description**:
 
-Deploys a data app or stops running data app in the Keboola workspace integration given the action and config
-id.
+Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
 
 
 **Input JSON Schema**:
@@ -965,26 +966,25 @@ id.
 ```
 
 ---
-<a name="sync_data_app"></a>
-## sync_data_app
+<a name="modify_data_app"></a>
+## modify_data_app
 **Annotations**: `destructive`
 
-**Tags**: `data-app`
+**Tags**: `data-apps`
 
 **Description**:
 
-Creates or updates a Streamlit data app in Keboola workspace integration.
+Creates or updates a Streamlit data
 
 Considerations:
 - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
-`{QUERY_DATA_FUNCTION}` where the `query_data` function will be injected. This function accepts a string of SQL
+`{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function accepts a string of SQL
 query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
-- Always use `query_data(sql_query)` to retrieve data from the workspace.
 - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
-`query_data` tool to inspect the data in the workspace before creating the data app.
-- If you're updating an existing data app, provide the `config_id` parameter. In this case, all existing parameters
-must either be preserved or explicitly updated. If the data app is deployed, it needs to be redeployed to apply the
-changes.
+`query_data` tool to inspect the data in the workspace before using it in the data app.
+- If you're updating an existing data app, provide the `configuration_id` parameter. In this case, all existing
+parameters must either be preserved or explicitly updated. If the data app is deployed, it needs to be redeployed
+to apply the changes.
 
 
 **Input JSON Schema**:
@@ -1021,8 +1021,8 @@ changes.
       "type": "boolean"
     },
     "configuration_id": {
-      "default": null,
-      "description": "The ID of existing data app configuration when updating, otherwise None.",
+      "default": "",
+      "description": "The ID of existing data app configuration when updating, otherwise empty string.",
       "title": "Configuration Id",
       "type": "string"
     }
