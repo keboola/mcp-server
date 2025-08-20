@@ -15,7 +15,7 @@ from keboola_mcp_server.tools.data_apps import (
     DataApp,
     DataAppSummary,
     GetDataAppsOutput,
-    SyncDataAppOutput,
+    ModifiedDataAppOutput
 )
 
 LOG = logging.getLogger(__name__)
@@ -78,8 +78,8 @@ async def initial_data_app(
     app_name: str,
     app_description: str,
     sample_streamlit_app: str,
-) -> AsyncGenerator[SyncDataAppOutput, None]:
-    sync_output: SyncDataAppOutput | None = None
+) -> AsyncGenerator[ModifiedDataAppOutput, None]:
+    sync_output: ModifiedDataAppOutput | None = None
     try:
         # Create
         created_result = await mcp_client.call_tool(
@@ -93,7 +93,7 @@ async def initial_data_app(
             },
         )
         assert created_result.structured_content is not None
-        sync_output = SyncDataAppOutput.model_validate(created_result.structured_content['result'])
+        sync_output = ModifiedDataAppOutput.model_validate(created_result.structured_content['result'])
         yield sync_output
     finally:
         if sync_output:
@@ -105,7 +105,7 @@ async def initial_data_app(
 
 
 @pytest.mark.asyncio
-async def test_get_data_apps_listing(mcp_client: Client, initial_data_app: SyncDataAppOutput) -> None:
+async def test_get_data_apps_listing(mcp_client: Client, initial_data_app: ModifiedDataAppOutput) -> None:
     """Test listing data apps does not error."""
     tool_result = await mcp_client.call_tool(name='get_data_apps', arguments={})
     assert tool_result.structured_content is not None
@@ -120,10 +120,9 @@ async def test_data_app_lifecycle(
     keboola_client: KeboolaClient,
     app_name: str,
     app_description: str,
-    initial_data_app: SyncDataAppOutput,
+    initial_data_app: ModifiedDataAppOutput,
     streamlit_app_header: str,
     streamlit_app_footer: str,
-    sample_streamlit_app: str,
 ) -> None:
     """
     End-to-end lifecycle for data apps:
@@ -195,7 +194,7 @@ async def test_data_app_lifecycle(
     )
     # Check updated app basic details
     assert updated_result.structured_content is not None
-    updated = SyncDataAppOutput.model_validate(updated_result.structured_content['result'])
+    updated = ModifiedDataAppOutput.model_validate(updated_result.structured_content['result'])
     assert updated.action == 'updated'
     assert updated.data_app.data_app_id == data_app_id
     assert updated.data_app.configuration_id == configuration_id
