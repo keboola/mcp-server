@@ -202,7 +202,7 @@ def create_server(
     LOG.info(f'Creating server with config: {config}')
     server_state = ServerState(config=config)
     mcp = KeboolaMcpServer(
-        name='Keboola Explorer',
+        name='Keboola MCP Server',
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
         middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware()],
