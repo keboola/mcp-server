@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Any, AsyncGenerator, Mapping, cast
 
@@ -6,7 +7,6 @@ import pytest_asyncio
 from fastmcp import Client, FastMCP
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
-from keboola_mcp_server.clients.data_science import DataAppResponse
 from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.data_apps import (
@@ -18,30 +18,40 @@ from keboola_mcp_server.tools.data_apps import (
     SyncDataAppOutput,
 )
 
+LOG = logging.getLogger(__name__)
 
-def _sample_streamlit_main() -> str:
-    return (        'def main():\n'
+
+@pytest.fixture
+def streamlit_app_header() -> str:
+    return 'import streamlit as st\n\n'
+
+
+@pytest.fixture
+def streamlit_app_footer() -> str:
+    return (
+        'def main():\n'
         "    st.title('Integration Test Data App')\n"
         "    st.write('Hello from integration test')\n"
         '    # Optionally query data (kept commented to avoid side-effects during tests)\n'
         "    # df = query_data('select 1 as col')\n"
         '    # st.dataframe(df)\n\n'
         'if __name__ == "__main__":\n'
-        '    main()\n')
+        '    main()\n'
+    )
 
-def _sample_streamlit_app() -> str:
+
+@pytest.fixture
+def sample_streamlit_app(streamlit_app_header: str, streamlit_app_footer: str) -> str:
     """Return a minimal Streamlit app template that supports query injection."""
-    return (
-        'import streamlit as st\n\n'
-        '{QUERY_DATA_FUNCTION}\n\n'
-
-    ) + _sample_streamlit_main()
+    return f'{streamlit_app_header}' '{QUERY_DATA_FUNCTION}\n\n' f'{streamlit_app_footer}'
 
 
 @pytest.fixture
 def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
     config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
-    return create_server(config)
+    mcp_server = create_server(config)
+    assert isinstance(mcp_server, FastMCP)
+    return mcp_server
 
 
 @pytest_asyncio.fixture
@@ -49,10 +59,12 @@ async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
     async with Client(mcp_server) as client:
         yield client
 
+
 @pytest.fixture
 def app_name() -> str:
     unique_suffix = uuid.uuid4().hex[:8]
     return f'Integration Test Data App {unique_suffix}'
+
 
 @pytest.fixture
 def app_description() -> str:
@@ -60,7 +72,13 @@ def app_description() -> str:
 
 
 @pytest_asyncio.fixture
-async def initial_data_app(mcp_client, keboola_client: KeboolaClient, app_name: str, app_description: str) -> AsyncGenerator[SyncDataAppOutput, None]:
+async def initial_data_app(
+    mcp_client: Client,
+    keboola_client: KeboolaClient,
+    app_name: str,
+    app_description: str,
+    sample_streamlit_app: str,
+) -> AsyncGenerator[SyncDataAppOutput, None]:
     sync_output: SyncDataAppOutput | None = None
     try:
         # Create
@@ -69,7 +87,7 @@ async def initial_data_app(mcp_client, keboola_client: KeboolaClient, app_name: 
             arguments={
                 'name': app_name,
                 'description': app_description,
-                'source_code': _sample_streamlit_app(),
+                'source_code': sample_streamlit_app,
                 'packages': ['numpy', 'streamlit'],
                 'authorization_required': False,
             },
@@ -79,11 +97,15 @@ async def initial_data_app(mcp_client, keboola_client: KeboolaClient, app_name: 
         yield sync_output
     finally:
         if sync_output:
-            await keboola_client.data_science_client.delete_data_app(sync_output.data_app.data_app_id)
-            await keboola_client.data_science_client.delete_data_app(sync_output.data_app.data_app_id)
+            try:
+                await keboola_client.data_science_client.delete_data_app(sync_output.data_app.data_app_id)
+                await keboola_client.data_science_client.delete_data_app(sync_output.data_app.data_app_id)
+            except Exception as e:
+                LOG.error(f'Error deleting data app: {e}')
+
 
 @pytest.mark.asyncio
-async def test_get_data_apps_listing(mcp_client: Client) -> None:
+async def test_get_data_apps_listing(mcp_client: Client, initial_data_app: SyncDataAppOutput) -> None:
     """Test listing data apps does not error."""
     tool_result = await mcp_client.call_tool(name='get_data_apps', arguments={})
     assert tool_result.structured_content is not None
@@ -93,21 +115,23 @@ async def test_get_data_apps_listing(mcp_client: Client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_data_app_lifecycle(mcp_client: Client, app_name: str, app_description: str, initial_data_app: SyncDataAppOutput) -> None:
+async def test_data_app_lifecycle(
+    mcp_client: Client,
+    keboola_client: KeboolaClient,
+    app_name: str,
+    app_description: str,
+    initial_data_app: SyncDataAppOutput,
+    streamlit_app_header: str,
+    streamlit_app_footer: str,
+    sample_streamlit_app: str,
+) -> None:
     """
     End-to-end lifecycle for data apps:
     - create via sync tool
     - get details and list
     - update via sync tool
-    - deploy then stop via manage tool
     Always deletes the data app in teardown.
     """
-    
-    updated_name = f'{app_name} - Updated'
-    updated_description = 'Data app updated by integration test'
-
-    data_app_id: str | None = None
-    configuration_id: str | None = None
 
     # Check created app basic details
     assert initial_data_app.action == 'created'
@@ -116,14 +140,14 @@ async def test_data_app_lifecycle(mcp_client: Client, app_name: str, app_descrip
     assert data_app_id
     assert configuration_id
 
-    # # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
-    # metadata = await keboola_client.storage_client.configuration_metadata_get(
-    #     component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
-    # )
-    # assert isinstance(metadata, list)
-    # metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
-    # assert MetadataField.CREATED_BY_MCP in metadata_dict
-    # assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
+    # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
+    metadata = await keboola_client.storage_client.configuration_metadata_get(
+        component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
+    )
+    assert isinstance(metadata, list)
+    metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
+    assert MetadataField.CREATED_BY_MCP in metadata_dict
+    assert metadata_dict[MetadataField.CREATED_BY_MCP] == 'true'
 
     # Check created app details by configuration_id
     details_result = await mcp_client.call_tool(
@@ -132,16 +156,19 @@ async def test_data_app_lifecycle(mcp_client: Client, app_name: str, app_descrip
     assert details_result.structured_content is not None
     details = GetDataAppsOutput.model_validate(details_result.structured_content['result'])
     assert len(details.data_apps) == 1
-    assert isinstance(details.data_apps[0], DataApp)
-    assert details.data_apps[0].configuration_id == configuration_id
-    assert details.data_apps[0].data_app_id == data_app_id
-    assert details.data_apps[0].name == app_name
-    assert details.data_apps[0].description == app_description
+    data_app_details = details.data_apps[0]
+    assert isinstance(data_app_details, DataApp)
+
+    assert data_app_details.configuration_id == configuration_id
+    assert data_app_details.data_app_id == data_app_id
+    assert data_app_details.name == app_name
+    assert data_app_details.description == app_description
     # Check code and code injection
-    assert _sample_streamlit_main() in details.data_apps[0].parameters['script']
-    assert _QUERY_DATA_FUNCTION_CODE in details.data_apps[0].parameters['script']
+    assert streamlit_app_header in data_app_details.parameters['script'][0]
+    assert streamlit_app_footer in data_app_details.parameters['script'][0]
+    assert _QUERY_DATA_FUNCTION_CODE in data_app_details.parameters['script'][0]
     # Check packages
-    assert set(details.data_apps[0].parameters['packages']) == set(['numpy', 'streamlit'] + _DEFAULT_PACKAGES)
+    assert set(data_app_details.parameters['packages']) == set(['numpy', 'streamlit'] + _DEFAULT_PACKAGES)
 
     # Check listing contains our app
     listed_result = await mcp_client.call_tool(name='get_data_apps', arguments={})
@@ -152,15 +179,18 @@ async def test_data_app_lifecycle(mcp_client: Client, app_name: str, app_descrip
     assert configuration_id in [a.configuration_id for a in listed.data_apps]
 
     # Update app
+    updated_name = f'{app_name} - Updated'
+    updated_description = 'Data app updated by integration test'
+    updated_source_code = 'import numpy as np\n\n'
     updated_result = await mcp_client.call_tool(
         name='sync_data_app',
         arguments={
             'name': updated_name,
             'description': updated_description,
-            'source_code': _sample_streamlit_app(),
+            'source_code': updated_source_code,
             'packages': ['streamlit'],
             'authorization_required': False,
-            'config_id': configuration_id,
+            'configuration_id': configuration_id,
         },
     )
     # Check updated app basic details
@@ -170,27 +200,31 @@ async def test_data_app_lifecycle(mcp_client: Client, app_name: str, app_descrip
     assert updated.data_app.data_app_id == data_app_id
     assert updated.data_app.configuration_id == configuration_id
 
-    # # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
-    # metadata = cast(
-    #     list[Mapping[str, Any]],
-    #     await keboola_client.storage_client.configuration_metadata_get(
-    #         component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
-    #     ),
-    # )
-    # meta_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{updated.data_app.config_version}'
-    # meta_value = get_metadata_property(metadata, meta_key)
-    # assert meta_value == 'true'
-    # # Check that the original creation metadata is still there
-    # assert get_metadata_property(metadata, MetadataField.CREATED_BY_MCP) == 'true'
+    # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
+    metadata = cast(
+        list[Mapping[str, Any]],
+        await keboola_client.storage_client.configuration_metadata_get(
+            component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
+        ),
+    )
+    meta_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{updated.data_app.config_version}'
+    meta_value = get_metadata_property(metadata, meta_key)
+    assert meta_value == 'true'
+    # Check that the original creation metadata is still there
+    assert get_metadata_property(metadata, MetadataField.CREATED_BY_MCP) == 'true'
 
     # Check updated app details by configuration_id
-    fetched_app = await mcp_client.call_tool(
-        name='get_data_apps', arguments={'configuration_ids': [configuration_id]}
-    )
+    fetched_app = await mcp_client.call_tool(name='get_data_apps', arguments={'configuration_ids': [configuration_id]})
     assert fetched_app.structured_content is not None
     fetched = GetDataAppsOutput.model_validate(fetched_app.structured_content['result'])
     assert len(fetched.data_apps) == 1
     assert isinstance(fetched.data_apps[0], DataApp)
     assert fetched.data_apps[0].name == updated_name
     assert fetched.data_apps[0].description == updated_description
-    assert fetched.data_apps[0].parameters['packages'] == ['streamlit'] + _DEFAULT_PACKAGES
+    # Check that the source code is updated
+    assert _QUERY_DATA_FUNCTION_CODE in fetched.data_apps[0].parameters['script'][0]
+    assert updated_source_code in fetched.data_apps[0].parameters['script'][0]
+    assert streamlit_app_header not in fetched.data_apps[0].parameters['script'][0]
+    assert streamlit_app_footer not in fetched.data_apps[0].parameters['script'][0]
+    # Check that the packages are updated
+    assert set(fetched.data_apps[0].parameters['packages']) == set(['streamlit'] + _DEFAULT_PACKAGES)
