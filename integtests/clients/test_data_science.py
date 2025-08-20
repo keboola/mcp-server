@@ -67,7 +67,6 @@ async def initial_data_app(ds_client: DataScienceClient, unique_id: str) -> Asyn
                     await ds_client.delete_data_app(data_app.id)
                 except Exception as e:
                     LOG.exception(f'Failed to delete data app: {e}')
-                    pass
 
 
 @pytest.mark.asyncio

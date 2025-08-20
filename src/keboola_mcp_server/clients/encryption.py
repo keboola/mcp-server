@@ -1,4 +1,4 @@
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
 
@@ -11,7 +11,7 @@ class EncryptionClient(KeboolaServiceClient):
     def create(
         cls,
         root_url: str,
-        token: Optional[str] = None,
+        token: str | None = None,
         headers: dict[str, Any] | None = None,
     ) -> 'EncryptionClient':
         """
@@ -34,9 +34,9 @@ class EncryptionClient(KeboolaServiceClient):
         self,
         value: EncValue,
         *,
-        project_id: Optional[str] = None,
-        component_id: Optional[str] = None,
-        config_id: Optional[str] = None,
+        project_id: str | None = None,
+        component_id: str | None = None,
+        config_id: str | None = None,
     ) -> EncValue:
         """
         Encrypt a value using the encryption service, returns encrypted value. Parameters are optional and the ciphers
