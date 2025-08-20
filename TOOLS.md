@@ -46,9 +46,11 @@ filtering.
 ### Other Tools
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing its configuration IDs.
-- [manage_data_app](#manage_data_app): Deploys a data app or stops running data app in the Keboola workspace integration given the action and config
-id.
-- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app in Keboola workspace integration.
+- [manage_data_app](#manage_data_app): Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
+- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data
+
+Considerations:
+- The `source_code` parameter must be a complete and runnable Streamlit app.
 
 ### Project Tools
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
@@ -881,7 +883,7 @@ EXAMPLES:
 ## get_data_apps
 **Annotations**: `read-only`
 
-**Tags**: `data-app`
+**Tags**: `data-apps`
 
 **Description**:
 
@@ -929,12 +931,11 @@ Considerations:
 ## manage_data_app
 **Annotations**: 
 
-**Tags**: `data-app`
+**Tags**: `data-apps`
 
 **Description**:
 
-Deploys a data app or stops running data app in the Keboola workspace integration given the action and config
-id.
+Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
 
 
 **Input JSON Schema**:
@@ -969,11 +970,11 @@ id.
 ## modify_data_app
 **Annotations**: `destructive`
 
-**Tags**: `data-app`
+**Tags**: `data-apps`
 
 **Description**:
 
-Creates or updates a Streamlit data app in Keboola workspace integration.
+Creates or updates a Streamlit data
 
 Considerations:
 - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
