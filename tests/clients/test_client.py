@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 import httpx
 import pytest
 
-from keboola_mcp_server.client import KeboolaClient, RawKeboolaClient
+from keboola_mcp_server.clients.base import RawKeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 
 
 @pytest.fixture
@@ -191,7 +192,7 @@ class TestAsyncStorageClient:
                 params=None,
                 headers={
                     'Content-Type': 'application/json',
-                    'Accept-encoding': 'gzip',
+                    'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
                     'User-Agent': f'Keboola MCP Server/{version} app_env=local',
                 },
@@ -276,7 +277,7 @@ class TestAsyncStorageClient:
                 params=None,
                 headers={
                     'Content-Type': 'application/json',
-                    'Accept-encoding': 'gzip',
+                    'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
                     'User-Agent': f'Keboola MCP Server/{version} app_env=local',
                 },

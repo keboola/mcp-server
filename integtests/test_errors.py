@@ -11,7 +11,7 @@ import pytest
 from fastmcp import Context
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.doc import docs_query
 from keboola_mcp_server.tools.jobs import get_job
