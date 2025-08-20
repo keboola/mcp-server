@@ -97,6 +97,8 @@ class JobsQueueClient(KeboolaServiceClient):
             'config': configuration_id,
             'mode': 'run',
         }
+        if self._branch_id:
+            payload['branchId'] = self._branch_id
         return cast(JsonDict, await self.post(endpoint='jobs', data=payload))
 
     async def _search(self, params: dict[str, Any]) -> JsonList:
