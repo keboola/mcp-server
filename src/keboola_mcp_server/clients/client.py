@@ -115,7 +115,7 @@ class KeboolaClient:
             root_url=ai_service_api_url, token=self._token, headers=self._get_headers()
         )
         self._data_science_client = DataScienceClient.create(
-            root_url=data_science_api_url, token=self.token, headers=self._get_headers()
+            root_url=data_science_api_url, token=self.token, branch_id=branch_id, headers=self._get_headers()
         )
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(

@@ -96,18 +96,30 @@ class DataAppConfig(BaseModel):
 
 class DataScienceClient(KeboolaServiceClient):
 
+    def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
+        """
+        Creates a DataScienceClient from a RawKeboolaClient and a branch id.
+
+        :param raw_client: The raw client to use
+        :param branch_id: The id of the branch
+        """
+        super().__init__(raw_client=raw_client)
+        self._branch_id = branch_id
+
     @classmethod
     def create(
         cls,
         root_url: str,
         token: str | None,
+        branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
     ) -> 'DataScienceClient':
         """
-        Creates an DataScienceClient from a Keboola Storage API token.
+        Creates a DataScienceClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
+        :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests
         :return: A new instance of DataScienceClient
         """
@@ -116,7 +128,8 @@ class DataScienceClient(KeboolaServiceClient):
                 base_api_url=root_url,
                 api_token=token,
                 headers=headers,
-            )
+            ),
+            branch_id=branch_id,
         )
 
     async def get_data_app(self, data_app_id: str) -> DataAppResponse:
@@ -158,8 +171,8 @@ class DataScienceClient(KeboolaServiceClient):
     async def suspend_data_app(self, data_app_id: str) -> DataAppResponse:
         """
         Suspend a data app by setting its desired state to 'stopped'.
-        :param data_app_id: data app ID to suspend
-        :return: Updated data app response with new state
+        :param data_app_id: Data app ID to suspend
+        :return: Updated data app response with the new state
         """
         data = {'desiredState': 'stopped'}
         response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
@@ -178,18 +191,16 @@ class DataScienceClient(KeboolaServiceClient):
         name: str,
         description: str,
         configuration: DataAppConfig,
-        branch_id: str | None = None,
     ) -> DataAppResponse:
         """
         Create a data app from a simplified config used in the MCP server.
         :param name: The name of the data app
         :param description: The description of the data app
         :param configuration: The simplified configuration of the data app
-        :param branch_id: The branch ID of the data app
         :return: The data app
         """
         data = {
-            'branchId': branch_id,
+            'branchId': self._branch_id,
             'name': name,
             'type': 'streamlit',
             'description': description,
