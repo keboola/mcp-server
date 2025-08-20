@@ -125,10 +125,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                     async with sse_app.lifespan(app):
                         yield
 
-            app = Starlette(
-                middleware=[Middleware(ForwardSlashMiddleware)],
-                lifespan=lifespan
-            )
+            app = Starlette(middleware=[Middleware(ForwardSlashMiddleware)], lifespan=lifespan)
             app.mount('/mcp', http_app)
             app.mount('/sse', sse_app)  # serves /sse/ and /messages
             custom_routes.add_to_starlette(app)

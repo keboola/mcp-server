@@ -5,7 +5,7 @@ import pytest
 from fastmcp import Context
 
 from integtests.conftest import BucketDef, TableDef
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,

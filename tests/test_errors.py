@@ -7,7 +7,7 @@ import pytest
 from fastmcp import Context
 from mcp.shared.context import RequestContext
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.errors import ToolException, tool_errors
 from keboola_mcp_server.mcp import ServerState
