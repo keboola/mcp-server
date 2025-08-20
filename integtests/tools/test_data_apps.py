@@ -15,7 +15,7 @@ from keboola_mcp_server.tools.data_apps import (
     DataApp,
     DataAppSummary,
     GetDataAppsOutput,
-    ModifiedDataAppOutput
+    ModifiedDataAppOutput,
 )
 
 LOG = logging.getLogger(__name__)
