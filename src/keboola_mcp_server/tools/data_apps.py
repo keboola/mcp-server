@@ -428,7 +428,7 @@ def _update_existing_data_app_config(
     )
     new_config['parameters']['script'] = [source_code] if source_code else existing_config['parameters']['script']
     new_config['parameters']['packages'] = list(set(packages + _DEFAULT_PACKAGES))
-    new_config['parameters']['dataApp']['secrets'] = {**secrets, **existing_config['parameters']['dataApp']['secrets']}
+    new_config['parameters']['dataApp']['secrets'] = existing_config['parameters']['dataApp']['secrets'] | secrets
     new_config['authorization'] = _get_authorization(authorize_with_password)
     return new_config
 
