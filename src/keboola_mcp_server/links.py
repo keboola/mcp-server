@@ -30,18 +30,22 @@ class Link(BaseModel):
 class ProjectLinksManager:
     FLOW_DOCUMENTATION_URL = 'https://help.keboola.com/flows/'
 
-    def __init__(self, base_url: str, project_id: str):
+    def __init__(self, *, base_url: str, project_id: str, branch_id: str | None):
         self._base_url = base_url
         self._project_id = project_id
+        self._branch_id = branch_id
 
     @classmethod
     async def from_client(cls, client: KeboolaClient) -> 'ProjectLinksManager':
-        base_url = client.storage_api_url
         project_id = await client.storage_client.project_id()
-        return cls(base_url=base_url, project_id=project_id)
+        return cls(base_url=client.storage_api_url, project_id=project_id, branch_id=client.branch_id)
 
     def _url(self, path: str) -> str:
-        return f'{self._base_url}/admin/projects/{self._project_id}/{path}'
+        parts = [self._base_url, 'admin/projects', self._project_id]
+        if self._branch_id:
+            parts += ['branch', self._branch_id]
+        parts.append(path)
+        return '/'.join(parts)
 
     # --- Project ---
     def get_project_detail_link(self) -> Link:
