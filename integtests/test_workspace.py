@@ -5,7 +5,7 @@ import pytest
 import requests
 from kbcstorage.client import Client as SyncStorageClient
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)

@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, FlowType, KeboolaClient
+from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, FlowType, KeboolaClient
 
 URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
 

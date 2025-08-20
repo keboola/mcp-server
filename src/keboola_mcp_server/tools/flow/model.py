@@ -7,7 +7,8 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, APIFlowResponse, FlowType
+from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
+from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.links import Link
 
 # =============================================================================

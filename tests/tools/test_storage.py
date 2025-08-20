@@ -6,7 +6,7 @@ import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.storage import (

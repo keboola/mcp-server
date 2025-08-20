@@ -5,7 +5,7 @@ import pytest
 from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.sql import QueryDataOutput, get_sql_dialect, query_data
 from keboola_mcp_server.workspace import (
     QueryResult,
