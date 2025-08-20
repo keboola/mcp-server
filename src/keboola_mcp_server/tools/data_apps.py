@@ -24,7 +24,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
-DATA_APP_TOOLS_TAG = 'data-app'
+DATA_APP_TOOLS_TAG = 'data-apps'
 
 
 def add_data_app_tools(mcp: FastMCP) -> None:
@@ -147,14 +147,18 @@ class DataApp(DataAppSummary):
         self.links = links
         return self
 
-    def with_logs(self, logs: list[str]) -> 'DataApp':
-        if logs:
-            self.deployment_info = DeploymentInfo(
-                version=self.config_version,
-                state=self.state,
-                url=self.deployment_url,
-                logs=logs,
-            )
+    def with_deployment_info(self, logs: list[str]) -> 'DataApp':
+        """Adds deployment info to the data app.
+
+        :param logs: The logs of the data app deployment.
+        :return: The data app with the deployment info.
+        """
+        self.deployment_info = DeploymentInfo(
+            version=self.config_version,
+            state=self.state,
+            url=self.deployment_url,
+            logs=logs,
+        )
         return self
 
     def to_summary(self) -> DataAppSummary:
@@ -172,19 +176,21 @@ class DataApp(DataAppSummary):
         )
 
 
-class SyncDataAppOutput(BaseModel):
-    """Output of the sync_data_app tool."""
+class ModifiedDataAppOutput(BaseModel):
+    """Modified data app output containing the action performed and the data app and links to the web interface."""
 
     action: Literal['created', 'updated'] = Field(description='The action performed.')
     data_app: DataAppSummary = Field(description='The data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
-class ManageDataAppOutput(BaseModel):
-    """Output of the deploy_data_app tool."""
+class ManagementDataAppResult(BaseModel):
+    """Management data app result containing the action performed, links and potentially the deployment info of the data
+    app if a deployment was performed."""
 
     action: Literal['deployed', 'stopped'] = Field(description='The action performed.')
-    links: list[Link] = Field(description='Deployment links for the data app.')
+    deployment_info: DeploymentInfo | None = Field(description='The deployment info of the data app.')
+    links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
 class GetDataAppsOutput(BaseModel):
@@ -209,8 +215,8 @@ async def modify_data_app(
     configuration_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
     ] = '',
-) -> Annotated[SyncDataAppOutput, Field(description='The created or updated data app.')]:
-    """Creates or updates a Streamlit data app in Keboola workspace integration.
+) -> ModifiedDataAppOutput:
+    """Creates or updates a Streamlit data
 
     Considerations:
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
@@ -268,7 +274,7 @@ async def modify_data_app(
             deployment_link=data_app.deployment_url,
             is_authorized=data_app.is_authorized,
         )
-        return SyncDataAppOutput(action='updated', data_app=data_app.to_summary(), links=links)
+        return ModifiedDataAppOutput(action='updated', data_app=data_app.to_summary(), links=links)
     else:
         # Create new data app
         config = _build_data_app_config(name, source_code, packages, authorization_required, secrets)
@@ -290,7 +296,7 @@ async def modify_data_app(
             deployment_link=data_app_resp.url,
             is_authorized=authorization_required,
         )
-        return SyncDataAppOutput(
+        return ModifiedDataAppOutput(
             action='created', data_app=DataAppSummary.from_api_response(data_app_resp), links=links
         )
 
@@ -301,7 +307,7 @@ async def get_data_apps(
     configuration_ids: Annotated[Sequence[str], Field(description='The IDs of the data app configurations.')] = tuple(),
     limit: Annotated[int, Field(description='The limit of the data apps to fetch.')] = 100,
     offset: Annotated[int, Field(description='The offset of the data apps to fetch.')] = 0,
-) -> Annotated[GetDataAppsOutput, Field(description='The data apps.')]:
+) -> GetDataAppsOutput:
     """Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
     providing its configuration IDs.
 
@@ -325,7 +331,7 @@ async def get_data_apps(
                 is_authorized=data_app.is_authorized,
             )
             logs = await _fetch_logs(client, data_app.data_app_id)
-            data_app_details.append(data_app.with_links(links).with_logs(logs))
+            data_app_details.append(data_app.with_links(links).with_deployment_info(logs))
         return GetDataAppsOutput(data_apps=data_app_details)
     else:
         # List all data apps in the project
@@ -342,23 +348,22 @@ async def manage_data_app(
     ctx: Context,
     action: Annotated[Literal['deploy', 'stop'], Field(description='The action to perform.')],
     configuration_id: Annotated[str, Field(description='The ID of the data app configuration.')],
-) -> Annotated[ManageDataAppOutput, Field(description='The created or updated data app.')]:
-    """Deploys a data app or stops running data app in the Keboola workspace integration given the action and config
-    id.
-    """
+) -> ManagementDataAppResult:
+    """Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(data_app.config_version))
         data_app = await _fetch_data_app(client, configuration_id=None, data_app_id=data_app.data_app_id)
+        data_app = data_app.with_deployment_info(await _fetch_logs(client, data_app.data_app_id))
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
             is_authorized=data_app.is_authorized,
         )
-        return ManageDataAppOutput(action='deployed', links=links)
+        return ManagementDataAppResult(action='deployed', links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         _ = await client.data_science_client.suspend_data_app(data_app.data_app_id)
@@ -369,7 +374,7 @@ async def manage_data_app(
             deployment_link=None,
             is_authorized=data_app.is_authorized,
         )
-        return ManageDataAppOutput(action='stopped', links=links)
+        return ManagementDataAppResult(action='stopped', links=links, deployment_info=None)
     else:
         raise ValueError(f'Invalid action: {action}')
 
