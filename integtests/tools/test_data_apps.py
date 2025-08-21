@@ -83,7 +83,7 @@ async def initial_data_app(
     try:
         # Create
         created_result = await mcp_client.call_tool(
-            name='sync_data_app',
+            name='modify_data_app',
             arguments={
                 'name': app_name,
                 'description': app_description,
@@ -93,7 +93,7 @@ async def initial_data_app(
             },
         )
         assert created_result.structured_content is not None
-        sync_output = ModifiedDataAppOutput.model_validate(created_result.structured_content['result'])
+        sync_output = ModifiedDataAppOutput.model_validate(created_result.structured_content)
         yield sync_output
     finally:
         if sync_output:
@@ -109,7 +109,7 @@ async def test_get_data_apps_listing(mcp_client: Client, initial_data_app: Modif
     """Test listing data apps does not error."""
     tool_result = await mcp_client.call_tool(name='get_data_apps', arguments={})
     assert tool_result.structured_content is not None
-    apps = GetDataAppsOutput.model_validate(tool_result.structured_content['result'])
+    apps = GetDataAppsOutput.model_validate(tool_result.structured_content)
     assert isinstance(apps.data_apps, list)
     assert all(isinstance(app, DataAppSummary) for app in apps.data_apps)
 
@@ -153,7 +153,7 @@ async def test_data_app_lifecycle(
         name='get_data_apps', arguments={'configuration_ids': [configuration_id]}
     )
     assert details_result.structured_content is not None
-    details = GetDataAppsOutput.model_validate(details_result.structured_content['result'])
+    details = GetDataAppsOutput.model_validate(details_result.structured_content)
     assert len(details.data_apps) == 1
     data_app_details = details.data_apps[0]
     assert isinstance(data_app_details, DataApp)
@@ -172,7 +172,7 @@ async def test_data_app_lifecycle(
     # Check listing contains our app
     listed_result = await mcp_client.call_tool(name='get_data_apps', arguments={})
     assert listed_result.structured_content is not None
-    listed = GetDataAppsOutput.model_validate(listed_result.structured_content['result'])
+    listed = GetDataAppsOutput.model_validate(listed_result.structured_content)
     assert len(listed.data_apps) > 0
     assert all(isinstance(app, DataAppSummary) for app in listed.data_apps)
     assert configuration_id in [a.configuration_id for a in listed.data_apps]
@@ -182,7 +182,7 @@ async def test_data_app_lifecycle(
     updated_description = 'Data app updated by integration test'
     updated_source_code = 'import numpy as np\n\n'
     updated_result = await mcp_client.call_tool(
-        name='sync_data_app',
+        name='modify_data_app',
         arguments={
             'name': updated_name,
             'description': updated_description,
@@ -190,11 +190,12 @@ async def test_data_app_lifecycle(
             'packages': ['streamlit'],
             'authorization_required': False,
             'configuration_id': configuration_id,
+            'change_description': 'Update Code'
         },
     )
     # Check updated app basic details
     assert updated_result.structured_content is not None
-    updated = ModifiedDataAppOutput.model_validate(updated_result.structured_content['result'])
+    updated = ModifiedDataAppOutput.model_validate(updated_result.structured_content)
     assert updated.action == 'updated'
     assert updated.data_app.data_app_id == data_app_id
     assert updated.data_app.configuration_id == configuration_id
@@ -215,7 +216,7 @@ async def test_data_app_lifecycle(
     # Check updated app details by configuration_id
     fetched_app = await mcp_client.call_tool(name='get_data_apps', arguments={'configuration_ids': [configuration_id]})
     assert fetched_app.structured_content is not None
-    fetched = GetDataAppsOutput.model_validate(fetched_app.structured_content['result'])
+    fetched = GetDataAppsOutput.model_validate(fetched_app.structured_content)
     assert len(fetched.data_apps) == 1
     assert isinstance(fetched.data_apps[0], DataApp)
     assert fetched.data_apps[0].name == updated_name
