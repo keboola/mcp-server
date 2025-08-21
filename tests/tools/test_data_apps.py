@@ -1,14 +1,17 @@
 import base64
 from typing import cast
 
+import pytest
 from cryptography.fernet import Fernet
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.data_apps import (
     _QUERY_DATA_FUNCTION_CODE,
+    DataAppSummary,
     _build_data_app_config,
     _get_authorization,
     _get_data_app_slug,
@@ -130,8 +133,7 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
     assert 'pandas' in new['parameters']['packages']
     assert 'httpx' in new['parameters']['packages']
     assert 'cryptography' in new['parameters']['packages']
-    # Secrets merged: current implementation keeps existing values on key conflict
-    assert new['parameters']['dataApp']['secrets']['FOO'] == 'old'
+    assert new['parameters']['dataApp']['secrets']['FOO'] == 'new'
     assert new['parameters']['dataApp']['secrets']['NEW'] == 'y'
     assert new['parameters']['dataApp']['secrets']['KEEP'] == 'x'
     assert new['authorization'] == _get_authorization(False)
@@ -182,3 +184,46 @@ def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
     # Decrypt the token
     decrypted_token = Fernet(key).decrypt(encrypted_token).decode()
     assert decrypted_token == 'TOKEN123'
+
+
+@pytest.mark.parametrize(
+    'values',
+    [
+        {
+            'type': 'streamlit',
+            'state': 'created',
+        },
+        {
+            'type': 'streamlit',
+            'state': 'running',
+        },
+        {
+            'type': 'streamlit',
+            'state': 'stopped',
+        },
+        {
+            'type': 'something else',
+            'state': 'something else',
+        },
+    ],
+)
+def test_data_app_summary_from_dict_minimal(values: JsonDict) -> None:
+    """Test creating DataAppSummary from dict with required fields."""
+    data_app = {
+        'component_id': 'comp-1',
+        'configuration_id': 'cfg-1',
+        'data_app_id': 'app-1',
+        'project_id': 'proj-1',
+        'branch_id': 'branch-1',
+        'config_version': 'v1',
+        'deployment_url': 'https://example.com/app',
+        'auto_suspend_after_seconds': 3600,
+    }
+    data_app.update(values)
+    model = DataAppSummary.model_validate(data_app)
+    assert model.component_id == 'comp-1'
+    assert model.configuration_id == 'cfg-1'
+    assert model.state == values['state']
+    assert model.type == values['type']
+    assert model.deployment_url == 'https://example.com/app'
+    assert model.auto_suspend_after_seconds == 3600

@@ -1,8 +1,9 @@
+import asyncio
 import base64
 import logging
 import os
 import re
-from typing import Annotated, Any, Literal, Optional, Sequence, cast
+from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast
 
 import httpx
 from cryptography.fernet import Fernet
@@ -46,12 +47,24 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     )
     mcp.add_tool(
         FunctionTool.from_function(
-            manage_data_app,
+            deploy_data_app,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
     )
     LOG.info('Data app tools initialized.')
+
+
+# State of the data app
+State = Literal['created', 'running', 'stopped', 'starting', 'stopping']
+# Accepts known states or any string preventing from validation errors when receiving unknown states from the API
+# LLM agent can still understand the state of the data app even if it is different from the known states
+SafeState = Union[State, str]
+# Type of the data app
+Type = Literal['streamlit']
+# Accepts known types or any string preventing from validation errors when receiving unknown types from the API
+# LLM agent can still understand the type of the data app even if it is different from the known types
+SafeType = Union[Type, str]
 
 
 class DataAppSummary(BaseModel):
@@ -63,10 +76,17 @@ class DataAppSummary(BaseModel):
     project_id: str = Field(description='The ID of the project.')
     branch_id: str = Field(description='The ID of the branch.')
     config_version: str = Field(description='The version of the data app config.')
-    state: str = Field(description='The state of the data app.')
-    type: str = Field(description='The type of the data app.')
+    state: SafeState = Field(description='The state of the data app.')
+    type: SafeType = Field(
+        description=(
+            'The type of the data app. Currently, only "streamlit" is supported in the MCP. However, Keboola DSAPI '
+            'supports additional types, which can be retrieved from the API.'
+        )
+    )
     deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
-    auto_suspend_after_seconds: int = Field(description='The auto suspend after seconds.')
+    auto_suspend_after_seconds: int = Field(
+        description='The number of seconds after which the running data app is automatically suspended.'
+    )
 
     @classmethod
     def from_api_response(cls, api_response: DataAppResponse) -> 'DataAppSummary':
@@ -85,7 +105,7 @@ class DataAppSummary(BaseModel):
 
 
 class DeploymentInfo(BaseModel):
-    """A deployment info of a data app."""
+    """Deployment information of a data app."""
 
     version: str = Field(description='The version of the data app deployment.')
     state: str = Field(description='The state of the data app deployment.')
@@ -99,11 +119,28 @@ class DeploymentInfo(BaseModel):
     logs: list[str] = Field(description='The latest 100 logs of the data app deployment.', default_factory=list)
 
 
-class DataApp(DataAppSummary):
+class DataApp(BaseModel):
     """A data app used for detail views."""
 
     name: str = Field(description='The name of the data app.')
     description: Optional[str] = Field(description='The description of the data app.', default=None)
+    component_id: str = Field(description='The ID of the data app component.')
+    configuration_id: str = Field(description='The ID of the data app configuration.')
+    data_app_id: str = Field(description='The ID of the data app.')
+    project_id: str = Field(description='The ID of the project.')
+    branch_id: str = Field(description='The ID of the branch.')
+    config_version: str = Field(description='The version of the data app config.')
+    state: SafeState = Field(description='The state of the data app.')
+    type: SafeType = Field(
+        description=(
+            'The type of the data app. Currently, only "streamlit" is supported in the MCP. However, Keboola DSAPI '
+            'supports additional types, which can be retrieved from the API.'
+        )
+    )
+    deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
+    auto_suspend_after_seconds: int = Field(
+        description='The number of seconds after which the running data app is automatically suspended.'
+    )
     is_authorized: bool = Field(description='Whether the data app is authorized using simple password or not.')
     parameters: dict[str, Any] = Field(description='The parameters of the data app.')
     authorization: dict[str, Any] = Field(description='The authorization of the data app.')
@@ -156,24 +193,10 @@ class DataApp(DataAppSummary):
         self.deployment_info = DeploymentInfo(
             version=self.config_version,
             state=self.state,
-            url=self.deployment_url,
+            url=self.deployment_url or 'deployment link not available yet',
             logs=logs,
         )
         return self
-
-    def to_summary(self) -> DataAppSummary:
-        return DataAppSummary(
-            component_id=self.component_id,
-            configuration_id=self.configuration_id,
-            data_app_id=self.data_app_id,
-            project_id=self.project_id,
-            branch_id=self.branch_id,
-            config_version=self.config_version,
-            state=self.state,
-            type=self.type,
-            deployment_url=self.deployment_url,
-            auto_suspend_after_seconds=self.auto_suspend_after_seconds,
-        )
 
 
 class ModifiedDataAppOutput(BaseModel):
@@ -184,11 +207,10 @@ class ModifiedDataAppOutput(BaseModel):
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
-class ManagementDataAppResult(BaseModel):
-    """Management data app result containing the action performed, links and potentially the deployment info of the data
-    app if a deployment was performed."""
+class DeploymentDataAppOutput(BaseModel):
+    """Deployment data app output containing the action performed, links and the deployment info of the data app."""
 
-    action: Literal['deployed', 'stopped'] = Field(description='The action performed.')
+    state: SafeState = Field(description='The state of the data app deployment.')
     deployment_info: DeploymentInfo | None = Field(description='The deployment info of the data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
@@ -207,13 +229,22 @@ async def modify_data_app(
     description: Annotated[str, Field(description='Description of the data app.')],
     source_code: Annotated[str, Field(description='Complete Python/Streamlit source code for the data app.')],
     packages: Annotated[
-        list[str], Field(description='Python packages used in the source code necessary to be installed.')
+        list[str],
+        Field(
+            description=(
+                'Python packages used in the source code necessary to be installed with pip, versioning is supported.'
+            )
+        ),
     ],
     authorization_required: Annotated[
         bool, Field(description='Whether the data app is authorized using simple password or not.')
     ] = False,
     configuration_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
+    ] = '',
+    change_description: Annotated[
+        str,
+        Field(description='The description of the change when updating (e.g. "Update Code"), otherwise empty string.'),
     ] = '',
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data
@@ -224,9 +255,9 @@ async def modify_data_app(
     query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
     - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
     `query_data` tool to inspect the data in the workspace before using it in the data app.
-    - If you're updating an existing data app, provide the `configuration_id` parameter. In this case, all existing
-    parameters must either be preserved or explicitly updated. If the data app is deployed, it needs to be redeployed
-    to apply the changes.
+    - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
+    parameter.
+    - If the data app is deployed and is updated, it needs to be redeployed to apply the changes.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
@@ -257,7 +288,7 @@ async def modify_data_app(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration=updated_config,
-            change_description='Change Data App',
+            change_description=change_description or 'Change Data App',
             updated_name=name,
             updated_description=description,
         )
@@ -274,7 +305,9 @@ async def modify_data_app(
             deployment_link=data_app.deployment_url,
             is_authorized=data_app.is_authorized,
         )
-        return ModifiedDataAppOutput(action='updated', data_app=data_app.to_summary(), links=links)
+        return ModifiedDataAppOutput(
+            action='updated', data_app=DataAppSummary.model_validate(data_app.model_dump()), links=links
+        )
     else:
         # Create new data app
         config = _build_data_app_config(name, source_code, packages, authorization_required, secrets)
@@ -320,19 +353,42 @@ async def get_data_apps(
     links_manager = await ProjectLinksManager.from_client(client)
 
     if configuration_ids:
-        # Get details of the data apps by their configuration IDs
-        data_app_details: list[DataApp] = []
-        for configuration_id in configuration_ids:
-            data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-            links = links_manager.get_data_app_links(
-                configuration_id=data_app.configuration_id,
-                configuration_name=data_app.name,
-                deployment_link=data_app.deployment_url,
-                is_authorized=data_app.is_authorized,
+        # Get details of the data apps by their configuration IDs using 10 parallel requests at a time to not overload
+        # the API
+        async def _fetch_data_app_task(client: KeboolaClient, configuration_id: str) -> DataApp | str:
+            """Task fetching data app details with logs and links by configuration ID.
+            :param client: The Keboola client
+            :param configuration_id: The ID of the data app configuration
+            :return: The data app details or the configuration ID if the data app is not found
+            """
+            try:
+                data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+                links = links_manager.get_data_app_links(
+                    configuration_id=data_app.configuration_id,
+                    configuration_name=data_app.name,
+                    deployment_link=data_app.deployment_url,
+                    is_authorized=data_app.is_authorized,
+                )
+                logs = await _fetch_logs(client, data_app.data_app_id)
+                return data_app.with_links(links).with_deployment_info(logs)
+            except Exception:
+                return configuration_id
+
+        data_app_details: list[DataApp | str] = []
+        batch_size = 10  # fetching 10 data apps details at a time to not overload the API
+        for current_batch in range(0, len(configuration_ids), batch_size):
+            batch_ids = configuration_ids[current_batch : current_batch + batch_size]
+            data_app_details.extend(
+                await asyncio.gather(
+                    *(_fetch_data_app_task(client, configuration_id) for configuration_id in batch_ids)
+                )
             )
-            logs = await _fetch_logs(client, data_app.data_app_id)
-            data_app_details.append(data_app.with_links(links).with_deployment_info(logs))
-        return GetDataAppsOutput(data_apps=data_app_details)
+        found_data_apps: list[DataApp] = [dap for dap in data_app_details if isinstance(dap, DataApp)]
+        not_found_ids: list[str] = [dap for dap in data_app_details if isinstance(dap, str)]
+        if not_found_ids:
+            await ctx.log(f'Could not find Data Apps Configurations for IDs: {not_found_ids}', 'error')
+            logging.error(f'Could not find Data Apps Configurations for IDs: {not_found_ids}')
+        return GetDataAppsOutput(data_apps=found_data_apps)
     else:
         # List all data apps in the project
         data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
@@ -344,18 +400,18 @@ async def get_data_apps(
 
 
 @tool_errors()
-async def manage_data_app(
+async def deploy_data_app(
     ctx: Context,
     action: Annotated[Literal['deploy', 'stop'], Field(description='The action to perform.')],
     configuration_id: Annotated[str, Field(description='The ID of the data app configuration.')],
-) -> ManagementDataAppResult:
+) -> DeploymentDataAppOutput:
     """Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID."""
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(data_app.config_version))
-        data_app = await _fetch_data_app(client, configuration_id=None, data_app_id=data_app.data_app_id)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         data_app = data_app.with_deployment_info(await _fetch_logs(client, data_app.data_app_id))
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
@@ -363,18 +419,18 @@ async def manage_data_app(
             deployment_link=data_app.deployment_url,
             is_authorized=data_app.is_authorized,
         )
-        return ManagementDataAppResult(action='deployed', links=links, deployment_info=data_app.deployment_info)
+        return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         _ = await client.data_science_client.suspend_data_app(data_app.data_app_id)
-        data_app = await _fetch_data_app(client, configuration_id=None, data_app_id=data_app.data_app_id)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=None,
             is_authorized=data_app.is_authorized,
         )
-        return ManagementDataAppResult(action='stopped', links=links, deployment_info=None)
+        return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=None)
     else:
         raise ValueError(f'Invalid action: {action}')
 
@@ -394,7 +450,7 @@ def _build_data_app_config(
     authorize_with_password: bool,
     secrets: dict[str, Any],
 ) -> dict[str, Any]:
-    packages = list(set(packages + _DEFAULT_PACKAGES))
+    packages = sorted(list(set(packages + _DEFAULT_PACKAGES)))
     slug = _get_data_app_slug(name)
     parameters = {
         'size': 'tiny',
@@ -427,8 +483,8 @@ def _update_existing_data_app_config(
         _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
     )
     new_config['parameters']['script'] = [source_code] if source_code else existing_config['parameters']['script']
-    new_config['parameters']['packages'] = list(set(packages + _DEFAULT_PACKAGES))
-    new_config['parameters']['dataApp']['secrets'] = {**secrets, **existing_config['parameters']['dataApp']['secrets']}
+    new_config['parameters']['packages'] = sorted(list(set(packages + _DEFAULT_PACKAGES)))
+    new_config['parameters']['dataApp']['secrets'] = existing_config['parameters']['dataApp']['secrets'] | secrets
     new_config['authorization'] = _get_authorization(authorize_with_password)
     return new_config
 
