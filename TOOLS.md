@@ -1006,7 +1006,7 @@ parameter.
       "type": "string"
     },
     "packages": {
-      "description": "Python packages used in the source code necessary to be installed with pip, versioning is supported.",
+      "description": "Python packages used in the source code that will be installed by `pip install` into the environment before the code runs. For example: [\"pandas\", \"requests~=2.32\"].",
       "items": {
         "type": "string"
       },
