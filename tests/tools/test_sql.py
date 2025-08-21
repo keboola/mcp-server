@@ -6,7 +6,7 @@ from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.tools.sql import QueryDataOutput, get_sql_dialect, query_data
+from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.workspace import (
     QueryResult,
     SqlSelectData,
@@ -59,17 +59,6 @@ async def test_query_data(
     assert isinstance(result, QueryDataOutput)
     assert result.query_name == query_name
     assert result.csv_data == expected_csv
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('dialect', ['snowflake', 'biq-query', 'foo'])
-async def test_get_sql_dialect(dialect: str, mcp_context_client: Context, mocker):
-    workspace_manager = mocker.AsyncMock(WorkspaceManager)
-    workspace_manager.get_sql_dialect.return_value = dialect
-    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
-
-    result = await get_sql_dialect(mcp_context_client)
-    assert result == dialect
 
 
 class TestWorkspaceManagerSnowflake:
