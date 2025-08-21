@@ -1,4 +1,5 @@
 import logging
+import time
 
 import pytest
 from fastmcp import Context
@@ -30,6 +31,9 @@ async def test_global_search_end_to_end(
         pytest.skip('Global search is not available. Please enable it in the project settings.')
 
     # Search for test items by name prefix 'test' which should match our test data
+    # searching is flaky, so we retry a few times
+    await search(ctx=mcp_context, name_prefixes=['test'], item_types=tuple(), limit=50, offset=0)  # Search all types
+    time.sleep(5)
     result = await search(
         ctx=mcp_context, name_prefixes=['test'], item_types=tuple(), limit=50, offset=0  # Search all types
     )
