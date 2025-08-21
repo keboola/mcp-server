@@ -5,11 +5,13 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, cast
 
+import httpx
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
+from keboola_mcp_server.clients import AsyncStorageClient
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
@@ -68,6 +70,13 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     LOG.info('Storage tools added to the MCP server.')
 
 
+def _sum(a: int | None, b: int | None) -> int | None:
+    if a is None and b is None:
+        return None
+    else:
+        return (a or 0) + (b or 0)
+
+
 def _extract_description(values: dict[str, Any]) -> Optional[str]:
     """Extracts the description from values or metadata."""
     if not (description := values.get('description')):
@@ -92,7 +101,6 @@ class BucketDetail(BaseModel):
         validation_alias=AliasChoices('dataSizeBytes', 'data_size_bytes', 'data-size-bytes'),
         serialization_alias='dataSizeBytes',
     )
-
     tables_count: Optional[int] = Field(
         default=None,
         description='Number of tables in the bucket.',
@@ -100,6 +108,42 @@ class BucketDetail(BaseModel):
         serialization_alias='tablesCount',
     )
     links: Optional[list[Link]] = Field(default=None, description='The links relevant to the bucket.')
+
+    # these are internal fields not meant to be exposed to LLMs
+    branch_id: Optional[str] = Field(
+        default=None, exclude=True, description='The ID of the branch the bucket belongs to.'
+    )
+    prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
+
+    def shade_by(self, other: 'BucketDetail', branch_id: str, links: list[Link] | None = None) -> 'BucketDetail':
+        if self.branch_id:
+            raise ValueError(
+                f'Dev branch buckets cannot be shaded: ' f'bucket.id={self.id}, bucket.branch_id={self.branch_id}'
+            )
+        if not other.branch_id:
+            raise ValueError(
+                f'Prod branch buckets cannot shade others: ' f'bucket.id={other.id}, bucket.branch_id={other.branch_id}'
+            )
+        if other.branch_id != branch_id:
+            raise ValueError(
+                f'Dev branch mismatch: '
+                f'bucket.id={other.id}, bucket.branch_id={other.branch_id}, branch_id={branch_id}'
+            )
+        if other.prod_id != self.id:
+            raise ValueError(f'Prod and dev buckets mismatch: prod_bucket.id={self.id}, dev_bucket.id={other.id}')
+        changes: JsonDict = {
+            # TODO: The name and display_name of a branch bucket typically contains the branch ID
+            #  and we may not wont to show that.
+            # 'name': other.name,
+            # 'display_name': other.display_name,
+            # 'description': other.description,
+            # TODO: These bytes and counts are approximated by summing the values of the two buckets.
+            'data_size_bytes': _sum(self.data_size_bytes, other.data_size_bytes),
+            'tables_count': _sum(self.tables_count, other.tables_count),
+        }
+        if links:
+            changes['links'] = links
+        return self.model_copy(update=changes)
 
     @model_validator(mode='before')
     @classmethod
@@ -114,6 +158,18 @@ class BucketDetail(BaseModel):
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
         values['description'] = _extract_description(values)
+        return values
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_branch_id(cls, values: dict[str, Any]) -> dict[str, Any]:
+        branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if branch_id:
+            values['branch_id'] = branch_id
+            values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
+        else:
+            values['branch_id'] = None
+            values['prod_id'] = values['id']
         return values
 
 
@@ -192,6 +248,15 @@ class UpdateDescriptionOutput(BaseModel):
     links: Optional[list[Link]] = Field(None, description='Links relevant to the description update.')
 
 
+async def _find_bucket(client: AsyncStorageClient, bucket_id: str) -> JsonDict | None:
+    try:
+        return await client.bucket_detail(bucket_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return None
+        raise
+
+
 @tool_errors()
 async def get_bucket(
     bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
@@ -200,9 +265,37 @@ async def get_bucket(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     assert isinstance(client, KeboolaClient)
-    raw_bucket = await client.storage_client.bucket_detail(bucket_id)
-    links = links_manager.get_bucket_links(bucket_id, raw_bucket.get('name') or bucket_id)
-    bucket = BucketDetail.model_validate(raw_bucket | {'links': links})
+
+    prod_bucket: BucketDetail | None = None
+    raw_bucket = await _find_bucket(client.storage_client, bucket_id)
+    if raw_bucket:
+        prod_bucket = BucketDetail.model_validate(raw_bucket)
+        if prod_bucket.branch_id:
+            # The bucket_id should be from the prod branch; if it is not pretend the bucket does not exist.
+            raise ValueError(f'Bucket not found: {bucket_id}')
+
+    dev_bucket: BucketDetail | None = None
+    if client.branch_id:
+        dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
+        raw_bucket = await _find_bucket(client.storage_client, dev_id)
+        if raw_bucket:
+            dev_bucket = BucketDetail.model_validate(raw_bucket)
+            if dev_bucket.branch_id != client.branch_id:
+                # The bucket's branch ID does not match; pretend the bucket does not exist.
+                raise ValueError(f'Bucket not found: {bucket_id}')
+
+    if prod_bucket and dev_bucket:
+        # generate a URL link to the dev bucket but with the prod bucket's name
+        links = links_manager.get_bucket_links(dev_bucket.id, prod_bucket.name or prod_bucket.id)
+        bucket = prod_bucket.shade_by(dev_bucket, client.branch_id, links)
+    elif prod_bucket:
+        links = links_manager.get_bucket_links(prod_bucket.id, prod_bucket.name or prod_bucket.id)
+        bucket = prod_bucket.model_copy(update={'links': links})
+    elif dev_bucket:
+        links = links_manager.get_bucket_links(dev_bucket.id, dev_bucket.name or dev_bucket.id)
+        bucket = dev_bucket.model_copy(update={'id': dev_bucket.prod_id, 'branch_id': None, 'links': links})
+    else:
+        raise ValueError(f'Bucket not found: {bucket_id}')
 
     return bucket
 
@@ -215,33 +308,37 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
 
     raw_bucket_data = await client.storage_client.bucket_list(include=['metadata'])
 
-    # group by buckets by the ID of a branch that they belong to
-    buckets_by_branch: dict[str, list[JsonDict]] = defaultdict(list)
-    for bucket in raw_bucket_data:
-        bucket_branch_id = get_metadata_property(bucket.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-        bucket_branch_id = bucket_branch_id or '__PROD__'
-        buckets_by_branch[bucket_branch_id].append(bucket)
+    # group buckets by their ID as it would appear on the production branch
+    buckets_by_prod_id: dict[str, list[BucketDetail]] = defaultdict(list)
+    for raw in raw_bucket_data:
+        bucket = BucketDetail.model_validate(raw)
+        if bucket.branch_id and bucket.branch_id != client.branch_id:
+            # a dev branch bucket from a different branch
+            continue
+        buckets_by_prod_id[bucket.prod_id].append(bucket)
 
-    buckets: list[JsonDict] = []
-    if client.branch_id:
-        # add the dev branch buckets and collect the IDs of their production branch equivalents
-        id_prefix = f'c-{client.branch_id}-'
-        hidden_bucket_ids: set[str] = set()
-        for b in buckets_by_branch.get(client.branch_id, []):
-            buckets.append(b)
-            hidden_bucket_ids.add(b['id'].replace(id_prefix, 'c-'))
+    buckets: list[BucketDetail] = []
+    for prod_id, group in buckets_by_prod_id.items():
+        prod_bucket: BucketDetail | None = None
+        dev_buckets: list[BucketDetail] = []
+        for b in group:
+            if b.branch_id:
+                dev_buckets.append(b)
+            else:
+                prod_bucket = b
 
-        # add the production branch buckets that are not "shaded" by their dev branch equivalent
-        for b in buckets_by_branch.get('__PROD__', []):
-            if b['id'] not in hidden_bucket_ids:
-                buckets.append(b)
-    else:
-        buckets += buckets_by_branch.get('__PROD__', [])
+        if prod_bucket and dev_buckets:
+            # there should only be one dev branch bucket in each group
+            buckets.append(prod_bucket.shade_by(dev_buckets[0], client.branch_id))
+        elif prod_bucket:
+            buckets.append(prod_bucket)
+        elif dev_buckets:
+            buckets.append(dev_buckets[0].model_copy(update={'id': prod_id, 'branch_id': None}))
+        else:
+            # should not happen
+            raise Exception(f'No buckets in the group: prod_id={prod_id}')
 
-    return ListBucketsOutput(
-        buckets=[BucketDetail.model_validate(bucket) for bucket in buckets],
-        links=[links_manager.get_bucket_dashboard_link()],
-    )
+    return ListBucketsOutput(buckets=buckets, links=[links_manager.get_bucket_dashboard_link()])
 
 
 @tool_errors()

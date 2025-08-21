@@ -2,10 +2,12 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 from unittest.mock import call
 
+import httpx
 import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
@@ -107,7 +109,7 @@ def _get_sapi_buckets() -> list[dict[str, Any]]:
             'displayName': '1246948-foo',
             'idBranch': 792027,
             'stage': 'in',
-            'description': '',
+            'description': 'The dev branch foo bucket.',
             'tables': 'https://connection.keboola.com/v2/storage/buckets/in.c-1246948-foo',
             'created': '2025-08-17T07:39:14+0200',
             'lastChangeDate': '2025-08-17T07:39:26+0200',
@@ -148,6 +150,7 @@ def _get_sapi_buckets() -> list[dict[str, Any]]:
                 },
             ],
         },
+        # foo bucket in the production branch
         {
             'uri': 'https://connection.keboola.com/v2/storage/buckets/in.c-bar',
             'id': 'out.c-bar',
@@ -203,6 +206,55 @@ def _get_sapi_buckets() -> list[dict[str, Any]]:
                 'owner': None,
             },
             'metadata': [],
+        },
+        # baz bucket in the dev branch
+        {
+            'uri': 'https://connection.keboola.com/v2/storage/buckets/in.c-1246948-baz',
+            'id': 'in.c-1246948-baz',
+            'name': 'c-1246948-baz',
+            'displayName': '1246948-baz',
+            'idBranch': 792027,
+            'stage': 'in',
+            'description': 'The dev branch baz bucket.',
+            'tables': 'https://connection.keboola.com/v2/storage/buckets/in.c-1246948-baz',
+            'created': '2025-01-02T03:04:05+0600',
+            'lastChangeDate': '2025-01-02T03:04:55+0600',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 987654321,
+            'rowsCount': 123,
+            'isMaintenance': False,
+            'backend': 'snowflake',
+            'sharing': None,
+            'hasExternalSchema': False,
+            'databaseName': '',
+            'path': 'in.c-1246948-baz',
+            'isSnowflakeSharedDatabase': False,
+            'color': None,
+            'owner': None,
+            'metadata': [
+                {
+                    'id': '1726664226',
+                    'key': 'KBC.createdBy.component.id',
+                    'value': 'ex-generic-v2',
+                    'provider': 'system',
+                    'timestamp': '2025-01-02T03:04:05+0600',
+                },
+                {
+                    'id': '1726664227',
+                    'key': 'KBC.createdBy.configuration.id',
+                    'value': '01jz7r9qqyarc324h24gzm6ap3',
+                    'provider': 'system',
+                    'timestamp': '2025-01-02T03:04:05+0600',
+                },
+                {
+                    'id': '1726664228',
+                    'key': 'KBC.createdBy.branch.id',
+                    'value': '1246948',
+                    'provider': 'system',
+                    'timestamp': '2025-01-02T03:04:05+0600',
+                },
+            ],
         },
     ]
 
@@ -276,47 +328,171 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('expected_bucket', _get_sapi_buckets())
+@pytest.mark.parametrize(
+    ('branch_id', 'bucket_id', 'expected_bucket'),
+    [
+        (
+            None,
+            'in.c-foo',
+            BucketDetail(
+                id='in.c-foo',
+                name='c-foo',
+                display_name='foo',
+                description='The foo bucket.',
+                stage='in',
+                created='2025-07-03T11:02:54+0200',
+                data_size_bytes=1024,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: c-foo',
+                        url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-foo',
+                    ),
+                    Link(
+                        type='ui-dashboard',
+                        title='Buckets in the project',
+                        url='https://connection.test.keboola.com/admin/projects/69420/storage',
+                    ),
+                ],
+            ),
+        ),
+        (
+            '1246948',
+            'in.c-foo',
+            BucketDetail(
+                # all fields come from the prod bucket except for data_size_bytes
+                id='in.c-foo',
+                name='c-foo',
+                display_name='foo',
+                description='The foo bucket.',
+                stage='in',
+                created='2025-07-03T11:02:54+0200',
+                data_size_bytes=4608 + 1024,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: c-foo',
+                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
+                        '/storage/in.c-1246948-foo',
+                    ),
+                    Link(
+                        type='ui-dashboard',
+                        title='Buckets in the project',
+                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948/storage',
+                    ),
+                ],
+            ),
+        ),
+        (
+            None,
+            'out.c-bar',
+            BucketDetail(
+                id='out.c-bar',
+                name='c-bar',
+                display_name='bar',
+                description='Sample of Restaurant Reviews',
+                stage='out',
+                created='2024-04-03T14:11:53+0200',
+                data_size_bytes=2048,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: c-bar',
+                        url='https://connection.test.keboola.com/admin/projects/69420/storage/out.c-bar',
+                    ),
+                    Link(
+                        type='ui-dashboard',
+                        title='Buckets in the project',
+                        url='https://connection.test.keboola.com/admin/projects/69420/storage',
+                    ),
+                ],
+            ),
+        ),
+        (
+            '1246948',  # no in.c-bar on this branch
+            'out.c-bar',
+            BucketDetail(
+                id='out.c-bar',
+                name='c-bar',
+                display_name='bar',
+                description='Sample of Restaurant Reviews',
+                stage='out',
+                created='2024-04-03T14:11:53+0200',
+                data_size_bytes=2048,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: c-bar',
+                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948/storage/out.c-bar',
+                    ),
+                    Link(
+                        type='ui-dashboard',
+                        title='Buckets in the project',
+                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948/storage',
+                    ),
+                ],
+            ),
+        ),
+        (
+            '1246948',
+            'in.c-baz',
+            BucketDetail(
+                id='in.c-baz',
+                name='c-1246948-baz',
+                display_name='1246948-baz',
+                description='The dev branch baz bucket.',
+                stage='in',
+                created='2025-01-02T03:04:05+0600',
+                data_size_bytes=987654321,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: c-1246948-baz',
+                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
+                        '/storage/in.c-1246948-baz',
+                    ),
+                    Link(
+                        type='ui-dashboard',
+                        title='Buckets in the project',
+                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948/storage',
+                    ),
+                ],
+            ),
+        ),
+    ],
+)
 async def test_get_bucket(
-    expected_bucket: Mapping[str, Any],
+    branch_id: str | None,
+    bucket_id: str,
+    expected_bucket: BucketDetail,
     mocker: MockerFixture,
     mcp_context_client: Context,
 ):
     """Test get_bucket tool."""
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(return_value=expected_bucket)
 
-    bucket_id = expected_bucket['id']
+    def _bucket_detail_side_effect(bid: str) -> JsonDict:
+        for bucket in _get_sapi_buckets():
+            if bucket['id'] == bid:
+                return bucket
+
+        raise httpx.HTTPStatusError(
+            message=f'Bucket not found: {bid}', request=mocker.AsyncMock(), response=httpx.Response(status_code=404)
+        )
+
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = branch_id
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
+
     result = await get_bucket(bucket_id, mcp_context_client)
 
     assert isinstance(result, BucketDetail)
-    assert result.id == expected_bucket['id']
-    assert result.name == expected_bucket['name']
-    assert result.display_name == expected_bucket['displayName']
-    assert set(result.links) == {
-        Link(
-            type='ui-detail',
-            title=f'Bucket: {expected_bucket["name"]}',
-            url=f'https://connection.test.keboola.com/admin/projects/69420/storage/{bucket_id}',
-        ),
-        Link(
-            type='ui-dashboard',
-            title='Buckets in the project',
-            url='https://connection.test.keboola.com/admin/projects/69420/storage',
-        ),
-    }
-
-    # Check optional fields only if they are present in the expected bucket
-    if 'description' in expected_bucket:
-        assert result.description == (expected_bucket['description'] or None)
-    if 'stage' in expected_bucket:
-        assert result.stage == expected_bucket['stage']
-    if 'created' in expected_bucket:
-        assert result.created == expected_bucket['created']
-    if 'tables_count' in expected_bucket:
-        assert result.tables_count == expected_bucket['tables_count']
-    if 'data_size_bytes' in expected_bucket:
-        assert result.data_size_bytes == expected_bucket['data_size_bytes']
+    assert result == expected_bucket
+    if branch_id:
+        keboola_client.storage_client.bucket_detail.assert_has_calls(
+            [call(bucket_id), call(bucket_id.replace('c-', f'c-{branch_id}-'))]
+        )
+    else:
+        keboola_client.storage_client.bucket_detail.assert_called_once_with(bucket_id)
 
 
 @pytest.mark.asyncio
@@ -350,13 +526,13 @@ async def test_get_bucket(
             '1246948',  # development branch
             [
                 BucketDetail(
-                    id='in.c-1246948-foo',
-                    name='c-1246948-foo',
-                    display_name='1246948-foo',
-                    description=None,
+                    id='in.c-foo',
+                    name='c-foo',
+                    display_name='foo',
+                    description='The foo bucket.',
                     stage='in',
-                    created='2025-08-17T07:39:14+0200',
-                    data_size_bytes=4608,
+                    created='2025-07-03T11:02:54+0200',
+                    data_size_bytes=4608 + 1024,
                 ),
                 BucketDetail(
                     id='out.c-bar',
@@ -366,6 +542,15 @@ async def test_get_bucket(
                     stage='out',
                     created='2024-04-03T14:11:53+0200',
                     data_size_bytes=2048,
+                ),
+                BucketDetail(
+                    id='in.c-baz',
+                    name='c-1246948-baz',
+                    display_name='1246948-baz',
+                    description='The dev branch baz bucket.',
+                    stage='in',
+                    created='2025-01-02T03:04:05+0600',
+                    data_size_bytes=987654321,
                 ),
             ],
         ),
