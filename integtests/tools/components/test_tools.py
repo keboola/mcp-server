@@ -34,7 +34,7 @@ from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
     get_sql_transformation_id_from_sql_dialect,
 )
-from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -617,7 +617,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         sql_code_blocks=test_sql_code_blocks,
         created_table_names=test_created_table_names,
     )
-    sql_dialect = await get_sql_dialect(mcp_context)
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
     expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     project_id = keboola_project.project_id
 

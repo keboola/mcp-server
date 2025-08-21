@@ -56,7 +56,6 @@ Considerations:
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
 
 ### SQL Tools
-- [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
 - [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
 
 ### Search Tools
@@ -1830,26 +1829,6 @@ Considerations:
 ---
 
 # SQL Tools
-<a name="get_sql_dialect"></a>
-## get_sql_dialect
-**Annotations**: `read-only`
-
-**Tags**: `sql`
-
-**Description**:
-
-Gets the name of the SQL dialect used by Keboola project's underlying database.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
 <a name="query_data"></a>
 ## query_data
 **Annotations**: `read-only`
@@ -1862,7 +1841,7 @@ Executes an SQL SELECT query to get the data from the underlying database.
 
 CRITICAL SQL REQUIREMENTS:
 
-* ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
+* ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
 * Do not include any comments in the SQL code
 
 DIALECT-SPECIFIC REQUIREMENTS:
