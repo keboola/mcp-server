@@ -8,7 +8,7 @@ from fastmcp import Client, Context, FastMCP
 from pydantic import ValidationError
 
 from integtests.conftest import ConfigDef, ProjectDef
-from keboola_mcp_server.client import (
+from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     ORCHESTRATOR_COMPONENT_ID,
     FlowType,

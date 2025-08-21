@@ -11,13 +11,12 @@ from typing import Callable, Optional, cast
 import jsonschema
 import jsonschema.validators
 
-from keboola_mcp_server.client import (
-    ORCHESTRATOR_COMPONENT_ID,
-    FlowType,
+from keboola_mcp_server.clients.base import (
     JsonDict,
     JsonPrimitive,
     JsonStruct,
 )
+from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
 from keboola_mcp_server.tools.components.model import Component
 from keboola_mcp_server.tools.components.utils import BIGQUERY_TRANSFORMATION_ID, SNOWFLAKE_TRANSFORMATION_ID
 
