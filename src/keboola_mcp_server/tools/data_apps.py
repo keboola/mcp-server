@@ -56,12 +56,14 @@ def add_data_app_tools(mcp: FastMCP) -> None:
 
 
 # State of the data app
-State = Literal['created', 'running', 'stopped']
-# Accepts known states or any string, as unknown states are not considered errors for llm
+State = Literal['created', 'running', 'stopped', 'starting', 'stopping']
+# Accepts known states or any string preventing from validation errors when receiving unknown states from the API
+# LLM agent can still understand the state of the data app even if it is different from the known states
 SafeState = Union[State, str]
 # Type of the data app
 Type = Literal['streamlit']
-# Accepts known types or any string, as unknown types are not considered errors for llm
+# Accepts known types or any string preventing from validation errors when receiving unknown types from the API
+# LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
 
 
@@ -191,7 +193,7 @@ class DataApp(BaseModel):
         self.deployment_info = DeploymentInfo(
             version=self.config_version,
             state=self.state,
-            url=self.deployment_url,
+            url=self.deployment_url or 'deployment link not available yet',
             logs=logs,
         )
         return self
@@ -351,28 +353,42 @@ async def get_data_apps(
     links_manager = await ProjectLinksManager.from_client(client)
 
     if configuration_ids:
-        # Get details of the data apps by their configuration IDs
-        async def _fetch_data_app_task(client: KeboolaClient, configuration_id: str) -> DataApp:
-            data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-            links = links_manager.get_data_app_links(
-                configuration_id=data_app.configuration_id,
-                configuration_name=data_app.name,
-                deployment_link=data_app.deployment_url,
-                is_authorized=data_app.is_authorized,
-            )
-            logs = await _fetch_logs(client, data_app.data_app_id)
-            return data_app.with_links(links).with_deployment_info(logs)
+        # Get details of the data apps by their configuration IDs using 10 parallel requests at a time to not overload
+        # the API
+        async def _fetch_data_app_task(client: KeboolaClient, configuration_id: str) -> DataApp | str:
+            """Task fetching data app details with logs and links by configuration ID.
+            :param client: The Keboola client
+            :param configuration_id: The ID of the data app configuration
+            :return: The data app details or the configuration ID if the data app is not found
+            """
+            try:
+                data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+                links = links_manager.get_data_app_links(
+                    configuration_id=data_app.configuration_id,
+                    configuration_name=data_app.name,
+                    deployment_link=data_app.deployment_url,
+                    is_authorized=data_app.is_authorized,
+                )
+                logs = await _fetch_logs(client, data_app.data_app_id)
+                return data_app.with_links(links).with_deployment_info(logs)
+            except Exception:
+                return configuration_id
 
-        data_app_details: list[DataApp] = []
+        data_app_details: list[DataApp | str] = []
         batch_size = 10  # fetching 10 data apps details at a time to not overload the API
         for current_batch in range(0, len(configuration_ids), batch_size):
             batch_ids = configuration_ids[current_batch : current_batch + batch_size]
             data_app_details.extend(
                 await asyncio.gather(
-                    *(_fetch_data_app_task(client, configuration_id) for configuration_id in batch_ids),
+                    *(_fetch_data_app_task(client, configuration_id) for configuration_id in batch_ids)
                 )
             )
-        return GetDataAppsOutput(data_apps=data_app_details)
+        found_data_apps: list[DataApp] = [dap for dap in data_app_details if isinstance(dap, DataApp)]
+        not_found_ids: list[str] = [dap for dap in data_app_details if isinstance(dap, str)]
+        if not_found_ids:
+            await ctx.log(f'Could not find Data Apps Configurations for IDs: {not_found_ids}', 'error')
+            logging.error(f'Could not find Data Apps Configurations for IDs: {not_found_ids}')
+        return GetDataAppsOutput(data_apps=found_data_apps)
     else:
         # List all data apps in the project
         data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
