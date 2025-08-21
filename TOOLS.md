@@ -44,9 +44,9 @@ filtering.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
+- [deploy_data_app](#deploy_data_app): Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing its configuration IDs.
-- [manage_data_app](#manage_data_app): Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
 - [modify_data_app](#modify_data_app): Creates or updates a Streamlit data
 
 Considerations:
@@ -879,6 +879,45 @@ EXAMPLES:
 ---
 
 # Other Tools
+<a name="deploy_data_app"></a>
+## deploy_data_app
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "action": {
+      "description": "The action to perform.",
+      "enum": [
+        "deploy",
+        "stop"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the data app configuration.",
+      "title": "Configuration Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "action",
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="get_data_apps"></a>
 ## get_data_apps
 **Annotations**: `read-only`
@@ -927,45 +966,6 @@ Considerations:
 ```
 
 ---
-<a name="manage_data_app"></a>
-## manage_data_app
-**Annotations**: 
-
-**Tags**: `data-apps`
-
-**Description**:
-
-Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "action": {
-      "description": "The action to perform.",
-      "enum": [
-        "deploy",
-        "stop"
-      ],
-      "title": "Action",
-      "type": "string"
-    },
-    "configuration_id": {
-      "description": "The ID of the data app configuration.",
-      "title": "Configuration Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "action",
-    "configuration_id"
-  ],
-  "type": "object"
-}
-```
-
----
 <a name="modify_data_app"></a>
 ## modify_data_app
 **Annotations**: `destructive`
@@ -982,9 +982,9 @@ Considerations:
 query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
 - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
 `query_data` tool to inspect the data in the workspace before using it in the data app.
-- If you're updating an existing data app, provide the `configuration_id` parameter. In this case, all existing
-parameters must either be preserved or explicitly updated. If the data app is deployed, it needs to be redeployed
-to apply the changes.
+- If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
+parameter.
+- If the data app is deployed and is updated, it needs to be redeployed to apply the changes.
 
 
 **Input JSON Schema**:
@@ -1007,7 +1007,7 @@ to apply the changes.
       "type": "string"
     },
     "packages": {
-      "description": "Python packages used in the source code necessary to be installed.",
+      "description": "Python packages used in the source code necessary to be installed with pip, versioning is supported.",
       "items": {
         "type": "string"
       },
@@ -1024,6 +1024,12 @@ to apply the changes.
       "default": "",
       "description": "The ID of existing data app configuration when updating, otherwise empty string.",
       "title": "Configuration Id",
+      "type": "string"
+    },
+    "change_description": {
+      "default": "",
+      "description": "The description of the change when updating (e.g. \"Update Code\"), otherwise empty string.",
+      "title": "Change Description",
       "type": "string"
     }
   },
