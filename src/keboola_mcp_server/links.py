@@ -2,7 +2,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, FlowType, KeboolaClient
+from keboola_mcp_server.clients.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    FlowType,
+    KeboolaClient,
+)
 
 URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
 
@@ -94,6 +98,40 @@ class ProjectLinksManager:
             ),
             self.get_config_dashboard_link(component_id=component_id, component_name=component_id),
         ]
+
+    # --- Data Apps ---
+    def get_data_app_config_link(self, configuration_id: str, configuration_name: str, is_authorized: bool) -> Link:
+        title = (
+            f'Data App Configuration (To see password, click on "OPEN DATA APP"): {configuration_name}'
+            if is_authorized
+            else f'Data App Configuration: {configuration_name}'
+        )
+        return Link.detail(title=title, url=self._url(f'data-apps/{configuration_id}'))
+
+    def get_data_app_dashboard_link(self) -> Link:
+        return Link.dashboard(title='Data Apps in the project', url=self._url('data-apps'))
+
+    def get_data_app_deployment_link(self, deployment_link: str) -> Link:
+        return Link.detail(title='Data App Deployment', url=deployment_link)
+
+    def get_data_app_links(
+        self,
+        configuration_id: str,
+        configuration_name: str,
+        deployment_link: str | None = None,
+        is_authorized: bool = False,
+    ) -> list[Link]:
+        links = [
+            self.get_data_app_config_link(
+                configuration_id=configuration_id,
+                configuration_name=configuration_name,
+                is_authorized=is_authorized,
+            ),
+            self.get_data_app_dashboard_link(),
+        ]
+        if deployment_link:
+            links.append(self.get_data_app_deployment_link(deployment_link))
+        return links
 
     # --- Transformations ---
     def get_transformations_dashboard_link(self) -> Link:
