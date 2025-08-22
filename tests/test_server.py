@@ -11,7 +11,7 @@ from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
@@ -39,18 +39,19 @@ class TestServer:
             'create_flow',
             'create_oauth_url',
             'create_sql_transformation',
+            'deploy_data_app',
             'docs_query',
             'find_component_id',
             'get_bucket',
             'get_component',
             'get_config',
             'get_config_examples',
+            'get_data_apps',
             'get_flow',
             'get_flow_examples',
             'get_flow_schema',
             'get_job',
             'get_project_info',
-            'get_sql_dialect',
             'get_table',
             'list_buckets',
             'list_configs',
@@ -58,6 +59,7 @@ class TestServer:
             'list_jobs',
             'list_tables',
             'list_transformations',
+            'modify_data_app',
             'query_data',
             'run_job',
             'search',
@@ -103,7 +105,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info', 'get_sql_dialect', 'list_buckets']
+        assert missing_properties == ['get_project_info', 'list_buckets']
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()
@@ -163,7 +165,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     os_mock.environ = envs
 
     mocker.patch(
-        'keboola_mcp_server.client.AsyncStorageClient.verify_token',
+        'keboola_mcp_server.clients.client.AsyncStorageClient.verify_token',
         return_value={'owner': {'features': ['global-search', 'waii-integration', 'hide-conditional-flows']}},
     )
 
@@ -217,7 +219,7 @@ async def test_keboola_injection_and_lifespan(
 
     mocker.patch('keboola_mcp_server.server.os.environ', os_environ_params)
     mocker.patch(
-        'keboola_mcp_server.client.AsyncStorageClient.verify_token',
+        'keboola_mcp_server.clients.client.AsyncStorageClient.verify_token',
         return_value={'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}},
     )
 
@@ -300,7 +302,6 @@ async def test_tool_annotations_and_tags():
         ('get_flow_schema', True, None, None, {FLOW_TOOLS_TAG}),
         # sql
         ('query_data', True, None, None, {SQL_TOOLS_TAG}),
-        ('get_sql_dialect', True, None, None, {SQL_TOOLS_TAG}),
         # jobs
         ('get_job', True, None, None, {JOB_TOOLS_TAG}),
         ('list_jobs', True, None, None, {JOB_TOOLS_TAG}),

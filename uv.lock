@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -926,9 +926,10 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "1.18.1"
+version = "1.19.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "json-log-formatter" },
@@ -970,6 +971,7 @@ tests = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'codestyle'", specifier = "~=25.1" },
+    { name = "cryptography", specifier = "~=45.0" },
     { name = "fastmcp", specifier = "==2.10.6" },
     { name = "flake8", marker = "extra == 'codestyle'", specifier = "~=7.2" },
     { name = "flake8-bugbear", marker = "extra == 'codestyle'", specifier = "~=24.12" },

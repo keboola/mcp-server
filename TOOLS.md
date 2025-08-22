@@ -43,11 +43,19 @@ filtering.
 ### OAuth Tools
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
+### Other Tools
+- [deploy_data_app](#deploy_data_app): Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
+- [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
+providing its configuration IDs.
+- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data
+
+Considerations:
+- The `source_code` parameter must be a complete and runnable Streamlit app.
+
 ### Project Tools
 - [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
 
 ### SQL Tools
-- [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
 - [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
 
 ### Search Tools
@@ -869,6 +877,173 @@ EXAMPLES:
 
 ---
 
+# Other Tools
+<a name="deploy_data_app"></a>
+## deploy_data_app
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "action": {
+      "description": "The action to perform.",
+      "enum": [
+        "deploy",
+        "stop"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the data app configuration.",
+      "title": "Configuration Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "action",
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_data_apps"></a>
+## get_data_apps
+**Annotations**: `read-only`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
+providing its configuration IDs.
+
+Considerations:
+- If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
+- If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+- Data App details contain configurations, deployment info along with logs and links to the data app dashboard.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_ids": {
+      "default": [],
+      "description": "The IDs of the data app configurations.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Configuration Ids",
+      "type": "array"
+    },
+    "limit": {
+      "default": 100,
+      "description": "The limit of the data apps to fetch.",
+      "title": "Limit",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "The offset of the data apps to fetch.",
+      "title": "Offset",
+      "type": "integer"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="modify_data_app"></a>
+## modify_data_app
+**Annotations**: `destructive`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Creates or updates a Streamlit data
+
+Considerations:
+- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
+`{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function accepts a string of SQL
+query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
+- Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
+`query_data` tool to inspect the data in the workspace before using it in the data app.
+- If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
+parameter.
+- If the data app is deployed and is updated, it needs to be redeployed to apply the changes.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "Name of the data app.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "Description of the data app.",
+      "title": "Description",
+      "type": "string"
+    },
+    "source_code": {
+      "description": "Complete Python/Streamlit source code for the data app.",
+      "title": "Source Code",
+      "type": "string"
+    },
+    "packages": {
+      "description": "Python packages used in the source code that will be installed by `pip install` into the environment before the code runs. For example: [\"pandas\", \"requests~=2.32\"].",
+      "items": {
+        "type": "string"
+      },
+      "title": "Packages",
+      "type": "array"
+    },
+    "authorization_required": {
+      "default": false,
+      "description": "Whether the data app is authorized using simple password or not.",
+      "title": "Authorization Required",
+      "type": "boolean"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "The ID of existing data app configuration when updating, otherwise empty string.",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "change_description": {
+      "default": "",
+      "description": "The description of the change when updating (e.g. \"Update Code\"), otherwise empty string.",
+      "title": "Change Description",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "source_code",
+    "packages"
+  ],
+  "type": "object"
+}
+```
+
+---
+
 # Documentation Tools
 <a name="docs_query"></a>
 ## docs_query
@@ -1654,26 +1829,6 @@ Considerations:
 ---
 
 # SQL Tools
-<a name="get_sql_dialect"></a>
-## get_sql_dialect
-**Annotations**: `read-only`
-
-**Tags**: `sql`
-
-**Description**:
-
-Gets the name of the SQL dialect used by Keboola project's underlying database.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
 <a name="query_data"></a>
 ## query_data
 **Annotations**: `read-only`
@@ -1686,7 +1841,7 @@ Executes an SQL SELECT query to get the data from the underlying database.
 
 CRITICAL SQL REQUIREMENTS:
 
-* ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
+* ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
 * Do not include any comments in the SQL code
 
 DIALECT-SPECIFIC REQUIREMENTS:

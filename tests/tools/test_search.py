@@ -5,7 +5,8 @@ import pytest
 from fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.client import GlobalSearchResponse, KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import GlobalSearchResponse
 from keboola_mcp_server.tools.search import (
     DEFAULT_GLOBAL_SEARCH_LIMIT,
     GlobalSearchOutput,

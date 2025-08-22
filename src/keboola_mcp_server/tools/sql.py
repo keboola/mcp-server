@@ -32,22 +32,7 @@ def add_sql_tools(mcp: FastMCP) -> None:
             tags={SQL_TOOLS_TAG},
         )
     )
-    mcp.add_tool(
-        FunctionTool.from_function(
-            get_sql_dialect,
-            annotations=ToolAnnotations(readOnlyHint=True),
-            tags={SQL_TOOLS_TAG},
-        )
-    )
     LOG.info('SQL tools added to the MCP server.')
-
-
-@tool_errors()
-async def get_sql_dialect(
-    ctx: Context,
-) -> Annotated[str, Field(description='The SQL dialect of the project database')]:
-    """Gets the name of the SQL dialect used by Keboola project's underlying database."""
-    return await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
 
 
 @tool_errors()
@@ -70,7 +55,7 @@ async def query_data(
 
     CRITICAL SQL REQUIREMENTS:
 
-    * ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
+    * ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
     * Do not include any comments in the SQL code
 
     DIALECT-SPECIFIC REQUIREMENTS:

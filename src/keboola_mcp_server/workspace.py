@@ -9,7 +9,7 @@ from httpx import HTTPStatusError
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 
 LOG = logging.getLogger(__name__)
 
@@ -422,3 +422,7 @@ class WorkspaceManager:
     async def get_sql_dialect(self) -> str:
         workspace = await self._get_workspace()
         return workspace.get_sql_dialect()
+
+    async def get_workspace_id(self) -> int:
+        workspace = await self._get_workspace()
+        return workspace.id
