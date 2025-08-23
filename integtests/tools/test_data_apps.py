@@ -190,7 +190,7 @@ async def test_data_app_lifecycle(
             'packages': ['streamlit'],
             'authorization_required': False,
             'configuration_id': configuration_id,
-            'change_description': 'Update Code'
+            'change_description': 'Update Code',
         },
     )
     # Check updated app basic details
