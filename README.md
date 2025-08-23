@@ -330,8 +330,7 @@ What buckets and tables are in my Keboola project?
 | | `list_buckets` | Retrieves all buckets in the project |
 | | `list_tables` | Retrieves all tables in a specific bucket |
 | | `update_description` | Updates description for a bucket, table, or column |
-| **SQL** | `get_sql_dialect` | Returns the SQL dialect used by the workspace |
-| | `query_data` | Executes a SELECT query against the underlying database |
+| **SQL** | `query_data` | Executes a SELECT query against the underlying database |
 | **Component** | `add_config_row` | Creates a configuration row for a component configuration |
 | | `create_config` | Creates a root component configuration |
 | | `create_sql_transformation` | Creates an SQL transformation from one or more SQL code blocks |
