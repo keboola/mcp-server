@@ -130,8 +130,8 @@ class ProjectLinksManager:
     def get_table_detail_link(self, bucket_id: str, table_name: str) -> Link:
         return Link.detail(title=f'Table: {table_name}', url=self._url(f'storage/{bucket_id}/table/{table_name}'))
 
-    def get_table_links(self, bucket_id: str, table_name: str) -> list[Link]:
+    def get_table_links(self, bucket_id: str, bucket_name: str, table_name: str) -> list[Link]:
         return [
             self.get_table_detail_link(bucket_id, table_name),
-            self.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id),
+            self.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_name),
         ]

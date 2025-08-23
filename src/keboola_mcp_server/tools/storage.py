@@ -114,6 +114,7 @@ class BucketDetail(BaseModel):
         default=None, exclude=True, description='The ID of the branch the bucket belongs to.'
     )
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
+    # TODO: add prod_name too to strip the '{branch_id}-' prefix from the name'
 
     def shade_by(self, other: 'BucketDetail', branch_id: str, links: list[Link] | None = None) -> 'BucketDetail':
         if self.branch_id:
@@ -229,10 +230,28 @@ class TableDetail(BaseModel):
     )
     links: list[Link] | None = Field(default=None, description='The links relevant to the table.')
 
+    # these are internal fields not meant to be exposed to LLMs
+    branch_id: Optional[str] = Field(
+        default=None, exclude=True, description='The ID of the branch the bucket belongs to.'
+    )
+    prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
+
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
         values['description'] = _extract_description(values)
+        return values
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_branch_id(cls, values: dict[str, Any]) -> dict[str, Any]:
+        branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if branch_id:
+            values['branch_id'] = branch_id
+            values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
+        else:
+            values['branch_id'] = None
+            values['prod_id'] = values['id']
         return values
 
 
@@ -248,7 +267,7 @@ class UpdateDescriptionOutput(BaseModel):
     links: Optional[list[Link]] = Field(None, description='Links relevant to the description update.')
 
 
-async def _find_bucket(client: AsyncStorageClient, bucket_id: str) -> JsonDict | None:
+async def _get_bucket_detail(client: AsyncStorageClient, bucket_id: str) -> JsonDict | None:
     try:
         return await client.bucket_detail(bucket_id)
     except httpx.HTTPStatusError as e:
@@ -257,32 +276,46 @@ async def _find_bucket(client: AsyncStorageClient, bucket_id: str) -> JsonDict |
         raise
 
 
-@tool_errors()
-async def get_bucket(
-    bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
-) -> BucketDetail:
-    """Gets detailed information about a specific bucket."""
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-    assert isinstance(client, KeboolaClient)
+async def _get_table_detail(client: AsyncStorageClient, table_id: str) -> JsonDict | None:
+    try:
+        return await client.table_detail(table_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return None
+        raise
 
+
+async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDetail | None, BucketDetail | None]:
     prod_bucket: BucketDetail | None = None
-    raw_bucket = await _find_bucket(client.storage_client, bucket_id)
-    if raw_bucket:
-        prod_bucket = BucketDetail.model_validate(raw_bucket)
-        if prod_bucket.branch_id:
-            # The bucket_id should be from the prod branch; if it is not pretend the bucket does not exist.
-            raise ValueError(f'Bucket not found: {bucket_id}')
-
     dev_bucket: BucketDetail | None = None
+
+    if raw := await _get_bucket_detail(client.storage_client, bucket_id):
+        bucket = BucketDetail.model_validate(raw)
+        if not bucket.branch_id:
+            prod_bucket = bucket
+        elif bucket.branch_id == client.branch_id:
+            dev_bucket = bucket
+
     if client.branch_id:
-        dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
-        raw_bucket = await _find_bucket(client.storage_client, dev_id)
-        if raw_bucket:
-            dev_bucket = BucketDetail.model_validate(raw_bucket)
-            if dev_bucket.branch_id != client.branch_id:
-                # The bucket's branch ID does not match; pretend the bucket does not exist.
-                raise ValueError(f'Bucket not found: {bucket_id}')
+        if not dev_bucket:
+            dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
+            if raw := await _get_bucket_detail(client.storage_client, dev_id):
+                bucket = BucketDetail.model_validate(raw)
+                if bucket.branch_id == client.branch_id:
+                    dev_bucket = bucket
+
+        if not prod_bucket and f'.c-{client.branch_id}-' in bucket_id:
+            prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
+            if raw := await _get_bucket_detail(client.storage_client, prod_id):
+                bucket = BucketDetail.model_validate(raw)
+                if not bucket.branch_id:
+                    prod_bucket = bucket
+
+    return prod_bucket, dev_bucket
+
+
+async def _combine_buckets(client: KeboolaClient, prod_bucket: BucketDetail, dev_bucket: BucketDetail) -> BucketDetail:
+    links_manager = await ProjectLinksManager.from_client(client)
 
     if prod_bucket and dev_bucket:
         # generate a URL link to the dev bucket but with the prod bucket's name
@@ -295,9 +328,24 @@ async def get_bucket(
         links = links_manager.get_bucket_links(dev_bucket.id, dev_bucket.name or dev_bucket.id)
         bucket = dev_bucket.model_copy(update={'id': dev_bucket.prod_id, 'branch_id': None, 'links': links})
     else:
-        raise ValueError(f'Bucket not found: {bucket_id}')
+        raise ValueError('No buckets specified.')
 
     return bucket
+
+
+@tool_errors()
+async def get_bucket(
+    bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
+) -> BucketDetail:
+    """Gets detailed information about a specific bucket."""
+    client = KeboolaClient.from_state(ctx.session.state)
+    assert isinstance(client, KeboolaClient)
+
+    prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
+    if not prod_bucket and not dev_bucket:
+        raise ValueError(f'Bucket not found: {bucket_id}')
+    else:
+        return await _combine_buckets(client, prod_bucket, dev_bucket)
 
 
 @tool_errors()
@@ -327,16 +375,13 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
             else:
                 prod_bucket = b
 
-        if prod_bucket and dev_buckets:
-            # there should only be one dev branch bucket in each group
-            buckets.append(prod_bucket.shade_by(dev_buckets[0], client.branch_id))
-        elif prod_bucket:
-            buckets.append(prod_bucket)
-        elif dev_buckets:
-            buckets.append(dev_buckets[0].model_copy(update={'id': prod_id, 'branch_id': None}))
-        else:
+        if not prod_bucket and not dev_buckets:
             # should not happen
             raise Exception(f'No buckets in the group: prod_id={prod_id}')
+
+        else:
+            bucket = await _combine_buckets(client, prod_bucket, next(iter(dev_buckets), None))
+            buckets.append(bucket.model_copy(update={'links': None}))  # no links when listing buckets
 
     return ListBucketsOutput(buckets=buckets, links=[links_manager.get_bucket_dashboard_link()])
 
@@ -347,13 +392,35 @@ async def get_table(
 ) -> TableDetail:
     """Gets detailed information about a specific table including its DB identifier and column information."""
     client = KeboolaClient.from_state(ctx.session.state)
+
+    prod_table: JsonDict | None = await _get_table_detail(client.storage_client, table_id)
+    if prod_table:
+        branch_id = get_metadata_property(prod_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if branch_id:
+            # The table should be from the prod branch; pretend that the table does not exist.
+            prod_table = None
+
+    dev_table: JsonDict | None = None
+    if client.branch_id:
+        dev_id = table_id.replace('c-', f'c-{client.branch_id}-')
+        dev_table = await _get_table_detail(client.storage_client, dev_id)
+        if dev_table:
+            branch_id = get_metadata_property(dev_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+            if branch_id != client.branch_id:
+                # The table's branch ID does not match; pretend that the table does not exist.
+                dev_table = None
+
+    raw_table = dev_table or prod_table
+    if not raw_table:
+        raise ValueError(f'Table not found: {table_id}')
+
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    raw_table = await client.storage_client.table_detail(table_id)
     raw_columns = cast(list[str], raw_table.get('columns', []))
     raw_column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))
     raw_primary_key = cast(list[str], raw_table.get('primaryKey', []))
+    sql_dialect = await workspace_manager.get_sql_dialect()
 
     column_info = []
     for col_name in raw_columns:
@@ -364,7 +431,6 @@ async def get_table(
             nullable = raw_nullable.lower() in ['1', 'yes', 'true']
         else:
             # default values for untyped columns
-            sql_dialect = await workspace_manager.get_sql_dialect()
             native_type = 'STRING' if sql_dialect == 'BigQuery' else 'VARCHAR'
             nullable = col_name not in raw_primary_key
 
@@ -377,16 +443,24 @@ async def get_table(
             )
         )
 
-    table_fqn = await workspace_manager.get_table_fqn(raw_table)
     bucket_info = cast(dict[str, Any], raw_table.get('bucket', {}))
     bucket_id = cast(str, bucket_info.get('id', ''))
-    table_name = cast(str, raw_table.get('name', ''))
-    links = links_manager.get_table_links(bucket_id, table_name)
+    prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
+    bucket = await _combine_buckets(client, prod_bucket, dev_bucket)
 
-    return TableDetail.model_validate(
+    table_fqn = await workspace_manager.get_table_fqn(raw_table)
+    table_name = cast(str, raw_table.get('name', ''))
+    links = links_manager.get_table_links(bucket_id, bucket.name, table_name)
+
+    table = TableDetail.model_validate(
         raw_table
-        | {'columns': column_info, 'fully_qualified_name': table_fqn.identifier if table_fqn else None, 'links': links}
+        | {
+            'columns': column_info,
+            'fully_qualified_name': table_fqn.identifier if table_fqn else None,
+            'links': links,
+        }
     )
+    return table.model_copy(update={'id': table.prod_id, 'branch_id': None})
 
 
 @tool_errors()
@@ -395,16 +469,27 @@ async def list_tables(
 ) -> ListTablesOutput:
     """Retrieves all tables in a specific bucket with their basic information."""
     client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
+    prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
+
     # TODO: requesting "metadata" to get the table description;
     #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
     #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
-    raw_tables = await client.storage_client.bucket_table_list(bucket_id, include=['metadata'])
 
-    return ListTablesOutput(
-        tables=[TableDetail.model_validate(raw_table) for raw_table in raw_tables],
-        links=[links_manager.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id)],
-    )
+    tables_by_prod_id: dict[str, TableDetail] = {}
+    if prod_bucket:
+        raw_table_data = await client.storage_client.bucket_table_list(prod_bucket.id, include=['metadata'])
+        for raw in raw_table_data:
+            table = TableDetail.model_validate(raw)
+            tables_by_prod_id[table.prod_id] = table
+
+    if dev_bucket:
+        raw_table_data = await client.storage_client.bucket_table_list(dev_bucket.id, include=['metadata'])
+        for raw in raw_table_data:
+            table = TableDetail.model_validate(raw)
+            tables_by_prod_id[table.prod_id] = table.model_copy(update={'id': table.prod_id, 'branch_id': None})
+
+    bucket = await _combine_buckets(client, prod_bucket, dev_bucket)
+    return ListTablesOutput(tables=list(tables_by_prod_id.values()), links=bucket.links)
 
 
 @tool_errors()
