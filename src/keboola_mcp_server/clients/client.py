@@ -4,6 +4,7 @@ import importlib.metadata
 import logging
 import os
 from typing import Any, Literal, Mapping, Optional, Sequence, TypeVar
+from urllib.parse import urlparse, urlunparse
 
 from keboola_mcp_server.clients.ai_service import AIServiceClient
 from keboola_mcp_server.clients.data_science import DataScienceClient
@@ -53,13 +54,6 @@ class KeboolaClient:
     """Class holding clients for Keboola APIs: Storage API, Job Queue API, and AI Service."""
 
     STATE_KEY = 'sapi_client'
-    # Prefixes for the storage and queue API URLs, we do not use http:// or https:// here since we split the storage
-    # api url by `connection` word
-    _PREFIX_STORAGE_API_URL = 'connection.'
-    _PREFIX_QUEUE_API_URL = 'https://queue.'
-    _PREFIX_AISERVICE_API_URL = 'https://ai.'
-    _PREFIX_DATA_SCIENCE_API_URL = 'https://data-science.'
-    _PREFIX_ENCRYPTION_API_URL = 'https://encryption.'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'KeboolaClient':
@@ -67,50 +61,102 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
-    def __init__(self, storage_api_token: str, storage_api_url: str, bearer_token: str | None = None) -> None:
+    def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
+        if branch_id == self.branch_id:
+            return self
+        else:
+            return KeboolaClient(
+                storage_api_url=self.storage_api_url,
+                storage_api_token=self.token,
+                bearer_token=self._bearer_token,
+                branch_id=branch_id,
+            )
+
+    def __init__(
+        self,
+        *,
+        storage_api_url: str,
+        storage_api_token: str,
+        bearer_token: str | None = None,
+        branch_id: str | None = None,
+    ) -> None:
         """
         Initialize the client.
 
         :param storage_api_token: Keboola Storage API token
         :param storage_api_url: Keboola Storage API URL
         :param bearer_token: The access token issued by Keboola OAuth server
+        :param branch_id: Keboola branch ID
         """
-        self.token = storage_api_token
-        # Ensure the base URL has a scheme
-        if not storage_api_url.startswith(('http://', 'https://')):
-            storage_api_url = f'https://{storage_api_url}'
+        self._token = storage_api_token
+        self._bearer_token = bearer_token
+        self._branch_id = branch_id
 
-        # Construct the queue API URL from the storage API URL expecting the following format:
-        # https://connection.REGION.keboola.com
-        # Remove the prefix from the storage API URL https://connection.REGION.keboola.com -> REGION.keboola.com
-        # and add the prefix for the queue API https://queue.REGION.keboola.com
-        queue_api_url = f'{self._PREFIX_QUEUE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
-        ai_service_api_url = f'{self._PREFIX_AISERVICE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
-        data_science_api_url = (
-            f'{self._PREFIX_DATA_SCIENCE_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
-        )
-        encryption_api_url = (
-            f'{self._PREFIX_ENCRYPTION_API_URL}{storage_api_url.split(self._PREFIX_STORAGE_API_URL)[1]}'
-        )
+        sapi_url_parsed = urlparse(storage_api_url)
+        if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
+            raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
+
+        hostname_suffix = sapi_url_parsed.hostname.split('connection.')[1]
+        self._storage_api_url = urlunparse(('https', f'connection.{hostname_suffix}', '', '', '', ''))
+        queue_api_url = urlunparse(('https', f'queue.{hostname_suffix}', '', '', '', ''))
+        ai_service_api_url = urlunparse(('https', f'ai.{hostname_suffix}', '', '', '', ''))
+        data_science_api_url = urlunparse(('https', f'data-science.{hostname_suffix}', '', '', '', ''))
+        encryption_api_url = urlunparse(('https', f'encryption.{hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
-        bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else storage_api_token
-        self.storage_client = AsyncStorageClient.create(
-            root_url=storage_api_url, token=bearer_or_sapi_token, headers=self._get_headers()
+        bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
+        self._storage_client = AsyncStorageClient.create(
+            root_url=self._storage_api_url, token=bearer_or_sapi_token, branch_id=branch_id, headers=self._get_headers()
         )
-        self.jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url, token=self.token, headers=self._get_headers()
+        self._jobs_queue_client = JobsQueueClient.create(
+            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._get_headers()
         )
-        self.ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self.token, headers=self._get_headers()
+        self._ai_service_client = AIServiceClient.create(
+            root_url=ai_service_api_url, token=self._token, headers=self._get_headers()
         )
-        self.data_science_client = DataScienceClient.create(
-            root_url=data_science_api_url, token=self.token, headers=self._get_headers()
+        self._data_science_client = DataScienceClient.create(
+            root_url=data_science_api_url, token=self.token, branch_id=branch_id, headers=self._get_headers()
         )
         # The encryption service does not require an authorization header, so we pass None as the token
-        self.encryption_client = EncryptionClient.create(
+        self._encryption_client = EncryptionClient.create(
             root_url=encryption_api_url, token=None, headers=self._get_headers()
         )
+
+    @property
+    def storage_api_url(self) -> str:
+        return self._storage_api_url
+
+    @property
+    def token(self) -> str:
+        return self._token
+
+    @property
+    def branch_id(self) -> str | None:
+        """
+        Gets ID of the Keboola branch that the MCP server is bound to or None if it's bound
+        to the main/production branch.
+        """
+        return self._branch_id
+
+    @property
+    def storage_client(self) -> 'AsyncStorageClient':
+        return self._storage_client
+
+    @property
+    def jobs_queue_client(self) -> 'JobsQueueClient':
+        return self._jobs_queue_client
+
+    @property
+    def ai_service_client(self) -> 'AIServiceClient':
+        return self._ai_service_client
+
+    @property
+    def data_science_client(self) -> 'DataScienceClient':
+        return self._data_science_client
+
+    @property
+    def encryption_client(self) -> 'EncryptionClient':
+        return self._encryption_client
 
     @classmethod
     def _get_user_agent(cls) -> str:

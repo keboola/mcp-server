@@ -64,11 +64,19 @@ async def initial_data_app(ds_client: DataScienceClient, unique_id: str) -> Asyn
         if data_app:
             for _ in range(2):  # Delete configuration 2 times (from storage and then from temporal bin)
                 try:
+                    # TODO: this does not work
+                    #  httpx.HTTPStatusError: Client error '400 Bad Request'
+                    #    for url 'https://data-science.keboola.com/apps/1265341721'
+                    #  For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400
+                    #  API error: App "1265341721" can't have desired state "deleted".
+                    #  Currently is in state: "starting", desired state: "running"
                     await ds_client.delete_data_app(data_app.id)
                 except Exception as e:
                     LOG.exception(f'Failed to delete data app: {e}')
+                    raise
 
 
+@pytest.mark.skip('This test does not work. It leaves DataApps behind and starts failing when there is >100 of them.')
 @pytest.mark.asyncio
 async def test_create_and_fetch_data_app(
     ds_client: DataScienceClient, initial_data_app: DataAppResponse, keboola_client: KeboolaClient
@@ -86,13 +94,13 @@ async def test_create_and_fetch_data_app(
     assert response.id == created.id
 
     # Fetch the data app from data science
-    fethced_ds = await ds_client.get_data_app(created.id)
-    assert fethced_ds.id == created.id
-    assert fethced_ds.type == created.type
-    assert fethced_ds.component_id == created.component_id
-    assert fethced_ds.project_id == created.project_id
-    assert fethced_ds.config_id == created.config_id
-    assert fethced_ds.config_version == created.config_version
+    fetched_ds = await ds_client.get_data_app(created.id)
+    assert fetched_ds.id == created.id
+    assert fetched_ds.type == created.type
+    assert fetched_ds.component_id == created.component_id
+    assert fetched_ds.project_id == created.project_id
+    assert fetched_ds.config_id == created.config_id
+    assert fetched_ds.config_version == created.config_version
 
     # Fetch the data app config from storage
     fetched_s = await keboola_client.storage_client.configuration_detail(
@@ -106,7 +114,7 @@ async def test_create_and_fetch_data_app(
     assert 'parameters' in fetched_s['configuration']
     assert isinstance(fetched_s['configuration']['parameters'], dict)
     assert 'id' in fetched_s['configuration']['parameters']
-    assert fethced_ds.id == fetched_s['configuration']['parameters']['id']
+    assert fetched_ds.id == fetched_s['configuration']['parameters']['id']
 
     # Fetch the all data apps and check if the created data app is in the list
     data_apps = await ds_client.list_data_apps()

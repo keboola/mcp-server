@@ -25,7 +25,7 @@ async def test_create_oauth_url_success(mcp_context_client: Context, mock_token_
     # Mock the storage client's token_create method to return the token response
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.token_create.return_value = mock_token_response
-    keboola_client.storage_client.base_api_url = 'https://connection.test.keboola.com'
+    keboola_client.storage_api_url = 'https://connection.test.keboola.com'
 
     component_id = 'keboola.ex-google-analytics-v4'
     config_id = 'config-123'
@@ -70,7 +70,6 @@ async def test_create_oauth_url_different_components(
     # Mock the storage client
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.token_create.return_value = mock_token_response
-    keboola_client.storage_client.base_api_url = 'https://connection.test.keboola.com'
 
     result = await create_oauth_url(component_id=component_id, config_id=config_id, ctx=mcp_context_client)
 

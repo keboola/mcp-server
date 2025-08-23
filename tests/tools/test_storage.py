@@ -55,28 +55,154 @@ def _get_sapi_table() -> dict[str, Any]:
     }
 
 
-@pytest.fixture
-def mock_buckets() -> Sequence[Mapping[str, Any]]:
-    """Fixture for mock bucket data."""
+def _get_sapi_buckets() -> list[dict[str, Any]]:
     return [
+        # foo bucket in the production branch
         {
-            'id': 'bucket1',
-            'name': 'Test Bucket 1',
-            'display_name': 'test-bucket-1-display-name',
-            'description': 'A test bucket',
-            'stage': 'production',
-            'created': '2024-01-01T00:00:00Z',
-            'table_count': 5,
-            'data_size_bytes': 1024,
+            'uri': 'https://connection.keboola.com/v2/storage/buckets/in.c-foo',
+            'id': 'in.c-foo',
+            'name': 'c-foo',
+            'displayName': 'foo',
+            'idBranch': 792027,
+            'stage': 'in',
+            'description': 'The foo bucket.',
+            'tables': 'https://connection.keboola.com/v2/storage/buckets/in.c-foo',
+            'created': '2025-07-03T11:02:54+0200',
+            'lastChangeDate': '2025-08-17T07:37:42+0200',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 1024,
+            'rowsCount': 5,
+            'isMaintenance': False,
+            'backend': 'snowflake',
+            'sharing': None,
+            'hasExternalSchema': False,
+            'databaseName': '',
+            'path': 'in.c-foo',
+            'isSnowflakeSharedDatabase': False,
+            'color': None,
+            'owner': None,
+            'metadata': [
+                {
+                    'id': '1725811315',
+                    'key': 'KBC.createdBy.component.id',
+                    'value': 'ex-generic-v2',
+                    'provider': 'system',
+                    'timestamp': '2025-07-03T11:02:56+0200',
+                },
+                {
+                    'id': '1725811316',
+                    'key': 'KBC.createdBy.configuration.id',
+                    'value': '0123456789deadbee',
+                    'provider': 'system',
+                    'timestamp': '2025-07-03T11:02:56+0200',
+                },
+            ],
+        },
+        # foo bucket in the dev branch
+        {
+            'uri': 'https://connection.keboola.com/v2/storage/buckets/in.c-1246948-foo',
+            'id': 'in.c-1246948-foo',
+            'name': 'c-1246948-foo',
+            'displayName': '1246948-foo',
+            'idBranch': 792027,
+            'stage': 'in',
+            'description': '',
+            'tables': 'https://connection.keboola.com/v2/storage/buckets/in.c-1246948-foo',
+            'created': '2025-08-17T07:39:14+0200',
+            'lastChangeDate': '2025-08-17T07:39:26+0200',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 4608,
+            'rowsCount': 14,
+            'isMaintenance': False,
+            'backend': 'snowflake',
+            'sharing': None,
+            'hasExternalSchema': False,
+            'databaseName': '',
+            'path': 'in.c-1246948-foo',
+            'isSnowflakeSharedDatabase': False,
+            'color': None,
+            'owner': None,
+            'metadata': [
+                {
+                    'id': '1726664226',
+                    'key': 'KBC.createdBy.component.id',
+                    'value': 'ex-generic-v2',
+                    'provider': 'system',
+                    'timestamp': '2025-08-17T07:39:16+0200',
+                },
+                {
+                    'id': '1726664227',
+                    'key': 'KBC.createdBy.configuration.id',
+                    'value': '01jz7r9qqyarc324h24gzm6ap3',
+                    'provider': 'system',
+                    'timestamp': '2025-08-17T07:39:16+0200',
+                },
+                {
+                    'id': '1726664228',
+                    'key': 'KBC.createdBy.branch.id',
+                    'value': '1246948',
+                    'provider': 'system',
+                    'timestamp': '2025-08-17T07:39:16+0200',
+                },
+            ],
         },
         {
-            'id': 'bucket2',
-            'name': 'Test Bucket 2',
-            'display_name': 'test-bucket-2-display-name',
-            'description': 'Another test bucket',
-            'created': '2025-01-01T00:00:00Z',
-            'table_count': 3,
-            'data_size_bytes': 2048,
+            'uri': 'https://connection.keboola.com/v2/storage/buckets/in.c-bar',
+            'id': 'out.c-bar',
+            'name': 'c-bar',
+            'displayName': 'bar',
+            'idBranch': 792027,
+            'stage': 'out',
+            'description': 'Sample of Restaurant Reviews',
+            'tables': 'https://connection.keboola.com/v2/storage/buckets/in.c-bar',
+            'created': '2024-04-03T14:11:53+0200',
+            'lastChangeDate': None,
+            'updated': None,
+            'isReadOnly': True,
+            'dataSizeBytes': 2048,
+            'rowsCount': 3,
+            'isMaintenance': False,
+            'backend': 'snowflake',
+            'sharing': None,
+            'hasExternalSchema': False,
+            'databaseName': '',
+            'path': 'out.c-bar',
+            'isSnowflakeSharedDatabase': False,
+            'color': None,
+            'owner': None,
+            'sourceBucket': {
+                'id': 'out.c-bar',
+                'name': 'c-bar',
+                'displayName': 'bar',
+                'stage': 'out',
+                'description': 'Sample of Restaurant Reviews',
+                'sharing': 'organization',
+                'created': '2017-04-07T14:15:24+0200',
+                'lastChangeDate': '2017-04-07T14:20:36+0200',
+                'dataSizeBytes': 900096,
+                'rowsCount': 2239,
+                'backend': 'snowflake',
+                'hasExternalSchema': False,
+                'databaseName': '',
+                'path': 'out.c-bar',
+                'project': {'id': 1234, 'name': 'A demo project'},
+                'tables': [
+                    {
+                        'id': 'in.c-bar.restaurants',
+                        'name': 'restaurants',
+                        'displayName': 'restaurants',
+                        'path': '/406653-restaurants',
+                    },
+                    {'id': 'in.c-bar.reviews', 'name': 'reviews', 'displayName': 'reviews', 'path': '/406653-reviews'},
+                ],
+                'color': None,
+                'sharingParameters': [],
+                'sharedBy': {'id': None, 'name': None, 'date': ''},
+                'owner': None,
+            },
+            'metadata': [],
         },
     ]
 
@@ -150,42 +276,39 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('bucket_id', ['bucket1', 'bucket2'])
+@pytest.mark.parametrize('expected_bucket', _get_sapi_buckets())
 async def test_get_bucket(
+    expected_bucket: Mapping[str, Any],
     mocker: MockerFixture,
     mcp_context_client: Context,
-    mock_buckets: Sequence[Mapping[str, Any]],
-    bucket_id: str,
 ):
     """Test get_bucket tool."""
-
-    expected_bucket = next(b for b in mock_buckets if b['id'] == bucket_id)
-
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(return_value=expected_bucket)
 
+    bucket_id = expected_bucket['id']
     result = await get_bucket(bucket_id, mcp_context_client)
 
     assert isinstance(result, BucketDetail)
     assert result.id == expected_bucket['id']
     assert result.name == expected_bucket['name']
-    assert result.display_name == expected_bucket['display_name']
+    assert result.display_name == expected_bucket['displayName']
     assert set(result.links) == {
         Link(
             type='ui-detail',
             title=f'Bucket: {expected_bucket["name"]}',
-            url=f'test://api.keboola.com/admin/projects/69420/storage/{bucket_id}',
+            url=f'https://connection.test.keboola.com/admin/projects/69420/storage/{bucket_id}',
         ),
         Link(
             type='ui-dashboard',
             title='Buckets in the project',
-            url='test://api.keboola.com/admin/projects/69420/storage',
+            url='https://connection.test.keboola.com/admin/projects/69420/storage',
         ),
     }
 
     # Check optional fields only if they are present in the expected bucket
     if 'description' in expected_bucket:
-        assert result.description == expected_bucket['description']
+        assert result.description == (expected_bucket['description'] or None)
     if 'stage' in expected_bucket:
         assert result.stage == expected_bucket['stage']
     if 'created' in expected_bucket:
@@ -197,36 +320,69 @@ async def test_get_bucket(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('branch_id', 'expected_buckets'),
+    [
+        (
+            None,  # production branch
+            [
+                BucketDetail(
+                    id='in.c-foo',
+                    name='c-foo',
+                    display_name='foo',
+                    description='The foo bucket.',
+                    stage='in',
+                    created='2025-07-03T11:02:54+0200',
+                    data_size_bytes=1024,
+                ),
+                BucketDetail(
+                    id='out.c-bar',
+                    name='c-bar',
+                    display_name='bar',
+                    description='Sample of Restaurant Reviews',
+                    stage='out',
+                    created='2024-04-03T14:11:53+0200',
+                    data_size_bytes=2048,
+                ),
+            ],
+        ),
+        (
+            '1246948',  # development branch
+            [
+                BucketDetail(
+                    id='in.c-1246948-foo',
+                    name='c-1246948-foo',
+                    display_name='1246948-foo',
+                    description=None,
+                    stage='in',
+                    created='2025-08-17T07:39:14+0200',
+                    data_size_bytes=4608,
+                ),
+                BucketDetail(
+                    id='out.c-bar',
+                    name='c-bar',
+                    display_name='bar',
+                    description='Sample of Restaurant Reviews',
+                    stage='out',
+                    created='2024-04-03T14:11:53+0200',
+                    data_size_bytes=2048,
+                ),
+            ],
+        ),
+    ],
+)
 async def test_list_buckets(
-    mocker: MockerFixture, mcp_context_client: Context, mock_buckets: Sequence[Mapping[str, Any]]
+    branch_id: str | None, expected_buckets: list[BucketDetail], mocker: MockerFixture, mcp_context_client: Context
 ) -> None:
     """Test the list_buckets tool."""
-
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=mock_buckets)
+    keboola_client.branch_id = branch_id
+    keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=_get_sapi_buckets())
 
     result = await list_buckets(mcp_context_client)
 
     assert isinstance(result, ListBucketsOutput)
-    assert len(result.buckets) == len(mock_buckets)
-    assert all(isinstance(bucket, BucketDetail) for bucket in result.buckets)
-
-    # Assert that the returned BucketDetail objects match the mock data
-    for expected_bucket, result_bucket in zip(mock_buckets, result.buckets):
-        assert result_bucket.id == expected_bucket['id']
-        assert result_bucket.name == expected_bucket['name']
-        assert result_bucket.display_name == expected_bucket['display_name']
-        if 'description' in expected_bucket:
-            assert result_bucket.description == expected_bucket['description']
-        if 'stage' in expected_bucket:
-            assert result_bucket.stage == expected_bucket['stage']
-        if 'created' in expected_bucket:
-            assert result_bucket.created == expected_bucket['created']
-        if 'tables_count' in expected_bucket:
-            assert result_bucket.tables_count == expected_bucket['tables_count']
-        if 'data_size_bytes' in expected_bucket:
-            assert result_bucket.data_size_bytes == expected_bucket['data_size_bytes']
-
+    assert result.buckets == expected_buckets
     keboola_client.storage_client.bucket_list.assert_called_once()
 
 
@@ -255,12 +411,13 @@ async def test_list_buckets(
                     Link(
                         type='ui-detail',
                         title='Table: test-table',
-                        url='test://api.keboola.com/admin/projects/69420/storage/in.c-test/table/test-table',
+                        url='https://connection.test.keboola.com'
+                        '/admin/projects/69420/storage/in.c-test/table/test-table',
                     ),
                     Link(
                         type='ui-detail',
                         title='Bucket: in.c-test',
-                        url='test://api.keboola.com/admin/projects/69420/storage/in.c-test',
+                        url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-test',
                     ),
                 ],
             ),
@@ -286,12 +443,13 @@ async def test_list_buckets(
                     Link(
                         type='ui-detail',
                         title='Table: test-table',
-                        url='test://api.keboola.com/admin/projects/69420/storage/in.c-test/table/test-table',
+                        url='https://connection.test.keboola.com'
+                        '/admin/projects/69420/storage/in.c-test/table/test-table',
                     ),
                     Link(
                         type='ui-detail',
                         title='Bucket: in.c-test',
-                        url='test://api.keboola.com/admin/projects/69420/storage/in.c-test',
+                        url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-test',
                     ),
                 ],
             ),

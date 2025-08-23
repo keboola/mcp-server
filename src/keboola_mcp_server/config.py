@@ -17,6 +17,8 @@ class Config:
     """The URL to the Storage API."""
     storage_token: Optional[str] = field(default=None, metadata={'aliases': ['storage_api_token']})
     """The token to access the storage API using the MCP tools."""
+    branch_id: Optional[str] = None
+    """The branch ID to access the storage API using the MCP tools."""
     workspace_schema: Optional[str] = None
     """Workspace schema to access the buckets, tables and execute sql queries."""
     accept_secrets_in_url: Optional[bool] = None
@@ -44,6 +46,9 @@ class Config:
             if value and not value.startswith(('http://', 'https://')):
                 value = f'https://{value}'
                 object.__setattr__(self, f.name, value)
+
+        if self.branch_id is not None and self.branch_id.lower() in ['', 'none', 'null', 'default', 'production']:
+            object.__setattr__(self, 'branch_id', None)
 
     @staticmethod
     def _normalize(name: str) -> str:
@@ -134,7 +139,7 @@ class MetadataField:
     # expected value: 'true'
     UPDATED_BY_MCP_PREFIX = 'KBC.MCP.updatedBy.version.'
 
-    # Brnach filtering works only for "fake development branches"
+    # Branch filtering works only for "fake development branches"
     FAKE_DEVELOPMENT_BRANCH = 'KBC.createdBy.branch.id'
 
     # Data type metadata fields

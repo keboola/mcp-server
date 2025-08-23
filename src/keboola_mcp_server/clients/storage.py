@@ -275,31 +275,24 @@ class CreateConfigurationAPIResponse(BaseModel):
 
 class AsyncStorageClient(KeboolaServiceClient):
 
-    def __init__(self, raw_client: RawKeboolaClient, branch_id: str = 'default') -> None:
+    def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
         """
         Creates an AsyncStorageClient from a RawKeboolaClient and a branch id.
 
         :param raw_client: The raw client to use
-        :param branch_id: The id of the branch
+        :param branch_id: The id of the Keboola project branch to work on
         """
         super().__init__(raw_client=raw_client)
-        self._branch_id: str = branch_id
-
-    @property
-    def branch_id(self) -> str:
-        return self._branch_id
-
-    @property
-    def base_api_url(self) -> str:
-        return self.raw_client.base_api_url.split('/v2')[0]
+        self._branch_id: str = branch_id or 'default'
 
     @classmethod
     def create(
         cls,
+        *,
         root_url: str,
         token: Optional[str],
         version: str = 'v2',
-        branch_id: str = 'default',
+        branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
     ) -> 'AsyncStorageClient':
         """
@@ -308,7 +301,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param root_url: The root URL of the service API
         :param token: The Keboola Storage API token, If None, the client will not send any authorization header.
         :param version: The version of the API to use (default: 'v2')
-        :param branch_id: The id of the branch
+        :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests
         :return: A new instance of AsyncStorageClient
         """
@@ -327,7 +320,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :return: Branch metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
         """
-        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self.branch_id}/metadata'))
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self._branch_id}/metadata'))
 
     async def branch_metadata_update(self, metadata: dict[str, Any]) -> list[JsonDict]:
         """
@@ -339,7 +332,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         payload = {
             'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
         }
-        return cast(list[JsonDict], await self.post(endpoint=f'branch/{self.branch_id}/metadata', data=payload))
+        return cast(list[JsonDict], await self.post(endpoint=f'branch/{self._branch_id}/metadata', data=payload))
 
     async def bucket_detail(self, bucket_id: str) -> JsonDict:
         """
@@ -420,7 +413,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param component_id: The id of the component
         :return: Component details as a dictionary
         """
-        return cast(JsonDict, await self.get(endpoint=f'branch/{self.branch_id}/components/{component_id}'))
+        return cast(JsonDict, await self.get(endpoint=f'branch/{self._branch_id}/components/{component_id}'))
 
     async def component_list(
         self, component_type: str, include: list[ComponentResource] | None = None
@@ -433,7 +426,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             Available resources: configuration, rows and state.
         :return: List of components as dictionary
         """
-        endpoint = f'branch/{self.branch_id}/components'
+        endpoint = f'branch/{self._branch_id}/components'
         params = {'componentType': component_type}
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
@@ -457,7 +450,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :return: The SAPI call response - created configuration or raise an error.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs'
 
         payload = {
             'name': name,
@@ -476,7 +469,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             (Technically it means the API endpoint is called twice.)
         :raises httpx.HTTPStatusError: If the (component_id, configuration_id) is not found.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
         await self.delete(endpoint=endpoint)
         if skip_trash:
             await self.delete(endpoint=endpoint)
@@ -494,7 +487,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             raise ValueError(f"Invalid component_id '{component_id}'.")
         if not isinstance(configuration_id, str) or configuration_id == '':
             raise ValueError(f"Invalid configuration_id '{configuration_id}'.")
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
 
         return cast(JsonDict, await self.get(endpoint=endpoint))
 
@@ -508,7 +501,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         if not isinstance(component_id, str) or component_id == '':
             raise ValueError(f"Invalid component_id '{component_id}'.")
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs'
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
@@ -520,7 +513,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_id: The id of the configuration.
         :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
     async def configuration_metadata_update(
@@ -537,7 +530,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param metadata: The metadata to update.
         :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
         payload = {
             'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
         }
@@ -567,7 +560,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param is_disabled: Whether the configuration should be disabled.
         :return: The SAPI call response - updated configuration or raise an error.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{configuration_id}'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
 
         payload = {
             'configuration': configuration,
@@ -611,7 +604,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows',
+                endpoint=f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/rows',
                 data=payload,
             ),
         )
@@ -654,7 +647,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.put(
-                endpoint=f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}'
+                endpoint=f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}'
                 f'/rows/{configuration_row_id}',
                 data=payload,
             ),
@@ -669,14 +662,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param configuration_row_id: The id of the configuration row.
         :return: Configuration row details.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/rows/{configuration_row_id}'
         return cast(JsonDict, await self.get(endpoint=endpoint))
 
     async def configuration_versions(self, component_id: str, config_id: str) -> list[JsonDict]:
         """
         Retrieves details of a specific configuration version.
         """
-        endpoint = f'branch/{self.branch_id}/components/{component_id}/configs/{config_id}/versions'
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/versions'
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
     async def configuration_version_latest(self, component_id: str, config_id: str) -> int:
@@ -700,7 +693,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param job_id: The id of the job
         :return: Job details as dictionary
         """
-        return cast(JsonDict, await self.get(endpoint=f'jobs/{job_id}'))
+        return cast(JsonDict, await self.get(endpoint=f'jobs/{job_id}'))  # TODO: no branch support
 
     async def global_search(
         self,
@@ -722,11 +715,15 @@ class AsyncStorageClient(KeboolaServiceClient):
         params: dict[str, Any] = {
             'query': query,
             'projectIds[]': [await self.project_id()],
-            'branchTypes[]': 'production',
             'types[]': types,
             'limit': limit,
             'offset': offset,
         }
+        if self._branch_id == 'default':
+            params['branchTypes[]'] = 'production'
+        else:
+            params['branchTypes[]'] = 'development'
+            params['branchIds[]'] = self._branch_id
         params = {k: v for k, v in params.items() if v}
         raw_resp = await self.get(endpoint='global-search', params=params)
         return GlobalSearchResponse.model_validate(raw_resp)
@@ -789,6 +786,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
 
+    # TODO: no branch support
     async def trigger_event(
         self,
         message: str,
@@ -855,7 +853,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/workspaces',
+                endpoint=f'branch/{self._branch_id}/workspaces',
                 params={'async': async_run},
                 data={
                     'readOnlyStorageAccess': read_only_storage_access,
@@ -872,7 +870,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param workspace_id: The id of the workspace
         :return: Workspace details as dictionary
         """
-        return cast(JsonDict, await self.get(endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}'))
+        return cast(JsonDict, await self.get(endpoint=f'branch/{self._branch_id}/workspaces/{workspace_id}'))
 
     async def workspace_query(self, workspace_id: int, query: str) -> JsonDict:
         """
@@ -885,7 +883,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self.branch_id}/workspaces/{workspace_id}/query',
+                endpoint=f'branch/{self._branch_id}/workspaces/{workspace_id}/query',
                 data={'query': query},
             ),
         )
@@ -896,7 +894,7 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :return: List of workspaces
         """
-        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self.branch_id}/workspaces'))
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{self._branch_id}/workspaces'))
 
     async def verify_token(self) -> JsonDict:
         """
