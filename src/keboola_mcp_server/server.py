@@ -20,6 +20,7 @@ from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMi
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
+from keboola_mcp_server.tools.data_apps import add_data_app_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
 from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
@@ -215,6 +216,7 @@ def create_server(
         custom_routes.add_to_mcp(mcp)
 
     add_component_tools(mcp)
+    add_data_app_tools(mcp)
     add_doc_tools(mcp)
     add_flow_tools(mcp)
     add_job_tools(mcp)
