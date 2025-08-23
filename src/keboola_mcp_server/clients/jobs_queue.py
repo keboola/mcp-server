@@ -8,18 +8,32 @@ class JobsQueueClient(KeboolaServiceClient):
     Async client for Keboola Job Queue API.
     """
 
+    def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
+        """
+        Creates a JobsQueueClient from a RawKeboolaClient and a branch id.
+
+        :param raw_client: The raw client to use
+        :param branch_id: The id of the branch
+        """
+        super().__init__(raw_client=raw_client)
+        self._branch_id = branch_id
+
     @classmethod
-    def create(cls, root_url: str, token: Optional[str], headers: dict[str, Any] | None = None) -> 'JobsQueueClient':
+    def create(
+        cls, root_url: str, token: str, branch_id: str | None = None, headers: dict[str, Any] | None = None
+    ) -> 'JobsQueueClient':
         """
         Creates a JobsQueue client.
 
         :param root_url: Root url of API. e.g. "https://queue.keboola.com/".
-        :param token: A key for the Storage API. Can be found in the storage console. If None, the client will not send
-        any authorization header.
+        :param token: The Keboola Storage API token
+        :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests.
         :return: A new instance of JobsQueueClient.
         """
-        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers))
+        return cls(
+            raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers), branch_id=branch_id
+        )
 
     async def get_job_detail(self, job_id: str) -> JsonDict:
         """
@@ -54,6 +68,7 @@ class JobsQueueClient(KeboolaServiceClient):
         :return: Dictionary containing matching jobs.
         """
         params = {
+            'branchId': self._branch_id,
             'componentId': component_id,
             'configId': config_id,
             'status': status,
@@ -82,6 +97,8 @@ class JobsQueueClient(KeboolaServiceClient):
             'config': configuration_id,
             'mode': 'run',
         }
+        if self._branch_id:
+            payload['branchId'] = self._branch_id
         return cast(JsonDict, await self.post(endpoint='jobs', data=payload))
 
     async def _search(self, params: dict[str, Any]) -> JsonList:

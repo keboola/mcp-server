@@ -239,17 +239,6 @@ class KeboolaServiceClient:
         """
         self.raw_client = raw_client
 
-    @classmethod
-    def create(cls, root_url: str, token: Optional[str]) -> 'KeboolaServiceClient':
-        """
-        Creates a KeboolaServiceClient from a Keboola Storage API token.
-
-        :param root_url: The root URL of the service API
-        :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
-        :return: A new instance of KeboolaServiceClient
-        """
-        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token))
-
     async def get(
         self,
         endpoint: str,

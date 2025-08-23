@@ -59,11 +59,8 @@ async def create_oauth_url(
     # Extract the token from response
     sapi_token = token_response['token']
 
-    # Get the storage API URL from client
-    storage_api_url = client.storage_client.base_api_url
-
     # Generate OAuth URL
-    query_params = urlencode({'token': sapi_token, 'sapiUrl': storage_api_url})
+    query_params = urlencode({'token': sapi_token, 'sapiUrl': client.storage_api_url})
     fragment = f'/{component_id}/{config_id}'
 
     oauth_url = urlunsplit(
