@@ -25,15 +25,10 @@ class TestHttpErrors:
     @pytest.mark.asyncio
     async def test_storage_api_404_error_maintains_standard_behavior(self, mcp_context: Context):
         match = re.compile(
-            r"Client error '404 Not Found' "
-            r"for url 'https://connection.keboola.com/v2/storage/buckets/non.existent.bucket'\n"
-            r'For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404\n'
-            r'API error: The bucket "non.existent.bucket" was not found in the project "\d+"\n'
-            r'Exception ID: .+\n'
-            r'When contacting Keboola support please provide the exception ID\.',
+            r'Bucket not found: non\.existent\.bucket',
             re.IGNORECASE,
         )
-        with pytest.raises(httpx.HTTPStatusError, match=match):
+        with pytest.raises(ValueError, match=match):
             await get_bucket('non.existent.bucket', mcp_context)
 
     @pytest.mark.asyncio
@@ -83,18 +78,13 @@ class TestHttpErrors:
 
         # Verify all errors are handled consistently
         match = re.compile(
-            r"Client error '404 Not Found' "
-            r"for url 'https://connection.keboola.com/v2/storage/buckets/non.existent.bucket.\d'\n"
-            r'For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404\n'
-            r'API error: The bucket "non.existent.bucket.\d" was not found in the project "\d+"\n'
-            r'Exception ID: .+\n'
-            r'When contacting Keboola support please provide the exception ID\.',
+            r'Bucket not found: non\.existent\.bucket\.\d+',
             re.IGNORECASE,
         )
 
         unexpected_errors: list[str] = []
         for result in results:
-            assert isinstance(result, httpx.HTTPStatusError)
+            assert isinstance(result, ValueError)
             error_message = str(result)
             if not match.fullmatch(error_message):
                 unexpected_errors.append(error_message)
