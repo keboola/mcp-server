@@ -98,10 +98,12 @@ async def initial_data_app(
     finally:
         if sync_output:
             try:
-                await keboola_client.data_science_client.delete_data_app(sync_output.data_app.data_app_id)
+                # Delete the data app from the data science API and the configuration from the storage API as well.
                 await keboola_client.data_science_client.delete_data_app(sync_output.data_app.data_app_id)
             except Exception as e:
                 LOG.error(f'Error deleting data app: {e}')
+        else:
+            LOG.error('No data app to delete')
 
 
 @pytest.mark.asyncio
