@@ -212,6 +212,10 @@ class DataScienceClient(KeboolaServiceClient):
     async def delete_data_app(self, data_app_id: str) -> None:
         """
         Delete a data app by its ID.
+        - The DSAPI delete endpoint removes the data app only if its desired and current states match.
+        - If they do not match, it returns a 400 Bad Request.
+        - When successful, DSAPI deletes both the app configuration from storage and the data app itself.
+        If the configuration was already deleted, DSAPI does not delete the data app and returns 500 error.
         :param data_app_id: ID of the data app to delete
         """
         await self.delete(endpoint=f'apps/{data_app_id}')
