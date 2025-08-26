@@ -147,8 +147,8 @@ jobs:
           path: ./integtest-results.xml
           reporter: 'java-junit'
 
-  build_docker_image:
-    name: Build Docker image
+  build_docker_image_and_do_basic_test:
+    name: Build Docker image and do basic test
     needs:
       - build
       - integration_tests
@@ -177,6 +177,10 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Run simple e2e test
+        run: |
+          STORAGE_API_TOKEN=${{ secrets.INTEGTEST_STORAGE_TOKEN }} STORAGE_API_URL=${{ vars.INTEGTEST_STORAGE_API_URL }} ./tests/docker/ci.sh
 
   deploy_to_pypi:
     needs:
