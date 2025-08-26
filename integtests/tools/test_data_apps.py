@@ -172,7 +172,10 @@ async def test_data_app_lifecycle(
     assert set(data_app_details.parameters['packages']) == set(['numpy', 'streamlit'] + _DEFAULT_PACKAGES)
 
     # Check listing contains our app
-    listed_result = await mcp_client.call_tool(name='get_data_apps', arguments={})
+    # TODO: Remove limit once DSAPI is fixed. The limit is temporarily increased to 500 to prevent leftover data apps
+    # from previous tests. These apps cannot be deleted because their configurations were removed in SAPI first,
+    # causing the DSAPI delete endpoint to return a 500 error afterward.
+    listed_result = await mcp_client.call_tool(name='get_data_apps', arguments={'limit': 500})
     assert listed_result.structured_content is not None
     listed = GetDataAppsOutput.model_validate(listed_result.structured_content)
     assert len(listed.data_apps) > 0
