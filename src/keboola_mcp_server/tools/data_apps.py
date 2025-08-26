@@ -409,6 +409,8 @@ async def deploy_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        if data_app.state == 'stopping':
+            raise ValueError('Data app is currently stopping, could not be started.')
         _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(data_app.config_version))
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         data_app = data_app.with_deployment_info(await _fetch_logs(client, data_app.data_app_id))
@@ -421,6 +423,8 @@ async def deploy_data_app(
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        if data_app.state == 'starting':
+            raise ValueError('Data app is currently starting, could not be stopped.')
         _ = await client.data_science_client.suspend_data_app(data_app.data_app_id)
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         links = links_manager.get_data_app_links(
