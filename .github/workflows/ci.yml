@@ -156,6 +156,8 @@ jobs:
     # run this job only for push events (not pull requests)
     if: github.event_name == 'push'
     steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
