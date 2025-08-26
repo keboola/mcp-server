@@ -1,5 +1,4 @@
 import base64
-from typing import cast
 
 import pytest
 from cryptography.fernet import Fernet
@@ -140,22 +139,15 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
 
 
 def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
-    # Deterministic salt
-    # salt = os.urandom(32)
-    # expected_seed = base64.urlsafe_b64encode(salt).decode()
-    # mocker.patch('keboola_mcp_server.tools.data_apps.os.urandom', return_value=salt)
 
-    class _StorageClient:
-        base_api_url = 'https://example.com'
-        branch_id = 'bid123'
-
-    class _Client:
-        token = 'TOKEN123'
-        storage_client = _StorageClient()
+    keboola_client = mocker.Mock(KeboolaClient)
+    keboola_client.storage_api_url = 'https://example.com'
+    keboola_client.token = 'TOKEN123'
+    keboola_client.branch_id = 'bid123'
 
     workspace_id = 'wid-1234'
 
-    secrets = _get_secrets(cast(KeboolaClient, _Client()), workspace_id)
+    secrets = _get_secrets(keboola_client, workspace_id)
 
     assert set(secrets.keys()) == {
         'BRANCH_ID',
