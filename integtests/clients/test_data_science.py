@@ -62,21 +62,15 @@ async def initial_data_app(ds_client: DataScienceClient, unique_id: str) -> Asyn
         yield data_app
     finally:
         if data_app:
-            for _ in range(2):  # Delete configuration 2 times (from storage and then from temporal bin)
-                try:
-                    # TODO: this does not work
-                    #  httpx.HTTPStatusError: Client error '400 Bad Request'
-                    #    for url 'https://data-science.keboola.com/apps/1265341721'
-                    #  For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400
-                    #  API error: App "1265341721" can't have desired state "deleted".
-                    #  Currently is in state: "starting", desired state: "running"
-                    await ds_client.delete_data_app(data_app.id)
-                except Exception as e:
-                    LOG.exception(f'Failed to delete data app: {e}')
-                    raise
+            try:
+                # The DSAPI delete endpoint removes a data app only if its desired and current states match.
+                # Otherwise, it returns a 400 Bad Request.
+                await ds_client.delete_data_app(data_app.id)
+            except Exception as e:
+                LOG.exception(f'Failed to delete data app: {e}')
+                raise
 
 
-@pytest.mark.skip('This test does not work. It leaves DataApps behind and starts failing when there is >100 of them.')
 @pytest.mark.asyncio
 async def test_create_and_fetch_data_app(
     ds_client: DataScienceClient, initial_data_app: DataAppResponse, keboola_client: KeboolaClient
@@ -86,12 +80,9 @@ async def test_create_and_fetch_data_app(
     created = initial_data_app
     assert isinstance(created, DataAppResponse)
     assert created.id
+    assert created.state == 'created'
     assert created.type == 'streamlit'
     assert created.component_id == DATA_APP_COMPONENT_ID
-
-    # Deploy the data app
-    response = await ds_client.deploy_data_app(created.id, created.config_version)
-    assert response.id == created.id
 
     # Fetch the data app from data science
     fetched_ds = await ds_client.get_data_app(created.id)
@@ -117,7 +108,11 @@ async def test_create_and_fetch_data_app(
     assert fetched_ds.id == fetched_s['configuration']['parameters']['id']
 
     # Fetch the all data apps and check if the created data app is in the list
-    data_apps = await ds_client.list_data_apps()
+    # TODO: Remove this limit once DSAPI is fixed.
+    # The limit is temporarily increased to 500 to prevent leftover data apps from previous tests.
+    # These apps cannot be deleted because their configurations were removed in SAPI first,
+    # causing the DSAPI delete endpoint to return a 500 error afterward.
+    data_apps = await ds_client.list_data_apps(limit=500)
     assert isinstance(data_apps, list)
     assert len(data_apps) > 0
     assert any(app.id == created.id for app in data_apps)
