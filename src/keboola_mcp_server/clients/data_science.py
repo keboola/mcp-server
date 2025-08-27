@@ -148,7 +148,7 @@ class DataScienceClient(KeboolaServiceClient):
         config_version: str,
         *,
         restart_if_running: bool = True,
-        update_dependencies: bool = True,
+        update_dependencies: bool = False,
     ) -> DataAppResponse:
         """
         Deploy a data app by its ID.
@@ -156,7 +156,8 @@ class DataScienceClient(KeboolaServiceClient):
         :param data_app_id: The ID of the data app
         :param config_version: The version of the config to deploy
         :param restart_if_running: Whether to restart the data app if it is already running
-        :param update_dependencies: Whether to update the dependencies of the data app
+        :param update_dependencies: If set to `true`, latest package versions are installed during app startup,
+                    instead of using frozen versions.
         :return: The data app
         """
         data = {
