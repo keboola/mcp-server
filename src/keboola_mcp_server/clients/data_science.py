@@ -214,6 +214,9 @@ class DataScienceClient(KeboolaServiceClient):
         Delete a data app by its ID.
         - The DSAPI delete endpoint removes the data app only if its desired and current states match.
         - If they do not match, it returns a 400 Bad Request.
+        - Desired state is the state where the app is supposed to be after the action is completed. While current
+        state reflects the actual state of the app. E.g. If we deploy the app, the desired state is 'running' and the
+        current state is 'started' until the app is deployed.
         - When successful, DSAPI deletes both the app configuration from storage and the data app itself.
         If the configuration was already deleted, DSAPI does not delete the data app and returns 500 error.
         :param data_app_id: ID of the data app to delete

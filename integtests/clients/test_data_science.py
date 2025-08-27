@@ -65,6 +65,9 @@ async def initial_data_app(ds_client: DataScienceClient, unique_id: str) -> Asyn
             try:
                 # The DSAPI delete endpoint removes a data app only if its desired and current states match.
                 # Otherwise, it returns a 400 Bad Request.
+                # When deploying/deleting/suspending/updating/etc. the data app, the desired state is set according to
+                # the action. Then there is a background task that runs for the given action and after it finishes,
+                # the current state is updated to match the desired state.
                 await ds_client.delete_data_app(data_app.id)
             except Exception as e:
                 LOG.exception(f'Failed to delete data app: {e}')
@@ -116,3 +119,6 @@ async def test_create_and_fetch_data_app(
     assert isinstance(data_apps, list)
     assert len(data_apps) > 0
     assert any(app.id == created.id for app in data_apps)
+    # TODO(REMOVE): Remove this assertion once DSAPI is fixed. This only checks that we do not leave any data apps
+    # in the CI project after test executions except those which are already there and cannot be deleted.
+    assert len(data_apps) < 110

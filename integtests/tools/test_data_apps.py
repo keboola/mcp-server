@@ -22,12 +22,12 @@ LOG = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def streamlit_app_header() -> str:
+def streamlit_app_imports() -> str:
     return 'import streamlit as st\n\n'
 
 
 @pytest.fixture
-def streamlit_app_footer() -> str:
+def streamlit_app_entrypoint() -> str:
     return (
         'def main():\n'
         "    st.title('Integration Test Data App')\n"
@@ -41,9 +41,9 @@ def streamlit_app_footer() -> str:
 
 
 @pytest.fixture
-def sample_streamlit_app(streamlit_app_header: str, streamlit_app_footer: str) -> str:
+def sample_streamlit_app(streamlit_app_imports: str, streamlit_app_entrypoint: str) -> str:
     """Return a minimal Streamlit app template that supports query injection."""
-    return f'{streamlit_app_header}' '{QUERY_DATA_FUNCTION}\n\n' f'{streamlit_app_footer}'
+    return f'{streamlit_app_imports}' '{QUERY_DATA_FUNCTION}\n\n' f'{streamlit_app_entrypoint}'
 
 
 @pytest.fixture
@@ -123,14 +123,15 @@ async def test_data_app_lifecycle(
     app_name: str,
     app_description: str,
     initial_data_app: ModifiedDataAppOutput,
-    streamlit_app_header: str,
-    streamlit_app_footer: str,
+    streamlit_app_imports: str,
+    streamlit_app_entrypoint: str,
 ) -> None:
     """
     End-to-end lifecycle for data apps:
-    - create via sync tool
-    - get details and list
-    - update via sync tool
+    Starts with a created app.
+    - get details and list of created app
+    - update app
+    - get details and list of updated app
     Always deletes the data app in teardown.
     """
 
@@ -165,22 +166,26 @@ async def test_data_app_lifecycle(
     assert data_app_details.name == app_name
     assert data_app_details.description == app_description
     # Check code and code injection
-    assert streamlit_app_header in data_app_details.parameters['script'][0]
-    assert streamlit_app_footer in data_app_details.parameters['script'][0]
+    assert streamlit_app_imports in data_app_details.parameters['script'][0]
+    assert streamlit_app_entrypoint in data_app_details.parameters['script'][0]
     assert _QUERY_DATA_FUNCTION_CODE in data_app_details.parameters['script'][0]
     # Check packages
     assert set(data_app_details.parameters['packages']) == set(['numpy', 'streamlit'] + _DEFAULT_PACKAGES)
 
     # Check listing contains our app
-    # TODO: Remove limit once DSAPI is fixed. The limit is temporarily increased to 500 to prevent leftover data apps
-    # from previous tests. These apps cannot be deleted because their configurations were removed in SAPI first,
-    # causing the DSAPI delete endpoint to return a 500 error afterward.
+    # TODO(REMOVE): Set the limit back to the default value once DSAPI is fixed. The limit is temporarily increased to
+    # 500 to prevent listing only the leftover data apps from previous tests (100). These apps cannot be deleted
+    # because their configurations were removed in SAPI first, causing the DSAPI delete endpoint to return a 500 error
+    # afterward.
     listed_result = await mcp_client.call_tool(name='get_data_apps', arguments={'limit': 500})
     assert listed_result.structured_content is not None
     listed = GetDataAppsOutput.model_validate(listed_result.structured_content)
     assert len(listed.data_apps) > 0
     assert all(isinstance(app, DataAppSummary) for app in listed.data_apps)
     assert configuration_id in [a.configuration_id for a in listed.data_apps]
+    # TODO(REMOVE): Remove this assertion once DSAPI is fixed. This only checks that we do not leave any data apps
+    # in the CI project after test executions except those which are already there and cannot be deleted.
+    assert len(listed.data_apps) < 110
 
     # Update app
     updated_name = f'{app_name} - Updated'
@@ -229,7 +234,7 @@ async def test_data_app_lifecycle(
     # Check that the source code is updated
     assert _QUERY_DATA_FUNCTION_CODE in fetched.data_apps[0].parameters['script'][0]
     assert updated_source_code in fetched.data_apps[0].parameters['script'][0]
-    assert streamlit_app_header not in fetched.data_apps[0].parameters['script'][0]
-    assert streamlit_app_footer not in fetched.data_apps[0].parameters['script'][0]
+    assert streamlit_app_imports not in fetched.data_apps[0].parameters['script'][0]
+    assert streamlit_app_entrypoint not in fetched.data_apps[0].parameters['script'][0]
     # Check that the packages are updated
     assert set(fetched.data_apps[0].parameters['packages']) == set(['streamlit'] + _DEFAULT_PACKAGES)
