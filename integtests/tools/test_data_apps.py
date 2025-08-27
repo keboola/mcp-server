@@ -136,7 +136,7 @@ async def test_data_app_lifecycle(
     """
 
     # Check created app basic details
-    assert initial_data_app.action == 'created'
+    assert initial_data_app.response == 'created'
     data_app_id = initial_data_app.data_app.data_app_id
     configuration_id = initial_data_app.data_app.configuration_id
     assert data_app_id
@@ -206,7 +206,7 @@ async def test_data_app_lifecycle(
     # Check updated app basic details
     assert updated_result.structured_content is not None
     updated = ModifiedDataAppOutput.model_validate(updated_result.structured_content)
-    assert updated.action == 'updated'
+    assert updated.response == 'updated'
     assert updated.data_app.data_app_id == data_app_id
     assert updated.data_app.configuration_id == configuration_id
 
