@@ -117,6 +117,15 @@ class SessionStateMiddleware(fmw.Middleware):
         ctx = context.fastmcp_context
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
+        import uuid
+
+        if not hasattr(ctx.session, 'uuid'):
+            ctx.session.uuid = str(uuid.uuid4())
+        LOG.info(
+            f'[SessionStateMiddleware] Before creating session state | '
+            f'| existing keys={list(ctx.session.state.keys()) if hasattr(ctx.session, "state") else []}'
+        )
+
         if not isinstance(ctx.session, MagicMock):
             config = ServerState.from_context(ctx).config
             accept_secrets_in_url = config.accept_secrets_in_url
@@ -158,9 +167,18 @@ class SessionStateMiddleware(fmw.Middleware):
             state = self._create_session_state(config)
             ctx.session.state = state
 
+            LOG.info(
+                f'[SessionStateMiddleware] After creating session state | '
+                f'session_uuid={ctx.session.uuid} | keys={list(ctx.session.state.keys())}'
+            )
+
         try:
             return await call_next(context)
         finally:
+            LOG.info(
+                f'[SessionStateMiddleware] Clearing session state | '
+                f'session_uuid={ctx.session.uuid} | keys_before_clear={list(ctx.session.state.keys())}'
+            )
             ctx.session.state = {}
 
     @staticmethod
