@@ -57,8 +57,27 @@ class KeboolaClient:
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'KeboolaClient':
+        if cls.STATE_KEY not in state:
+            # Add defensive logging before the KeyError
+            LOG.error(
+                f'[KeboolaClient.from_state] Missing key="{cls.STATE_KEY}" in session state. '
+                f'Available keys={list(state.keys())} | state_type={type(state)} | state_id={id(state)}'
+            )
+            raise KeyError(
+                f'Missing required key "{cls.STATE_KEY}" in session state. '
+                f'Available keys: {list(state.keys())}'
+            )
+
         instance = state[cls.STATE_KEY]
-        assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
+        LOG.debug(
+            f'[KeboolaClient.from_state] Retrieved instance from state | '
+            f'key="{cls.STATE_KEY}" | instance_type={type(instance)} | state_id={id(state)}'
+        )
+
+        assert isinstance(instance, KeboolaClient), (
+            f'Expected KeboolaClient, got: {type(instance)} | value={instance}'
+        )
+
         return instance
 
     def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
