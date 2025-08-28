@@ -56,7 +56,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
 
 
 # State of the data app
-State = Literal['created', 'running', 'stopped', 'starting', 'stopping']
+State = Literal['created', 'running', 'stopped', 'starting', 'stopping', 'restarting']
 # Accepts known states or any string preventing from validation errors when receiving unknown states from the API
 # LLM agent can still understand the state of the data app even if it is different from the known states
 SafeState = Union[State, str]
@@ -203,7 +203,7 @@ class ModifiedDataAppOutput(BaseModel):
     """Modified data app output containing the response of the action performed and the data app and links to the web
     interface."""
 
-    response: Literal['created', 'updated'] = Field(description='The response of the action performed.')
+    response: str = Field(description='The response of the action performed with potential additional information.')
     data_app: DataAppSummary = Field(description='The data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
@@ -305,8 +305,13 @@ async def modify_data_app(
             deployment_link=data_app.deployment_url,
             is_authorized=data_app.is_authorized,
         )
+        response = (
+            'updated (redeploy required to apply changes in the running app)'
+            if data_app.state in ('running', 'starting')
+            else 'updated'
+        )
         return ModifiedDataAppOutput(
-            response='updated', data_app=DataAppSummary.model_validate(data_app.model_dump()), links=links
+            response=response, data_app=DataAppSummary.model_validate(data_app.model_dump()), links=links
         )
     else:
         # Create new data app
@@ -402,7 +407,10 @@ async def deploy_data_app(
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         if data_app.state == 'stopping':
             raise ValueError('Data app is currently "stopping", could not be started at the moment.')
-        _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(data_app.config_version))
+        config_version = await client.storage_client.configuration_version_latest(
+            DATA_APP_COMPONENT_ID, data_app.configuration_id
+        )
+        _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         data_app = data_app.with_deployment_info(await _fetch_logs(client, data_app.data_app_id))
         links = links_manager.get_data_app_links(
@@ -414,7 +422,7 @@ async def deploy_data_app(
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        if data_app.state == 'starting':
+        if data_app.state in ('starting', 'restarting'):
             raise ValueError('Data app is currently "starting", could not be stopped at the moment.')
         _ = await client.data_science_client.suspend_data_app(data_app.data_app_id)
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
