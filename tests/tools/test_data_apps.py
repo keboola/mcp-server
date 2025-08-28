@@ -1,15 +1,18 @@
 import base64
+from typing import Literal, cast
 
 import pytest
 from cryptography.fernet import Fernet
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.data_apps import (
     _QUERY_DATA_FUNCTION_CODE,
+    DataApp,
     DataAppSummary,
     _build_data_app_config,
     _get_authorization,
@@ -18,7 +21,53 @@ from keboola_mcp_server.tools.data_apps import (
     _inject_query_to_source_code,
     _is_authorized,
     _update_existing_data_app_config,
+    deploy_data_app,
 )
+
+
+@pytest.fixture
+def data_app() -> DataApp:
+    return DataApp(
+        name='test',
+        component_id='test',
+        configuration_id='test',
+        data_app_id='test',
+        project_id='test',
+        branch_id='test',
+        config_version='test',
+        type='test',
+        auto_suspend_after_seconds=3600,
+        is_authorized=True,
+        parameters={},
+        authorization={},
+        state='test',
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('current_state', 'action', 'error_match'),
+    [
+        ('starting', 'stop', 'Data app is currently "starting", could not be stopped at the moment.'),
+        ('restarting', 'stop', 'Data app is currently "starting", could not be stopped at the moment.'),
+        ('stopping', 'deploy', 'Data app is currently "stopping", could not be started at the moment.'),
+    ],
+)
+async def test_deploy_data_app_when_current_state_contradicts_with_action(
+    mocker,
+    data_app: DataApp,
+    current_state: str,
+    action: Literal['deploy', 'stop'],
+    error_match: str,
+    mcp_context_client: Context,
+) -> None:
+    """call deploy_data_app with mocked data_app and given state expecting ValueError with proper error message."""
+    data_app.state = current_state
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', return_value=data_app)
+    with pytest.raises(ValueError, match=error_match):
+        await deploy_data_app(
+            ctx=mcp_context_client, action=cast(Literal['deploy', 'stop'], action), configuration_id='cfg-123'
+        )
 
 
 def test_get_data_app_slug():
