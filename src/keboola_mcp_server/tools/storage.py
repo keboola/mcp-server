@@ -210,6 +210,7 @@ async def get_bucket(
 @tool_errors()
 async def list_buckets(ctx: Context) -> ListBucketsOutput:
     """Retrieves information about all buckets in the project."""
+    LOG.info(f'Running list_buckets tool with session state: {ctx.session.state}')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
