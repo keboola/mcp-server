@@ -161,7 +161,9 @@ class SessionStateMiddleware(fmw.Middleware):
         try:
             return await call_next(context)
         finally:
-            ctx.session.state = {}
+            # NOTE: This line is commented following a bug related to session state clearance in Claude client
+            # ctx.session.state = {}
+            pass
 
     @staticmethod
     def _create_session_state(config: Config) -> dict[str, Any]:

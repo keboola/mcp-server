@@ -56,7 +56,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
 
 
 # State of the data app
-State = Literal['created', 'running', 'stopped', 'starting', 'stopping']
+State = Literal['created', 'running', 'stopped', 'starting', 'stopping', 'restarting']
 # Accepts known states or any string preventing from validation errors when receiving unknown states from the API
 # LLM agent can still understand the state of the data app even if it is different from the known states
 SafeState = Union[State, str]
@@ -200,9 +200,10 @@ class DataApp(BaseModel):
 
 
 class ModifiedDataAppOutput(BaseModel):
-    """Modified data app output containing the action performed and the data app and links to the web interface."""
+    """Modified data app output containing the response of the action performed and the data app and links to the web
+    interface."""
 
-    action: Literal['created', 'updated'] = Field(description='The action performed.')
+    response: str = Field(description='The response of the action performed with potential additional information.')
     data_app: DataAppSummary = Field(description='The data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
@@ -256,7 +257,7 @@ async def modify_data_app(
     `query_data` tool to inspect the data in the workspace before using it in the data app.
     - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
     parameter.
-    - If the data app is deployed and is updated, it needs to be redeployed to apply the changes.
+    - If the data app is updated while running, it must be redeployed for the changes to take effect.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
@@ -304,8 +305,13 @@ async def modify_data_app(
             deployment_link=data_app.deployment_url,
             is_authorized=data_app.is_authorized,
         )
+        response = (
+            'updated (redeploy required to apply changes in the running app)'
+            if data_app.state in ('running', 'starting')
+            else 'updated'
+        )
         return ModifiedDataAppOutput(
-            action='updated', data_app=DataAppSummary.model_validate(data_app.model_dump()), links=links
+            response=response, data_app=DataAppSummary.model_validate(data_app.model_dump()), links=links
         )
     else:
         # Create new data app
@@ -329,7 +335,7 @@ async def modify_data_app(
             is_authorized=authorization_required,
         )
         return ModifiedDataAppOutput(
-            action='created', data_app=DataAppSummary.from_api_response(data_app_resp), links=links
+            response='created', data_app=DataAppSummary.from_api_response(data_app_resp), links=links
         )
 
 
@@ -341,7 +347,7 @@ async def get_data_apps(
     offset: Annotated[int, Field(description='The offset of the data apps to fetch.')] = 0,
 ) -> GetDataAppsOutput:
     """Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
-    providing its configuration IDs.
+    providing their configuration IDs.
 
     Considerations:
     - If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
@@ -354,32 +360,16 @@ async def get_data_apps(
     if configuration_ids:
         # Get details of the data apps by their configuration IDs using 10 parallel requests at a time to not overload
         # the API
-        async def _fetch_data_app_task(client: KeboolaClient, configuration_id: str) -> DataApp | str:
-            """Task fetching data app details with logs and links by configuration ID.
-            :param client: The Keboola client
-            :param configuration_id: The ID of the data app configuration
-            :return: The data app details or the configuration ID if the data app is not found
-            """
-            try:
-                data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-                links = links_manager.get_data_app_links(
-                    configuration_id=data_app.configuration_id,
-                    configuration_name=data_app.name,
-                    deployment_link=data_app.deployment_url,
-                    is_authorized=data_app.is_authorized,
-                )
-                logs = await _fetch_logs(client, data_app.data_app_id)
-                return data_app.with_links(links).with_deployment_info(logs)
-            except Exception:
-                return configuration_id
-
         data_app_details: list[DataApp | str] = []
         batch_size = 10  # fetching 10 data apps details at a time to not overload the API
         for current_batch in range(0, len(configuration_ids), batch_size):
             batch_ids = configuration_ids[current_batch : current_batch + batch_size]
             data_app_details.extend(
                 await asyncio.gather(
-                    *(_fetch_data_app_task(client, configuration_id) for configuration_id in batch_ids)
+                    *(
+                        _fetch_data_app_details_task(client, links_manager, configuration_id)
+                        for configuration_id in batch_ids
+                    )
                 )
             )
         found_data_apps: list[DataApp] = [dap for dap in data_app_details if isinstance(dap, DataApp)]
@@ -404,12 +394,23 @@ async def deploy_data_app(
     action: Annotated[Literal['deploy', 'stop'], Field(description='The action to perform.')],
     configuration_id: Annotated[str, Field(description='The ID of the data app configuration.')],
 ) -> DeploymentDataAppOutput:
-    """Deploys a data app or stops running data app in the Keboola environment given the action and configuration ID."""
+    """Deploys/redeploys a data app or stops running data app in the Keboola environment given the action and
+    configuration ID.
+
+    Considerations:
+    - Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
+    because it needs to restart.
+    """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(data_app.config_version))
+        if data_app.state == 'stopping':
+            raise ValueError('Data app is currently "stopping", could not be started at the moment.')
+        config_version = await client.storage_client.configuration_version_latest(
+            DATA_APP_COMPONENT_ID, data_app.configuration_id
+        )
+        _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         data_app = data_app.with_deployment_info(await _fetch_logs(client, data_app.data_app_id))
         links = links_manager.get_data_app_links(
@@ -421,6 +422,8 @@ async def deploy_data_app(
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        if data_app.state in ('starting', 'restarting'):
+            raise ValueError('Data app is currently "starting", could not be stopped at the moment.')
         _ = await client.data_science_client.suspend_data_app(data_app.data_app_id)
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         links = links_manager.get_data_app_links(
@@ -528,10 +531,32 @@ async def _fetch_data_app(
         raise ValueError('Either data_app_id or configuration_id must be provided.')
 
 
+async def _fetch_data_app_details_task(
+    client: KeboolaClient, links_manager: ProjectLinksManager, configuration_id: str
+) -> DataApp | str:
+    """Task fetching data app details with logs and links by configuration ID.
+    :param client: The Keboola client
+    :param configuration_id: The ID of the data app configuration
+    :return: The data app details or the configuration ID if the data app is not found
+    """
+    try:
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        links = links_manager.get_data_app_links(
+            configuration_id=data_app.configuration_id,
+            configuration_name=data_app.name,
+            deployment_link=data_app.deployment_url,
+            is_authorized=data_app.is_authorized,
+        )
+        logs = await _fetch_logs(client, data_app.data_app_id)
+        return data_app.with_links(links).with_deployment_info(logs)
+    except Exception:
+        return configuration_id
+
+
 async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:
     """Fetches the logs of a data app if it is running otherwise returns empty list."""
     try:
-        str_logs = await client.data_science_client.tail_app_logs(data_app_id, since=None, lines=100)
+        str_logs = await client.data_science_client.tail_app_logs(data_app_id, since=None, lines=20)
         logs = str_logs.split('\n')
         return logs
     except httpx.HTTPStatusError:
@@ -595,7 +620,11 @@ def query_data(query: str) -> pd.DataFrame:
     key = base64.urlsafe_b64encode(kdf.derive(random_seed))
     decoded_token = Fernet(key).decrypt(encrypted_token).decode()
     base_url = os.environ.get('STORAGE_API_URL')
-    with httpx.Client() as client:
+
+    timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
+    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+
+    with httpx.Client(timeout=timeout, limits=limits) as client:
         response = client.post(
             f'{base_url}/v2/storage/branch/{bid}/workspaces/{wid}/query',
             json={'query': query},
@@ -654,8 +683,8 @@ def _get_secrets(client: KeboolaClient, workspace_id: str) -> dict[str, Any]:
     encrypted_token = Fernet(key).encrypt(client.token.encode())
     return {
         'WORKSPACE_ID': workspace_id,
-        'STORAGE_API_URL': client.storage_client.base_api_url,
-        'BRANCH_ID': client.storage_client.branch_id,
+        'STORAGE_API_URL': client.storage_api_url,
+        'BRANCH_ID': client.branch_id or 'default',
         '#STORAGE_API_TOKEN': base64.urlsafe_b64encode(encrypted_token).decode('utf-8'),
         '#SAPI_RANDOM_SEED': base64.urlsafe_b64encode(random_seed).decode('utf-8'),
     }
