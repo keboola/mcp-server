@@ -45,6 +45,7 @@ For detailed setup instructions and region-specific URLs, see our [Remote Server
 - **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations
 - **SQL**: Create SQL transformations with natural language
 - **Jobs**: Run components and transformations, and retrieve job execution details
+- **Data Apps**: Create, deploy and manage Keboola Streamlit Data Apps displaying your queries over storage data.
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
 
 ## Preparations
@@ -353,6 +354,9 @@ What buckets and tables are in my Keboola project?
 | **Jobs** | `get_job` | Retrieves detailed information about a specific job |
 | | `list_jobs` | Lists jobs with optional filtering, sorting, and pagination |
 | | `run_job` | Starts a job for a component or transformation |
+| **Data Apps** | `get_data_apps` | Retrieves detailed information about a specific Data Apps or List Data Apps in the project. |
+| | `modify_data_app` | Creates or updates Data Apps |
+| | `deploy_data_app` | Deploys or supsends Streamlit Data Apps in the Keboola environment. |
 | **Documentation** | `docs_query` | Answers questions using Keboola documentation as the source |
 | **Other** | `create_oauth_url` | Generates an OAuth authorization URL for a component configuration |
 | | `search` | Searches for items in the project by name prefixes |
