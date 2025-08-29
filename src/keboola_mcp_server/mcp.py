@@ -117,13 +117,10 @@ class SessionStateMiddleware(fmw.Middleware):
         ctx = context.fastmcp_context
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
-        import uuid
-
-        if not hasattr(ctx.session, 'uuid'):
-            ctx.session.uuid = str(uuid.uuid4())
         LOG.info(
-            f'[SessionStateMiddleware] Before creating session state | '
-            f'| existing keys={list(ctx.session.state.keys()) if hasattr(ctx.session, "state") else []}'
+            f'[SessionStateMiddleware] Start | '
+            f'session_id={ctx.session_id} | '
+            f'existing_keys={list(getattr(ctx.session, "state", {}).keys())}'
         )
 
         if not isinstance(ctx.session, MagicMock):
@@ -169,17 +166,20 @@ class SessionStateMiddleware(fmw.Middleware):
 
             LOG.info(
                 f'[SessionStateMiddleware] After creating session state | '
-                f'session_uuid={ctx.session.uuid} | keys={list(ctx.session.state.keys())}'
+                f'session_id={ctx.session_id} | '
+                f'keys={list(ctx.session.state.keys())}'
             )
 
         try:
             return await call_next(context)
         finally:
-            LOG.info(
-                f'[SessionStateMiddleware] Clearing session state | '
-                f'session_uuid={ctx.session.uuid} | keys_before_clear={list(ctx.session.state.keys())}'
-            )
-            ctx.session.state = {}
+            # LOG.info(
+            #     f'[SessionStateMiddleware] Clearing session state | '
+            #     f'session_id={ctx.session_id} | '
+            #     f'keys={list(ctx.session.state.keys())}'
+            # )
+            # ctx.session.state = {}
+            pass
 
     @staticmethod
     def _create_session_state(config: Config) -> dict[str, Any]:
