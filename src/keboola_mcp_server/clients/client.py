@@ -3,7 +3,7 @@
 import importlib.metadata
 import logging
 import os
-from typing import Any, Literal, Mapping, Optional, Sequence, TypeVar
+from typing import Any, Literal, Mapping, Sequence, TypeVar
 from urllib.parse import urlparse, urlunparse
 
 from keboola_mcp_server.clients.ai_service import AIServiceClient
