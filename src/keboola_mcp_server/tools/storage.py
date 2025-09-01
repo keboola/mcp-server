@@ -315,9 +315,11 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
 
 
 async def _combine_buckets(
-    client: KeboolaClient, prod_bucket: BucketDetail | None, dev_bucket: BucketDetail | None
+    client: KeboolaClient,
+    links_manager: ProjectLinksManager,
+    prod_bucket: BucketDetail | None,
+    dev_bucket: BucketDetail | None,
 ) -> BucketDetail:
-    links_manager = await ProjectLinksManager.from_client(client)
 
     if prod_bucket and dev_bucket:
         # generate a URL link to the dev bucket but with the prod bucket's name
@@ -341,13 +343,13 @@ async def get_bucket(
 ) -> BucketDetail:
     """Gets detailed information about a specific bucket."""
     client = KeboolaClient.from_state(ctx.session.state)
-    assert isinstance(client, KeboolaClient)
+    links_manager = await ProjectLinksManager.from_client(client)
 
     prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
     if not prod_bucket and not dev_bucket:
         raise ValueError(f'Bucket not found: {bucket_id}')
     else:
-        return await _combine_buckets(client, prod_bucket, dev_bucket)
+        return await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
 
 
 @tool_errors()
@@ -382,7 +384,7 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
             raise Exception(f'No buckets in the group: prod_id={prod_id}')
 
         else:
-            bucket = await _combine_buckets(client, prod_bucket, next(iter(dev_buckets), None))
+            bucket = await _combine_buckets(client, links_manager, prod_bucket, next(iter(dev_buckets), None))
             buckets.append(bucket.model_copy(update={'links': None}))  # no links when listing buckets
 
     return ListBucketsOutput(buckets=buckets, links=[links_manager.get_bucket_dashboard_link()])
@@ -448,7 +450,7 @@ async def get_table(
     bucket_info = cast(dict[str, Any], raw_table.get('bucket', {}))
     bucket_id = cast(str, bucket_info.get('id', ''))
     prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
-    bucket = await _combine_buckets(client, prod_bucket, dev_bucket)
+    bucket = await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
 
     table_fqn = await workspace_manager.get_table_fqn(raw_table)
     table_name = cast(str, raw_table.get('name', ''))
@@ -471,6 +473,7 @@ async def list_tables(
 ) -> ListTablesOutput:
     """Retrieves all tables in a specific bucket with their basic information."""
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
 
     # TODO: requesting "metadata" to get the table description;
@@ -490,8 +493,8 @@ async def list_tables(
             table = TableDetail.model_validate(raw)
             tables_by_prod_id[table.prod_id] = table.model_copy(update={'id': table.prod_id, 'branch_id': None})
 
-    bucket = await _combine_buckets(client, prod_bucket, dev_bucket)
-    return ListTablesOutput(tables=list(tables_by_prod_id.values()), links=bucket.links)
+    bucket = await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
+    return ListTablesOutput(tables=list(tables_by_prod_id.values()), links=bucket.links or [])
 
 
 @tool_errors()
