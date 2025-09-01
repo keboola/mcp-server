@@ -116,7 +116,7 @@ class BucketDetail(BaseModel):
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
     # TODO: add prod_name too to strip the '{branch_id}-' prefix from the name'
 
-    def shade_by(self, other: 'BucketDetail', branch_id: str, links: list[Link] | None = None) -> 'BucketDetail':
+    def shade_by(self, other: 'BucketDetail', branch_id: str | None, links: list[Link] | None = None) -> 'BucketDetail':
         if self.branch_id:
             raise ValueError(
                 f'Dev branch buckets cannot be shaded: ' f'bucket.id={self.id}, bucket.branch_id={self.branch_id}'
@@ -132,7 +132,7 @@ class BucketDetail(BaseModel):
             )
         if other.prod_id != self.id:
             raise ValueError(f'Prod and dev buckets mismatch: prod_bucket.id={self.id}, dev_bucket.id={other.id}')
-        changes: JsonDict = {
+        changes: dict[str, int | None | list[Link] | str] = {
             # TODO: The name and display_name of a branch bucket typically contains the branch ID
             #  and we may not wont to show that.
             # 'name': other.name,
@@ -314,7 +314,9 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
     return prod_bucket, dev_bucket
 
 
-async def _combine_buckets(client: KeboolaClient, prod_bucket: BucketDetail, dev_bucket: BucketDetail) -> BucketDetail:
+async def _combine_buckets(
+    client: KeboolaClient, prod_bucket: BucketDetail | None, dev_bucket: BucketDetail | None
+) -> BucketDetail:
     links_manager = await ProjectLinksManager.from_client(client)
 
     if prod_bucket and dev_bucket:
