@@ -2,11 +2,15 @@
 
 import dataclasses
 import logging
+import os
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional
+from importlib.metadata import distribution
+from typing import Any, Literal, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
 _NO_VALUE_MARKER = '__NO_VALUE_MARKER__'
+Transport = Literal['stdio', 'sse', 'streamable-http', 'http-compat']
 
 
 @dataclass(frozen=True)
@@ -120,6 +124,24 @@ class Config:
                 params.append(f'{f.name}=None')
         joined_params = ', '.join(params)
         return f'Config({joined_params})'
+
+
+@dataclass(frozen=True)
+class ServerRuntimeConfig:
+    """Server runtime configuration."""
+
+    transport: Transport
+    """Transport used by the MCP server (e.g., 'stdio', 'sse', 'streamable-http', 'http-compat')."""
+    server_id: str = uuid.uuid4().hex
+    """The ID of the MCP server."""
+    app_version = os.getenv('APP_VERSION') or 'DEV'
+    """The version of the MCP server application."""
+    server_version = distribution('keboola_mcp_server').version
+    """The version of the Keboola MCP server library."""
+    mcp_library_version = distribution('mcp').version
+    """The version of the MCP library."""
+    fastmcp_library_version = distribution('fastmcp').version
+    """The version of the FastMCP library."""
 
 
 class MetadataField:
