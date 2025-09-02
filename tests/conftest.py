@@ -8,7 +8,7 @@ from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.config import Config, ServerRuntimeConfig
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -51,7 +51,7 @@ def empty_context(mocker) -> Context:
     ctx.session_id = None
     ctx.client_id = None
     ctx.request_context = mocker.MagicMock(RequestContext)
-    ctx.request_context.lifespan_context = ServerState(Config())
+    ctx.request_context.lifespan_context = ServerState(Config(), ServerRuntimeConfig(transport='stdio'))
     return ctx
 
 

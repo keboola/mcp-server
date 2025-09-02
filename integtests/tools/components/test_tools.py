@@ -3,12 +3,11 @@ from typing import Any, AsyncGenerator, cast
 
 import pytest
 import pytest_asyncio
-from fastmcp import Client, FastMCP
-from mcp.server.fastmcp import Context
+from fastmcp import Client, Context, FastMCP
 
 from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
-from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeConfig
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components import (
@@ -200,7 +199,9 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
 @pytest.fixture
 def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
     config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
-    return create_server(config)
+    server = create_server(config, runtime_config=ServerRuntimeConfig(transport='stdio'))
+    assert isinstance(server, FastMCP)
+    return server
 
 
 @pytest_asyncio.fixture
