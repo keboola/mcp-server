@@ -11,7 +11,7 @@ from typing import Optional
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
 
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.config import Config, ServerRuntimeConfig
 from keboola_mcp_server.mcp import ForwardSlashMiddleware
 from keboola_mcp_server.server import create_server
 
@@ -88,11 +88,13 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         workspace_schema=parsed_args.workspace_schema,
         accept_secrets_in_url=parsed_args.accept_secrets_in_url,
     )
+    # Create runtime config from the CLI arguments
+    runtime_config = ServerRuntimeConfig(transport=parsed_args.transport)
 
     try:
         # Create and run the server
         if parsed_args.transport == 'stdio':
-            keboola_mcp_server: FastMCP = create_server(config)
+            keboola_mcp_server: FastMCP = create_server(config, runtime_config=runtime_config)
             if config.oauth_client_id or config.oauth_client_secret:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
@@ -108,7 +110,9 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             import uvicorn
             from starlette.applications import Starlette
 
-            mcp_server, custom_routes = create_server(config, custom_routes_handling='return')
+            mcp_server, custom_routes = create_server(
+                config, runtime_config=runtime_config, custom_routes_handling='return'
+            )
 
             http_app = mcp_server.http_app(
                 path='/',
@@ -147,7 +151,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             await server.serve()
 
         else:
-            keboola_mcp_server: FastMCP = create_server(config)
+            keboola_mcp_server: FastMCP = create_server(config, runtime_config=runtime_config)
             await keboola_mcp_server.run_http_async(
                 show_banner=False,
                 transport=parsed_args.transport,
