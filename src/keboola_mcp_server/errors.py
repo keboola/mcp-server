@@ -68,8 +68,8 @@ async def _trigger_event(
         if http_rq := get_http_request_or_none():
             user_agent = http_rq.headers.get('User-Agent')
 
-    # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server.tool.json
-    # for the JSON schema describing the 'keboola.mcp-server.tool' component's event params.
+    # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server-tool.json
+    # for the JSON schema describing the 'keboola.mcp-server-tool' component's event params.
     event_params: dict[str, Any] = {
         'mcpServerContext': {
             'appEnv': server_state.app_version,
@@ -97,7 +97,7 @@ async def _trigger_event(
     client = KeboolaClient.from_state(ctx.session.state)
     resp = await client.storage_client.trigger_event(
         message=message,
-        component_id='keboola.mcp-server.tool',
+        component_id='keboola.mcp-server-tool',
         event_type=event_type,
         params=event_params,
         duration=execution_time,
