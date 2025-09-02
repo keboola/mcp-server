@@ -72,11 +72,11 @@ async def _trigger_event(
     # for the JSON schema describing the 'keboola.mcp-server.tool' component's event params.
     event_params: dict[str, Any] = {
         'mcpServerContext': {
-            'appEnv': server_state.app_version,
-            'version': server_state.server_version,
+            'appEnv': server_state.runtime_config.app_version,
+            'version': server_state.runtime_config.server_version,
             'userAgent': user_agent or '',
             # For the HTTP-based transports use the HTTP session ID. For other transports use the server ID.
-            'sessionId': ctx.session_id or server_state.server_id,
+            'sessionId': ctx.session_id or server_state.runtime_config.server_id,
         },
         'tool': {
             'name': tool_name,
