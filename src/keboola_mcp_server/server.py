@@ -15,7 +15,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.config import Config, ServerRuntimeConfig, Transport
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
@@ -57,6 +57,11 @@ class ServiceInfoApiResp(BaseModel):
     fastmcp_library_version: str = Field(
         validation_alias=AliasChoices('fastmcpLibraryVersion', 'fastmcp_library_version', 'fastmcp-library-version'),
         serialization_alias='fastmcpLibraryVersion',
+    )
+    server_transport: Transport | None = Field(
+        validation_alias=AliasChoices('serverTransport', 'server_transport', 'server-transport'),
+        serialization_alias='serverTransport',
+        default=None,
     )
 
 
@@ -102,10 +107,11 @@ class CustomRoutes:
     async def get_info(self, _rq: Request) -> Response:
         """Returns basic information about the service."""
         resp = ServiceInfoApiResp(
-            app_version=self.server_state.app_version,
-            server_version=self.server_state.server_version,
-            mcp_library_version=self.server_state.mcp_library_version,
-            fastmcp_library_version=self.server_state.fastmcp_library_version,
+            app_version=self.server_state.runtime_config.app_version,
+            server_version=self.server_state.runtime_config.server_version,
+            mcp_library_version=self.server_state.runtime_config.mcp_library_version,
+            fastmcp_library_version=self.server_state.runtime_config.fastmcp_library_version,
+            server_transport=self.server_state.runtime_config.transport,
         )
         return JSONResponse(resp.model_dump(by_alias=True))
 
@@ -158,7 +164,10 @@ class CustomRoutes:
 
 
 def create_server(
-    config: Config, custom_routes_handling: Literal['add', 'return'] | None = 'add'
+    config: Config,
+    *,
+    runtime_config: ServerRuntimeConfig,
+    custom_routes_handling: Literal['add', 'return'] | None = 'add',
 ) -> FastMCP | tuple[FastMCP, CustomRoutes]:
     """Create and configure the MCP server.
 
@@ -201,7 +210,7 @@ def create_server(
 
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
-    server_state = ServerState(config=config)
+    server_state = ServerState(config=config, runtime_config=runtime_config)
     mcp = KeboolaMcpServer(
         name='Keboola MCP Server',
         lifespan=create_keboola_lifespan(server_state),
@@ -211,9 +220,8 @@ def create_server(
 
     if custom_routes_handling:
         custom_routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
-
-    if custom_routes_handling == 'add':
-        custom_routes.add_to_mcp(mcp)
+        if custom_routes_handling == 'add':
+            custom_routes.add_to_mcp(mcp)
 
     add_component_tools(mcp)
     add_data_app_tools(mcp)
