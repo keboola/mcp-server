@@ -459,6 +459,7 @@ class ConfigToolOutput(BaseModel):
     component_id: str = Field(description='The ID of the component.')
     configuration_id: str = Field(description='The ID of the configuration.')
     description: str = Field(description='The description of the configuration.')
+    version: int = Field(description='The version number of the configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the configuration.')
