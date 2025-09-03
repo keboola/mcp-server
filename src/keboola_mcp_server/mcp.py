@@ -179,7 +179,7 @@ class SessionStateMiddleware(fmw.Middleware):
             return 'NA'
 
     @classmethod
-    def _get_user_agent(cls) -> str:
+    def _get_user_agent(cls, transport: str) -> str:
         """
         :return: User agent string.
         """
@@ -189,7 +189,7 @@ class SessionStateMiddleware(fmw.Middleware):
             version = 'NA'
 
         app_env = os.getenv('APP_ENV', 'local')
-        return f'Keboola MCP Server/{version} app_env={app_env}'
+        return f'Keboola MCP Server/{version} app_env={app_env} transport={transport}'
 
     @classmethod
     def _get_headers(cls, runtime_config: ServerRuntimeConfig | None = None) -> dict[str, Any]:
@@ -197,9 +197,10 @@ class SessionStateMiddleware(fmw.Middleware):
         :param headers: Additional headers for the requests
         :return: Additional headers for the requests, namely the user agent.
         """
+        transport = runtime_config.transport if runtime_config else 'NA'
         return {
-            'User-Agent': cls._get_user_agent(),
-            'MCP-Server-Transport': cls._get_server_transport(runtime_config),
+            'User-Agent': cls._get_user_agent(transport),
+            'MCP-Server-Transport': transport,
             'MCP-Server-Versions': cls._get_server_versions(runtime_config),
         }
 
