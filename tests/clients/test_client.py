@@ -315,7 +315,7 @@ class TestKeboolaClient:
                     'Content-Type': 'application/json',
                     'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
-                    'User-Agent': f'Keboola MCP Server/{kbc_version} app_env=local',
+                    'User-Agent': f'Keboola MCP Server/{kbc_version} app_env=local transport=stdio',
                     'MCP-Server-Transport': 'stdio',
                     'MCP-Server-Versions': (
                         f'keboola-mcp-server/{kbc_version} mcp/{mcp_version} fastmcp/{fastmcp_version}'
