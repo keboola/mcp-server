@@ -233,6 +233,7 @@ class TestCreateFlowTool:
         assert result.description == mock_legacy_flow_create_update['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
+        assert result.version == mock_legacy_flow_create_update['version']
 
         keboola_client.storage_client.configuration_create.assert_called_once()
 
@@ -263,6 +264,7 @@ class TestCreateFlowTool:
         assert result.description == mock_conditional_flow_create_update['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
+        assert result.version == mock_conditional_flow_create_update['version']
 
         keboola_client.storage_client.configuration_create.assert_called_once()
 
@@ -321,6 +323,7 @@ class TestUpdateFlowTool:
         assert result.description == 'Updated legacy ETL pipeline'
         assert result.timestamp is not None
         assert len(result.links) == 3
+        assert result.version == updated_config['version']
 
         keboola_client.storage_client.configuration_update.assert_called_once()
 
@@ -366,6 +369,7 @@ class TestUpdateFlowTool:
         assert result.description == updated_config['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
+        assert result.version == updated_config['version']
 
         keboola_client.storage_client.configuration_update.assert_called_once()
 

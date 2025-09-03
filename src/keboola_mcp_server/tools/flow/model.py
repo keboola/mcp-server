@@ -32,10 +32,12 @@ class FlowToolResponse(BaseModel):
     :param timestamp: The timestamp of the operation.
     :param success: Indicates if the operation succeeded.
     :param links: The links relevant to the flow.
+    :param version: The version number of the flow configuration.
     """
 
     id: str = Field(description='The id of the flow.')
     description: str = Field(description='The description of the Flow.')
+    version: int = Field(description='The version number of the flow configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the flow.')
