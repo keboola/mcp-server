@@ -1,7 +1,7 @@
 """Keboola Storage API client wrapper."""
 
 import logging
-from typing import Any, Literal, Mapping, Optional, Sequence, TypeVar
+from typing import Any, Literal, Mapping, Sequence, TypeVar
 from urllib.parse import urlparse, urlunparse
 
 from keboola_mcp_server.clients.ai_service import AIServiceClient
@@ -27,7 +27,7 @@ FLOW_TYPES: Sequence[FlowType] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_CO
 
 def get_metadata_property(
     metadata: list[Mapping[str, Any]], key: str, provider: str | None = None, default: T | None = None
-) -> Optional[T]:
+) -> T | None:
     """
     Gets the value of a metadata property based on the provided key and optional provider. If multiple metadata entries
     exist with the same key, the most recent one is returned.
