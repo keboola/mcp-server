@@ -45,9 +45,10 @@ For detailed setup instructions and region-specific URLs, see our [Remote Server
 - **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations
 - **SQL**: Create SQL transformations with natural language
 - **Jobs**: Run components and transformations, and retrieve job execution details
-- **Flows**: Create and manage orchestrations. Supports Conditional Flows and Orchestrator flows.
+- **Flows**: Build and manage workflow pipelines using Conditional Flows and Orchestrator Flows.
 - **Data Apps**: Create, deploy and manage Keboola Streamlit Data Apps displaying your queries over storage data.
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
+- **Dev Branches**: Work safely in development branches outside of production, where all operations are scoped to the selected branch.
 
 ## Preparations
 
@@ -120,13 +121,12 @@ Your Keboola API URL depends on your deployment region. You can determine your r
 
 ### KBC_BRANCH_ID (optional)
 
-If you want the server to operate on a specific Keboola development branch, provide its branch ID via environment variable `KBC_BRANCH_ID`.
+To have the server operate on a specific Keboola development branch, set the branch ID using the `KBC_BRANCH_ID` parameter. The server scopes its functionality to the specified branch, ensuring all changes remain isolated and do not impact the production branch.
 
 - If unset the server uses the production branch.
 - For development work, set `KBC_BRANCH_ID` to the numeric ID of your branch (e.g., `123456`).
 - On remote transports, you can override per-request with the HTTP header `X-Branch-Id: <branchId>` or `KBC_BRANCH_ID: <branchId>`.
 
-The server scopes its functionality to the selected branch, ensuring that changes remain isolated and do not affect the production branch.
 
 ## Running Keboola MCP Server
 
