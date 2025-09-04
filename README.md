@@ -55,6 +55,9 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 
 For detailed setup instructions and region-specific URLs, see our [Remote Server Setup documentation](https://help.keboola.com/ai/mcp-server/#remote-server-setup).
 
+### Using Development Branches
+You can work safely in [Keboola development branches](https://help.keboola.com/components/branches/) without affecting your production data. The remotely hosted MCP Servers respect the `KBC_BRANCH_ID` parameter and will scope all operations to the specified branch. You can find the development branch ID in the URL when navigating to the development branch in the UI, for example: `https://connection.us-east4.gcp.keboola.com/admin/projects/PROJECT_ID/branch/BRANCH_ID/dashboard`. The branch ID must be included in each request using the header `X-Branch-Id: <branchId>`, otherwise the MCP Server uses production branch as default. This should be managed by the AI client or the environment handling the server connection.
+
 ---
 
 ## 🐌 Slow Start: Local MCP Server Setup (Custom or Dev Way) {#slow_start}
@@ -109,7 +112,7 @@ To operate on a specific [Keboola development branch](https://help.keboola.com/c
 
 - If unset the server uses the production branch by default.
 - For development work, set `KBC_BRANCH_ID` to the numeric ID of your branch (e.g., `123456`). You can find the development branch ID in the URL when navigating to the development branch in the UI, for example: `https://connection.us-east4.gcp.keboola.com/admin/projects/PROJECT_ID/branch/BRANCH_ID/dashboard`.
-- On remote transports, you can override per-request with the HTTP header `X-Branch-Id: <branchId>` or `KBC_BRANCH_ID: <branchId>`. 
+- On remote transports, you can override per-request with the HTTP header `X-Branch-Id: <branchId>` or `KBC_BRANCH_ID: <branchId>`.
 
 
 ### Installation
