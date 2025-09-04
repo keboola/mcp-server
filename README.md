@@ -121,7 +121,7 @@ Your Keboola API URL depends on your deployment region. You can determine your r
 
 ### KBC_BRANCH_ID (optional)
 
-To have the server operate on a specific Keboola development branch, set the branch ID using the `KBC_BRANCH_ID` parameter. The server scopes its functionality to the specified branch, ensuring all changes remain isolated and do not impact the production branch.
+To have the server operate on a specific [Keboola development branch](https://help.keboola.com/components/branches/), set the branch ID using the `KBC_BRANCH_ID` parameter. The server scopes its functionality to the specified branch, ensuring all changes remain isolated and do not impact the production branch.
 
 - If unset the server uses the production branch.
 - For development work, set `KBC_BRANCH_ID` to the numeric ID of your branch (e.g., `123456`).
