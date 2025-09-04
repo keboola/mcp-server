@@ -463,6 +463,7 @@ async def create_sql_transformation(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
+        version=new_raw_transformation_configuration['version'],
     )
 
 
@@ -596,6 +597,7 @@ async def update_sql_transformation(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
+        version=updated_raw_configuration['version'],
     )
 
 
@@ -693,6 +695,7 @@ async def create_config(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
+        version=new_raw_configuration['version'],
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -811,6 +814,7 @@ async def add_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
+        version=new_raw_configuration['version'],
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -938,6 +942,7 @@ async def update_config(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
+        version=updated_raw_configuration['version'],
     )
 
 
@@ -1068,6 +1073,7 @@ async def update_config_row(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
+        version=updated_raw_configuration['version'],
     )
 
 
