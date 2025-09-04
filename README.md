@@ -10,7 +10,25 @@
 
 Keboola MCP Server is an open-source bridge between your Keboola project and modern AI tools. It turns Keboola features—like storage access, SQL transformations, and job triggers—into callable tools for Claude, Cursor, CrewAI, LangChain, Amazon Q, and more.
 
-## 🚀 Quick Start: Remote MCP Server (Easiest Way)
+- [Quick Start](#quick_start)
+- [Local Setup](#slow_start)
+
+## Features
+
+With the AI Agent and MCP Server, you can:
+
+- **Storage**: Query tables directly and manage table or bucket descriptions
+- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations
+- **SQL**: Create SQL transformations with natural language
+- **Jobs**: Run components and transformations, and retrieve job execution details
+- **Flows**: Build and manage workflow pipelines using Conditional Flows and Orchestrator Flows.
+- **Data Apps**: Create, deploy and manage Keboola Streamlit Data Apps displaying your queries over storage data.
+- **Metadata**: Search, read, and update project documentation and object metadata using natural language
+- **Dev Branches**: Work safely in development branches outside of production, where all operations are scoped to the selected branch.
+
+---
+
+## 🚀 Quick Start: Remote MCP Server (Easiest Way) {#quick_start}
 
 The easiest way to use Keboola MCP Server is through our **Remote MCP Server**. This hosted solution eliminates the need for local setup, configuration, or installation.
 
@@ -39,18 +57,62 @@ For detailed setup instructions and region-specific URLs, see our [Remote Server
 
 ---
 
-## Features
+## 🐌 Slow Start: Local MCP Server Setup (Custom or Dev Way) {#slow_start}
 
-- **Storage**: Query tables directly and manage table or bucket descriptions
-- **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations
-- **SQL**: Create SQL transformations with natural language
-- **Jobs**: Run components and transformations, and retrieve job execution details
-- **Flows**: Build and manage workflow pipelines using Conditional Flows and Orchestrator Flows.
-- **Data Apps**: Create, deploy and manage Keboola Streamlit Data Apps displaying your queries over storage data.
-- **Metadata**: Search, read, and update project documentation and object metadata using natural language
-- **Dev Branches**: Work safely in development branches outside of production, where all operations are scoped to the selected branch.
+Run the MCP server on your own machine for full control and easy development. Choose this when you want to customize tools, debug locally, or iterate quickly. You’ll clone the repo, set Keboola credentials via environment variables or headers depending on the server transport, install dependencies, and start the server. This approach offers maximum flexibility (custom tools, local logging, offline iteration) but requires manual setup and you manage updates and secrets yourself.
 
-## Preparations
+The server supports multiple **transport** options, which can be selected by providing the `--transport <transport>` argument when starting the server:
+- `stdio` - Default when `--transport` is not specified. Standard input/output, typically used for local deployment with a single client.
+- `streamable-http` - Runs the server remotely over HTTP with a bidirectional streaming channel, allowing the client and server to continuously exchange messages. Connect via <url>/mcp (e.g., http://localhost:8000/mcp).
+- `sse` - Deprecated, use `streamable-http` instead. Runs the server remotely using Server-Sent Events (SSE) for one-way event streaming from server to client. Connect via <url>/sse (e.g., http://localhost:8000/sse).
+- `http-compat` - A custom transport supporting both `SSE` and `streamable-http`. It is currently used on Keboola remote servers but will soon be replaced by `streamable-http` only.
+
+For client–server communication, Keboola credentials must be provided to enable working with your project in your Keboola Region. The following are required: `KBC_STORAGE_TOKEN`, `KBC_STORAGE_API_URL`, `KBC_WORKSPACE_SCHEMA` and optionally `KBC_BRANCH_ID`. You can provide these in two ways:
+- For personal use (mainly with stdio transport): set the environment variables before starting the server. All requests will reuse these predefined credentials.
+- For multi-user use: include the variables in the request headers so that each request uses the credentials provided with it.
+
+
+#### KBC_STORAGE_TOKEN
+
+This is your authentication token for Keboola:
+
+For instructions on how to create and manage Storage API tokens, refer to the [official Keboola documentation](https://help.keboola.com/management/project/tokens/).
+
+**Note**: If you want the MCP server to have limited access, use custom storage token, if you want the MCP to access everything in your project, use the master token.
+
+#### KBC_WORKSPACE_SCHEMA
+
+This identifies your workspace in Keboola and is used for SQL queries. However, this is **only required if you're using a custom storage token** instead of the Master Token:
+
+- If using [Master Token](https://help.keboola.com/management/project/tokens/#master-tokens): The workspace is created automatically behind the scenes
+- If using [custom storage token](https://help.keboola.com/management/project/tokens/#limited-tokens): Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA
+
+**Note**: When creating a workspace manually, check Grant read-only access to all Project data option
+
+**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
+
+#### KBC_STORAGE_API_URL (Keboola Region)
+
+Your Keboola Region API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
+
+| Region | API URL |
+|--------|---------|
+| AWS North America | `https://connection.keboola.com` |
+| AWS Europe | `https://connection.eu-central-1.keboola.com` |
+| Google Cloud EU | `https://connection.europe-west3.gcp.keboola.com` |
+| Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
+| Azure EU | `https://connection.north-europe.azure.keboola.com` |
+
+#### KBC_BRANCH_ID (Optional) {#kbc_branch_id}
+
+To operate on a specific [Keboola development branch](https://help.keboola.com/components/branches/), set the branch ID using the `KBC_BRANCH_ID` parameter. The MCP server scopes its functionality to the specified branch, ensuring all changes remain isolated and do not impact the production branch.
+
+- If unset the server uses the production branch by default.
+- For development work, set `KBC_BRANCH_ID` to the numeric ID of your branch (e.g., `123456`). You can find the development branch ID in the URL when navigating to the development branch in the UI, for example: `https://connection.us-east4.gcp.keboola.com/admin/projects/PROJECT_ID/branch/BRANCH_ID/dashboard`.
+- On remote transports, you can override per-request with the HTTP header `X-Branch-Id: <branchId>` or `KBC_BRANCH_ID: <branchId>`. 
+
+
+### Installation
 
 Make sure you have:
 
@@ -86,49 +148,8 @@ winget install --id=astral-sh.uv -e
 
 For more installation options, see the [official uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
 
-Before setting up the MCP server, you need three key pieces of information:
 
-### KBC_STORAGE_TOKEN
-
-This is your authentication token for Keboola:
-
-For instructions on how to create and manage Storage API tokens, refer to the [official Keboola documentation](https://help.keboola.com/management/project/tokens/).
-
-**Note**: If you want the MCP server to have limited access, use custom storage token, if you want the MCP to access everything in your project, use the master token.
-
-### KBC_WORKSPACE_SCHEMA
-
-This identifies your workspace in Keboola and is used for SQL queries. However, this is **only required if you're using a custom storage token** instead of the Master Token:
-
-- If using [Master Token](https://help.keboola.com/management/project/tokens/#master-tokens): The workspace is created automatically behind the scenes
-- If using [custom storage token](https://help.keboola.com/management/project/tokens/#limited-tokens): Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA
-
-**Note**: When creating a workspace manually, check Grant read-only access to all Project data option
-
-**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
-
-### Keboola Region
-
-Your Keboola API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
-
-| Region | API URL |
-|--------|---------|
-| AWS North America | `https://connection.keboola.com` |
-| AWS Europe | `https://connection.eu-central-1.keboola.com` |
-| Google Cloud EU | `https://connection.europe-west3.gcp.keboola.com` |
-| Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
-| Azure EU | `https://connection.north-europe.azure.keboola.com` |
-
-### KBC_BRANCH_ID (optional)
-
-To have the server operate on a specific [Keboola development branch](https://help.keboola.com/components/branches/), set the branch ID using the `KBC_BRANCH_ID` parameter. The server scopes its functionality to the specified branch, ensuring all changes remain isolated and do not impact the production branch.
-
-- If unset the server uses the production branch.
-- For development work, set `KBC_BRANCH_ID` to the numeric ID of your branch (e.g., `123456`). You can find the development branch ID in the URL when navigating to the development branch in the UI, for example: `https://connection.us-east4.gcp.keboola.com/admin/projects/PROJECT_ID/branch/BRANCH_ID/dashboard`.
-- On remote transports, you can override per-request with the HTTP header `X-Branch-Id: <branchId>` or `KBC_BRANCH_ID: <branchId>`.
-
-
-## Running Keboola MCP Server
+### Running Keboola MCP Server
 
 There are four ways to use the Keboola MCP Server, depending on your needs:
 
@@ -150,7 +171,7 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
   "mcpServers": {
     "keboola": {
       "command": "uvx",
-      "args": ["keboola_mcp_server"],
+      "args": ["keboola_mcp_server --transport <transport>"],
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
@@ -178,7 +199,7 @@ Config file locations:
   "mcpServers": {
     "keboola": {
       "command": "uvx",
-      "args": ["keboola_mcp_server"],
+      "args": ["keboola_mcp_server --transport <transport>"],
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
@@ -209,7 +230,7 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
           "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
           "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
           "export KBC_BRANCH_ID=your_branch_id_optional &&",
-          "/snap/bin/uvx keboola_mcp_server",
+          "/snap/bin/uvx keboola_mcp_server --transport <transport>",
           "'"
       ]
     }
@@ -231,7 +252,7 @@ For developers working on the MCP server code itself:
       "command": "/absolute/path/to/.venv/bin/python",
       "args": [
         "-m",
-        "keboola_mcp_server"
+        "keboola_mcp_server --transport <transport>"
       ],
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
