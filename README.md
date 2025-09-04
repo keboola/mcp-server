@@ -11,7 +11,7 @@
 Keboola MCP Server is an open-source bridge between your Keboola project and modern AI tools. It turns Keboola features—like storage access, SQL transformations, and job triggers—into callable tools for Claude, Cursor, CrewAI, LangChain, Amazon Q, and more.
 
 - [Quick Start](#-quick-start-remote-mcp-server-easiest-way)
-- [Local Setup](#-slow-start-local-mcp-server-setup-custom-or-dev-way)
+- [Local Setup](#local-mcp-server-setup-custom-or-dev-way)
 
 ## Features
 
@@ -60,7 +60,7 @@ You can work safely in [Keboola development branches](https://help.keboola.com/c
 
 ---
 
-## 🐌 Slow Start: Local MCP Server Setup (Custom or Dev Way)
+## Local MCP Server Setup (Custom or Dev Way)
 
 Run the MCP server on your own machine for full control and easy development. Choose this when you want to customize tools, debug locally, or iterate quickly. You’ll clone the repo, set Keboola credentials via environment variables or headers depending on the server transport, install dependencies, and start the server. This approach offers maximum flexibility (custom tools, local logging, offline iteration) but requires manual setup and you manage updates and secrets yourself.
 
