@@ -172,7 +172,7 @@ def create_server(
     """Create and configure the MCP server.
 
     :param config: Server configuration.
-
+    :param runtime_info: Server runtime information holding the server versions, transport, etc.
     :param custom_routes_handling: Add custom routes (health check etc.) to the server. If 'add',
         the routes are added to the MCP server instance. If 'return', the routes are returned as a CustomRoutes
         instance. If None, no custom routes are added. The 'return' mode is a workaround for the 'http-compat'
