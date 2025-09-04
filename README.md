@@ -45,8 +45,10 @@ For detailed setup instructions and region-specific URLs, see our [Remote Server
 - **Components**: Create, List and inspect extractors, writers, data apps, and transformation configurations
 - **SQL**: Create SQL transformations with natural language
 - **Jobs**: Run components and transformations, and retrieve job execution details
+- **Flows**: Build and manage workflow pipelines using Conditional Flows and Orchestrator Flows.
 - **Data Apps**: Create, deploy and manage Keboola Streamlit Data Apps displaying your queries over storage data.
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
+- **Dev Branches**: Work safely in development branches outside of production, where all operations are scoped to the selected branch.
 
 ## Preparations
 
@@ -117,6 +119,15 @@ Your Keboola API URL depends on your deployment region. You can determine your r
 | Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
 | Azure EU | `https://connection.north-europe.azure.keboola.com` |
 
+### KBC_BRANCH_ID (optional)
+
+To have the server operate on a specific [Keboola development branch](https://help.keboola.com/components/branches/), set the branch ID using the `KBC_BRANCH_ID` parameter. The server scopes its functionality to the specified branch, ensuring all changes remain isolated and do not impact the production branch.
+
+- If unset the server uses the production branch.
+- For development work, set `KBC_BRANCH_ID` to the numeric ID of your branch (e.g., `123456`). You can find the development branch ID in the URL when navigating to the development branch in the UI, for example: `https://connection.us-east4.gcp.keboola.com/admin/projects/PROJECT_ID/branch/BRANCH_ID/dashboard`.
+- On remote transports, you can override per-request with the HTTP header `X-Branch-Id: <branchId>` or `KBC_BRANCH_ID: <branchId>`.
+
+
 ## Running Keboola MCP Server
 
 There are four ways to use the Keboola MCP Server, depending on your needs:
@@ -143,7 +154,8 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
-        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
+        "KBC_BRANCH_ID": "your_branch_id_optional"
       }
     }
   }
@@ -170,7 +182,8 @@ Config file locations:
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
-        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
+        "KBC_BRANCH_ID": "your_branch_id_optional"
       }
     }
   }
@@ -195,6 +208,7 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
           "export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com &&",
           "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
           "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
+          "export KBC_BRANCH_ID=your_branch_id_optional &&",
           "/snap/bin/uvx keboola_mcp_server",
           "'"
       ]
@@ -222,7 +236,8 @@ For developers working on the MCP server code itself:
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
-        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
+        "KBC_BRANCH_ID": "your_branch_id_optional"
       }
     }
   }
@@ -238,6 +253,7 @@ You can run the server manually in a terminal for testing or debugging:
 export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com
 export KBC_STORAGE_TOKEN=your_keboola_storage_token
 export KBC_WORKSPACE_SCHEMA=your_workspace_schema
+export KBC_BRANCH_ID=your_branch_id_optional
 
 uvx keboola_mcp_server --transport sse
 ```
@@ -261,6 +277,7 @@ docker run \
   -e KBC_STORAGE_API_URL="https://connection.YOUR_REGION.keboola.com" \
   -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_STORAGE_TOKEN" \
   -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
+  -e KBC_BRANCH_ID="YOUR_BRANCH_ID_OPTIONAL" \
   keboola/mcp-server:latest \
   --transport sse \
   --host 0.0.0.0
