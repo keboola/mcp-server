@@ -144,6 +144,7 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
         assert created_config.description == test_description
         assert created_config.success is True
         assert created_config.timestamp is not None
+        assert created_config.version is not None
         assert frozenset(created_config.links) == frozenset(
             [
                 Link(
@@ -278,6 +279,7 @@ async def test_update_config(
     assert updated_config.configuration_id == configuration_id
     assert updated_config.success is True
     assert updated_config.timestamp is not None
+    assert updated_config.version is not None
 
     expected_name = updates.get('name') or 'Initial Test Configuration'
     expected_description = updates.get('description') or initial_cmpconf.description
@@ -388,6 +390,7 @@ async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], ke
         assert created_row_config.description == row_description
         assert created_row_config.component_id == component_id
         assert created_row_config.configuration_id == root_config.configuration_id
+        assert created_row_config.version is not None
         assert frozenset(created_row_config.links) == frozenset(
             [
                 Link(
@@ -528,6 +531,7 @@ async def test_update_config_row(
     assert updated_row_config.configuration_id == configuration_id
     assert updated_row_config.success is True
     assert updated_row_config.timestamp is not None
+    assert updated_row_config.version is not None
 
     expected_row_name = updates.get('name') or 'Initial Test Row Configuration'
     expected_row_description = updates.get('description') or initial_cmpconf_row.description
@@ -629,6 +633,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         assert created_transformation.description == test_description
         assert created_transformation.component_id == expected_component_id
         assert created_transformation.configuration_id is not None
+        assert created_transformation.version is not None
         expected_links = frozenset(
             [
                 Link(
@@ -831,6 +836,7 @@ async def test_update_sql_transformation(
     assert updated_trfm.configuration_id == configuration_id
     assert updated_trfm.success is True
     assert updated_trfm.timestamp is not None
+    assert updated_trfm.version is not None
 
     expected_name = updates.get('name') or 'Initial Test SQL Transformation'
     expected_description = updates.get('updated_description') or initial_sqltrfm.description

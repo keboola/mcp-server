@@ -205,6 +205,7 @@ async def create_flow(
     tool_response = FlowToolResponse(
         id=api_config.id,
         description=api_config.description or '',
+        version=api_config.version,
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
@@ -269,6 +270,7 @@ async def create_conditional_flow(
     tool_response = FlowToolResponse(
         id=api_config.id,
         description=api_config.description or '',
+        version=api_config.version,
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
@@ -406,6 +408,7 @@ async def update_flow(
     tool_response = FlowToolResponse(
         id=api_config.id,
         description=api_config.description or '',
+        version=api_config.version,
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
