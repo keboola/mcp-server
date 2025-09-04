@@ -317,6 +317,7 @@ async def test_create_sql_transformation(
     assert new_transformation_configuration.component_id == expected_component_id
     assert new_transformation_configuration.configuration_id == mock_configuration['id']
     assert new_transformation_configuration.description == mock_configuration['description']
+    assert new_transformation_configuration.version == mock_configuration['version']
 
     keboola_client.storage_client.configuration_create.assert_called_once_with(
         component_id=expected_component_id,
@@ -477,6 +478,7 @@ async def test_update_sql_transformation(
     assert updated_result.component_id == expected_component_id
     assert updated_result.configuration_id == mock_configuration['id']
     assert updated_result.description == mock_configuration['description']
+    assert updated_result.version == updated_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_with(component_id=expected_component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
@@ -571,6 +573,7 @@ async def test_create_config(
     assert result.description == description
     assert result.success is True
     assert result.timestamp is not None
+    assert result.version == configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
     keboola_client.storage_client.configuration_create.assert_called_once_with(
@@ -624,6 +627,7 @@ async def test_add_config_row(
     assert result.description == description
     assert result.success is True
     assert result.timestamp is not None
+    assert result.version == row_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
     keboola_client.storage_client.configuration_row_create.assert_called_once_with(
@@ -734,6 +738,7 @@ async def test_update_config(
     assert result.description == updated_description
     assert result.success is True
     assert result.timestamp is not None
+    assert result.version == updated_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
@@ -844,6 +849,7 @@ async def test_update_config_row(
     assert result.description == updated_description
     assert result.success is True
     assert result.timestamp is not None
+    assert result.version == updated_row_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
     keboola_client.storage_client.configuration_row_update.assert_called_once_with(

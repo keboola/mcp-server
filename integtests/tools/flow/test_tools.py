@@ -89,6 +89,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         # Verify the links of created flow
         assert created.success is True
         assert set(created.links) == set(expected_links)
+        assert created.version is not None
 
         # Verify the flow is listed in the list_flows tool
         result = await list_flows(mcp_context)
@@ -195,6 +196,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
         assert created.description == flow_description
         assert created.success is True
         assert set(created.links) == set(expected_links)
+        assert created.version is not None
 
         # Verify the flow is listed in the list_flows tool
         result = await list_flows(mcp_context)
@@ -513,6 +515,7 @@ async def test_update_flow(
     assert updated_flow.id == flow_id
     assert updated_flow.success is True
     assert updated_flow.timestamp is not None
+    assert updated_flow.version is not None
 
     expected_name = updates.get('name') or 'Initial Test Flow'
     expected_description = updates.get('description') or initial_flow.description
@@ -808,6 +811,7 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
     assert isinstance(orchestrator_result, FlowToolResponse)
     assert orchestrator_result.success is True
     assert orchestrator_result.description == orchestrator_flow_description
+    assert orchestrator_result.version is not None
     created_flows.append((ORCHESTRATOR_COMPONENT_ID, orchestrator_result.id))
 
     # Step 2: Try to create conditional flow (only if project allows it)
@@ -826,6 +830,7 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
         assert isinstance(conditional_result, FlowToolResponse)
         assert conditional_result.success is True
         assert conditional_result.description == conditional_flow_description
+        assert conditional_result.version is not None
         created_flows.append((CONDITIONAL_FLOW_COMPONENT_ID, conditional_result.id))
     else:
         LOG.info('Conditional flows are disabled in this project, skipping conditional flow creation')
