@@ -21,7 +21,7 @@ from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeConfig
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -326,7 +326,7 @@ def mcp_context(
     client_context.client_id = None
     client_context.session_id = None
     client_context.request_context = mocker.MagicMock(RequestContext)
-    client_context.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeConfig(transport='stdio'))
+    client_context.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeInfo(transport='stdio'))
 
     return client_context
 

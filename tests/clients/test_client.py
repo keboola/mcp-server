@@ -7,7 +7,7 @@ import pytest
 
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import ServerRuntimeConfig
+from keboola_mcp_server.config import ServerRuntimeInfo
 from keboola_mcp_server.mcp import SessionStateMiddleware
 
 
@@ -286,11 +286,11 @@ class TestAsyncStorageClient:
 class TestKeboolaClient:
 
     @pytest.fixture
-    def runtime_config(self) -> ServerRuntimeConfig:
-        return ServerRuntimeConfig(transport='stdio', server_id='test')
+    def runtime_config(self) -> ServerRuntimeInfo:
+        return ServerRuntimeInfo(transport='stdio', server_id='test')
 
     @pytest.fixture
-    def keboola_client_with_headers(self, runtime_config: ServerRuntimeConfig) -> KeboolaClient:
+    def keboola_client_with_headers(self, runtime_config: ServerRuntimeInfo) -> KeboolaClient:
         headers = SessionStateMiddleware._get_headers(runtime_config)
         return KeboolaClient(
             storage_api_url='https://connection.nowhere', storage_api_token='test-token', headers=headers

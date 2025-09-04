@@ -7,7 +7,7 @@ from mcp.types import TextContent
 
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeConfig
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import Configuration
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -27,7 +27,7 @@ async def test_stdio_setup(
     config = Config(storage_api_url=storage_api_url)
     # We expect getting the credentials from environment variables.
 
-    server = create_server(config, runtime_config=ServerRuntimeConfig(transport='stdio'))
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
     component_config = configs[0]
     async with Client(server) as client:
@@ -56,7 +56,7 @@ async def test_sse_setup(
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
 
-    server = create_server(config, runtime_config=ServerRuntimeConfig(transport='sse'))
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='sse'))
     assert isinstance(server, FastMCP)
     component_config = configs[0]
 
@@ -95,7 +95,7 @@ async def test_http_setup(
     mocker.patch('keboola_mcp_server.server.os.environ', {})
 
     transport = 'streamable-http'
-    server = create_server(config, runtime_config=ServerRuntimeConfig(transport=transport))
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
     assert isinstance(server, FastMCP)
     component_config = configs[0]
     async with run_server_remote(server, transport) as url:
@@ -127,7 +127,7 @@ async def test_http_multiple_clients(
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
     transport = 'streamable-http'
-    server = create_server(config, runtime_config=ServerRuntimeConfig(transport=transport))
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
     assert isinstance(server, FastMCP)
     component_config = configs[0]
     async with run_server_remote(server, transport) as url:
@@ -177,7 +177,7 @@ async def test_http_multiple_clients_with_different_headers(
         return f'{which_client}'
 
     transport = 'streamable-http'
-    server = create_server(config, runtime_config=ServerRuntimeConfig(transport=transport))
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
     assert isinstance(server, FastMCP)
     server.add_tool(FunctionTool.from_function(assessed_function))
 
@@ -212,7 +212,7 @@ async def test_http_server_header_and_query_params_client(
     mocker.patch('keboola_mcp_server.server.os.environ', {})
 
     transport = 'streamable-http'
-    server = create_server(config, runtime_config=ServerRuntimeConfig(transport=transport))
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
     assert isinstance(server, FastMCP)
     component_config = configs[0]
 

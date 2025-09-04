@@ -68,6 +68,7 @@ class KeboolaClient:
                 storage_api_token=self.token,
                 bearer_token=self._bearer_token,
                 branch_id=branch_id,
+                headers=self._headers,
             )
 
     def __init__(
@@ -86,7 +87,7 @@ class KeboolaClient:
         :param storage_api_url: Keboola Storage API URL
         :param bearer_token: The access token issued by Keboola OAuth server
         :param branch_id: Keboola branch ID
-        :param headers: Additional headers for the requests
+        :param headers: Additional headers for the requests sent by all clients
         """
         self._token = storage_api_token
         self._bearer_token = bearer_token

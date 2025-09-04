@@ -12,7 +12,7 @@ from mcp.types import TextContent
 from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeConfig
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
@@ -30,7 +30,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 class TestServer:
     @pytest.mark.asyncio
     async def test_list_tools(self):
-        server = create_server(Config(), runtime_config=ServerRuntimeConfig(transport='stdio'))
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
         tools = await server.get_tools()
         assert sorted(tool.name for tool in tools.values()) == [
@@ -73,7 +73,7 @@ class TestServer:
 
     @pytest.mark.asyncio
     async def test_tools_have_descriptions(self):
-        server = create_server(Config(), runtime_config=ServerRuntimeConfig(transport='stdio'))
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
         tools = await server.get_tools()
 
@@ -87,7 +87,7 @@ class TestServer:
 
     @pytest.mark.asyncio
     async def test_tools_input_schema(self):
-        server = create_server(Config(), runtime_config=ServerRuntimeConfig(transport='stdio'))
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
         tools = await server.get_tools()
 
@@ -173,7 +173,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     )
 
     # create MCP server with the initial Config
-    mcp = create_server(config, runtime_config=ServerRuntimeConfig(transport='stdio'))
+    mcp = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(mcp, FastMCP)
     tools_count = len(await mcp.get_tools())
     mcp.add_tool(FunctionTool.from_function(assessed_function, name='assessed-function'))
@@ -227,7 +227,7 @@ async def test_keboola_injection_and_lifespan(
         return_value={'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}},
     )
 
-    server = create_server(config, runtime_config=ServerRuntimeConfig(transport='stdio'))
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
 
     async def assessed_function(ctx: Context, param: str) -> str:
@@ -259,7 +259,7 @@ async def test_tool_annotations_and_tags():
     """
     Test that the tool annotations are properly set.
     """
-    server = create_server(Config(), runtime_config=ServerRuntimeConfig(transport='stdio'))
+    server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
     tools = await server.get_tools()
     for tool in tools.values():
@@ -331,7 +331,7 @@ async def test_tool_annotations_tags_values(
     """
     Test that the tool annotations are having the expected values.
     """
-    server = create_server(Config(), runtime_config=ServerRuntimeConfig(transport='stdio'))
+    server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
     tools = await server.get_tools()
 

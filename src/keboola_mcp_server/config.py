@@ -1,11 +1,11 @@
 """Configuration handling for the Keboola MCP server."""
 
 import dataclasses
+import importlib.metadata
 import logging
 import os
 import uuid
 from dataclasses import dataclass, field
-from importlib.metadata import distribution
 from typing import Any, Literal, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
@@ -127,20 +127,20 @@ class Config:
 
 
 @dataclass(frozen=True)
-class ServerRuntimeConfig:
-    """Server runtime configuration."""
+class ServerRuntimeInfo:
+    """Server runtime Information."""
 
     transport: Transport
     """Transport used by the MCP server (e.g., 'stdio', 'sse', 'streamable-http', 'http-compat')."""
-    server_id: str = uuid.uuid4().hex
+    server_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     """The ID of the MCP server."""
-    app_version = os.getenv('APP_VERSION') or 'DEV'
+    app_version: str = os.getenv('APP_VERSION') or 'DEV'
     """The version of the MCP server application."""
-    server_version = distribution('keboola_mcp_server').version
+    server_version: str = importlib.metadata.version('keboola_mcp_server')
     """The version of the Keboola MCP server library."""
-    mcp_library_version = distribution('mcp').version
+    mcp_library_version: str = importlib.metadata.version('mcp')
     """The version of the MCP library."""
-    fastmcp_library_version = distribution('fastmcp').version
+    fastmcp_library_version: str = importlib.metadata.version('fastmcp')
     """The version of the FastMCP library."""
 
 

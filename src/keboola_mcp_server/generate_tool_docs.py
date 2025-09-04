@@ -11,7 +11,7 @@ from fastmcp import FastMCP
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
-from keboola_mcp_server.config import Config, ServerRuntimeConfig
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
@@ -177,7 +177,7 @@ async def generate_docs() -> None:
     )
 
     try:
-        mcp = create_server(config, runtime_config=ServerRuntimeConfig(transport='stdio'))
+        mcp = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(mcp, FastMCP)
         tools = await mcp.get_tools()
         categories = [

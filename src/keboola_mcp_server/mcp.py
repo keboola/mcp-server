@@ -26,7 +26,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeConfig
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -36,7 +36,7 @@ LOG = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ServerState:
     config: Config
-    runtime_config: ServerRuntimeConfig
+    runtime_info: ServerRuntimeInfo
 
     @classmethod
     def from_context(cls, ctx: Context) -> 'ServerState':
@@ -113,8 +113,9 @@ class SessionStateMiddleware(fmw.Middleware):
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
         if not isinstance(ctx.session, MagicMock):
-            config: Config = ServerState.from_context(ctx).config
-            runtime_config: ServerRuntimeConfig = ServerState.from_context(ctx).runtime_config
+            server_state = ServerState.from_context(ctx)
+            config: Config = server_state.config
+            runtime_info: ServerRuntimeInfo = server_state.runtime_info
             accept_secrets_in_url = config.accept_secrets_in_url
 
             # IMPORTANT: Be careful what functions you use for accessing the HTTP request when handling SSE traffic.
@@ -151,7 +152,7 @@ class SessionStateMiddleware(fmw.Middleware):
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
-            state = self._create_session_state(config, runtime_config)
+            state = self._create_session_state(config, runtime_info)
             ctx.session.state = state
 
         try:
@@ -162,18 +163,26 @@ class SessionStateMiddleware(fmw.Middleware):
             pass
 
     @staticmethod
-    def _get_server_transport(runtime_config: ServerRuntimeConfig | None = None) -> str:
-        if runtime_config:
-            return runtime_config.transport
+    def _get_server_transport(runtime_info: ServerRuntimeInfo | None = None) -> str:
+        """
+        :param runtime_info: Runtime information
+        :return: Transport used by the MCP server if provided, otherwise 'NA' used in the headers
+        """
+        if runtime_info:
+            return runtime_info.transport
         else:
             return 'NA'
 
     @staticmethod
-    def _get_server_versions(runtime_config: ServerRuntimeConfig | None = None) -> str:
-        if runtime_config:
+    def _get_server_versions(runtime_info: ServerRuntimeInfo | None = None) -> str:
+        """
+        :param runtime_info: Runtime information
+        :return: Server versions string if provided, otherwise 'NA' used in the headers
+        """
+        if runtime_info:
             return (
-                f'keboola-mcp-server/{runtime_config.server_version} mcp/{runtime_config.mcp_library_version} '
-                f'fastmcp/{runtime_config.fastmcp_library_version}'
+                f'keboola-mcp-server/{runtime_info.server_version} mcp/{runtime_info.mcp_library_version} '
+                f'fastmcp/{runtime_info.fastmcp_library_version}'
             )
         else:
             return 'NA'
@@ -181,7 +190,8 @@ class SessionStateMiddleware(fmw.Middleware):
     @classmethod
     def _get_user_agent(cls, transport: str) -> str:
         """
-        :return: User agent string.
+        :param transport: Transport used by the MCP server
+        :return: User agent string
         """
         try:
             version = importlib.metadata.version('keboola-mcp-server')
@@ -192,20 +202,20 @@ class SessionStateMiddleware(fmw.Middleware):
         return f'Keboola MCP Server/{version} app_env={app_env} transport={transport}'
 
     @classmethod
-    def _get_headers(cls, runtime_config: ServerRuntimeConfig | None = None) -> dict[str, Any]:
+    def _get_headers(cls, runtime_info: ServerRuntimeInfo | None = None) -> dict[str, Any]:
         """
-        :param headers: Additional headers for the requests
-        :return: Additional headers for the requests, namely the user agent.
+        :param runtime_info: Runtime information
+        :return: Additional headers for the requests used for tracing the MCP server
         """
-        transport = runtime_config.transport if runtime_config else 'NA'
+        transport = runtime_info.transport if runtime_info else 'NA'
         return {
             'User-Agent': cls._get_user_agent(transport),
             'MCP-Server-Transport': transport,
-            'MCP-Server-Versions': cls._get_server_versions(runtime_config),
+            'MCP-Server-Versions': cls._get_server_versions(runtime_info),
         }
 
     @classmethod
-    def _create_session_state(cls, config: Config, runtime_config: ServerRuntimeConfig) -> dict[str, Any]:
+    def _create_session_state(cls, config: Config, runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
         """Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state."""
         LOG.info(f'Creating SessionState from config: {config}.')
 
@@ -220,7 +230,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 storage_api_token=config.storage_token,
                 bearer_token=config.bearer_token,
                 branch_id=config.branch_id,
-                headers=cls._get_headers(runtime_config),
+                headers=cls._get_headers(runtime_info),
             )
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
