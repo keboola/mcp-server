@@ -10,8 +10,8 @@
 
 Keboola MCP Server is an open-source bridge between your Keboola project and modern AI tools. It turns Keboola features—like storage access, SQL transformations, and job triggers—into callable tools for Claude, Cursor, CrewAI, LangChain, Amazon Q, and more.
 
-- [Quick Start](#quick_start)
-- [Local Setup](#slow_start)
+- [Quick Start](#-quick-start-remote-mcp-server-easiest-way)
+- [Local Setup](#-slow-start-local-mcp-server-setup-custom-or-dev-way)
 
 ## Features
 
@@ -28,7 +28,7 @@ With the AI Agent and MCP Server, you can:
 
 ---
 
-## 🚀 Quick Start: Remote MCP Server (Easiest Way) {#quick_start}
+## 🚀 Quick Start: Remote MCP Server (Easiest Way)
 
 The easiest way to use Keboola MCP Server is through our **Remote MCP Server**. This hosted solution eliminates the need for local setup, configuration, or installation.
 
@@ -60,7 +60,7 @@ You can work safely in [Keboola development branches](https://help.keboola.com/c
 
 ---
 
-## 🐌 Slow Start: Local MCP Server Setup (Custom or Dev Way) {#slow_start}
+## 🐌 Slow Start: Local MCP Server Setup (Custom or Dev Way)
 
 Run the MCP server on your own machine for full control and easy development. Choose this when you want to customize tools, debug locally, or iterate quickly. You’ll clone the repo, set Keboola credentials via environment variables or headers depending on the server transport, install dependencies, and start the server. This approach offers maximum flexibility (custom tools, local logging, offline iteration) but requires manual setup and you manage updates and secrets yourself.
 
@@ -75,7 +75,7 @@ For client–server communication, Keboola credentials must be provided to enabl
 - For multi-user use: include the variables in the request headers so that each request uses the credentials provided with it.
 
 
-#### KBC_STORAGE_TOKEN
+### KBC_STORAGE_TOKEN
 
 This is your authentication token for Keboola:
 
@@ -83,7 +83,7 @@ For instructions on how to create and manage Storage API tokens, refer to the [o
 
 **Note**: If you want the MCP server to have limited access, use custom storage token, if you want the MCP to access everything in your project, use the master token.
 
-#### KBC_WORKSPACE_SCHEMA
+### KBC_WORKSPACE_SCHEMA
 
 This identifies your workspace in Keboola and is used for SQL queries. However, this is **only required if you're using a custom storage token** instead of the Master Token:
 
@@ -94,7 +94,7 @@ This identifies your workspace in Keboola and is used for SQL queries. However, 
 
 **Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
 
-#### KBC_STORAGE_API_URL (Keboola Region)
+### KBC_STORAGE_API_URL (Keboola Region)
 
 Your Keboola Region API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
 
@@ -106,11 +106,11 @@ Your Keboola Region API URL depends on your deployment region. You can determine
 | Google Cloud US | `https://connection.us-east4.gcp.keboola.com` |
 | Azure EU | `https://connection.north-europe.azure.keboola.com` |
 
-#### KBC_BRANCH_ID (Optional) {#kbc_branch_id}
+### KBC_BRANCH_ID (Optional)
 
 To operate on a specific [Keboola development branch](https://help.keboola.com/components/branches/), set the branch ID using the `KBC_BRANCH_ID` parameter. The MCP server scopes its functionality to the specified branch, ensuring all changes remain isolated and do not impact the production branch.
 
-- If unset the server uses the production branch by default.
+- If not provided, the server uses the production branch by default.
 - For development work, set `KBC_BRANCH_ID` to the numeric ID of your branch (e.g., `123456`). You can find the development branch ID in the URL when navigating to the development branch in the UI, for example: `https://connection.us-east4.gcp.keboola.com/admin/projects/PROJECT_ID/branch/BRANCH_ID/dashboard`.
 - On remote transports, you can override per-request with the HTTP header `X-Branch-Id: <branchId>` or `KBC_BRANCH_ID: <branchId>`.
 
