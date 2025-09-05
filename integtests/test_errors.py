@@ -149,6 +149,7 @@ class TestStorageEvents:
             'version': distribution('keboola_mcp_server').version,
             'userAgent': 'integtest/1.2.3',
             'sessionId': 'deadbee',
+            'serverTransport': 'stdio',
         }
 
     @staticmethod

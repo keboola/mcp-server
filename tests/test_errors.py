@@ -119,6 +119,9 @@ async def test_get_session_id(transport: str, mcp_context_client: Context, mocke
         )
     elif transport == 'http':
         mcp_context_client.session_id = session_id
+        mcp_context_client.request_context.lifespan_context = ServerState(
+            config=Config(), runtime_info=ServerRuntimeInfo(transport='http', server_id=session_id)
+        )
     else:
         pytest.fail(f'Unknown transport: {transport}')
 
@@ -134,6 +137,7 @@ async def test_get_session_id(transport: str, mcp_context_client: Context, mocke
                 'version': distribution('keboola_mcp_server').version,
                 'userAgent': '',
                 'sessionId': session_id,
+                'serverTransport': transport,
             },
             'tool': {
                 'name': 'foo',
