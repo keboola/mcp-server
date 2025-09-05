@@ -77,8 +77,7 @@ async def _trigger_event(
             'userAgent': user_agent or '',
             # For the HTTP-based transports use the HTTP session ID. For other transports use the server ID.
             'sessionId': ctx.session_id or server_state.runtime_info.server_id,
-            # TODO: Uncomment once the Storage API event params are updated.
-            # 'serverTransport': server_state.runtime_config.transport,
+            'serverTransport': server_state.runtime_info.transport
         },
         'tool': {
             'name': tool_name,
