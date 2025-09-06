@@ -15,7 +15,7 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
     get_metadata_property,
 )
-from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.flow.model import Flow
@@ -234,7 +234,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
 @pytest.fixture
 def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
     config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
-    return create_server(config)
+    return create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
 
 
 @pytest_asyncio.fixture
