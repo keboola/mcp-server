@@ -129,7 +129,7 @@ async def test_get_session_id(transport: str, mcp_context_client: Context, mocke
     client = KeboolaClient.from_state(mcp_context_client.session.state)
     client.storage_client.trigger_event.assert_called_once_with(
         message='MCP tool "foo" call succeeded.',
-        component_id='keboola.mcp-server.tool',
+        component_id='keboola.mcp-server-tool',
         event_type='success',
         params={
             'mcpServerContext': {

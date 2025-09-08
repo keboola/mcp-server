@@ -133,7 +133,7 @@ class TestStorageEvents:
         events = await client.storage_client.get(
             endpoint='events',
             params={
-                'component': 'keboola.mcp-server.tool',
+                'component': 'keboola.mcp-server-tool',
                 'q': f'message:"MCP tool "{tool_name}" call*"',
                 'limit': 10,
             },
