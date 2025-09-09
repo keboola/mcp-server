@@ -394,10 +394,10 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
             bucket = await _combine_buckets(client, links_manager, prod_bucket, next(iter(dev_buckets), None))
             buckets.append(bucket.model_copy(update={'links': None}))  # no links when listing buckets
 
-    # Count buckets by stage
-    input_count = sum(1 for bucket in buckets if bucket.stage == 'in')
-    output_count = sum(1 for bucket in buckets if bucket.stage == 'out')
+    # Count buckets by stage (only count input, derive output)
     total_count = len(buckets)
+    input_count = sum(1 for bucket in buckets if bucket.stage == 'in')
+    output_count = total_count - input_count
     
     bucket_counts = BucketCounts(
         total_buckets=total_count,
