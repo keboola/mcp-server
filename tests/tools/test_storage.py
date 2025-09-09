@@ -18,7 +18,6 @@ from keboola_mcp_server.tools.storage import (
     TableColumnInfo,
     TableDetail,
     UpdateDescriptionsOutput,
-    UpdateItemResult,
     get_bucket,
     get_table,
     list_buckets,
