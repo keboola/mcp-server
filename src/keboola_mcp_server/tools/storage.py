@@ -66,6 +66,14 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
             tags={STORAGE_TOOLS_TAG},
         )
     )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            bulk_update_descriptions,
+            serializer=exclude_none_serializer,
+            annotations=ToolAnnotations(destructiveHint=True),
+            tags={STORAGE_TOOLS_TAG},
+        )
+    )
 
     LOG.info('Storage tools added to the MCP server.')
 
@@ -265,6 +273,20 @@ class UpdateDescriptionOutput(BaseModel):
     timestamp: datetime = Field(description='The timestamp of the description update.')
     success: bool = Field(default=True, description='Indicates if the update succeeded.')
     links: Optional[list[Link]] = Field(None, description='Links relevant to the description update.')
+
+
+class BulkUpdateItemResult(BaseModel):
+    path: str = Field(description='The path that was updated.')
+    success: bool = Field(description='Whether the update succeeded.')
+    error: Optional[str] = Field(None, description='Error message if the update failed.')
+    timestamp: Optional[datetime] = Field(None, description='Timestamp of the update if successful.')
+
+
+class BulkUpdateDescriptionsOutput(BaseModel):
+    results: list[BulkUpdateItemResult] = Field(description='Results for each update attempt.')
+    total_processed: int = Field(description='Total number of items processed.')
+    successful: int = Field(description='Number of successful updates.')
+    failed: int = Field(description='Number of failed updates.')
 
 
 async def _get_bucket_detail(client: AsyncStorageClient, bucket_id: str) -> JsonDict | None:
@@ -495,6 +517,222 @@ async def list_tables(
 
     bucket = await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
     return ListTablesOutput(tables=list(tables_by_prod_id.values()), links=bucket.links or [])
+
+
+def _parse_path(path: str) -> tuple[str, str, str, str]:
+    """
+    Parse a path string to extract item type and identifiers.
+    
+    :param path: Path string (e.g., "in.c-bucket", "in.c-bucket.table", "in.c-bucket.table.column")
+    :return: Tuple of (item_type, bucket_id, table_id, column_name)
+    """
+    # Bucket IDs always start with 'in.' or 'out.' followed by 'c-'
+    if path.startswith(('in.c-', 'out.c-')):
+        # Check if this is a bucket, table, or column
+        parts = path.split('.')
+        if len(parts) == 2:
+            # Bucket: "in.c-bucket" or "out.c-bucket"
+            return 'bucket', path, '', ''
+        elif len(parts) == 3:
+            # Table: "in.c-bucket.table" or "out.c-bucket.table"
+            return 'table', f'{parts[0]}.{parts[1]}', path, ''
+        elif len(parts) == 4:
+            # Column: "in.c-bucket.table.column" or "out.c-bucket.table.column"
+            return 'column', f'{parts[0]}.{parts[1]}', f'{parts[0]}.{parts[1]}.{parts[2]}', parts[3]
+        else:
+            raise ValueError(f'Invalid path format: {path}')
+    else:
+        raise ValueError(f'Invalid path format: {path} - must start with in.c- or out.c-')
+
+
+async def _update_bucket_description(
+    client: KeboolaClient, 
+    bucket_id: str, 
+    description: str
+) -> BulkUpdateItemResult:
+    """Update a bucket description."""
+    try:
+        links_manager = await ProjectLinksManager.from_client(client)
+        response = await client.storage_client.bucket_metadata_update(
+            bucket_id=bucket_id,
+            metadata={MetadataField.DESCRIPTION: description},
+        )
+        description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
+        update_output = UpdateDescriptionOutput.model_validate(description_entry)
+        return BulkUpdateItemResult(
+            path=bucket_id,
+            success=True,
+            timestamp=update_output.timestamp
+        )
+    except Exception as e:
+        return BulkUpdateItemResult(
+            path=bucket_id,
+            success=False,
+            error=str(e)
+        )
+
+
+async def _update_table_description(
+    client: KeboolaClient, 
+    table_id: str, 
+    description: str
+) -> BulkUpdateItemResult:
+    """Update a table description."""
+    try:
+        response = await client.storage_client.table_metadata_update(
+            table_id=table_id,
+            metadata={MetadataField.DESCRIPTION: description},
+            columns_metadata={},
+        )
+        raw_metadata = cast(list[JsonDict], response.get('metadata', []))
+        description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
+        update_output = UpdateDescriptionOutput.model_validate(description_entry)
+        return BulkUpdateItemResult(
+            path=table_id,
+            success=True,
+            timestamp=update_output.timestamp
+        )
+    except Exception as e:
+        return BulkUpdateItemResult(
+            path=table_id,
+            success=False,
+            error=str(e)
+        )
+
+
+async def _update_column_descriptions(
+    client: KeboolaClient, 
+    table_id: str, 
+    column_updates: dict[str, str]
+) -> list[BulkUpdateItemResult]:
+    """Update multiple column descriptions for a single table."""
+    try:
+        columns_metadata = {
+            column_name: [{'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}]
+            for column_name, description in column_updates.items()
+        }
+        
+        response = await client.storage_client.table_metadata_update(
+            table_id=table_id,
+            columns_metadata=columns_metadata,
+        )
+        
+        column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
+        results = []
+        
+        for column_name, description in column_updates.items():
+            try:
+                description_entry = next(
+                    entry for entry in column_metadata.get(column_name, []) 
+                    if entry.get('key') == MetadataField.DESCRIPTION
+                )
+                update_output = UpdateDescriptionOutput.model_validate(description_entry)
+                results.append(BulkUpdateItemResult(
+                    path=f'{table_id}.{column_name}',
+                    success=True,
+                    timestamp=update_output.timestamp
+                ))
+            except Exception as e:
+                results.append(BulkUpdateItemResult(
+                    path=f'{table_id}.{column_name}',
+                    success=False,
+                    error=str(e)
+                ))
+        
+        return results
+    except Exception as e:
+        # If the entire table update fails, mark all columns as failed
+        return [
+            BulkUpdateItemResult(
+                path=f'{table_id}.{column_name}',
+                success=False,
+                error=str(e)
+            )
+            for column_name in column_updates.keys()
+        ]
+
+
+@tool_errors()
+async def bulk_update_descriptions(
+    ctx: Context,
+    updates: Annotated[
+        dict[str, str], 
+        Field(description='Dictionary mapping paths to descriptions. Paths: "bucket_id", "bucket_id.table_id", "bucket_id.table_id.column_name"')
+    ]
+) -> Annotated[
+    BulkUpdateDescriptionsOutput,
+    Field(description='The response object for the bulk description updates.'),
+]:
+    """
+    Updates descriptions for multiple Keboola storage items in bulk.
+    
+    This tool provides significant performance improvements over individual updates,
+    especially when dealing with large numbers of columns (e.g., 100+ columns per table).
+    
+    Path formats:
+    - "bucket_id" -> Updates bucket description
+    - "bucket_id.table_id" -> Updates table description  
+    - "bucket_id.table_id.column_name" -> Updates column description
+    
+    The tool groups updates by table to minimize API calls. All column updates
+    for a single table are batched into a single API call.
+    
+    :param updates: Dictionary mapping paths to descriptions
+    :return: Detailed results for each update attempt
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    
+    # Group updates by type
+    bucket_updates: dict[str, str] = {}
+    table_updates: dict[str, str] = {}
+    column_updates_by_table: dict[str, dict[str, str]] = {}
+    results: list[BulkUpdateItemResult] = []
+    
+    for path, description in updates.items():
+        try:
+            item_type, bucket_id, table_id, column_name = _parse_path(path)
+            
+            if item_type == 'bucket':
+                bucket_updates[bucket_id] = description
+            elif item_type == 'table':
+                table_updates[table_id] = description
+            elif item_type == 'column':
+                if table_id not in column_updates_by_table:
+                    column_updates_by_table[table_id] = {}
+                column_updates_by_table[table_id][column_name] = description
+        except ValueError as e:
+            # Invalid path format - add to results as failed
+            results.append(BulkUpdateItemResult(
+                path=path,
+                success=False,
+                error=f'Invalid path format: {e}'
+            ))
+    
+    # Process bucket updates
+    for bucket_id, description in bucket_updates.items():
+        result = await _update_bucket_description(client, bucket_id, description)
+        results.append(result)
+    
+    # Process table updates
+    for table_id, description in table_updates.items():
+        result = await _update_table_description(client, table_id, description)
+        results.append(result)
+    
+    # Process column updates (grouped by table)
+    for table_id, column_updates in column_updates_by_table.items():
+        table_results = await _update_column_descriptions(client, table_id, column_updates)
+        results.extend(table_results)
+    
+    # Calculate summary statistics
+    successful = sum(1 for r in results if r.success)
+    failed = len(results) - successful
+    
+    return BulkUpdateDescriptionsOutput(
+        results=results,
+        total_processed=len(results),
+        successful=successful,
+        failed=failed
+    )
 
 
 @tool_errors()
