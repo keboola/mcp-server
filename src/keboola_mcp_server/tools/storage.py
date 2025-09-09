@@ -557,7 +557,6 @@ def _group_updates_by_type(updates: dict[str, str]) -> DescriptionUpdateGroups:
     column_updates_by_table: dict[str, dict[str, str]] = {}
 
     for path, description in updates.items():
-
         parsed = _parse_path(path)
 
         if parsed.item_type == 'bucket':
@@ -660,11 +659,19 @@ async def update_descriptions(
 ]:
     """Updates descriptions for Keboola storage items (buckets, tables, columns)."""
     client = KeboolaClient.from_state(ctx.session.state)
-
-    grouped_updates = _group_updates_by_type(updates)
-
     results: list[UpdateItemResult] = []
+    valid_updates: dict[str, str] = {}
 
+    # Handle invalid paths first and filter valid ones
+    for path, description in updates.items():
+        try:
+            _parse_path(path)
+            valid_updates[path] = description
+        except ValueError as e:
+            results.append(UpdateItemResult(path=path, success=False, error=f'Invalid path format: {e}'))
+
+    # Process valid updates
+    grouped_updates = _group_updates_by_type(valid_updates)
     for bucket_id, description in grouped_updates.bucket_updates.items():
         result = await _update_bucket_description(client, bucket_id, description)
         results.append(result)
