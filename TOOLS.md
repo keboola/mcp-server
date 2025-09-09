@@ -69,7 +69,7 @@ potentially narrowed down by item type, limited and paginated.
 - [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
 - [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
 - [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
-- [update_description](#update_description): Updates the description for a Keboola storage item.
+- [update_descriptions](#update_descriptions): Updates descriptions for Keboola storage items (buckets, tables, columns).
 
 ---
 
@@ -2018,74 +2018,32 @@ Retrieves all tables in a specific bucket with their basic information.
 ```
 
 ---
-<a name="update_description"></a>
-## update_description
+<a name="update_descriptions"></a>
+## update_descriptions
 **Annotations**: `destructive`
 
 **Tags**: `storage`
 
 **Description**:
 
-Updates the description for a Keboola storage item.
-
-The tool supports three item types and validates the required identifiers based on the selected type:
-
-- item_type = "bucket": requires bucket_id
-- item_type = "table": requires table_id
-- item_type = "column": requires table_id and column_name
-
-Usage examples:
-- Update a bucket: item_type="bucket", bucket_id="in.c-my-bucket",
-  description="New bucket description"
-- Update a table: item_type="table", table_id="in.c-my-bucket.my-table",
-  description="New table description"
-- Update a column: item_type="column", table_id="in.c-my-bucket.my-table",
-  column_name="my_column", description="New column description"
-
-:return: The update result containing the stored description, timestamp, success flag, and optional links.
+Updates descriptions for Keboola storage items (buckets, tables, columns).
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "item_type": {
-      "description": "Type of the item to update. One of: bucket, table, column.",
-      "enum": [
-        "bucket",
-        "table",
-        "column"
-      ],
-      "title": "Item Type",
-      "type": "string"
-    },
-    "description": {
-      "description": "The new description to set for the specified item.",
-      "title": "Description",
-      "type": "string"
-    },
-    "bucket_id": {
-      "default": "",
-      "description": "Bucket ID. Required when item_type is \"bucket\".",
-      "title": "Bucket Id",
-      "type": "string"
-    },
-    "table_id": {
-      "default": "",
-      "description": "Table ID. Required when item_type is \"table\" or \"column\".",
-      "title": "Table Id",
-      "type": "string"
-    },
-    "column_name": {
-      "default": "",
-      "description": "Column name. Required when item_type is \"column\".",
-      "title": "Column Name",
-      "type": "string"
+    "updates": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Dictionary mapping paths to descriptions. Paths: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
+      "title": "Updates",
+      "type": "object"
     }
   },
   "required": [
-    "item_type",
-    "description"
+    "updates"
   ],
   "type": "object"
 }
