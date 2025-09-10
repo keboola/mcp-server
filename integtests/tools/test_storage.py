@@ -9,6 +9,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
+    DescriptionUpdate,
     ListBucketsOutput,
     ListTablesOutput,
     TableDetail,
@@ -97,7 +98,7 @@ async def test_update_descriptions_bucket(mcp_context: Context, buckets: list[Bu
     try:
         result = await update_descriptions(
             ctx=mcp_context,
-            updates={bucket.bucket_id: 'New Description'},
+            updates=[DescriptionUpdate(item_id=bucket.bucket_id, description='New Description')],
         )
 
         assert isinstance(result, UpdateDescriptionsOutput)
@@ -132,7 +133,7 @@ async def test_update_descriptions_table(mcp_context: Context, tables: list[Tabl
     try:
         result = await update_descriptions(
             ctx=mcp_context,
-            updates={table.table_id: 'New Table Description'},
+            updates=[DescriptionUpdate(item_id=table.table_id, description='New Table Description')],
         )
 
         assert isinstance(result, UpdateDescriptionsOutput)
@@ -175,11 +176,11 @@ async def test_update_descriptions_mixed_types(mcp_context: Context, buckets: li
     try:
         result = await update_descriptions(
             ctx=mcp_context,
-            updates={
-                bucket.bucket_id: 'Mixed Bucket Description',
-                table.table_id: 'Mixed Table Description',
-                f'{table.table_id}.{column_name}': 'Mixed Column Description',
-            },
+            updates=[
+                DescriptionUpdate(item_id=bucket.bucket_id, description='Mixed Bucket Description'),
+                DescriptionUpdate(item_id=table.table_id, description='Mixed Table Description'),
+                DescriptionUpdate(item_id=f'{table.table_id}.{column_name}', description='Mixed Column Description'),
+            ],
         )
 
         assert isinstance(result, UpdateDescriptionsOutput)
@@ -222,7 +223,7 @@ async def test_update_descriptions_invalid_path(mcp_context: Context):
     """Tests that `update_descriptions` handles invalid paths gracefully."""
     result = await update_descriptions(
         ctx=mcp_context,
-        updates={'invalid-path': 'This should fail'},
+        updates=[DescriptionUpdate(item_id='invalid-path', description='This should fail')],
     )
 
     assert isinstance(result, UpdateDescriptionsOutput)

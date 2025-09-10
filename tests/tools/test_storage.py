@@ -17,6 +17,7 @@ from keboola_mcp_server.tools.storage import (
     ListTablesOutput,
     TableColumnInfo,
     TableDetail,
+    DescriptionUpdate,
     UpdateDescriptionsOutput,
     get_bucket,
     get_table,
@@ -994,7 +995,7 @@ async def test_update_descriptions_bucket_success(
 
     result = await update_descriptions(
         ctx=mcp_context_client,
-        updates={'in.c-test-bucket': 'Updated bucket description'},
+        updates=[DescriptionUpdate(item_id='in.c-test-bucket', description='Updated bucket description')],
     )
 
     assert isinstance(result, UpdateDescriptionsOutput)
@@ -1027,7 +1028,7 @@ async def test_update_descriptions_table_success(
 
     result = await update_descriptions(
         ctx=mcp_context_client,
-        updates={'in.c-test.test-table': 'Updated table description'},
+        updates=[DescriptionUpdate(item_id='in.c-test.test-table', description='Updated table description')],
     )
 
     assert isinstance(result, UpdateDescriptionsOutput)
@@ -1061,7 +1062,9 @@ async def test_update_descriptions_column_success(
 
     result = await update_descriptions(
         ctx=mcp_context_client,
-        updates={'in.c-test.test-table.column_name': 'Updated column description'},
+        updates=[
+            DescriptionUpdate(item_id='in.c-test.test-table.column_name', description='Updated column description')
+        ],
     )
 
     assert isinstance(result, UpdateDescriptionsOutput)
@@ -1104,10 +1107,10 @@ async def test_update_descriptions_mixed_types_success(
 
     result = await update_descriptions(
         ctx=mcp_context_client,
-        updates={
-            'in.c-test-bucket': 'Updated bucket description',
-            'in.c-test.test-table': 'Updated table description',
-        },
+        updates=[
+            DescriptionUpdate(item_id='in.c-test-bucket', description='Updated bucket description'),
+            DescriptionUpdate(item_id='in.c-test.test-table', description='Updated table description'),
+        ],
     )
 
     assert isinstance(result, UpdateDescriptionsOutput)
@@ -1143,7 +1146,7 @@ async def test_update_descriptions_invalid_path_error(mcp_context_client) -> Non
     """Test that invalid paths are handled gracefully."""
     result = await update_descriptions(
         ctx=mcp_context_client,
-        updates={'invalid-path': 'This should fail'},
+        updates=[DescriptionUpdate(item_id='invalid-path', description='This should fail')],
     )
 
     assert isinstance(result, UpdateDescriptionsOutput)
@@ -1171,7 +1174,7 @@ async def test_update_descriptions_api_error_handling(mocker: MockerFixture, mcp
 
     result = await update_descriptions(
         ctx=mcp_context_client,
-        updates={'in.c-test-bucket': 'This will fail'},
+        updates=[DescriptionUpdate(item_id='in.c-test-bucket', description='This will fail')],
     )
 
     assert isinstance(result, UpdateDescriptionsOutput)
@@ -1192,7 +1195,7 @@ async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
     """Test that empty updates dictionary is handled."""
     result = await update_descriptions(
         ctx=mcp_context_client,
-        updates={},
+        updates=[],
     )
 
     assert isinstance(result, UpdateDescriptionsOutput)
