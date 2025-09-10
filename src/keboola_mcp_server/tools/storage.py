@@ -24,9 +24,9 @@ LOG = logging.getLogger(__name__)
 
 STORAGE_TOOLS_TAG = 'storage'
 
-BUCKET_PATH_PARTS = 2
-TABLE_PATH_PARTS = 3
-COLUMN_PATH_PARTS = 4
+BUCKET_ID_PARTS = 2
+TABLE_ID_PARTS = 3
+COLUMN_ID_PARTS = 4
 
 
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
@@ -265,7 +265,7 @@ class ListTablesOutput(BaseModel):
 
 
 class UpdateItemResult(BaseModel):
-    path: str = Field(description='The path that was updated.')
+    item_id: str = Field(description='The storage item identifier that was updated.')
     success: bool = Field(description='Whether the update succeeded.')
     error: Optional[str] = Field(None, description='Error message if the update failed.')
     timestamp: Optional[datetime] = Field(None, description='Timestamp of the update if successful.')
@@ -279,7 +279,7 @@ class UpdateDescriptionsOutput(BaseModel):
 
 
 class DescriptionUpdate(BaseModel):
-    """Structured update describing a storage item path and its new description."""
+    """Structured update describing a storage item and its new description."""
 
     item_id: str = Field(
         description='Storage item name: "bucket_id", "bucket_id.table_id", "bucket_id.table_id.column_name"'
@@ -291,9 +291,9 @@ class ParsedStorageItem(BaseModel):
     """Represents a parsed storage item."""
 
     item_type: Literal['bucket', 'table', 'column'] = Field(description='Type of storage item.')
-    bucket_id: str = Field(description='Bucket identifier.')
-    table_id: str = Field(description='Table identifier.')
-    column_name: str = Field(description='Column name.')
+    bucket_id: Optional[str] = Field(default=None, description='Bucket identifier.')
+    table_id: Optional[str] = Field(default=None, description='Table identifier.')
+    column_name: Optional[str] = Field(default=None, description='Column name.')
 
 
 class DescriptionUpdateGroups(BaseModel):
@@ -534,29 +534,29 @@ async def list_tables(
     return ListTablesOutput(tables=list(tables_by_prod_id.values()), links=bucket.links or [])
 
 
-def _parse_path(path: str) -> ParsedStorageItem:
+def _parse_item_id(item_id: str) -> ParsedStorageItem:
     """
-    Parse a path string to extract item type and identifiers.
+    Parse an item_id string to extract item type and identifiers.
 
-    :param path: Path string (e.g., "in.c-bucket", "in.c-bucket.table", "in.c-bucket.table.column")
-    :return: ParsedPath object with structured data
+    :param item_id: Item ID (e.g., "in.c-bucket", "in.c-bucket.table", "in.c-bucket.table.column")
+    :return: ParsedStorageItem object with structured data
     """
-    if not path.startswith(('in.', 'out.')):
-        raise ValueError(f'Invalid path format: {path} - must start with in. or out.')
+    if not item_id.startswith(('in.', 'out.')):
+        raise ValueError(f'Invalid item_id format: {item_id} - must start with in. or out.')
 
-    parts = path.split('.')
+    parts = item_id.split('.')
 
-    if len(parts) == BUCKET_PATH_PARTS:
-        return ParsedStorageItem(item_type='bucket', bucket_id=path, table_id='', column_name='')
-    elif len(parts) == TABLE_PATH_PARTS:
+    if len(parts) == BUCKET_ID_PARTS:
+        return ParsedStorageItem(item_type='bucket', bucket_id=item_id)
+    elif len(parts) == TABLE_ID_PARTS:
         bucket_id = f'{parts[0]}.{parts[1]}'
-        return ParsedStorageItem(item_type='table', bucket_id=bucket_id, table_id=path, column_name='')
-    elif len(parts) == COLUMN_PATH_PARTS:
+        return ParsedStorageItem(item_type='table', bucket_id=bucket_id, table_id=item_id)
+    elif len(parts) == COLUMN_ID_PARTS:
         bucket_id = f'{parts[0]}.{parts[1]}'
         table_id = f'{parts[0]}.{parts[1]}.{parts[2]}'
         return ParsedStorageItem(item_type='column', bucket_id=bucket_id, table_id=table_id, column_name=parts[3])
     else:
-        raise ValueError(f'Invalid path format: {path}')
+        raise ValueError(f'Invalid item_id format: {item_id}')
 
 
 def _group_updates_by_type(updates: list[DescriptionUpdate]) -> DescriptionUpdateGroups:
@@ -566,7 +566,7 @@ def _group_updates_by_type(updates: list[DescriptionUpdate]) -> DescriptionUpdat
     column_updates_by_table: dict[str, dict[str, str]] = defaultdict(dict)
 
     for update in updates:
-        parsed = _parse_path(update.item_id)
+        parsed = _parse_item_id(update.item_id)
 
         if parsed.item_type == 'bucket':
             bucket_updates[parsed.bucket_id] = update.description
@@ -590,9 +590,9 @@ async def _update_bucket_description(client: KeboolaClient, bucket_id: str, desc
             metadata={MetadataField.DESCRIPTION: description},
         )
         description_entry = next(entry for entry in response if entry.get('key') == MetadataField.DESCRIPTION)
-        return UpdateItemResult(path=bucket_id, success=True, timestamp=description_entry['timestamp'])
+        return UpdateItemResult(item_id=bucket_id, success=True, timestamp=description_entry['timestamp'])
     except Exception as e:
-        return UpdateItemResult(path=bucket_id, success=False, error=str(e))
+        return UpdateItemResult(item_id=bucket_id, success=False, error=str(e))
 
 
 async def _update_table_description(client: KeboolaClient, table_id: str, description: str) -> UpdateItemResult:
@@ -605,9 +605,9 @@ async def _update_table_description(client: KeboolaClient, table_id: str, descri
         )
         raw_metadata = cast(list[JsonDict], response.get('metadata', []))
         description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
-        return UpdateItemResult(path=table_id, success=True, timestamp=description_entry['timestamp'])
+        return UpdateItemResult(item_id=table_id, success=True, timestamp=description_entry['timestamp'])
     except Exception as e:
-        return UpdateItemResult(path=table_id, success=False, error=str(e))
+        return UpdateItemResult(item_id=table_id, success=False, error=str(e))
 
 
 async def _update_column_descriptions(
@@ -637,19 +637,16 @@ async def _update_column_descriptions(
                 )
                 results.append(
                     UpdateItemResult(
-                        path=f'{table_id}.{column_name}', success=True, timestamp=description_entry['timestamp']
+                        item_id=f'{table_id}.{column_name}', success=True, timestamp=description_entry['timestamp']
+                        )
                     )
-                )
             except Exception as e:
-                results.append(UpdateItemResult(path=f'{table_id}.{column_name}', success=False, error=str(e)))
+                results.append(UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e)))
 
         return results
     except Exception as e:
         # If the entire table update fails, mark all columns as failed
-        return [
-            UpdateItemResult(path=f'{table_id}.{column_name}', success=False, error=str(e))
-            for column_name in column_updates.keys()
-        ]
+        return [UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e)) for column_name in column_updates.keys()]
 
 
 @tool_errors()
@@ -658,8 +655,8 @@ async def update_descriptions(
     updates: Annotated[
         list[DescriptionUpdate],
         Field(
-            description='List of DescriptionUpdate objects with storage path and new description. '
-            'Paths: "bucket_id", "bucket_id.table_id", "bucket_id.table_id.column_name"'
+            description='List of DescriptionUpdate objects with storage item_id and new description. '
+            'Examples: "bucket_id", "bucket_id.table_id", "bucket_id.table_id.column_name"'
         ),
     ],
 ) -> Annotated[
@@ -671,13 +668,13 @@ async def update_descriptions(
     results: list[UpdateItemResult] = []
     valid_updates: list[DescriptionUpdate] = []
 
-    # Handle invalid paths first and filter valid ones
+    # Handle invalid item_ids first and filter valid ones
     for update in updates:
         try:
-            _parse_path(update.item_id)
+            _parse_item_id(update.item_id)
             valid_updates.append(update)
         except ValueError as e:
-            results.append(UpdateItemResult(path=update.item_id, success=False, error=f'Invalid path format: {e}'))
+            results.append(UpdateItemResult(item_id=update.item_id, success=False, error=f'Invalid item_id format: {e}'))
 
     # Process valid updates
     grouped_updates = _group_updates_by_type(valid_updates)
