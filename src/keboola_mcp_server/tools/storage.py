@@ -278,6 +278,15 @@ class UpdateDescriptionsOutput(BaseModel):
     failed: int = Field(description='Number of failed updates.')
 
 
+class DescriptionUpdate(BaseModel):
+    """Structured update describing a storage item path and its new description."""
+
+    item_id: str = Field(
+        description='Storage item name: "bucket_id", "bucket_id.table_id", "bucket_id.table_id.column_name"'
+    )
+    description: str = Field(description='New description to set for the storage item.')
+
+
 class ParsedStorageItem(BaseModel):
     """Represents a parsed storage item."""
 
@@ -550,21 +559,21 @@ def _parse_path(path: str) -> ParsedStorageItem:
         raise ValueError(f'Invalid path format: {path}')
 
 
-def _group_updates_by_type(updates: dict[str, str]) -> DescriptionUpdateGroups:
+def _group_updates_by_type(updates: list[DescriptionUpdate]) -> DescriptionUpdateGroups:
     """Group updates by type for efficient processing."""
     bucket_updates: dict[str, str] = {}
     table_updates: dict[str, str] = {}
     column_updates_by_table: dict[str, dict[str, str]] = defaultdict(dict)
 
-    for path, description in updates.items():
-        parsed = _parse_path(path)
+    for update in updates:
+        parsed = _parse_path(update.item_id)
 
         if parsed.item_type == 'bucket':
-            bucket_updates[parsed.bucket_id] = description
+            bucket_updates[parsed.bucket_id] = update.description
         elif parsed.item_type == 'table':
-            table_updates[parsed.table_id] = description
+            table_updates[parsed.table_id] = update.description
         elif parsed.item_type == 'column':
-            column_updates_by_table[parsed.table_id][parsed.column_name] = description
+            column_updates_by_table[parsed.table_id][parsed.column_name] = update.description
 
     return DescriptionUpdateGroups(
         bucket_updates=bucket_updates,
@@ -647,9 +656,9 @@ async def _update_column_descriptions(
 async def update_descriptions(
     ctx: Context,
     updates: Annotated[
-        dict[str, str],
+        list[DescriptionUpdate],
         Field(
-            description='Dictionary mapping paths to descriptions. '
+            description='List of DescriptionUpdate objects with storage path and new description. '
             'Paths: "bucket_id", "bucket_id.table_id", "bucket_id.table_id.column_name"'
         ),
     ],
@@ -660,15 +669,15 @@ async def update_descriptions(
     """Updates descriptions for Keboola storage items (buckets, tables, columns)."""
     client = KeboolaClient.from_state(ctx.session.state)
     results: list[UpdateItemResult] = []
-    valid_updates: dict[str, str] = {}
+    valid_updates: list[DescriptionUpdate] = []
 
     # Handle invalid paths first and filter valid ones
-    for path, description in updates.items():
+    for update in updates:
         try:
-            _parse_path(path)
-            valid_updates[path] = description
+            _parse_path(update.item_id)
+            valid_updates.append(update)
         except ValueError as e:
-            results.append(UpdateItemResult(path=path, success=False, error=f'Invalid path format: {e}'))
+            results.append(UpdateItemResult(path=update.item_id, success=False, error=f'Invalid path format: {e}'))
 
     # Process valid updates
     grouped_updates = _group_updates_by_type(valid_updates)
