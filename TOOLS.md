@@ -2034,7 +2034,7 @@ Updates descriptions for Keboola storage items (buckets, tables, columns).
 {
   "$defs": {
     "DescriptionUpdate": {
-      "description": "Structured update describing a storage item path and its new description.",
+      "description": "Structured update describing a storage item and its new description.",
       "properties": {
         "item_id": {
           "description": "Storage item name: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
@@ -2057,7 +2057,7 @@ Updates descriptions for Keboola storage items (buckets, tables, columns).
   },
   "properties": {
     "updates": {
-      "description": "List of DescriptionUpdate objects with storage path and new description. Paths: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
+      "description": "List of DescriptionUpdate objects with storage item_id and new description. Examples: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
       "items": {
         "$ref": "#/$defs/DescriptionUpdate"
       },
