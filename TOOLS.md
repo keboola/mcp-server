@@ -2032,14 +2032,37 @@ Updates descriptions for Keboola storage items (buckets, tables, columns).
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "DescriptionUpdate": {
+      "description": "Structured update describing a storage item path and its new description.",
+      "properties": {
+        "item_id": {
+          "description": "Storage item name: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "description": {
+          "description": "New description to set for the storage item.",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "description"
+      ],
+      "title": "DescriptionUpdate",
+      "type": "object"
+    }
+  },
   "properties": {
     "updates": {
-      "additionalProperties": {
-        "type": "string"
+      "description": "List of DescriptionUpdate objects with storage path and new description. Paths: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
+      "items": {
+        "$ref": "#/$defs/DescriptionUpdate"
       },
-      "description": "Dictionary mapping paths to descriptions. Paths: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
       "title": "Updates",
-      "type": "object"
+      "type": "array"
     }
   },
   "required": [
