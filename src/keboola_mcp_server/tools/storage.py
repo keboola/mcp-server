@@ -554,7 +554,7 @@ def _group_updates_by_type(updates: dict[str, str]) -> DescriptionUpdateGroups:
     """Group updates by type for efficient processing."""
     bucket_updates: dict[str, str] = {}
     table_updates: dict[str, str] = {}
-    column_updates_by_table: dict[str, dict[str, str]] = {}
+    column_updates_by_table: dict[str, dict[str, str]] = defaultdict(dict)
 
     for path, description in updates.items():
         parsed = _parse_path(path)
@@ -564,12 +564,12 @@ def _group_updates_by_type(updates: dict[str, str]) -> DescriptionUpdateGroups:
         elif parsed.item_type == 'table':
             table_updates[parsed.table_id] = description
         elif parsed.item_type == 'column':
-            if parsed.table_id not in column_updates_by_table:
-                column_updates_by_table[parsed.table_id] = {}
             column_updates_by_table[parsed.table_id][parsed.column_name] = description
 
     return DescriptionUpdateGroups(
-        bucket_updates=bucket_updates, table_updates=table_updates, column_updates_by_table=column_updates_by_table
+        bucket_updates=bucket_updates,
+        table_updates=table_updates,
+        column_updates_by_table=dict(column_updates_by_table),
     )
 
 
