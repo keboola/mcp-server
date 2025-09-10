@@ -591,10 +591,10 @@ _QUERY_DATA_FUNCTION_CODE = """
 #### QUERY DATA FUNCTION ####
 import httpx
 import os
-import pandas
+import pandas as pd
 
 
-def query_data(query: str) -> pandas.DataFrame:
+def query_data(query: str) -> pd.DataFrame:
     bid = os.environ.get('BRANCH_ID')
     wid = os.environ.get('WORKSPACE_ID')
     kbc_url = os.environ.get('KBC_URL')
@@ -613,7 +613,7 @@ def query_data(query: str) -> pandas.DataFrame:
         response_json = response.json()
         if response_json.get('status') == 'error':
             raise ValueError(f'Error when executing query "{query}": {response_json.get("message")}.')
-        return pandas.DataFrame(response_json['data']['rows'])
+        return pd.DataFrame(response_json['data']['rows'])
 
 #### END_OF_INJECTED_CODE ####
 """
