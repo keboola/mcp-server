@@ -278,8 +278,8 @@ class UpdateDescriptionsOutput(BaseModel):
     failed: int = Field(description='Number of failed updates.')
 
 
-class ParsedPath(BaseModel):
-    """Represents a parsed storage item path."""
+class ParsedStorageItem(BaseModel):
+    """Represents a parsed storage item."""
 
     item_type: Literal['bucket', 'table', 'column'] = Field(description='Type of storage item.')
     bucket_id: str = Field(description='Bucket identifier.')
@@ -525,7 +525,7 @@ async def list_tables(
     return ListTablesOutput(tables=list(tables_by_prod_id.values()), links=bucket.links or [])
 
 
-def _parse_path(path: str) -> ParsedPath:
+def _parse_path(path: str) -> ParsedStorageItem:
     """
     Parse a path string to extract item type and identifiers.
 
@@ -538,14 +538,14 @@ def _parse_path(path: str) -> ParsedPath:
     parts = path.split('.')
 
     if len(parts) == BUCKET_PATH_PARTS:
-        return ParsedPath(item_type='bucket', bucket_id=path, table_id='', column_name='')
+        return ParsedStorageItem(item_type='bucket', bucket_id=path, table_id='', column_name='')
     elif len(parts) == TABLE_PATH_PARTS:
         bucket_id = f'{parts[0]}.{parts[1]}'
-        return ParsedPath(item_type='table', bucket_id=bucket_id, table_id=path, column_name='')
+        return ParsedStorageItem(item_type='table', bucket_id=bucket_id, table_id=path, column_name='')
     elif len(parts) == COLUMN_PATH_PARTS:
         bucket_id = f'{parts[0]}.{parts[1]}'
         table_id = f'{parts[0]}.{parts[1]}.{parts[2]}'
-        return ParsedPath(item_type='column', bucket_id=bucket_id, table_id=table_id, column_name=parts[3])
+        return ParsedStorageItem(item_type='column', bucket_id=bucket_id, table_id=table_id, column_name=parts[3])
     else:
         raise ValueError(f'Invalid path format: {path}')
 
