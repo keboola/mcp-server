@@ -13,11 +13,11 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
+    DescriptionUpdate,
     ListBucketsOutput,
     ListTablesOutput,
     TableColumnInfo,
     TableDetail,
-    DescriptionUpdate,
     UpdateDescriptionsOutput,
     get_bucket,
     get_table,
@@ -1005,7 +1005,7 @@ async def test_update_descriptions_bucket_success(
     assert len(result.results) == 1
 
     bucket_result = result.results[0]
-    assert bucket_result.path == 'in.c-test-bucket'
+    assert bucket_result.item_id == 'in.c-test-bucket'
     assert bucket_result.success is True
     assert bucket_result.error is None
     assert bucket_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
@@ -1038,7 +1038,7 @@ async def test_update_descriptions_table_success(
     assert len(result.results) == 1
 
     table_result = result.results[0]
-    assert table_result.path == 'in.c-test.test-table'
+    assert table_result.item_id == 'in.c-test.test-table'
     assert table_result.success is True
     assert table_result.error is None
     assert table_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
@@ -1074,7 +1074,7 @@ async def test_update_descriptions_column_success(
     assert len(result.results) == 1
 
     column_result = result.results[0]
-    assert column_result.path == 'in.c-test.test-table.column_name'
+    assert column_result.item_id == 'in.c-test.test-table.column_name'
     assert column_result.success is True
     assert column_result.error is None
     assert column_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
@@ -1120,12 +1120,12 @@ async def test_update_descriptions_mixed_types_success(
     assert len(result.results) == 2
 
     # Check bucket result
-    bucket_result = next(r for r in result.results if r.path == 'in.c-test-bucket')
+    bucket_result = next(r for r in result.results if r.item_id == 'in.c-test-bucket')
     assert bucket_result.success is True
     assert bucket_result.error is None
 
     # Check table result
-    table_result = next(r for r in result.results if r.path == 'in.c-test.test-table')
+    table_result = next(r for r in result.results if r.item_id == 'in.c-test.test-table')
     assert table_result.success is True
     assert table_result.error is None
 
@@ -1156,10 +1156,10 @@ async def test_update_descriptions_invalid_path_error(mcp_context_client) -> Non
     assert len(result.results) == 1
 
     error_result = result.results[0]
-    assert error_result.path == 'invalid-path'
+    assert error_result.item_id == 'invalid-path'
     assert error_result.success is False
     assert error_result.error is not None
-    assert 'Invalid path format' in error_result.error
+    assert 'Invalid item_id format' in error_result.error
     assert error_result.timestamp is None
 
 
@@ -1184,7 +1184,7 @@ async def test_update_descriptions_api_error_handling(mocker: MockerFixture, mcp
     assert len(result.results) == 1
 
     error_result = result.results[0]
-    assert error_result.path == 'in.c-test-bucket'
+    assert error_result.item_id == 'in.c-test-bucket'
     assert error_result.success is False
     assert error_result.error is not None
     assert error_result.timestamp is None

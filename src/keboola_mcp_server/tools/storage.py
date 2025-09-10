@@ -638,15 +638,18 @@ async def _update_column_descriptions(
                 results.append(
                     UpdateItemResult(
                         item_id=f'{table_id}.{column_name}', success=True, timestamp=description_entry['timestamp']
-                        )
                     )
+                )
             except Exception as e:
                 results.append(UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e)))
 
         return results
     except Exception as e:
         # If the entire table update fails, mark all columns as failed
-        return [UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e)) for column_name in column_updates.keys()]
+        return [
+            UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e))
+            for column_name in column_updates.keys()
+        ]
 
 
 @tool_errors()
@@ -674,7 +677,9 @@ async def update_descriptions(
             _parse_item_id(update.item_id)
             valid_updates.append(update)
         except ValueError as e:
-            results.append(UpdateItemResult(item_id=update.item_id, success=False, error=f'Invalid item_id format: {e}'))
+            results.append(
+                UpdateItemResult(item_id=update.item_id, success=False, error=f'Invalid item_id format: {e}')
+            )
 
     # Process valid updates
     grouped_updates = _group_updates_by_type(valid_updates)

@@ -108,7 +108,7 @@ async def test_update_descriptions_bucket(mcp_context: Context, buckets: list[Bu
         assert len(result.results) == 1
 
         bucket_result = result.results[0]
-        assert bucket_result.path == bucket.bucket_id
+        assert bucket_result.item_id == bucket.bucket_id
         assert bucket_result.success is True
         assert bucket_result.error is None
         assert bucket_result.timestamp is not None
@@ -143,7 +143,7 @@ async def test_update_descriptions_table(mcp_context: Context, tables: list[Tabl
         assert len(result.results) == 1
 
         table_result = result.results[0]
-        assert table_result.path == table.table_id
+        assert table_result.item_id == table.table_id
         assert table_result.success is True
         assert table_result.error is None
         assert table_result.timestamp is not None
@@ -233,8 +233,8 @@ async def test_update_descriptions_invalid_path(mcp_context: Context):
     assert len(result.results) == 1
 
     error_result = result.results[0]
-    assert error_result.path == 'invalid-path'
+    assert error_result.item_id == 'invalid-path'
     assert error_result.success is False
     assert error_result.error is not None
-    assert 'Invalid path format' in error_result.error
+    assert 'Invalid item_id format' in error_result.error
     assert error_result.timestamp is None
