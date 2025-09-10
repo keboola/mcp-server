@@ -666,7 +666,22 @@ async def update_descriptions(
     UpdateDescriptionsOutput,
     Field(description='The response object for the description updates.'),
 ]:
-    """Updates descriptions for Keboola storage items (buckets, tables, columns)."""
+    """Updates the description for a Keboola storage item.
+
+    This tool supports three item types, inferred from the provided item_id:
+
+    - bucket: item_id = "in.c-bucket"
+    - table: item_id = "in.c-bucket.table"
+    - column: item_id = "in.c-bucket.table.column"
+
+    Usage examples (payload uses a list of DescriptionUpdate objects):
+    - Update a bucket:
+      updates=[DescriptionUpdate(item_id="in.c-my-bucket", description="New bucket description")]
+    - Update a table:
+      updates=[DescriptionUpdate(item_id="in.c-my-bucket.my-table", description="New table description")]
+    - Update a column:
+      updates=[DescriptionUpdate(item_id="in.c-my-bucket.my-table.my_column", description="New column description")]
+    """
     client = KeboolaClient.from_state(ctx.session.state)
     results: list[UpdateItemResult] = []
     valid_updates: list[DescriptionUpdate] = []

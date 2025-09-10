@@ -69,7 +69,7 @@ potentially narrowed down by item type, limited and paginated.
 - [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
 - [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
 - [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
-- [update_descriptions](#update_descriptions): Updates descriptions for Keboola storage items (buckets, tables, columns).
+- [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
 
@@ -2026,7 +2026,21 @@ Retrieves all tables in a specific bucket with their basic information.
 
 **Description**:
 
-Updates descriptions for Keboola storage items (buckets, tables, columns).
+Updates the description for a Keboola storage item.
+
+This tool supports three item types, inferred from the provided item_id:
+
+- bucket: item_id = "in.c-bucket"
+- table: item_id = "in.c-bucket.table"
+- column: item_id = "in.c-bucket.table.column"
+
+Usage examples (payload uses a list of DescriptionUpdate objects):
+- Update a bucket:
+  updates=[DescriptionUpdate(item_id="in.c-my-bucket", description="New bucket description")]
+- Update a table:
+  updates=[DescriptionUpdate(item_id="in.c-my-bucket.my-table", description="New table description")]
+- Update a column:
+  updates=[DescriptionUpdate(item_id="in.c-my-bucket.my-table.my_column", description="New column description")]
 
 
 **Input JSON Schema**:
