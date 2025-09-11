@@ -34,6 +34,18 @@ async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
         assert isinstance(item, BucketDetail)
 
     assert len(result.buckets) == len(buckets)
+    assert result.bucket_counts.total_buckets == len(buckets)
+    
+    # Count buckets by stage from the actual result (since BucketDef doesn't have stage info)
+    actual_input_count = sum(1 for bucket in result.buckets if bucket.stage == 'in')
+    actual_output_count = sum(1 for bucket in result.buckets if bucket.stage == 'out')
+    
+    # Verify our counts match what we calculated
+    assert result.bucket_counts.input_buckets == actual_input_count
+    assert result.bucket_counts.output_buckets == actual_output_count
+    
+    # Verify the counts add up to the total
+    assert result.bucket_counts.input_buckets + result.bucket_counts.output_buckets == result.bucket_counts.total_buckets
 
 
 @pytest.mark.asyncio
