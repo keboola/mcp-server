@@ -1,11 +1,6 @@
-import base64
 from typing import Literal, cast
 
 import pytest
-from cryptography.fernet import Fernet
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
@@ -144,7 +139,6 @@ def test_build_data_app_config_merges_defaults_and_secrets():
     # Default packages are included and deduplicated
     assert 'pandas' in params['packages']
     assert 'httpx' in params['packages']
-    assert 'cryptography' in params['packages']
     # Secrets carried over
     assert params['dataApp']['secrets'] == secrets
     # Authorization reflects flag
@@ -180,7 +174,6 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
     # Packages combined with defaults
     assert 'pandas' in new['parameters']['packages']
     assert 'httpx' in new['parameters']['packages']
-    assert 'cryptography' in new['parameters']['packages']
     assert new['parameters']['dataApp']['secrets']['FOO'] == 'new'
     assert new['parameters']['dataApp']['secrets']['NEW'] == 'y'
     assert new['parameters']['dataApp']['secrets']['KEEP'] == 'x'
@@ -190,7 +183,6 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
 def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
 
     keboola_client = mocker.Mock(KeboolaClient)
-    keboola_client.storage_api_url = 'https://example.com'
     keboola_client.token = 'TOKEN123'
     keboola_client.branch_id = 'bid123'
 
@@ -201,30 +193,9 @@ def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
     assert set(secrets.keys()) == {
         'BRANCH_ID',
         'WORKSPACE_ID',
-        'STORAGE_API_URL',
-        '#STORAGE_API_TOKEN',
-        '#SAPI_RANDOM_SEED',
     }
     assert secrets['BRANCH_ID'] == 'bid123'
     assert secrets['WORKSPACE_ID'] == 'wid-1234'
-    assert secrets['STORAGE_API_URL'] == 'https://example.com'
-
-    # Get the seed (decode it)
-    seed = base64.urlsafe_b64decode(secrets['#SAPI_RANDOM_SEED'].encode())
-    # Get the encrypted token (decode it)
-    encrypted_token = base64.urlsafe_b64decode(secrets['#STORAGE_API_TOKEN'].encode())
-    # Derive the key from the seed
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,  # Fernet requires 32-byte keys
-        salt=workspace_id.encode('utf-8'),
-        iterations=390000,
-        backend=default_backend(),
-    )
-    key = base64.urlsafe_b64encode(kdf.derive(seed))
-    # Decrypt the token
-    decrypted_token = Fernet(key).decrypt(encrypted_token).decode()
-    assert decrypted_token == 'TOKEN123'
 
 
 @pytest.mark.parametrize(
