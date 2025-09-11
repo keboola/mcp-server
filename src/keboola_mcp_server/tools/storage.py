@@ -178,8 +178,15 @@ class BucketDetail(BaseModel):
         return values
 
 
+class BucketCounts(BaseModel):
+    total_buckets: int = Field(..., description='Total number of buckets.')
+    input_buckets: int = Field(..., description='Number of input stage buckets.')
+    output_buckets: int = Field(..., description='Number of output stage buckets.')
+
+
 class ListBucketsOutput(BaseModel):
     buckets: list[BucketDetail] = Field(..., description='List of buckets.')
+    bucket_counts: BucketCounts = Field(..., description='Bucket counts by stage.')
     links: list[Link] = Field(..., description='Links relevant to the bucket listing.')
 
 
@@ -424,7 +431,22 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
             bucket = await _combine_buckets(client, links_manager, prod_bucket, next(iter(dev_buckets), None))
             buckets.append(bucket.model_copy(update={'links': None}))  # no links when listing buckets
 
-    return ListBucketsOutput(buckets=buckets, links=[links_manager.get_bucket_dashboard_link()])
+    # Count buckets by stage (only count input, derive output)
+    total_count = len(buckets)
+    input_count = sum(1 for bucket in buckets if bucket.stage == 'in')
+    output_count = total_count - input_count
+    
+    bucket_counts = BucketCounts(
+        total_buckets=total_count,
+        input_buckets=input_count,
+        output_buckets=output_count
+    )
+    
+    return ListBucketsOutput(
+        buckets=buckets, 
+        bucket_counts=bucket_counts, 
+        links=[links_manager.get_bucket_dashboard_link()]
+    )
 
 
 @tool_errors()

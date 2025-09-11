@@ -671,6 +671,14 @@ async def test_list_buckets(
 
     assert isinstance(result, ListBucketsOutput)
     assert result.buckets == expected_buckets
+    assert result.bucket_counts.total_buckets == len(expected_buckets)
+    
+    # Count expected buckets by stage
+    expected_input_count = sum(1 for bucket in expected_buckets if bucket.stage == 'in')
+    expected_output_count = sum(1 for bucket in expected_buckets if bucket.stage == 'out')
+    
+    assert result.bucket_counts.input_buckets == expected_input_count
+    assert result.bucket_counts.output_buckets == expected_output_count
     keboola_client.storage_client.bucket_list.assert_called_once()
 
 
