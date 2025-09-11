@@ -151,7 +151,7 @@ jobs:
     name: Build Docker image and do basic test
     needs:
       - build
-      - integration_tests
+      # - integration_tests
     runs-on: ubuntu-latest
     # run this job only for push events (not pull requests)
     if: github.event_name == 'push'
