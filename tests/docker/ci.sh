@@ -40,14 +40,31 @@ main() {
         
         if [ "$http_code" = "200" ] && [ -n "$body" ]; then
             echo "✓ MCP server initialized successfully"
-            echo "Response body:"
-            if command -v jq >/dev/null 2>&1; then
-                echo "$body" | grep "^data: " | sed 's/^data: //' | jq '.'
-            else
-                echo "$body"
+
+            # Try calling a simple tool to verify tool execution works over HTTP
+            echo "Testing tools/call → get_project_info..."
+            tool_response=$(curl -s -w "\n%{http_code}" -X POST \
+               -H "Content-Type: application/json" \
+               -H "Accept: application/json, text/event-stream" \
+               -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_project_info", "arguments": {}}}' \
+               "http://localhost:8080/mcp" 2>/dev/null)
+
+            tool_http_code=$(echo "$tool_response" | tail -n1)
+            tool_body=$(echo "$tool_response" | sed '$d')
+
+            if [ "$tool_http_code" = "200" ] && [ -n "$tool_body" ]; then
+                echo "✓ Tool call succeeded"
+                echo "Response body:"
+                if command -v jq >/dev/null 2>&1; then
+                    json_line=$(echo "$tool_body" | grep "^data: " | sed 's/^data: //')
+                    echo "$json_line" | jq '.'
+                else
+                    echo "$tool_body"
+                fi
+                echo "✓ Tool call test passed"
+                exit 0
             fi
-            echo "✓ Test passed"
-            exit 0
+            # If tool call didn't succeed, continue outer loop
         fi
         sleep 1
     done
