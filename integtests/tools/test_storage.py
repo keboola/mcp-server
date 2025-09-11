@@ -9,15 +9,16 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
+    DescriptionUpdate,
     ListBucketsOutput,
     ListTablesOutput,
     TableDetail,
-    UpdateDescriptionOutput,
+    UpdateDescriptionsOutput,
     get_bucket,
     get_table,
     list_buckets,
     list_tables,
-    update_description,
+    update_descriptions,
 )
 
 LOG = logging.getLogger(__name__)
@@ -101,21 +102,30 @@ async def test_list_tables(mcp_context: Context, tables: list[TableDef], buckets
 
 
 @pytest.mark.asyncio
-async def test_update_bucket_description(mcp_context: Context, buckets: list[BucketDef]):
-    """Tests that `update_bucket_description` updates the description of a bucket."""
+async def test_update_descriptions_bucket(mcp_context: Context, buckets: list[BucketDef]):
+    """Tests that `update_descriptions` updates bucket descriptions correctly."""
     bucket = buckets[0]
     md_id: str | None = None
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
-        result = await update_description(
+        result = await update_descriptions(
             ctx=mcp_context,
-            item_type='bucket',
-            description='New Description',
-            bucket_id=bucket.bucket_id,
+            updates=[DescriptionUpdate(item_id=bucket.bucket_id, description='New Description')],
         )
-        assert isinstance(result, UpdateDescriptionOutput)
-        assert result.description == 'New Description'
 
+        assert isinstance(result, UpdateDescriptionsOutput)
+        assert result.total_processed == 1
+        assert result.successful == 1
+        assert result.failed == 0
+        assert len(result.results) == 1
+
+        bucket_result = result.results[0]
+        assert bucket_result.item_id == bucket.bucket_id
+        assert bucket_result.success is True
+        assert bucket_result.error is None
+        assert bucket_result.timestamp is not None
+
+        # Verify the description was actually updated
         metadata = await client.storage_client.bucket_metadata_get(bucket.bucket_id)
         metadata_entry = next((entry for entry in metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
         assert metadata_entry is not None, f'Metadata entry for bucket {bucket.bucket_id} description not found'
@@ -127,25 +137,34 @@ async def test_update_bucket_description(mcp_context: Context, buckets: list[Buc
 
 
 @pytest.mark.asyncio
-async def test_update_table_description(mcp_context: Context, tables: list[TableDef]):
-    """Tests that `update_table_description` updates the description of a table."""
+async def test_update_descriptions_table(mcp_context: Context, tables: list[TableDef]):
+    """Tests that `update_descriptions` updates table descriptions correctly."""
     table = tables[0]
     md_id: str | None = None
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
-        result = await update_description(
+        result = await update_descriptions(
             ctx=mcp_context,
-            item_type='table',
-            description='New Description',
-            table_id=table.table_id,
+            updates=[DescriptionUpdate(item_id=table.table_id, description='New Table Description')],
         )
-        assert isinstance(result, UpdateDescriptionOutput)
-        assert result.description == 'New Description'
 
+        assert isinstance(result, UpdateDescriptionsOutput)
+        assert result.total_processed == 1
+        assert result.successful == 1
+        assert result.failed == 0
+        assert len(result.results) == 1
+
+        table_result = result.results[0]
+        assert table_result.item_id == table.table_id
+        assert table_result.success is True
+        assert table_result.error is None
+        assert table_result.timestamp is not None
+
+        # Verify the description was actually updated
         metadata = await client.storage_client.table_metadata_get(table.table_id)
         metadata_entry = next((entry for entry in metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
         assert metadata_entry is not None, f'Metadata entry for table {table.table_id} description not found'
-        assert metadata_entry['value'] == 'New Description'
+        assert metadata_entry['value'] == 'New Table Description'
         md_id = str(metadata_entry['id'])
     finally:
         if md_id is not None:
@@ -153,30 +172,81 @@ async def test_update_table_description(mcp_context: Context, tables: list[Table
 
 
 @pytest.mark.asyncio
-async def test_update_column_description(mcp_context: Context, tables: list[TableDef]):
-    """Tests that `update_column_description` updates the description of a column."""
+async def test_update_descriptions_mixed_types(mcp_context: Context, buckets: list[BucketDef], tables: list[TableDef]):
+    """Tests that `update_descriptions` can handle mixed types in a single call."""
+    bucket = buckets[0]
     table = tables[0]
 
     # Get the first column name from the table CSV file
     with table.file_path.open('r', encoding='utf-8') as f:
         reader = csv.reader(f)
         columns = next(reader)
+    column_name = columns[0]
 
-    column_name = columns[0]  # Use the first column
-    test_description = 'New Column Description'
+    md_ids: list[str] = []
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    try:
+        result = await update_descriptions(
+            ctx=mcp_context,
+            updates=[
+                DescriptionUpdate(item_id=bucket.bucket_id, description='Mixed Bucket Description'),
+                DescriptionUpdate(item_id=table.table_id, description='Mixed Table Description'),
+                DescriptionUpdate(item_id=f'{table.table_id}.{column_name}', description='Mixed Column Description'),
+            ],
+        )
 
-    # Test the update_column_description function
-    result = await update_description(
+        assert isinstance(result, UpdateDescriptionsOutput)
+        assert result.total_processed == 3
+        assert result.successful == 3
+        assert result.failed == 0
+        assert len(result.results) == 3
+
+        # Verify all results are successful
+        for item_result in result.results:
+            assert item_result.success is True
+            assert item_result.error is None
+            assert item_result.timestamp is not None
+
+        # Verify bucket description was updated
+        bucket_metadata = await client.storage_client.bucket_metadata_get(bucket.bucket_id)
+        bucket_entry = next((entry for entry in bucket_metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
+        if bucket_entry:
+            assert bucket_entry['value'] == 'Mixed Bucket Description'
+            md_ids.append(('bucket', bucket.bucket_id, str(bucket_entry['id'])))
+
+        # Verify table description was updated
+        table_metadata = await client.storage_client.table_metadata_get(table.table_id)
+        table_entry = next((entry for entry in table_metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
+        if table_entry:
+            assert table_entry['value'] == 'Mixed Table Description'
+            md_ids.append(('table', table.table_id, str(table_entry['id'])))
+
+    finally:
+        # Clean up metadata
+        for md_type, item_id, md_id in md_ids:
+            if md_type == 'bucket':
+                await client.storage_client.bucket_metadata_delete(bucket_id=item_id, metadata_id=md_id)
+            elif md_type == 'table':
+                await client.storage_client.table_metadata_delete(table_id=item_id, metadata_id=md_id)
+
+
+@pytest.mark.asyncio
+async def test_update_descriptions_invalid_path(mcp_context: Context):
+    """Tests that `update_descriptions` handles invalid paths gracefully."""
+    result = await update_descriptions(
         ctx=mcp_context,
-        item_type='column',
-        description=test_description,
-        table_id=table.table_id,
-        column_name=column_name,
+        updates=[DescriptionUpdate(item_id='invalid-path', description='This should fail')],
     )
-    LOG.error(result)
 
-    # Verify the function returns expected result
-    assert isinstance(result, UpdateDescriptionOutput)
-    assert result.description == test_description
-    assert result.success is True
-    assert result.timestamp is not None
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 0
+    assert result.failed == 1
+    assert len(result.results) == 1
+
+    error_result = result.results[0]
+    assert error_result.item_id == 'invalid-path'
+    assert error_result.success is False
+    assert error_result.error is not None
+    assert 'Invalid item_id format' in error_result.error
+    assert error_result.timestamp is None
