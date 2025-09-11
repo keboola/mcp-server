@@ -287,8 +287,8 @@ class DescriptionUpdate(BaseModel):
     description: str = Field(description='New description to set for the storage item.')
 
 
-class ParsedStorageItem(BaseModel):
-    """Represents a parsed storage item."""
+class StorageItemId(BaseModel):
+    """Represents a parsed storage item ID."""
 
     item_type: Literal['bucket', 'table', 'column'] = Field(description='Type of storage item.')
     bucket_id: Optional[str] = Field(default=None, description='Bucket identifier.')
@@ -534,12 +534,12 @@ async def list_tables(
     return ListTablesOutput(tables=list(tables_by_prod_id.values()), links=bucket.links or [])
 
 
-def _parse_item_id(item_id: str) -> ParsedStorageItem:
+def _parse_item_id(item_id: str) -> StorageItemId:
     """
     Parse an item_id string to extract item type and identifiers.
 
     :param item_id: Item ID (e.g., "in.c-bucket", "in.c-bucket.table", "in.c-bucket.table.column")
-    :return: ParsedStorageItem object with structured data
+    :return: StorageItemId object with structured data
     """
     if not item_id.startswith(('in.', 'out.')):
         raise ValueError(f'Invalid item_id format: {item_id} - must start with in. or out.')
@@ -547,14 +547,14 @@ def _parse_item_id(item_id: str) -> ParsedStorageItem:
     parts = item_id.split('.')
 
     if len(parts) == BUCKET_ID_PARTS:
-        return ParsedStorageItem(item_type='bucket', bucket_id=item_id)
+        return StorageItemId(item_type='bucket', bucket_id=item_id)
     elif len(parts) == TABLE_ID_PARTS:
         bucket_id = f'{parts[0]}.{parts[1]}'
-        return ParsedStorageItem(item_type='table', bucket_id=bucket_id, table_id=item_id)
+        return StorageItemId(item_type='table', bucket_id=bucket_id, table_id=item_id)
     elif len(parts) == COLUMN_ID_PARTS:
         bucket_id = f'{parts[0]}.{parts[1]}'
         table_id = f'{parts[0]}.{parts[1]}.{parts[2]}'
-        return ParsedStorageItem(item_type='column', bucket_id=bucket_id, table_id=table_id, column_name=parts[3])
+        return StorageItemId(item_type='column', bucket_id=bucket_id, table_id=table_id, column_name=parts[3])
     else:
         raise ValueError(f'Invalid item_id format: {item_id}')
 
