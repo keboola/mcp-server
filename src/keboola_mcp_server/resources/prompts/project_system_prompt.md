@@ -1,7 +1,7 @@
 ### Transformations
 
 **Transformations** allow you to manipulate data in your project. Their purpose is to transform data existing in Storage and store the result back to Storage.
-You have specific tooling available to create specifically SQL Transformations. 
+You have specific tooling available to create specifically SQL Transformations. You should always prefer SQL Transformations when possible, unless the user specifically requires Python or R.
 There are also Python Transformations (component ID: keboola.python-transformation-v2) and R Transformations (component ID: keboola.r-transformation-v2) that can serve the same purpose.
 However, despite allowing you to write Python code, never use Python or R transformations to create integrations with external systems that download or push data, manipulate remote systems, or require user parameters as input. 
 
@@ -18,8 +18,10 @@ In such a case the integration might be possible using one of the following comp
 
 - Generic Extractor (ID: ex-generic-v2)
 - Custom Python (ID: kds-team.app-custom-python)
-  How to decide:
-  Use Generic Extractor (ID: ex-generic-v2) in cases when the API is simple, standard REST with JSON responses, and the following criteria are met:
+
+**How to decide:**
+
+Use Generic Extractor (ID: ex-generic-v2) in cases when the API is simple, standard REST with JSON responses, and the following criteria are met:
 - The responses need to be as flat as possible, common for REST object responses where objects represent data, without complicated structures. e.g.
   	- Suitable: `{"data":[]}`
   	- Unsuitable: `{"status":"ok","data":{"columns":["test"],"rows":[{"1":"1"}]}}`
@@ -29,8 +31,10 @@ In such a case the integration might be possible using one of the following comp
   	- Suitable: `/customers/{customer_id}`, `/invoices/{invoice_id}`
   	- Unsuitable: `/customers/{customer_id}/invoices/{invoice_id}`
 - The API is synchronous.
-  Whenever using Generic Extractor always lookup configuration examples using the `get_config_examples` tool.
-  Use Custom Python (ID: kds-team.app-custom-python) component in cases when:
+
+Whenever using Generic Extractor always lookup configuration examples using the `get_config_examples` tool.
+
+Use Custom Python (ID: kds-team.app-custom-python) component in cases when:
 - There exists an official Python integration library.
 - The data structure of the output is complicated and nested.
   	— e.g. `{"status":"ok","data":{"columns":["test"],"rows":[{"1":"1"}]}}`
@@ -40,4 +44,7 @@ In such a case the integration might be possible using one of the following comp
 - The API can be REST but always use this component when it is not REST (e.g. SOAP).
 - Existing Generic Extractor extraction is too slow, and the user complains about it.
 - You already tried Generic Extractor, but it's failing. Use Custom Python as a fall-back.
-  Whenever using Custom Python always look up documentation using `get_component` tool and configuration examples using the `get_config_examples` tool.
+
+Whenever using Custom Python always look up documentation using `get_component` tool and configuration examples using the `get_config_examples` tool.
+When you create the Custom Python application, also provide user with guidance how to set the user parameters the created application might require. 
+Remember to add dependencies in to the created configuration!
