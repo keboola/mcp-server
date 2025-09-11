@@ -66,7 +66,7 @@ class TestServer:
             'search',
             'update_config',
             'update_config_row',
-            'update_description',
+            'update_descriptions',
             'update_flow',
             'update_sql_transformation',
         ]
@@ -297,7 +297,7 @@ async def test_tool_annotations_and_tags():
         ('list_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
         ('get_table', True, None, None, {STORAGE_TOOLS_TAG}),
         ('list_tables', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('update_description', None, True, None, {STORAGE_TOOLS_TAG}),
+        ('update_descriptions', None, True, None, {STORAGE_TOOLS_TAG}),
         # flows
         ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
         ('create_conditional_flow', None, False, None, {FLOW_TOOLS_TAG}),
