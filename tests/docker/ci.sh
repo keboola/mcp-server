@@ -46,7 +46,7 @@ main() {
             tool_response=$(curl -s -w "\n%{http_code}" -X POST \
                  -H "Content-Type: application/json" \
                  -H "Accept: application/json, text/event-stream" \
-                 -H "X-StorageAPI-Token: $STORAGE_API_TOKEN" \
+                 -H "X-Storage-Token: $STORAGE_API_TOKEN" \
                  -H "X-STORAGE-API-URL: $STORAGE_API_URL" \
                  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_project_info", "arguments": {}}}' \
                  "http://localhost:8080/mcp" 2>/dev/null)
