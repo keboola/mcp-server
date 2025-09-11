@@ -32,6 +32,8 @@ main() {
         response=$(curl -s -w "\n%{http_code}" -X POST \
            -H "Content-Type: application/json" \
            -H "Accept: application/json, text/event-stream" \
+           -H "storage_token: $STORAGE_API_TOKEN" \
+           -H "workspace_schema: $WORKSPACE_SCHEMA" \
            -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "ci-docker-test", "version": "1.0.0"}}}' \
            "http://localhost:8080/mcp" 2>/dev/null)
         
@@ -46,8 +48,10 @@ main() {
             tool_response=$(curl -s -w "\n%{http_code}" -X POST \
                -H "Content-Type: application/json" \
                -H "Accept: application/json, text/event-stream" \
-               -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"name": "get_project_info", "arguments": {}}}' \
-               "http://localhost:8080/mcp/messages" 2>/dev/null)
+               -H "storage_token: $STORAGE_API_TOKEN" \
+            #    -H "workspace_schema: $WORKSPACE_SCHEMA" \
+               -d '{"jsonrpc": "2.0", "id": 2, "method": "call_tool", "params": {"name": "get_project_info", "arguments": {}}}' \
+               "http://localhost:8080/mcp" 2>/dev/null)
 
             tool_http_code=$(echo "$tool_response" | tail -n1)
             tool_body=$(echo "$tool_response" | sed '$d')
