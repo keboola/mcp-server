@@ -46,7 +46,7 @@ main() {
             tool_response=$(curl -s -w "\n%{http_code}" -X POST \
                -H "Content-Type: application/json" \
                -H "Accept: application/json, text/event-stream" \
-               -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_project_info", "arguments": {}}}' \
+               -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"name": "get_project_info", "arguments": {}}}' \
                "http://localhost:8080/mcp/messages" 2>/dev/null)
 
             tool_http_code=$(echo "$tool_response" | tail -n1)
