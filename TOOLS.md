@@ -990,6 +990,8 @@ query following current sql dialect and returns a pandas DataFrame with the resu
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
 parameter.
 - If the data app is updated while running, it must be redeployed for the changes to take effect.
+- The Data App requires basic authorization by default for security reasons, unless explicitly specified otherwise
+by the user.
 
 
 **Input JSON Schema**:
@@ -1020,7 +1022,7 @@ parameter.
       "type": "array"
     },
     "authorization_required": {
-      "default": false,
+      "default": true,
       "description": "Whether the data app is authorized using simple password or not.",
       "title": "Authorization Required",
       "type": "boolean"
