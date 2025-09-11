@@ -33,7 +33,7 @@ main() {
            -H "Content-Type: application/json" \
            -H "Accept: application/json, text/event-stream" \
            -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "ci-docker-test", "version": "1.0.0"}}}' \
-           "http://localhost:8080/mcp" 2>/dev/null)
+           "http://localhost:8080/sse" 2>/dev/null)
         
         http_code=$(echo "$response" | tail -n1)
         body=$(echo "$response" | sed '$d')
@@ -42,12 +42,12 @@ main() {
             echo "✓ MCP server initialized successfully"
 
             # Try calling a simple tool to verify tool execution works over HTTP
-            echo "Testing call_tool → get_project_info..."
+            echo "Testing tools/call → get_project_info..."
             tool_response=$(curl -s -w "\n%{http_code}" -X POST \
                -H "Content-Type: application/json" \
                -H "Accept: application/json, text/event-stream" \
-               -d '{"jsonrpc": "2.0", "id": 2, "method": "call_tool", "params": {"name": "get_project_info", "arguments": {}}}' \
-               "http://localhost:8080/mcp" 2>/dev/null)
+               -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_project_info", "arguments": {}}}' \
+               "http://localhost:8080/sse" 2>/dev/null)
 
             tool_http_code=$(echo "$tool_response" | tail -n1)
             tool_body=$(echo "$tool_response" | sed '$d')
