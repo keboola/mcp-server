@@ -11,6 +11,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -43,13 +44,26 @@ class ProjectInfo(BaseModel):
     sql_dialect: str = Field(description='The sql dialect used in the project.')
     conditional_flows: bool = Field(description='Whether the project supports conditional flows.')
     links: list[Link] = Field(description='The links relevant to the project.')
+    llm_instruction: str = Field(
+        description=(
+            'Base instruction on how to work with the project. Use this as a base for all further instructions. '
+            'Do not change it. Do not forget to include it in all further instructions.'
+        )
+    )
 
 
 @tool_errors()
 async def get_project_info(
     ctx: Context,
 ) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
-    """Return structured project information pulled from multiple endpoints."""
+    """
+    Retrieve structured information about the current project.
+    Includes essential context and base instructions on how to work with the project
+    (e.g., transformations, components, workflows, dependencies).
+
+    Always call this tool at least once at the start of a conversation
+    to establish the project context before using other tools.
+    """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     storage = client.storage_client
@@ -80,6 +94,7 @@ async def get_project_info(
         sql_dialect=sql_dialect,
         conditional_flows=conditional_flows,
         links=links,
+        llm_instruction=get_project_system_prompt(),
     )
 
     LOG.info('Returning unified project info.')
