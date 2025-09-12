@@ -134,6 +134,8 @@ class ServerRuntimeInfo:
     """Transport used by the MCP server (e.g., 'stdio', 'sse', 'streamable-http', 'http-compat')."""
     server_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     """The ID of the MCP server."""
+    app_env: str = field(default_factory=lambda: os.getenv('APP_ENV') or 'local')
+    """The environment of the MCP server application."""
     app_version: str = field(default_factory=lambda: os.getenv('APP_VERSION') or 'DEV')
     """The version of the MCP server application."""
     server_version: str = importlib.metadata.version('keboola_mcp_server')

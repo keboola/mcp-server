@@ -5,9 +5,7 @@ It also provides a decorator that MCP tool functions can use to inject session s
 """
 
 import dataclasses
-import importlib.metadata
 import logging
-import os
 import textwrap
 from dataclasses import dataclass
 from typing import Any
@@ -162,56 +160,22 @@ class SessionStateMiddleware(fmw.Middleware):
             # ctx.session.state = {}
             pass
 
-    @staticmethod
-    def _get_server_transport(runtime_info: ServerRuntimeInfo | None = None) -> str:
-        """
-        :param runtime_info: Runtime information
-        :return: Transport used by the MCP server if provided, otherwise 'NA' used in the headers
-        """
-        if runtime_info:
-            return runtime_info.transport
-        else:
-            return 'NA'
-
-    @staticmethod
-    def _get_server_versions(runtime_info: ServerRuntimeInfo | None = None) -> str:
-        """
-        :param runtime_info: Runtime information
-        :return: Server versions string if provided, otherwise 'NA' used in the headers
-        """
-        if runtime_info:
-            return (
-                f'keboola-mcp-server/{runtime_info.server_version} mcp/{runtime_info.mcp_library_version} '
-                f'fastmcp/{runtime_info.fastmcp_library_version}'
-            )
-        else:
-            return 'NA'
-
     @classmethod
-    def _get_user_agent(cls, transport: str) -> str:
-        """
-        :param transport: Transport used by the MCP server
-        :return: User agent string
-        """
-        try:
-            version = importlib.metadata.version('keboola-mcp-server')
-        except importlib.metadata.PackageNotFoundError:
-            version = 'NA'
-
-        app_env = os.getenv('APP_ENV', 'local')
-        return f'Keboola MCP Server/{version} app_env={app_env} transport={transport}'
-
-    @classmethod
-    def _get_headers(cls, runtime_info: ServerRuntimeInfo | None = None) -> dict[str, Any]:
+    def _get_headers(cls, runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
         """
         :param runtime_info: Runtime information
         :return: Additional headers for the requests used for tracing the MCP server
         """
-        transport = runtime_info.transport if runtime_info else 'NA'
         return {
-            'User-Agent': cls._get_user_agent(transport),
-            'MCP-Server-Transport': transport,
-            'MCP-Server-Versions': cls._get_server_versions(runtime_info),
+            'User-Agent': (
+                f'Keboola MCP Server/{runtime_info.server_version} app_env={runtime_info.app_env} '
+                f'transport={runtime_info.transport}'
+            ),
+            'MCP-Server-Transport': runtime_info.transport or 'NA',
+            'MCP-Server-Versions': (
+                f'keboola-mcp-server/{runtime_info.server_version} mcp/{runtime_info.mcp_library_version} '
+                f'fastmcp/{runtime_info.fastmcp_library_version}'
+            ),
         }
 
     @classmethod
