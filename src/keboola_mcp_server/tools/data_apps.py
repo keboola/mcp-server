@@ -1,15 +1,9 @@
 import asyncio
-import base64
 import logging
-import os
 import re
 from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast
 
 import httpx
-from cryptography.fernet import Fernet
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
@@ -238,7 +232,7 @@ async def modify_data_app(
     ],
     authorization_required: Annotated[
         bool, Field(description='Whether the data app is authorized using simple password or not.')
-    ] = False,
+    ] = True,
     configuration_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
     ] = '',
@@ -258,6 +252,8 @@ async def modify_data_app(
     - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
     parameter.
     - If the data app is updated while running, it must be redeployed for the changes to take effect.
+    - The Data App requires basic authorization by default for security reasons, unless explicitly specified otherwise
+    by the user.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
@@ -442,7 +438,7 @@ _DEFAULT_STREAMLIT_THEME = (
     '"#E6F2FF"\nprimaryColor = "#1F8FFF"'
 )
 
-_DEFAULT_PACKAGES = ['pandas', 'httpx', 'cryptography']
+_DEFAULT_PACKAGES = ['pandas', 'httpx']
 
 
 def _build_data_app_config(
@@ -595,40 +591,25 @@ def _is_authorized(authorization: dict[str, Any]) -> bool:
 _QUERY_DATA_FUNCTION_CODE = """
 #### INJECTED_CODE ####
 #### QUERY DATA FUNCTION ####
-import base64
-import os
 import httpx
+import os
 import pandas as pd
-from cryptography.fernet import Fernet
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
 def query_data(query: str) -> pd.DataFrame:
     bid = os.environ.get('BRANCH_ID')
     wid = os.environ.get('WORKSPACE_ID')
-    random_seed = base64.urlsafe_b64decode(os.environ.get('SAPI_RANDOM_SEED').encode())
-    encrypted_token = base64.urlsafe_b64decode(os.environ.get('STORAGE_API_TOKEN').encode())
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,  # Fernet requires 32-byte keys
-        salt=wid.encode("utf-8"),
-        iterations=390000,
-        backend=default_backend()
-    )
-    key = base64.urlsafe_b64encode(kdf.derive(random_seed))
-    decoded_token = Fernet(key).decrypt(encrypted_token).decode()
-    base_url = os.environ.get('STORAGE_API_URL')
+    kbc_url = os.environ.get('KBC_URL')
+    kbc_token = os.environ.get('KBC_TOKEN')
 
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
 
     with httpx.Client(timeout=timeout, limits=limits) as client:
         response = client.post(
-            f'{base_url}/v2/storage/branch/{bid}/workspaces/{wid}/query',
+            f'{kbc_url}/v2/storage/branch/{bid}/workspaces/{wid}/query',
             json={'query': query},
-            headers={'X-StorageAPI-Token': decoded_token},
+            headers={'X-StorageAPI-Token': kbc_token},
         )
         response.raise_for_status()
         response_json = response.json()
@@ -661,30 +642,11 @@ def _get_secrets(client: KeboolaClient, workspace_id: str) -> dict[str, Any]:
     """
     Generates secrets for the data app for querying the tables in the given wokrspace using the query_data endpoint.
 
-    - First, the storage token is encrypted using `cryptography.fernet`, combining a random seed and the workspace ID.
-    This encrypted token is sent to the data app as part of the secrets.
-    - Next, all values with keys starting with a hashtag (`#`) are further encrypted by sending them to an encryption
-    service endpoint. These values are automatically decrypted by the service when the data app starts.
-    - Finally, the storage token is decrypted inside the data app using Fernet and the associated metadata.
-
     :param client: The Keboola client
     :param workspace_id: The ID of the workspace
     :return: The secrets
     """
-    random_seed = os.urandom(32)
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,  # Fernet requires 32-byte keys
-        salt=workspace_id.encode('utf-8'),
-        iterations=390000,
-        backend=default_backend(),
-    )
-    key = base64.urlsafe_b64encode(kdf.derive(random_seed))
-    encrypted_token = Fernet(key).encrypt(client.token.encode())
     return {
         'WORKSPACE_ID': workspace_id,
-        'STORAGE_API_URL': client.storage_api_url,
         'BRANCH_ID': client.branch_id or 'default',
-        '#STORAGE_API_TOKEN': base64.urlsafe_b64encode(encrypted_token).decode('utf-8'),
-        '#SAPI_RANDOM_SEED': base64.urlsafe_b64encode(random_seed).decode('utf-8'),
     }

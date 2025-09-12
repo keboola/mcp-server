@@ -13,16 +13,17 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
+    DescriptionUpdate,
     ListBucketsOutput,
     ListTablesOutput,
     TableColumnInfo,
     TableDetail,
-    UpdateDescriptionOutput,
+    UpdateDescriptionsOutput,
     get_bucket,
     get_table,
     list_buckets,
     list_tables,
-    update_description,
+    update_descriptions,
 )
 from keboola_mcp_server.workspace import TableFqn, WorkspaceManager
 
@@ -426,7 +427,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
             }
         ],
         'columnsMetadata': {
-            'text': [
+            'column_name': [
                 {
                     'id': '1725066342',
                     'key': 'KBC.description',
@@ -670,6 +671,14 @@ async def test_list_buckets(
 
     assert isinstance(result, ListBucketsOutput)
     assert result.buckets == expected_buckets
+    assert result.bucket_counts.total_buckets == len(expected_buckets)
+    
+    # Count expected buckets by stage
+    expected_input_count = sum(1 for bucket in expected_buckets if bucket.stage == 'in')
+    expected_output_count = sum(1 for bucket in expected_buckets if bucket.stage == 'out')
+    
+    assert result.bucket_counts.input_buckets == expected_input_count
+    assert result.bucket_counts.output_buckets == expected_output_count
     keboola_client.storage_client.bucket_list.assert_called_once()
 
 
@@ -983,56 +992,65 @@ async def test_list_tables(
 
 
 @pytest.mark.asyncio
-async def test_update_bucket_description_success(
+async def test_update_descriptions_bucket_success(
     mocker: MockerFixture, mcp_context_client, mock_update_bucket_description_response
 ) -> None:
-    """Test successful update of bucket description."""
-
+    """Test successful update of bucket description using update_descriptions."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_metadata_update = mocker.AsyncMock(
         return_value=mock_update_bucket_description_response,
     )
 
-    result = await update_description(
+    result = await update_descriptions(
         ctx=mcp_context_client,
-        item_type='bucket',
-        description='Updated bucket description',
-        bucket_id='in.c-test.bucket-id',
+        updates=[DescriptionUpdate(item_id='in.c-test-bucket', description='Updated bucket description')],
     )
 
-    assert isinstance(result, UpdateDescriptionOutput)
-    assert result.success is True
-    assert result.description == 'Updated bucket description'
-    assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 1
+    assert result.failed == 0
+    assert len(result.results) == 1
+
+    bucket_result = result.results[0]
+    assert bucket_result.item_id == 'in.c-test-bucket'
+    assert bucket_result.success is True
+    assert bucket_result.error is None
+    assert bucket_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
+
     keboola_client.storage_client.bucket_metadata_update.assert_called_once_with(
-        bucket_id='in.c-test.bucket-id',
+        bucket_id='in.c-test-bucket',
         metadata={MetadataField.DESCRIPTION: 'Updated bucket description'},
     )
 
 
 @pytest.mark.asyncio
-async def test_update_table_description_success(
+async def test_update_descriptions_table_success(
     mocker: MockerFixture, mcp_context_client, mock_update_table_description_response
 ) -> None:
-    """Test successful update of table description."""
-
-    # Mock the Keboola client post method
+    """Test successful update of table description using update_descriptions."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
         return_value=mock_update_table_description_response,
     )
 
-    result = await update_description(
+    result = await update_descriptions(
         ctx=mcp_context_client,
-        item_type='table',
-        description='Updated table description',
-        table_id='in.c-test.test-table',
+        updates=[DescriptionUpdate(item_id='in.c-test.test-table', description='Updated table description')],
     )
 
-    assert isinstance(result, UpdateDescriptionOutput)
-    assert result.success is True
-    assert result.description == 'Updated table description'
-    assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 1
+    assert result.failed == 0
+    assert len(result.results) == 1
+
+    table_result = result.results[0]
+    assert table_result.item_id == 'in.c-test.test-table'
+    assert table_result.success is True
+    assert table_result.error is None
+    assert table_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
+
     keboola_client.storage_client.table_metadata_update.assert_called_once_with(
         table_id='in.c-test.test-table',
         metadata={MetadataField.DESCRIPTION: 'Updated table description'},
@@ -1041,31 +1059,155 @@ async def test_update_table_description_success(
 
 
 @pytest.mark.asyncio
-async def test_update_column_description_success(
+async def test_update_descriptions_column_success(
     mocker: MockerFixture, mcp_context_client, mock_update_column_description_response
 ) -> None:
-    """Test successful update of column description."""
-
+    """Test successful update of column description using update_descriptions."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
         return_value=mock_update_column_description_response,
     )
 
-    result = await update_description(
+    result = await update_descriptions(
         ctx=mcp_context_client,
-        item_type='column',
-        description='Updated column description',
-        table_id='in.c-test.test-table',
-        column_name='text',
+        updates=[
+            DescriptionUpdate(item_id='in.c-test.test-table.column_name', description='Updated column description')
+        ],
     )
 
-    assert isinstance(result, UpdateDescriptionOutput)
-    assert result.success is True
-    assert result.description == 'Updated column description'
-    assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 1
+    assert result.failed == 0
+    assert len(result.results) == 1
+
+    column_result = result.results[0]
+    assert column_result.item_id == 'in.c-test.test-table.column_name'
+    assert column_result.success is True
+    assert column_result.error is None
+    assert column_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
+
     keboola_client.storage_client.table_metadata_update.assert_called_once_with(
         table_id='in.c-test.test-table',
         columns_metadata={
-            'text': [{'key': MetadataField.DESCRIPTION, 'value': 'Updated column description', 'columnName': 'text'}]
+            'column_name': [
+                {'key': MetadataField.DESCRIPTION, 'value': 'Updated column description', 'columnName': 'column_name'}
+            ]
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_update_descriptions_mixed_types_success(
+    mocker: MockerFixture,
+    mcp_context_client,
+    mock_update_bucket_description_response,
+    mock_update_table_description_response,
+) -> None:
+    """Test successful update of mixed types using update_descriptions."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.bucket_metadata_update = mocker.AsyncMock(
+        return_value=mock_update_bucket_description_response,
+    )
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
+        return_value=mock_update_table_description_response,
+    )
+
+    result = await update_descriptions(
+        ctx=mcp_context_client,
+        updates=[
+            DescriptionUpdate(item_id='in.c-test-bucket', description='Updated bucket description'),
+            DescriptionUpdate(item_id='in.c-test.test-table', description='Updated table description'),
+        ],
+    )
+
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 2
+    assert result.successful == 2
+    assert result.failed == 0
+    assert len(result.results) == 2
+
+    # Check bucket result
+    bucket_result = next(r for r in result.results if r.item_id == 'in.c-test-bucket')
+    assert bucket_result.success is True
+    assert bucket_result.error is None
+
+    # Check table result
+    table_result = next(r for r in result.results if r.item_id == 'in.c-test.test-table')
+    assert table_result.success is True
+    assert table_result.error is None
+
+    # Verify API calls
+    keboola_client.storage_client.bucket_metadata_update.assert_called_once_with(
+        bucket_id='in.c-test-bucket',
+        metadata={MetadataField.DESCRIPTION: 'Updated bucket description'},
+    )
+    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
+        table_id='in.c-test.test-table',
+        metadata={MetadataField.DESCRIPTION: 'Updated table description'},
+        columns_metadata={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_descriptions_invalid_path_error(mcp_context_client) -> None:
+    """Test that invalid paths are handled gracefully."""
+    result = await update_descriptions(
+        ctx=mcp_context_client,
+        updates=[DescriptionUpdate(item_id='invalid-path', description='This should fail')],
+    )
+
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 0
+    assert result.failed == 1
+    assert len(result.results) == 1
+
+    error_result = result.results[0]
+    assert error_result.item_id == 'invalid-path'
+    assert error_result.success is False
+    assert error_result.error is not None
+    assert 'Invalid item_id format' in error_result.error
+    assert error_result.timestamp is None
+
+
+@pytest.mark.asyncio
+async def test_update_descriptions_api_error_handling(mocker: MockerFixture, mcp_context_client) -> None:
+    """Test that API errors are handled gracefully."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.bucket_metadata_update = mocker.AsyncMock()
+    keboola_client.storage_client.bucket_metadata_update.side_effect = httpx.HTTPStatusError(
+        message='API Error', request=AsyncMock(), response=httpx.Response(status_code=500)
+    )
+
+    result = await update_descriptions(
+        ctx=mcp_context_client,
+        updates=[DescriptionUpdate(item_id='in.c-test-bucket', description='This will fail')],
+    )
+
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 0
+    assert result.failed == 1
+    assert len(result.results) == 1
+
+    error_result = result.results[0]
+    assert error_result.item_id == 'in.c-test-bucket'
+    assert error_result.success is False
+    assert error_result.error is not None
+    assert error_result.timestamp is None
+
+
+@pytest.mark.asyncio
+async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
+    """Test that empty updates dictionary is handled."""
+    result = await update_descriptions(
+        ctx=mcp_context_client,
+        updates=[],
+    )
+
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 0
+    assert result.successful == 0
+    assert result.failed == 0
+    assert len(result.results) == 0
