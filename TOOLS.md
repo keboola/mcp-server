@@ -54,7 +54,9 @@ Considerations:
 - The `source_code` parameter must be a complete and runnable Streamlit app.
 
 ### Project Tools
-- [get_project_info](#get_project_info): Retrieves structured information about the current project.
+- [get_project_info](#get_project_info): Retrieves structured information about the current project,
+including essential context and base instructions for working with it
+(e.
 
 ### SQL Tools
 - [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
@@ -1715,9 +1717,9 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 
 **Description**:
 
-Retrieves structured information about the current project.
-Includes essential context and base instructions on how to work with the project
-(e.g., transformations, components, workflows, dependencies).
+Retrieves structured information about the current project,
+including essential context and base instructions for working with it
+(e.g., transformations, components, workflows, and dependencies).
 
 Always call this tool at least once at the start of a conversation
 to establish the project context before using other tools.

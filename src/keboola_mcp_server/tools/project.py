@@ -46,8 +46,9 @@ class ProjectInfo(BaseModel):
     links: list[Link] = Field(description='The links relevant to the project.')
     llm_instruction: str = Field(
         description=(
-            'Base instruction on how to work with the project. Use this as a base for all further instructions. '
-            'Do not change it. Do not forget to include it in all further instructions.'
+            'These are the base instructions for working on the project. '
+            'Use them as the basis for all further instructions. '
+            'Do not change them. Remember to include them in all subsequent instructions.'
         )
     )
 
@@ -57,9 +58,9 @@ async def get_project_info(
     ctx: Context,
 ) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
     """
-    Retrieves structured information about the current project.
-    Includes essential context and base instructions on how to work with the project
-    (e.g., transformations, components, workflows, dependencies).
+    Retrieves structured information about the current project,
+    including essential context and base instructions for working with it
+    (e.g., transformations, components, workflows, and dependencies).
 
     Always call this tool at least once at the start of a conversation
     to establish the project context before using other tools.
