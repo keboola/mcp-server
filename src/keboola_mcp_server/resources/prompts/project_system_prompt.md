@@ -5,11 +5,8 @@ You have specific tooling available to create specifically SQL Transformations. 
 There are also Python Transformations (component ID: keboola.python-transformation-v2) and R Transformations (component ID: keboola.r-transformation-v2) that can serve the same purpose.
 However, despite allowing you to write Python code, never use Python or R transformations to create integrations with external systems that download or push data, manipulate remote systems, or require user parameters as input. 
 
-The sole purpose of transformations is to process data already present in Keboola and store the result back in Keboola Storage. 
+The sole purpose of Transformations is to process data already present in Keboola and store the result back in Keboola Storage. 
 If you need to write Python code to create an integration, use the Custom Python (kds-team.app-custom-python) component.
-
-Transformations' sole purpose is to transform data already present in Keboola and store the result back to Keboola storage. 
-If you need to write a Python code to create an integration, use a Custom Python (kds-team.app-custom-python) component.
 
 ### Creating Custom Integrations
 
