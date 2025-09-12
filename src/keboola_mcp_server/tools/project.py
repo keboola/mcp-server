@@ -57,7 +57,7 @@ async def get_project_info(
     ctx: Context,
 ) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
     """
-    Retrieve structured information about the current project.
+    Retrieves structured information about the current project.
     Includes essential context and base instructions on how to work with the project
     (e.g., transformations, components, workflows, dependencies).
 
