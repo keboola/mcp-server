@@ -911,7 +911,6 @@ async def test_get_table(
 
     if expected_table:
         result = await get_table(table_id, mcp_context_client)
-        print('res', result)
         assert isinstance(result, TableDetail)
         assert result == expected_table
         workspace_manager.get_sql_dialect.assert_called_once()
