@@ -7,6 +7,8 @@ import pytest
 
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.config import ServerRuntimeInfo
+from keboola_mcp_server.mcp import SessionStateMiddleware
 
 
 @pytest.fixture
@@ -186,7 +188,6 @@ class TestAsyncStorageClient:
             )
 
             assert result == {'id': '13008826', 'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'}
-            version = importlib.metadata.version('keboola-mcp-server')
             mock_client.post.assert_called_once_with(
                 'https://connection.nowhere/v2/storage/events',
                 params=None,
@@ -194,7 +195,6 @@ class TestAsyncStorageClient:
                     'Content-Type': 'application/json',
                     'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
-                    'User-Agent': f'Keboola MCP Server/{version} app_env=local',
                 },
                 json={
                     key: value
@@ -271,7 +271,6 @@ class TestAsyncStorageClient:
             assert result['description'] == description
 
             # Verify the API call was made with correct parameters
-            version = importlib.metadata.version('keboola-mcp-server')
             mock_client.post.assert_called_once_with(
                 'https://connection.nowhere/v2/storage/tokens',
                 params=None,
@@ -279,7 +278,47 @@ class TestAsyncStorageClient:
                     'Content-Type': 'application/json',
                     'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
-                    'User-Agent': f'Keboola MCP Server/{version} app_env=local',
                 },
                 json=expected_data,
+            )
+
+
+class TestKeboolaClient:
+
+    @pytest.fixture
+    def runtime_config(self) -> ServerRuntimeInfo:
+        return ServerRuntimeInfo(transport='stdio', server_id='test')
+
+    @pytest.fixture
+    def keboola_client_with_headers(self, runtime_config: ServerRuntimeInfo) -> KeboolaClient:
+        headers = SessionStateMiddleware._get_headers(runtime_config)
+        return KeboolaClient(
+            storage_api_url='https://connection.nowhere', storage_api_token='test-token', headers=headers
+        )
+
+    @pytest.mark.asyncio
+    async def test_keboola_client_passing_headers(self, keboola_client_with_headers: KeboolaClient):
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
+            mock_client.get.return_value = (response := Mock(spec=httpx.Response))
+            response.status_code = 201
+            response.json.return_value = {'test': 'test'}
+            result = await keboola_client_with_headers.storage_client.verify_token()
+            assert result == {'test': 'test'}
+            kbc_version = importlib.metadata.version('keboola-mcp-server')
+            mcp_version = importlib.metadata.version('mcp')
+            fastmcp_version = importlib.metadata.version('fastmcp')
+            mock_client.get.assert_called_once_with(
+                'https://connection.nowhere/v2/storage/tokens/verify',
+                params=None,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept-Encoding': 'gzip',
+                    'X-StorageAPI-Token': 'test-token',
+                    'User-Agent': f'Keboola MCP Server/{kbc_version} app_env=local transport=stdio',
+                    'MCP-Server-Transport': 'stdio',
+                    'MCP-Server-Versions': (
+                        f'keboola-mcp-server/{kbc_version} mcp/{mcp_version} fastmcp/{fastmcp_version}'
+                    ),
+                },
             )
