@@ -199,6 +199,7 @@ class TableColumnInfo(BaseModel):
     )
     native_type: str = Field(description='The database type of data in the column.')
     nullable: bool = Field(description='Whether the column can contain null values.')
+    description: str | None = Field(default=None, description='Description of the column.')
 
 
 class TableDetail(BaseModel):
@@ -435,17 +436,11 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
     total_count = len(buckets)
     input_count = sum(1 for bucket in buckets if bucket.stage == 'in')
     output_count = total_count - input_count
-    
-    bucket_counts = BucketCounts(
-        total_buckets=total_count,
-        input_buckets=input_count,
-        output_buckets=output_count
-    )
-    
+
+    bucket_counts = BucketCounts(total_buckets=total_count, input_buckets=input_count, output_buckets=output_count)
+
     return ListBucketsOutput(
-        buckets=buckets, 
-        bucket_counts=bucket_counts, 
-        links=[links_manager.get_bucket_dashboard_link()]
+        buckets=buckets, bucket_counts=bucket_counts, links=[links_manager.get_bucket_dashboard_link()]
     )
 
 
@@ -488,6 +483,7 @@ async def get_table(
     column_info = []
     for col_name in raw_columns:
         col_meta = raw_column_metadata.get(col_name, [])
+        description: str | None = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
         native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
         if native_type:
             raw_nullable = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
@@ -503,6 +499,7 @@ async def get_table(
                 quoted_name=await workspace_manager.get_quoted_name(col_name),
                 native_type=native_type,
                 nullable=nullable,
+                description=description,
             )
         )
 

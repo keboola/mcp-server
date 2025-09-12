@@ -406,6 +406,24 @@ class AsyncStorageClient(KeboolaServiceClient):
             params['include'] = ','.join(include)
         return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
 
+    async def column_metadata_delete(self, column_id: str, metadata_id: str) -> None:
+        """
+        Deletes metadata for a given column.
+
+        :param column_id: The id of the column
+        :param metadata_id: The id of the metadata
+        """
+        await self.delete(endpoint=f'columns/{column_id}/metadata/{metadata_id}')
+
+    async def column_metadata_get(self, column_id: str) -> list[JsonDict]:
+        """
+        Retrieves metadata for a given column.
+
+        :param column_id: The id of the column
+        :return: Column metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        """
+        return cast(list[JsonDict], await self.get(endpoint=f'columns/{column_id}/metadata'))
+
     async def component_detail(self, component_id: str) -> JsonDict:
         """
         Retrieves information about a given component.
