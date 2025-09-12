@@ -23,7 +23,7 @@ In such a case the integration might be possible using one of the following comp
 
 Use Generic Extractor (ID: ex-generic-v2) in cases when the API is simple, standard REST with JSON responses, and the following criteria are met:
 - The responses need to be as flat as possible, common for REST object responses where objects represent data, without complicated structures. e.g.
-  	- Suitable: `{"data":[]}`
+  	- Suitable: `{"data":[]}`   
   	- Unsuitable: `{"status":"ok","data":{"columns":["test"],"rows":[{"1":"1"}]}}`
 - The pagination must be REST standard and simple. Pagination in headers is not allowed.
 - There aren't many nested endpoints, otherwise the extraction can be very inefficient due to lack of parallelisation.
@@ -42,6 +42,7 @@ Use Custom Python (ID: kds-team.app-custom-python) component in cases when:
 - The API contains a lot of nested endpoints (requires request concurrency for optimal performance).
 - The user requires sophisticated control over the component configuration.
 - The API can be REST but always use this component when it is not REST (e.g. SOAP).
+- You are asked to download a single (or multiple) file (e.g. XML, CSV, Excel) from a URL and load it to Storage.
 - Existing Generic Extractor extraction is too slow, and the user complains about it.
 - You already tried Generic Extractor, but it's failing. Use Custom Python as a fall-back.
 
