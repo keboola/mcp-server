@@ -5,6 +5,7 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.tools.project import ProjectInfo, get_project_info
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -48,3 +49,4 @@ async def test_get_project_info(mocker: MockerFixture, mcp_context_client: Conte
     assert result.project_description == 'A test project.'
     assert result.sql_dialect == 'Snowflake'
     assert result.links == links
+    assert result.llm_instruction == get_project_system_prompt()
