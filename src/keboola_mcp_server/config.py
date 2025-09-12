@@ -10,7 +10,7 @@ from typing import Any, Literal, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
 _NO_VALUE_MARKER = '__NO_VALUE_MARKER__'
-Transport = Literal['stdio', 'sse', 'streamable-http', 'http-compat']
+Transport = Literal['stdio', 'sse', 'streamable-http', 'http-compat', 'http-compat/sse', 'http-compat/streamable-http']
 
 
 @dataclass(frozen=True)
@@ -131,7 +131,8 @@ class ServerRuntimeInfo:
     """Server runtime Information."""
 
     transport: Transport
-    """Transport used by the MCP server (e.g., 'stdio', 'sse', 'streamable-http', 'http-compat')."""
+    """Transport used by the MCP server (e.g., 'stdio', 'sse', 'streamable-http', 'http-compat/sse',
+    'http-compat/streamable-http')."""
     server_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     """The ID of the MCP server."""
     app_env: str = field(default_factory=lambda: os.getenv('APP_ENV') or 'local')
