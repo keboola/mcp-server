@@ -5,7 +5,7 @@ import pytest
 from fastmcp import Context
 
 from integtests.conftest import BucketDef, TableDef
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
@@ -107,70 +107,93 @@ async def test_list_tables(mcp_context: Context, tables: list[TableDef], buckets
 async def test_update_descriptions_bucket(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that `update_descriptions` updates bucket descriptions correctly."""
     bucket = buckets[0]
-    md_id: str | None = None
     client = KeboolaClient.from_state(mcp_context.session.state)
-    try:
-        result = await update_descriptions(
-            ctx=mcp_context,
-            updates=[DescriptionUpdate(item_id=bucket.bucket_id, description='New Description')],
-        )
 
-        assert isinstance(result, UpdateDescriptionsOutput)
-        assert result.total_processed == 1
-        assert result.successful == 1
-        assert result.failed == 0
-        assert len(result.results) == 1
+    result = await update_descriptions(
+        ctx=mcp_context,
+        updates=[DescriptionUpdate(item_id=bucket.bucket_id, description='New Description')],
+    )
 
-        bucket_result = result.results[0]
-        assert bucket_result.item_id == bucket.bucket_id
-        assert bucket_result.success is True
-        assert bucket_result.error is None
-        assert bucket_result.timestamp is not None
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 1
+    assert result.failed == 0
+    assert len(result.results) == 1
 
-        # Verify the description was actually updated
-        metadata = await client.storage_client.bucket_metadata_get(bucket.bucket_id)
-        metadata_entry = next((entry for entry in metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
-        assert metadata_entry is not None, f'Metadata entry for bucket {bucket.bucket_id} description not found'
-        assert metadata_entry['value'] == 'New Description'
-        md_id = str(metadata_entry['id'])
-    finally:
-        if md_id is not None:
-            await client.storage_client.bucket_metadata_delete(bucket_id=bucket.bucket_id, metadata_id=md_id)
+    bucket_result = result.results[0]
+    assert bucket_result.item_id == bucket.bucket_id
+    assert bucket_result.success is True
+    assert bucket_result.error is None
+    assert bucket_result.timestamp is not None
+
+    # Verify the description was actually updated
+    metadata = await client.storage_client.bucket_metadata_get(bucket.bucket_id)
+    assert get_metadata_property(metadata, MetadataField.DESCRIPTION) == 'New Description'
 
 
 @pytest.mark.asyncio
 async def test_update_descriptions_table(mcp_context: Context, tables: list[TableDef]):
     """Tests that `update_descriptions` updates table descriptions correctly."""
     table = tables[0]
-    md_id: str | None = None
     client = KeboolaClient.from_state(mcp_context.session.state)
-    try:
-        result = await update_descriptions(
-            ctx=mcp_context,
-            updates=[DescriptionUpdate(item_id=table.table_id, description='New Table Description')],
-        )
+    
+    result = await update_descriptions(
+        ctx=mcp_context,
+        updates=[DescriptionUpdate(item_id=table.table_id, description='New Table Description')],
+    )
 
-        assert isinstance(result, UpdateDescriptionsOutput)
-        assert result.total_processed == 1
-        assert result.successful == 1
-        assert result.failed == 0
-        assert len(result.results) == 1
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 1
+    assert result.failed == 0
+    assert len(result.results) == 1
 
-        table_result = result.results[0]
-        assert table_result.item_id == table.table_id
-        assert table_result.success is True
-        assert table_result.error is None
-        assert table_result.timestamp is not None
+    table_result = result.results[0]
+    assert table_result.item_id == table.table_id
+    assert table_result.success is True
+    assert table_result.error is None
+    assert table_result.timestamp is not None
 
-        # Verify the description was actually updated
-        metadata = await client.storage_client.table_metadata_get(table.table_id)
-        metadata_entry = next((entry for entry in metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
-        assert metadata_entry is not None, f'Metadata entry for table {table.table_id} description not found'
-        assert metadata_entry['value'] == 'New Table Description'
-        md_id = str(metadata_entry['id'])
-    finally:
-        if md_id is not None:
-            await client.storage_client.table_metadata_delete(table_id=table.table_id, metadata_id=md_id)
+    # Verify the description was actually updated
+    metadata = await client.storage_client.table_metadata_get(table.table_id)
+    assert get_metadata_property(metadata, MetadataField.DESCRIPTION) == 'New Table Description'
+
+
+
+@pytest.mark.asyncio
+async def test_update_descriptions_table_column(mcp_context: Context, tables: list[TableDef]):
+    """Tests that `update_descriptions` updates table descriptions correctly."""
+    table = tables[0]
+
+    with table.file_path.open('r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        columns = next(reader)
+    column_name = columns[0]
+    
+    column_id = f'{table.table_id}.{column_name}'
+    result = await update_descriptions(
+        ctx=mcp_context,
+        updates=[DescriptionUpdate(item_id=column_id, description='New Table Column Description')],
+    )
+
+    assert isinstance(result, UpdateDescriptionsOutput)
+    assert result.total_processed == 1
+    assert result.successful == 1
+    assert result.failed == 0
+    assert len(result.results) == 1
+
+    column_result = result.results[0]
+    assert column_result.item_id == column_id
+    assert column_result.success is True
+    assert column_result.error is None
+    assert column_result.timestamp is not None
+
+    # Verify the description is available in the table detail
+    table_detail = await get_table(table.table_id, mcp_context)
+    assert table_detail.columns is not None
+    column_detail = next((col for col in table_detail.columns if col.name == column_name), None)
+    assert column_detail is not None
+    assert column_detail.description == 'New Table Column Description'
 
 
 @pytest.mark.asyncio
@@ -223,6 +246,18 @@ async def test_update_descriptions_mixed_types(mcp_context: Context, buckets: li
             assert table_entry['value'] == 'Mixed Table Description'
             md_ids.append(('table', table.table_id, str(table_entry['id'])))
 
+        # Verify column description was updated
+        table_detail = await client.storage_client.table_detail(table.table_id)
+        assert 'columnMetadata' in table_detail
+        column_metadata = table_detail['columnMetadata']
+        assert column_name in column_metadata
+        column_entry = next(
+            (entry for entry in column_metadata[column_name] if entry.get('key') == MetadataField.DESCRIPTION), None
+        )
+        if column_entry:
+            assert column_entry['value'] == 'Mixed Column Description'
+            md_ids.append(('column', f'{table.table_id}.{column_name}', str(column_entry['id'])))
+
     finally:
         # Clean up metadata
         for md_type, item_id, md_id in md_ids:
@@ -230,6 +265,8 @@ async def test_update_descriptions_mixed_types(mcp_context: Context, buckets: li
                 await client.storage_client.bucket_metadata_delete(bucket_id=item_id, metadata_id=md_id)
             elif md_type == 'table':
                 await client.storage_client.table_metadata_delete(table_id=item_id, metadata_id=md_id)
+            elif md_type == 'column':
+                await client.storage_client.column_metadata_delete(column_id=item_id, metadata_id=md_id)
 
 
 @pytest.mark.asyncio

@@ -66,6 +66,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 ],
                 'name': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                    {'id': '1234', 'key': 'KBC.description', 'value': 'Name of the user.'},
                 ],
                 'surname': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
@@ -105,6 +106,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 ],
                 'address': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                    {'id': '1234', 'key': 'KBC.description', 'value': 'Email address. 1'},
                 ],
                 'user_id': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'INT'},
@@ -144,6 +146,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 ],
                 'address': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                    {'id': '1234', 'key': 'KBC.description', 'value': 'Email address. 2'},
                 ],
                 'user_id': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'INT'},
@@ -698,9 +701,19 @@ async def test_list_buckets(
                 rows_count=10,
                 data_size_bytes=10240,
                 columns=[
-                    TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=False),
-                    TableColumnInfo(name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(
+                        name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False, description=None
+                    ),
+                    TableColumnInfo(
+                        name='name',
+                        quoted_name='#name#',
+                        native_type='VARCHAR',
+                        nullable=False,
+                        description='Name of the user.',
+                    ),
+                    TableColumnInfo(
+                        name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False, description=None
+                    ),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#users#',
                 links=[
@@ -729,9 +742,19 @@ async def test_list_buckets(
                 rows_count=10,
                 data_size_bytes=10240,
                 columns=[
-                    TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=False),
-                    TableColumnInfo(name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(
+                        name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False, description=None
+                    ),
+                    TableColumnInfo(
+                        name='name',
+                        quoted_name='#name#',
+                        native_type='VARCHAR',
+                        nullable=False,
+                        description='Name of the user.',
+                    ),
+                    TableColumnInfo(
+                        name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False, description=None
+                    ),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#users#',
                 links=[
@@ -762,7 +785,13 @@ async def test_list_buckets(
                 data_size_bytes=332211,
                 columns=[
                     TableColumnInfo(name='email_id', quoted_name='#email_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='address', quoted_name='#address#', native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(
+                        name='address',
+                        quoted_name='#address#',
+                        native_type='VARCHAR',
+                        nullable=False,
+                        description='Email address. 1',
+                    ),
                     TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#emails#',
@@ -793,7 +822,13 @@ async def test_list_buckets(
                 data_size_bytes=2211,
                 columns=[
                     TableColumnInfo(name='email_id', quoted_name='#email_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='address', quoted_name='#address#', native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(
+                        name='address',
+                        quoted_name='#address#',
+                        native_type='VARCHAR',
+                        nullable=False,
+                        description='Email address. 2',
+                    ),
                     TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-1246948-foo#.#emails#',
@@ -876,7 +911,6 @@ async def test_get_table(
 
     if expected_table:
         result = await get_table(table_id, mcp_context_client)
-
         assert isinstance(result, TableDetail)
         assert result == expected_table
         workspace_manager.get_sql_dialect.assert_called_once()
