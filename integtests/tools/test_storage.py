@@ -136,7 +136,7 @@ async def test_update_descriptions_table(mcp_context: Context, tables: list[Tabl
     """Tests that `update_descriptions` updates table descriptions correctly."""
     table = tables[0]
     client = KeboolaClient.from_state(mcp_context.session.state)
-    
+
     result = await update_descriptions(
         ctx=mcp_context,
         updates=[DescriptionUpdate(item_id=table.table_id, description='New Table Description')],
@@ -159,7 +159,6 @@ async def test_update_descriptions_table(mcp_context: Context, tables: list[Tabl
     assert get_metadata_property(metadata, MetadataField.DESCRIPTION) == 'New Table Description'
 
 
-
 @pytest.mark.asyncio
 async def test_update_descriptions_table_column(mcp_context: Context, tables: list[TableDef]):
     """Tests that `update_descriptions` updates table descriptions correctly."""
@@ -169,7 +168,7 @@ async def test_update_descriptions_table_column(mcp_context: Context, tables: li
         reader = csv.reader(f)
         columns = next(reader)
     column_name = columns[0]
-    
+
     column_id = f'{table.table_id}.{column_name}'
     result = await update_descriptions(
         ctx=mcp_context,
