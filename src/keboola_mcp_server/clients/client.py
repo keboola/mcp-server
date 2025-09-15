@@ -1,8 +1,6 @@
 """Keboola Storage API client wrapper."""
 
-import importlib.metadata
 import logging
-import os
 from typing import Any, Literal, Mapping, Sequence, TypeVar
 from urllib.parse import urlparse, urlunparse
 
@@ -70,6 +68,7 @@ class KeboolaClient:
                 storage_api_token=self.token,
                 bearer_token=self._bearer_token,
                 branch_id=branch_id,
+                headers=self._headers,
             )
 
     def __init__(
@@ -79,6 +78,7 @@ class KeboolaClient:
         storage_api_token: str,
         bearer_token: str | None = None,
         branch_id: str | None = None,
+        headers: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the client.
@@ -87,10 +87,12 @@ class KeboolaClient:
         :param storage_api_url: Keboola Storage API URL
         :param bearer_token: The access token issued by Keboola OAuth server
         :param branch_id: Keboola branch ID
+        :param headers: Additional headers for the requests sent by all clients
         """
         self._token = storage_api_token
         self._bearer_token = bearer_token
         self._branch_id = branch_id
+        self._headers = headers
 
         sapi_url_parsed = urlparse(storage_api_url)
         if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
@@ -106,20 +108,20 @@ class KeboolaClient:
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
         self._storage_client = AsyncStorageClient.create(
-            root_url=self._storage_api_url, token=bearer_or_sapi_token, branch_id=branch_id, headers=self._get_headers()
+            root_url=self._storage_api_url, token=bearer_or_sapi_token, branch_id=branch_id, headers=self._headers
         )
         self._jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._get_headers()
+            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers
         )
         self._ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self._token, headers=self._get_headers()
+            root_url=ai_service_api_url, token=self._token, headers=self._headers
         )
         self._data_science_client = DataScienceClient.create(
-            root_url=data_science_api_url, token=self.token, branch_id=branch_id, headers=self._get_headers()
+            root_url=data_science_api_url, token=self.token, branch_id=branch_id, headers=self._headers
         )
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(
-            root_url=encryption_api_url, token=None, headers=self._get_headers()
+            root_url=encryption_api_url, token=None, headers=self._headers
         )
 
     @property
@@ -157,23 +159,3 @@ class KeboolaClient:
     @property
     def encryption_client(self) -> 'EncryptionClient':
         return self._encryption_client
-
-    @classmethod
-    def _get_user_agent(cls) -> str:
-        """
-        :return: User agent string.
-        """
-        try:
-            version = importlib.metadata.version('keboola-mcp-server')
-        except importlib.metadata.PackageNotFoundError:
-            version = 'NA'
-
-        app_env = os.getenv('APP_ENV', 'local')
-        return f'Keboola MCP Server/{version} app_env={app_env}'
-
-    @classmethod
-    def _get_headers(cls) -> dict[str, Any]:
-        """
-        :return: Additional headers for the requests, namely the user agent.
-        """
-        return {'User-Agent': cls._get_user_agent()}

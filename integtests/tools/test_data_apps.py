@@ -7,7 +7,7 @@ import pytest_asyncio
 from fastmcp import Client, FastMCP
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
-from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.data_apps import (
     _DEFAULT_PACKAGES,
@@ -49,7 +49,7 @@ def sample_streamlit_app(streamlit_app_imports: str, streamlit_app_entrypoint: s
 @pytest.fixture
 def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
     config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
-    mcp_server = create_server(config)
+    mcp_server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(mcp_server, FastMCP)
     return mcp_server
 
