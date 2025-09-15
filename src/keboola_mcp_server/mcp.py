@@ -6,11 +6,8 @@ It also provides a decorator that MCP tool functions can use to inject session s
 
 import dataclasses
 import logging
-import os
 import textwrap
-import uuid
 from dataclasses import dataclass
-from importlib.metadata import distribution
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -27,7 +24,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -37,11 +34,7 @@ LOG = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ServerState:
     config: Config
-    server_id: str = uuid.uuid4().hex
-    app_version = os.getenv('APP_VERSION') or 'DEV'
-    server_version = distribution('keboola_mcp_server').version
-    mcp_library_version = distribution('mcp').version
-    fastmcp_library_version = distribution('fastmcp').version
+    runtime_info: ServerRuntimeInfo
 
     @classmethod
     def from_context(cls, ctx: Context) -> 'ServerState':
@@ -118,7 +111,9 @@ class SessionStateMiddleware(fmw.Middleware):
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
         if not isinstance(ctx.session, MagicMock):
-            config = ServerState.from_context(ctx).config
+            server_state = ServerState.from_context(ctx)
+            config: Config = server_state.config
+            runtime_info: ServerRuntimeInfo = server_state.runtime_info
             accept_secrets_in_url = config.accept_secrets_in_url
 
             # IMPORTANT: Be careful what functions you use for accessing the HTTP request when handling SSE traffic.
@@ -155,7 +150,7 @@ class SessionStateMiddleware(fmw.Middleware):
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
-            state = self._create_session_state(config)
+            state = self._create_session_state(config, runtime_info)
             ctx.session.state = state
 
         try:
@@ -165,8 +160,26 @@ class SessionStateMiddleware(fmw.Middleware):
             # ctx.session.state = {}
             pass
 
-    @staticmethod
-    def _create_session_state(config: Config) -> dict[str, Any]:
+    @classmethod
+    def _get_headers(cls, runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
+        """
+        :param runtime_info: Runtime information
+        :return: Additional headers for the requests used for tracing the MCP server
+        """
+        return {
+            'User-Agent': (
+                f'Keboola MCP Server/{runtime_info.server_version} app_env={runtime_info.app_env} '
+                f'transport={runtime_info.transport}'
+            ),
+            'MCP-Server-Transport': runtime_info.transport or 'NA',
+            'MCP-Server-Versions': (
+                f'keboola-mcp-server/{runtime_info.server_version} mcp/{runtime_info.mcp_library_version} '
+                f'fastmcp/{runtime_info.fastmcp_library_version}'
+            ),
+        }
+
+    @classmethod
+    def _create_session_state(cls, config: Config, runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
         """Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state."""
         LOG.info(f'Creating SessionState from config: {config}.')
 
@@ -181,6 +194,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 storage_api_token=config.storage_token,
                 bearer_token=config.bearer_token,
                 branch_id=config.branch_id,
+                headers=cls._get_headers(runtime_info),
             )
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')

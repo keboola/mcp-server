@@ -435,17 +435,11 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
     total_count = len(buckets)
     input_count = sum(1 for bucket in buckets if bucket.stage == 'in')
     output_count = total_count - input_count
-    
-    bucket_counts = BucketCounts(
-        total_buckets=total_count,
-        input_buckets=input_count,
-        output_buckets=output_count
-    )
-    
+
+    bucket_counts = BucketCounts(total_buckets=total_count, input_buckets=input_count, output_buckets=output_count)
+
     return ListBucketsOutput(
-        buckets=buckets, 
-        bucket_counts=bucket_counts, 
-        links=[links_manager.get_bucket_dashboard_link()]
+        buckets=buckets, bucket_counts=bucket_counts, links=[links_manager.get_bucket_dashboard_link()]
     )
 
 
