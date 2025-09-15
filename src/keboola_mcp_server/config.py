@@ -10,7 +10,7 @@ from typing import Any, Literal, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
 _NO_VALUE_MARKER = '__NO_VALUE_MARKER__'
-Transport = Literal['stdio', 'sse', 'streamable-http']
+Transport = Literal['stdio', 'sse', 'streamable-http', 'http-compat/sse', 'http-compat/streamable-http']
 
 
 @dataclass(frozen=True)
