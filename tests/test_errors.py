@@ -8,7 +8,7 @@ from fastmcp import Context
 from mcp.shared.context import RequestContext
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.errors import ToolException, tool_errors
 from keboola_mcp_server.mcp import ServerState
 
@@ -114,9 +114,14 @@ async def test_get_session_id(transport: str, mcp_context_client: Context, mocke
     if transport == 'stdio':
         mcp_context_client.session_id = None
         mcp_context_client.request_context = mocker.MagicMock(RequestContext)
-        mcp_context_client.request_context.lifespan_context = ServerState(config=Config(), server_id=session_id)
+        mcp_context_client.request_context.lifespan_context = ServerState(
+            config=Config(), runtime_info=ServerRuntimeInfo(transport='stdio', server_id=session_id)
+        )
     elif transport == 'http':
         mcp_context_client.session_id = session_id
+        mcp_context_client.request_context.lifespan_context = ServerState(
+            config=Config(), runtime_info=ServerRuntimeInfo(transport='http', server_id=session_id)
+        )
     else:
         pytest.fail(f'Unknown transport: {transport}')
 
@@ -132,6 +137,7 @@ async def test_get_session_id(transport: str, mcp_context_client: Context, mocke
                 'version': distribution('keboola_mcp_server').version,
                 'userAgent': '',
                 'sessionId': session_id,
+                'serverTransport': transport,
             },
             'tool': {
                 'name': 'foo',
