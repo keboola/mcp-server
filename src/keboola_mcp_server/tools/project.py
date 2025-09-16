@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, cast
+from typing import cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -56,7 +56,7 @@ class ProjectInfo(BaseModel):
 @tool_errors()
 async def get_project_info(
     ctx: Context,
-) -> Annotated[ProjectInfo, Field(description='Structured project info.')]:
+) -> ProjectInfo:
     """
     Retrieves structured information about the current project,
     including essential context and base instructions for working with it
