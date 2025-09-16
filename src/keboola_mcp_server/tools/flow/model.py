@@ -28,6 +28,7 @@ class FlowToolOutput(BaseModel):
     Standard response model for flow tool operations.
 
     :param configuration_id: The configuration ID of the flow.
+    :param component_id: The component ID of the flow.
     :param description: The description of the Flow.
     :param timestamp: The timestamp of the operation.
     :param success: Indicates if the operation succeeded.
