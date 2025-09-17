@@ -117,20 +117,25 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
         # So, instead we require the clients to send their redirect URI in the authorization request,
         # and we discard all URIs that are not on a whitelist.
         if not redirect_uri:
+            LOG.debug(f'[validate_redirect_uri] No redirect_uri specified.')
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
         if not redirect_uri.scheme:
+            LOG.debug(f'[validate_redirect_uri] No scheme in redirect_uri: {redirect_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
         if redirect_uri.scheme in _FORBIDDEN_SCHEMES:
+            LOG.debug(f'[validate_redirect_uri] Forbidden scheme in redirect_uri: {redirect_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
         if redirect_uri.scheme == 'http' and redirect_uri.host not in ['localhost', '127.0.0.1']:
+            LOG.debug(f'[validate_redirect_uri] Not a localhost redirect_uri: {redirect_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
         if redirect_uri.scheme == 'https' and not any([p.fullmatch(redirect_uri.host) for p in _WELL_KNOWN_DOMAINS]):
+            LOG.debug(f'[validate_redirect_uri] Unknown domain in redirect_uri: {redirect_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
 
         # All other schemes are allowed (e.g. cursor://). They require a custom handler registered in a browser.
         # They are used for redirecting a browser to a locally running app.
 
-        LOG.debug(f'[validate_redirect_uri] redirect_uri={redirect_uri}]')
+        LOG.debug(f'[validate_redirect_uri] Accepted redirect_uri: {redirect_uri}]')
         return redirect_uri
 
 
