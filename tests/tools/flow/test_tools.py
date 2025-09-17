@@ -18,7 +18,7 @@ from keboola_mcp_server.tools.flow.model import (
     ListFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.tools import (
-    FlowToolResponse,
+    FlowToolOutput,
     create_conditional_flow,
     create_flow,
     get_flow,
@@ -227,9 +227,10 @@ class TestCreateFlowTool:
             tasks=legacy_flow_tasks,
         )
 
-        assert isinstance(result, FlowToolResponse)
+        assert isinstance(result, FlowToolOutput)
         assert result.success is True
-        assert result.id == mock_legacy_flow_create_update['id']
+        assert result.configuration_id == mock_legacy_flow_create_update['id']
+        assert result.component_id == 'keboola.orchestrator'
         assert result.description == mock_legacy_flow_create_update['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
@@ -258,9 +259,10 @@ class TestCreateFlowTool:
             tasks=mock_conditional_flow_create_update['configuration']['tasks'],
         )
 
-        assert isinstance(result, FlowToolResponse)
+        assert isinstance(result, FlowToolOutput)
         assert result.success is True
-        assert result.id == mock_conditional_flow_create_update['id']
+        assert result.configuration_id == mock_conditional_flow_create_update['id']
+        assert result.component_id == 'keboola.flow'
         assert result.description == mock_conditional_flow_create_update['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
@@ -317,9 +319,10 @@ class TestUpdateFlowTool:
             change_description='Added data validation phase and enhanced error handling',
         )
 
-        assert isinstance(result, FlowToolResponse)
+        assert isinstance(result, FlowToolOutput)
         assert result.success is True
-        assert result.id == 'legacy_flow_123'
+        assert result.configuration_id == 'legacy_flow_123'
+        assert result.component_id == 'keboola.orchestrator'
         assert result.description == 'Updated legacy ETL pipeline'
         assert result.timestamp is not None
         assert len(result.links) == 3
@@ -363,9 +366,10 @@ class TestUpdateFlowTool:
             change_description='Enhanced error handling and added notification phase',
         )
 
-        assert isinstance(result, FlowToolResponse)
+        assert isinstance(result, FlowToolOutput)
         assert result.success is True
-        assert result.id == updated_config['id']
+        assert result.configuration_id == updated_config['id']
+        assert result.component_id == 'keboola.flow'
         assert result.description == updated_config['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
