@@ -23,11 +23,12 @@ class ListFlowsOutput(BaseModel):
     links: list[Link] = Field(description='The list of links relevant to the flows.')
 
 
-class FlowToolResponse(BaseModel):
+class FlowToolOutput(BaseModel):
     """
     Standard response model for flow tool operations.
 
-    :param id: The id of the flow.
+    :param configuration_id: The configuration ID of the flow.
+    :param component_id: The component ID of the flow.
     :param description: The description of the Flow.
     :param timestamp: The timestamp of the operation.
     :param success: Indicates if the operation succeeded.
@@ -35,7 +36,8 @@ class FlowToolResponse(BaseModel):
     :param version: The version number of the flow configuration.
     """
 
-    id: str = Field(description='The id of the flow.')
+    configuration_id: str = Field(description='The configuration ID of the flow.')
+    component_id: str = Field(description='The ID of the component.')
     description: str = Field(description='The description of the Flow.')
     version: int = Field(description='The version number of the flow configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')

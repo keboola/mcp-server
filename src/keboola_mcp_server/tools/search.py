@@ -127,10 +127,7 @@ async def search(
         ),
     ] = DEFAULT_GLOBAL_SEARCH_LIMIT,
     offset: Annotated[int, Field(description='Number of matching items to skip, pagination.')] = 0,
-) -> Annotated[
-    GlobalSearchOutput,
-    Field(description='Search results grouped by item type, ordered by relevance and creation time.'),
-]:
+) -> GlobalSearchOutput:
     """
     Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
     potentially narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.

@@ -49,7 +49,7 @@ async def query_data(
         ),
     ],
     ctx: Context,
-) -> Annotated[QueryDataOutput, Field(description='The query results with name and CSV data.')]:
+) -> QueryDataOutput:
     """
     Executes an SQL SELECT query to get the data from the underlying database.
 
