@@ -117,7 +117,7 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
         # So, instead we require the clients to send their redirect URI in the authorization request,
         # and we discard all URIs that are not on a whitelist.
         if not redirect_uri:
-            LOG.debug(f'[validate_redirect_uri] No redirect_uri specified.')
+            LOG.debug('[validate_redirect_uri] No redirect_uri specified.')
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
         if not redirect_uri.scheme:
             LOG.debug(f'[validate_redirect_uri] No scheme in redirect_uri: {redirect_uri}')
