@@ -81,7 +81,7 @@ async def test_global_search_end_to_end(
 @pytest.mark.asyncio
 async def test_find_component_id(mcp_context: Context):
     """Tests that `find_component_id` returns relevant component IDs for a query."""
-    query = 'generic extractor'
+    query = 'generic extractor - extract data from many APIs'
     generic_extractor_id = 'ex-generic-v2'
 
     result = await find_component_id(query=query, ctx=mcp_context)
