@@ -20,6 +20,7 @@ main() {
         --transport http-compat \
         --api-url "$STORAGE_API_URL" \
         --storage-token "$STORAGE_API_TOKEN" \
+        --workspace-schema "$WORKSPACE_SCHEMA" \
         --host "0.0.0.0" \
         --port 8000 >/dev/null
 
