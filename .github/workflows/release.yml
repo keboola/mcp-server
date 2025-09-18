@@ -46,8 +46,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile # Explicitly specify the Dockerfile path
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: "keboola/mcp-server:ci"
           push: false
           load: true
           cache-from: type=gha
