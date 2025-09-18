@@ -34,6 +34,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_bucket,
+            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={STORAGE_TOOLS_TAG},
         )

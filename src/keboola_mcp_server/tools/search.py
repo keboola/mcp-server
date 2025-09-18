@@ -12,6 +12,7 @@ from keboola_mcp_server.clients.ai_service import SuggestedComponent
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import GlobalSearchResponse, ItemType
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.mcp import exclude_none_serializer
 
 LOG = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ def add_search_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             search,
             name=SEARCH_TOOL_NAME,
+            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={SEARCH_TOOLS_TAG},
         )

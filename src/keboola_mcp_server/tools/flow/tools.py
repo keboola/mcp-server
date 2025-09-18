@@ -55,6 +55,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_flow,
+            serializer=exclude_none_serializer,
             tags={FLOW_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
@@ -62,6 +63,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_conditional_flow,
+            serializer=exclude_none_serializer,
             tags={FLOW_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
@@ -77,6 +79,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_flow,
+            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(destructiveHint=True),
             tags={FLOW_TOOLS_TAG},
         )
@@ -84,6 +87,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_flow,
+            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )

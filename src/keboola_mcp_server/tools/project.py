@@ -12,6 +12,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
+from keboola_mcp_server.mcp import exclude_none_serializer
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def add_project_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_project_info,
+            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={PROJECT_TOOLS_TAG},
         )

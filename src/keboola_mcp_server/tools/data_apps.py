@@ -16,6 +16,7 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.workspace import WorkspaceManager
+from keboola_mcp_server.mcp import exclude_none_serializer
 
 LOG = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             modify_data_app,
+            serializer=exclude_none_serializer,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )
@@ -35,6 +37,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_data_apps,
+            serializer=exclude_none_serializer,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
         )
@@ -42,6 +45,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             deploy_data_app,
+            serializer=exclude_none_serializer,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )

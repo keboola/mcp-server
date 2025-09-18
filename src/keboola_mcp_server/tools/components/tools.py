@@ -86,6 +86,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_component,
+            serializer=exclude_none_serializer,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
         )
@@ -93,6 +94,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_config,
+            serializer=exclude_none_serializer,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
         )
@@ -117,6 +119,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_config,
+            serializer=exclude_none_serializer,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
@@ -124,6 +127,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_config,
+            serializer=exclude_none_serializer,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )
@@ -131,6 +135,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             add_config_row,
+            serializer=exclude_none_serializer,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
@@ -138,6 +143,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_config_row,
+            serializer=exclude_none_serializer,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )
@@ -155,6 +161,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_sql_transformation,
+            serializer=exclude_none_serializer,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
@@ -162,6 +169,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_sql_transformation,
+            serializer=exclude_none_serializer,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )

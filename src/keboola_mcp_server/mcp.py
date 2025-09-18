@@ -291,4 +291,4 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
 
 def exclude_none_serializer(data: BaseModel) -> str:
-    return data.model_dump_json(exclude_none=True, indent=2, by_alias=False)
+    return data.model_dump_json(exclude_none=True, by_alias=False)
