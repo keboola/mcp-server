@@ -40,14 +40,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_PUSH_USER }}
           password: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
 
+      # Build for tests (single-arch, load into daemon)
       - name: Build Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile # Explicitly specify the Dockerfile path
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: "keboola/mcp-server:ci"
           push: false
           load: true
           cache-from: type=gha
@@ -55,8 +54,10 @@ jobs:
 
       - name: Run simple e2e test
         run: |
+          set -euo pipefail
           STORAGE_API_TOKEN=${{ secrets.INTEGTEST_STORAGE_TOKEN }} STORAGE_API_URL=${{ vars.INTEGTEST_STORAGE_API_URL }} WORKSPACE_SCHEMA=${{ vars.INTEGTEST_WORKSPACE_SCHEMA }} ./tests/docker/ci.sh
 
+      # Push multi-arch image (no load)
       - name: Push Docker image
         uses: docker/build-push-action@v6
         with:
