@@ -54,6 +54,7 @@ jobs:
 
       - name: Run simple e2e test
         run: |
+          set -euo Pipefail
           STORAGE_API_TOKEN=${{ secrets.INTEGTEST_STORAGE_TOKEN }} STORAGE_API_URL=${{ vars.INTEGTEST_STORAGE_API_URL }} WORKSPACE_SCHEMA=${{ vars.INTEGTEST_WORKSPACE_SCHEMA }} ./tests/docker/ci.sh
 
       # Push multi-arch image (no load)
