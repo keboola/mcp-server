@@ -14,9 +14,9 @@ from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppRespon
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import exclude_none_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.workspace import WorkspaceManager
-from keboola_mcp_server.mcp import exclude_none_serializer
 
 LOG = logging.getLogger(__name__)
 
