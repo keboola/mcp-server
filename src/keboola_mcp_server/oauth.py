@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import time
 from http.client import HTTPException
@@ -25,6 +26,70 @@ from pydantic import AnyHttpUrl, AnyUrl
 
 LOG = logging.getLogger(__name__)
 _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
+_WELL_KNOWN_DOMAINS = [
+    re.compile(r'^.+\.keboola\.(com|dev)$', re.IGNORECASE),
+    re.compile(r'^.*chatgpt\.com$', re.IGNORECASE),
+    re.compile(r'^.*claude\.ai$', re.IGNORECASE),
+    re.compile(r'^librechat\.glami-ml\.com$', re.IGNORECASE),  # no subdomains allowed
+    re.compile(r'^.*make\.com$', re.IGNORECASE),
+]
+_FORBIDDEN_SCHEMES = [
+    # # Web/HTTP
+    # 'http',
+    # 'https',
+    # File transfer
+    'ftp',
+    'ftps',
+    'sftp',
+    'tftp',
+    # Email
+    'mailto',
+    'smtp',
+    'smtps',
+    'pop3',
+    'pop3s',
+    'imap',
+    'imaps',
+    # Real-time Communication
+    'ws',
+    'wss',
+    'sip',
+    'sips',
+    'xmpp',
+    # Remote Access
+    'ssh',
+    'telnet',
+    'rdp',
+    'vnc',
+    # File Systems
+    'file',
+    'nfs',
+    'smb',
+    'cifs',
+    'afp',
+    # Database
+    'jdbc',
+    'mysql',
+    'postgresql',
+    'mongodb',
+    'redis',
+    'ldap',
+    'ldaps',
+    # Media/Streaming
+    'rtsp',
+    'rtmp',
+    'mms',
+    'rtmps',
+    # Other Common Schemes
+    'dns',
+    'snmp',
+    'gopher',
+    'news',
+    'nntp',
+    'irc',
+    'git',
+    'svn',
+]
 
 
 def _log_debug(msg: str) -> None:
@@ -50,12 +115,28 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
         # Ideally, this should verify the redirect_uri against the URI registered by the client.
         # That, however, would require a persistent registry of clients.
         # So, instead we require the clients to send their redirect URI in the authorization request,
-        # and we just use that.
-        if redirect_uri is not None:
-            LOG.debug(f'[validate_redirect_uri] redirect_uri={redirect_uri}]')
-            return redirect_uri
-        else:
+        # and we discard all URIs that are not on a whitelist.
+        if not redirect_uri:
+            LOG.debug('[validate_redirect_uri] No redirect_uri specified.')
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
+        if not redirect_uri.scheme:
+            LOG.debug(f'[validate_redirect_uri] No scheme in redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
+        if redirect_uri.scheme in _FORBIDDEN_SCHEMES:
+            LOG.debug(f'[validate_redirect_uri] Forbidden scheme in redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
+        if redirect_uri.scheme == 'http' and redirect_uri.host not in ['localhost', '127.0.0.1']:
+            LOG.debug(f'[validate_redirect_uri] Not a localhost redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
+        if redirect_uri.scheme == 'https' and not any([p.fullmatch(redirect_uri.host) for p in _WELL_KNOWN_DOMAINS]):
+            LOG.debug(f'[validate_redirect_uri] Unknown domain in redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
+
+        # All other schemes are allowed (e.g. cursor://). They require a custom handler registered in a browser.
+        # They are used for redirecting a browser to a locally running app.
+
+        LOG.debug(f'[validate_redirect_uri] Accepted redirect_uri: {redirect_uri}]')
+        return redirect_uri
 
 
 class _ExtendedAuthorizationCode(AuthorizationCode):
