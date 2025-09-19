@@ -63,10 +63,16 @@ class ForwardSlashMiddleware:
 class KeboolaMcpServer(FastMCP):
     def add_tool(self, tool: Tool) -> None:
         """Applies `textwrap.dedent()` function to the tool's docstring, if no explicit description is provided."""
+        update = {}
         if tool.description:
             description = textwrap.dedent(tool.description).strip()
             if description != tool.description:
-                tool = tool.model_copy(update={'description': description})
+                update['description'] = description
+        if not tool.serializer:
+            update['serializer'] = _exclude_none_serializer
+
+        if update:
+            tool = tool.model_copy(update=update)
 
         super().add_tool(tool)
 
@@ -290,5 +296,5 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         return await call_next(context)
 
 
-def exclude_none_serializer(data: BaseModel) -> str:
-    return data.model_dump_json(exclude_none=True, indent=2, by_alias=False)
+def _exclude_none_serializer(data: BaseModel) -> str:
+    return data.model_dump_json(exclude_none=True, by_alias=False)

@@ -13,7 +13,7 @@ from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
@@ -84,6 +84,22 @@ class TestServer:
 
         missing_descriptions.sort()
         assert not missing_descriptions, f'These tools have no description: {missing_descriptions}'
+
+    @pytest.mark.asyncio
+    async def test_tools_have_serializer(self):
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
+        tools = await server.get_tools()
+
+        missing_serializer: list[str] = []
+        for tool in tools.values():
+            if not tool.serializer:
+                missing_serializer.append(tool.name)
+            if tool.serializer != _exclude_none_serializer:
+                missing_serializer.append(tool.name)
+
+        missing_serializer.sort()
+        assert not missing_serializer, f'These tools have no serializer: {missing_serializer}'
 
     @pytest.mark.asyncio
     async def test_tools_input_schema(self):
