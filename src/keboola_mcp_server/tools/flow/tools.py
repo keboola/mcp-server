@@ -22,7 +22,6 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import exclude_none_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
@@ -55,7 +54,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_flow,
-            serializer=exclude_none_serializer,
             tags={FLOW_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
@@ -63,7 +61,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_conditional_flow,
-            serializer=exclude_none_serializer,
             tags={FLOW_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
@@ -71,7 +68,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             list_flows,
-            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )
@@ -79,7 +75,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_flow,
-            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(destructiveHint=True),
             tags={FLOW_TOOLS_TAG},
         )
@@ -87,7 +82,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_flow,
-            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )
