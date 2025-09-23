@@ -46,9 +46,7 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 ### Supported Clients
 
 - **[Cursor](https://cursor.com)**: Use the "Install In Cursor" button in your project's MCP Server settings or click
-  this button
-  [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
-- **[Claude Desktop](https://claude.ai)**: Add the integration via Settings → Integrations
+  this button [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](cursor://anysphere.cursor-deeplink/mcp/install?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vbWNwIn0=)
 - **[Windsurf](https://windsurf.ai)**: Configure with the remote server URL
 - **[Make](https://make.com)**: Configure with the remote server URL
 - **Other MCP clients**: Configure with the remote server URL
