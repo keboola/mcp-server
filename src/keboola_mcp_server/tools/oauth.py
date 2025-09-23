@@ -37,7 +37,7 @@ async def create_oauth_url(
     ],
     config_id: Annotated[str, Field(description='The configuration ID for the component.')],
     ctx: Context,
-) -> str:
+) -> Annotated[str, Field(description='The OAuth authorization URL.')]:
     """
     Generates an OAuth authorization URL for a Keboola component configuration.
 
