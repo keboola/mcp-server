@@ -241,7 +241,7 @@ async def modify_data_app(
         Field(description='The description of the change when updating (e.g. "Update Code"), otherwise empty string.'),
     ] = '',
 ) -> ModifiedDataAppOutput:
-    """Creates or updates a Streamlit data
+    """Creates or updates a Streamlit data app.
 
     Considerations:
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
