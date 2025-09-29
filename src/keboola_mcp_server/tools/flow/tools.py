@@ -22,7 +22,6 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import exclude_none_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
@@ -30,7 +29,7 @@ from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowPhase,
     FlowTask,
-    FlowToolResponse,
+    FlowToolOutput,
     ListFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.utils import (
@@ -69,7 +68,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             list_flows,
-            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )
@@ -144,7 +142,7 @@ async def create_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
-) -> FlowToolResponse:
+) -> FlowToolOutput:
     """
     Creates a new flow configuration in Keboola.
     A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
@@ -202,8 +200,9 @@ async def create_flow(
     )
 
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
-    tool_response = FlowToolResponse(
-        id=api_config.id,
+    tool_response = FlowToolOutput(
+        configuration_id=api_config.id,
+        component_id=flow_type,
         description=api_config.description or '',
         version=api_config.version,
         timestamp=datetime.now(timezone.utc),
@@ -222,7 +221,7 @@ async def create_conditional_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions for conditional flows.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
-) -> FlowToolResponse:
+) -> FlowToolOutput:
     """
     Creates a new **conditional flow** configuration in Keboola.
 
@@ -267,8 +266,9 @@ async def create_conditional_flow(
     )
 
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
-    tool_response = FlowToolResponse(
-        id=api_config.id,
+    tool_response = FlowToolOutput(
+        configuration_id=api_config.id,
+        component_id=flow_type,
         description=api_config.description or '',
         version=api_config.version,
         timestamp=datetime.now(timezone.utc),
@@ -298,7 +298,7 @@ async def update_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
     name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
-) -> FlowToolResponse:
+) -> FlowToolOutput:
     """
     Updates an existing flow configuration in Keboola.
 
@@ -405,8 +405,9 @@ async def update_flow(
     )
 
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
-    tool_response = FlowToolResponse(
-        id=api_config.id,
+    tool_response = FlowToolOutput(
+        configuration_id=api_config.id,
+        component_id=flow_type,
         description=api_config.description or '',
         version=api_config.version,
         timestamp=datetime.now(timezone.utc),

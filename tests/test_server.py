@@ -6,14 +6,14 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
-from fastmcp import Client, Context
+from fastmcp import Client, Context, FastMCP
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
@@ -30,7 +30,8 @@ from keboola_mcp_server.workspace import WorkspaceManager
 class TestServer:
     @pytest.mark.asyncio
     async def test_list_tools(self):
-        server = create_server(Config())
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
         tools = await server.get_tools()
         assert sorted(tool.name for tool in tools.values()) == [
             'add_config_row',
@@ -72,7 +73,8 @@ class TestServer:
 
     @pytest.mark.asyncio
     async def test_tools_have_descriptions(self):
-        server = create_server(Config())
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
         tools = await server.get_tools()
 
         missing_descriptions: list[str] = []
@@ -84,8 +86,25 @@ class TestServer:
         assert not missing_descriptions, f'These tools have no description: {missing_descriptions}'
 
     @pytest.mark.asyncio
+    async def test_tools_have_serializer(self):
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
+        tools = await server.get_tools()
+
+        missing_serializer: list[str] = []
+        for tool in tools.values():
+            if not tool.serializer:
+                missing_serializer.append(tool.name)
+            if tool.serializer != _exclude_none_serializer:
+                missing_serializer.append(tool.name)
+
+        missing_serializer.sort()
+        assert not missing_serializer, f'These tools have no serializer: {missing_serializer}'
+
+    @pytest.mark.asyncio
     async def test_tools_input_schema(self):
-        server = create_server(Config())
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
         tools = await server.get_tools()
 
         missing_properties: list[str] = []
@@ -170,7 +189,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     )
 
     # create MCP server with the initial Config
-    mcp = create_server(config)
+    mcp = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+    assert isinstance(mcp, FastMCP)
     tools_count = len(await mcp.get_tools())
     mcp.add_tool(FunctionTool.from_function(assessed_function, name='assessed-function'))
 
@@ -223,7 +243,8 @@ async def test_keboola_injection_and_lifespan(
         return_value={'owner': {'features': ['global-search', 'waii-integration', 'conditional-flows']}},
     )
 
-    server = create_server(config)
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+    assert isinstance(server, FastMCP)
 
     async def assessed_function(ctx: Context, param: str) -> str:
         assert hasattr(ctx.session, 'state')
@@ -254,7 +275,8 @@ async def test_tool_annotations_and_tags():
     """
     Test that the tool annotations are properly set.
     """
-    server = create_server(Config())
+    server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    assert isinstance(server, FastMCP)
     tools = await server.get_tools()
     for tool in tools.values():
         assert tool.tags is not None, f'{tool.name} has no tags'
@@ -325,7 +347,8 @@ async def test_tool_annotations_tags_values(
     """
     Test that the tool annotations are having the expected values.
     """
-    server = create_server(Config())
+    server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    assert isinstance(server, FastMCP)
     tools = await server.get_tools()
 
     # check tool registration

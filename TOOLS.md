@@ -51,7 +51,9 @@ providing their configuration IDs.
 - [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
-- [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
+- [get_project_info](#get_project_info): Retrieves structured information about the current project,
+including essential context and base instructions for working with it
+(e.
 
 ### SQL Tools
 - [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
@@ -987,6 +989,8 @@ query following current sql dialect and returns a pandas DataFrame with the resu
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
 parameter.
 - If the data app is updated while running, it must be redeployed for the changes to take effect.
+- The Data App requires basic authorization by default for security reasons, unless explicitly specified otherwise
+by the user.
 
 
 **Input JSON Schema**:
@@ -1017,7 +1021,7 @@ parameter.
       "type": "array"
     },
     "authorization_required": {
-      "default": false,
+      "default": true,
       "description": "Whether the data app is authorized using simple password or not.",
       "title": "Authorization Required",
       "type": "boolean"
@@ -1710,7 +1714,12 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 
 **Description**:
 
-Return structured project information pulled from multiple endpoints.
+Retrieves structured information about the current project,
+including essential context and base instructions for working with it
+(e.g., transformations, components, workflows, and dependencies).
+
+Always call this tool at least once at the start of a conversation
+to establish the project context before using other tools.
 
 
 **Input JSON Schema**:

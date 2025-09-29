@@ -1,17 +1,22 @@
+import json
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 from unittest.mock import AsyncMock, call
 
 import httpx
 import pytest
+from fastmcp import Client, FastMCP
 from mcp.server.fastmcp import Context
+from mcp.types import TextContent
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage import (
+    BucketCounts,
     BucketDetail,
     DescriptionUpdate,
     ListBucketsOutput,
@@ -66,6 +71,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 ],
                 'name': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                    {'id': '1234', 'key': 'KBC.description', 'value': 'Name of the user.'},
                 ],
                 'surname': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
@@ -105,6 +111,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 ],
                 'address': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                    {'id': '1234', 'key': 'KBC.description', 'value': 'Email address. 1'},
                 ],
                 'user_id': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'INT'},
@@ -144,6 +151,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 ],
                 'address': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                    {'id': '1234', 'key': 'KBC.description', 'value': 'Email address. 2'},
                 ],
                 'user_id': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'INT'},
@@ -671,6 +679,14 @@ async def test_list_buckets(
 
     assert isinstance(result, ListBucketsOutput)
     assert result.buckets == expected_buckets
+    assert result.bucket_counts.total_buckets == len(expected_buckets)
+
+    # Count expected buckets by stage
+    expected_input_count = sum(1 for bucket in expected_buckets if bucket.stage == 'in')
+    expected_output_count = sum(1 for bucket in expected_buckets if bucket.stage == 'out')
+
+    assert result.bucket_counts.input_buckets == expected_input_count
+    assert result.bucket_counts.output_buckets == expected_output_count
     keboola_client.storage_client.bucket_list.assert_called_once()
 
 
@@ -690,9 +706,19 @@ async def test_list_buckets(
                 rows_count=10,
                 data_size_bytes=10240,
                 columns=[
-                    TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=False),
-                    TableColumnInfo(name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(
+                        name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False, description=None
+                    ),
+                    TableColumnInfo(
+                        name='name',
+                        quoted_name='#name#',
+                        native_type='VARCHAR',
+                        nullable=False,
+                        description='Name of the user.',
+                    ),
+                    TableColumnInfo(
+                        name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False, description=None
+                    ),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#users#',
                 links=[
@@ -721,9 +747,19 @@ async def test_list_buckets(
                 rows_count=10,
                 data_size_bytes=10240,
                 columns=[
-                    TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=False),
-                    TableColumnInfo(name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(
+                        name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False, description=None
+                    ),
+                    TableColumnInfo(
+                        name='name',
+                        quoted_name='#name#',
+                        native_type='VARCHAR',
+                        nullable=False,
+                        description='Name of the user.',
+                    ),
+                    TableColumnInfo(
+                        name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False, description=None
+                    ),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#users#',
                 links=[
@@ -754,7 +790,13 @@ async def test_list_buckets(
                 data_size_bytes=332211,
                 columns=[
                     TableColumnInfo(name='email_id', quoted_name='#email_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='address', quoted_name='#address#', native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(
+                        name='address',
+                        quoted_name='#address#',
+                        native_type='VARCHAR',
+                        nullable=False,
+                        description='Email address. 1',
+                    ),
                     TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#emails#',
@@ -785,7 +827,13 @@ async def test_list_buckets(
                 data_size_bytes=2211,
                 columns=[
                     TableColumnInfo(name='email_id', quoted_name='#email_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='address', quoted_name='#address#', native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(
+                        name='address',
+                        quoted_name='#address#',
+                        native_type='VARCHAR',
+                        nullable=False,
+                        description='Email address. 2',
+                    ),
                     TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-1246948-foo#.#emails#',
@@ -868,7 +916,6 @@ async def test_get_table(
 
     if expected_table:
         result = await get_table(table_id, mcp_context_client)
-
         assert isinstance(result, TableDetail)
         assert result == expected_table
         workspace_manager.get_sql_dialect.assert_called_once()
@@ -1203,3 +1250,94 @@ async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
     assert result.successful == 0
     assert result.failed == 0
     assert len(result.results) == 0
+
+    @pytest.mark.asyncio
+    async def test_list_buckets_use_serializer(mocker):
+        # Ideally, we'd test the output of every tool, but the required mocking would be excessive.
+        # Here, we test only the 'list_buckets' tool.
+        # The test_server.TestServer.test_tools_have_serializer() test verifies that the same serializer is used
+        # for all tools.
+        # Therefore, all tools should produce compact JSON in their unstructured output.
+        cfg_dict = {
+            'storage_token': '123-test-storage-token',
+            'storage_api_url': 'https://connection.keboola.com',
+            'transport': 'stdio',
+        }
+        config = Config.from_dict(cfg_dict)
+
+        mocker.patch(
+            'keboola_mcp_server.clients.base.KeboolaServiceClient.get',
+            return_value={'owner': {'id': '123'}},
+        )
+        mocker.patch(
+            'keboola_mcp_server.clients.client.AsyncStorageClient.trigger_event',
+            return_value={},
+        )
+        mocker.patch(
+            'keboola_mcp_server.clients.client.AsyncStorageClient.bucket_list',
+            return_value=[
+                {
+                    'uri': 'https://connection.keboola.com/v2/storage/buckets/in.c-foo',
+                    'id': 'in.c-foo',
+                    'name': 'c-foo',
+                    'displayName': 'foo',
+                    'idBranch': 202,
+                    'stage': 'in',
+                    'description': '',
+                    'tables': 'https://connection.keboola.com/v2/storage/buckets/in.c-foo',
+                    'created': '2025-06-05T08:16:36+0200',
+                    'lastChangeDate': '2025-06-05T08:17:12+0200',
+                    'updated': None,
+                    'isReadOnly': False,
+                    'dataSizeBytes': 112233,
+                    'rowsCount': 987,
+                    'isMaintenance': False,
+                    'backend': 'snowflake',
+                    'sharing': None,
+                    'hasExternalSchema': False,
+                    'databaseName': '',
+                    'path': 'in.c-foo',
+                    'isSnowflakeSharedDatabase': False,
+                    'color': None,
+                    'owner': None,
+                    'backendPath': ['KEBOOLA_123', 'in.c-foo'],
+                    'attributes': [],
+                }
+            ],
+        )
+        expected = ListBucketsOutput(
+            buckets=[
+                BucketDetail(
+                    id='in.c-foo',
+                    name='c-foo',
+                    display_name='foo',
+                    description='',
+                    stage='in',
+                    created='2025-06-05T08:16:36+0200',
+                    data_size_bytes=112233,
+                )
+            ],
+            bucket_counts=BucketCounts(total_buckets=1, input_buckets=1, output_buckets=0),
+            links=[
+                Link(
+                    type='ui-dashboard',
+                    title='Buckets in the project',
+                    url='https://connection.keboola.com/admin/projects/123/storage',
+                )
+            ],
+        )
+
+        server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
+
+        async with Client(server) as client:
+            result = await client.call_tool('list_buckets')
+            # check the structured output
+            assert ListBucketsOutput.model_validate(result.structured_content) == expected
+            # check the unstructured output
+            assert len(result.content) == 1
+            assert result.content[0] == TextContent(
+                type='text',
+                # no fields with None values, no indentation, no whitespace
+                text=json.dumps(expected.model_dump(exclude_none=True), ensure_ascii=False, separators=(',', ':')),
+            )

@@ -15,12 +15,12 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
     get_metadata_property,
 )
-from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.flow.model import Flow
 from keboola_mcp_server.tools.flow.tools import (
-    FlowToolResponse,
+    FlowToolOutput,
     ListFlowsOutput,
     create_conditional_flow,
     create_flow,
@@ -75,7 +75,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         phases=phases,
         tasks=tasks,
     )
-    flow_id = created.id
+    flow_id = created.configuration_id
     client = KeboolaClient.from_state(mcp_context.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     expected_links = [
@@ -84,7 +84,8 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         links_manager.get_flows_docs_link(),
     ]
     try:
-        assert isinstance(created, FlowToolResponse)
+        assert isinstance(created, FlowToolOutput)
+        assert created.component_id == ORCHESTRATOR_COMPONENT_ID
         assert created.description == flow_description
         # Verify the links of created flow
         assert created.success is True
@@ -183,7 +184,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
         phases=phases,
         tasks=tasks,
     )
-    flow_id = created.id
+    flow_id = created.configuration_id
     client = KeboolaClient.from_state(mcp_context.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     expected_links = [
@@ -192,7 +193,8 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
         links_manager.get_flows_docs_link(),
     ]
     try:
-        assert isinstance(created, FlowToolResponse)
+        assert isinstance(created, FlowToolOutput)
+        assert created.component_id == CONDITIONAL_FLOW_COMPONENT_ID
         assert created.description == flow_description
         assert created.success is True
         assert set(created.links) == set(expected_links)
@@ -234,7 +236,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
 @pytest.fixture
 def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
     config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
-    return create_server(config)
+    return create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
 
 
 @pytest_asyncio.fixture
@@ -246,7 +248,7 @@ async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
 @pytest_asyncio.fixture
 async def initial_lf(
     mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
-) -> AsyncGenerator[FlowToolResponse, None]:
+) -> AsyncGenerator[FlowToolOutput, None]:
     # Create the initial component configuration test data
     tool_result = await mcp_client.call_tool(
         name='create_flow',
@@ -271,12 +273,12 @@ async def initial_lf(
         },
     )
     try:
-        yield FlowToolResponse.model_validate(tool_result.structured_content)
+        yield FlowToolOutput.model_validate(tool_result.structured_content)
     finally:
         # Clean up: Delete the configuration
         await keboola_client.storage_client.configuration_delete(
             component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=tool_result.structured_content['id'],
+            configuration_id=tool_result.structured_content['configuration_id'],
             skip_trash=True,
         )
 
@@ -284,7 +286,7 @@ async def initial_lf(
 @pytest_asyncio.fixture
 async def initial_cf(
     mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
-) -> AsyncGenerator[FlowToolResponse, None]:
+) -> AsyncGenerator[FlowToolOutput, None]:
     # Create the initial component configuration test data
     tool_result = await mcp_client.call_tool(
         name='create_conditional_flow',
@@ -315,12 +317,12 @@ async def initial_cf(
         },
     )
     try:
-        yield FlowToolResponse.model_validate(tool_result.structured_content)
+        yield FlowToolOutput.model_validate(tool_result.structured_content)
     finally:
         # Clean up: Delete the configuration
         await keboola_client.storage_client.configuration_delete(
             component_id=CONDITIONAL_FLOW_COMPONENT_ID,
-            configuration_id=tool_result.structured_content['id'],
+            configuration_id=tool_result.structured_content['configuration_id'],
             skip_trash=True,
         )
 
@@ -490,8 +492,8 @@ async def initial_cf(
 async def test_update_flow(
     flow_type: FlowType,
     updates: dict[str, Any],
-    initial_lf: FlowToolResponse,
-    initial_cf: FlowToolResponse,
+    initial_lf: FlowToolOutput,
+    initial_cf: FlowToolOutput,
     mcp_client: Client,
     keboola_project: ProjectDef,
     keboola_client: KeboolaClient,
@@ -499,7 +501,7 @@ async def test_update_flow(
     """Tests that 'update_flow' tool works as expected."""
     initial_flow = initial_lf if flow_type == ORCHESTRATOR_COMPONENT_ID else initial_cf
     project_id = keboola_project.project_id
-    flow_id = initial_flow.id
+    flow_id = initial_flow.configuration_id
     tool_result = await mcp_client.call_tool(
         name='update_flow',
         arguments={
@@ -511,8 +513,9 @@ async def test_update_flow(
     )
 
     # Check the tool's output
-    updated_flow = FlowToolResponse.model_validate(tool_result.structured_content)
-    assert updated_flow.id == flow_id
+    updated_flow = FlowToolOutput.model_validate(tool_result.structured_content)
+    assert updated_flow.configuration_id == flow_id
+    assert updated_flow.component_id == flow_type
     assert updated_flow.success is True
     assert updated_flow.timestamp is not None
     assert updated_flow.version is not None
@@ -544,7 +547,7 @@ async def test_update_flow(
 
     # Verify the configuration was updated
     flow_detail = await keboola_client.storage_client.configuration_detail(
-        component_id=flow_type, configuration_id=updated_flow.id
+        component_id=flow_type, configuration_id=updated_flow.configuration_id
     )
 
     assert flow_detail['name'] == expected_name
@@ -565,7 +568,7 @@ async def test_update_flow(
 
     # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
     metadata = await keboola_client.storage_client.configuration_metadata_get(
-        component_id=flow_type, configuration_id=updated_flow.id
+        component_id=flow_type, configuration_id=updated_flow.configuration_id
     )
     assert isinstance(metadata, list), f'Expecting list, got: {type(metadata)}'
 
@@ -808,11 +811,12 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
         tasks=legacy_tasks,
     )
 
-    assert isinstance(orchestrator_result, FlowToolResponse)
+    assert isinstance(orchestrator_result, FlowToolOutput)
     assert orchestrator_result.success is True
+    assert orchestrator_result.component_id == ORCHESTRATOR_COMPONENT_ID
     assert orchestrator_result.description == orchestrator_flow_description
     assert orchestrator_result.version is not None
-    created_flows.append((ORCHESTRATOR_COMPONENT_ID, orchestrator_result.id))
+    created_flows.append((ORCHESTRATOR_COMPONENT_ID, orchestrator_result.configuration_id))
 
     # Step 2: Try to create conditional flow (only if project allows it)
     conditional_flow_name = 'Integration Test Conditional Flow'
@@ -827,11 +831,12 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
             tasks=conditional_tasks,
         )
 
-        assert isinstance(conditional_result, FlowToolResponse)
+        assert isinstance(conditional_result, FlowToolOutput)
         assert conditional_result.success is True
+        assert conditional_result.component_id == CONDITIONAL_FLOW_COMPONENT_ID
         assert conditional_result.description == conditional_flow_description
         assert conditional_result.version is not None
-        created_flows.append((CONDITIONAL_FLOW_COMPONENT_ID, conditional_result.id))
+        created_flows.append((CONDITIONAL_FLOW_COMPONENT_ID, conditional_result.configuration_id))
     else:
         LOG.info('Conditional flows are disabled in this project, skipping conditional flow creation')
 

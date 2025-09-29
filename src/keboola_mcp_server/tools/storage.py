@@ -17,7 +17,7 @@ from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_proper
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, exclude_none_serializer
+from keboola_mcp_server.mcp import KeboolaMcpServer
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -41,7 +41,6 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             list_buckets,
-            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
@@ -49,7 +48,6 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_table,
-            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
@@ -57,7 +55,6 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             list_tables,
-            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
@@ -65,7 +62,6 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_descriptions,
-            serializer=exclude_none_serializer,
             annotations=ToolAnnotations(destructiveHint=True),
             tags={STORAGE_TOOLS_TAG},
         )
@@ -178,8 +174,15 @@ class BucketDetail(BaseModel):
         return values
 
 
+class BucketCounts(BaseModel):
+    total_buckets: int = Field(..., description='Total number of buckets.')
+    input_buckets: int = Field(..., description='Number of input stage buckets.')
+    output_buckets: int = Field(..., description='Number of output stage buckets.')
+
+
 class ListBucketsOutput(BaseModel):
     buckets: list[BucketDetail] = Field(..., description='List of buckets.')
+    bucket_counts: BucketCounts = Field(..., description='Bucket counts by stage.')
     links: list[Link] = Field(..., description='Links relevant to the bucket listing.')
 
 
@@ -192,6 +195,7 @@ class TableColumnInfo(BaseModel):
     )
     native_type: str = Field(description='The database type of data in the column.')
     nullable: bool = Field(description='Whether the column can contain null values.')
+    description: str | None = Field(default=None, description='Description of the column.')
 
 
 class TableDetail(BaseModel):
@@ -424,7 +428,16 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
             bucket = await _combine_buckets(client, links_manager, prod_bucket, next(iter(dev_buckets), None))
             buckets.append(bucket.model_copy(update={'links': None}))  # no links when listing buckets
 
-    return ListBucketsOutput(buckets=buckets, links=[links_manager.get_bucket_dashboard_link()])
+    # Count buckets by stage (only count input, derive output)
+    total_count = len(buckets)
+    input_count = sum(1 for bucket in buckets if bucket.stage == 'in')
+    output_count = total_count - input_count
+
+    bucket_counts = BucketCounts(total_buckets=total_count, input_buckets=input_count, output_buckets=output_count)
+
+    return ListBucketsOutput(
+        buckets=buckets, bucket_counts=bucket_counts, links=[links_manager.get_bucket_dashboard_link()]
+    )
 
 
 @tool_errors()
@@ -466,6 +479,7 @@ async def get_table(
     column_info = []
     for col_name in raw_columns:
         col_meta = raw_column_metadata.get(col_name, [])
+        description: str | None = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
         native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
         if native_type:
             raw_nullable = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
@@ -481,6 +495,7 @@ async def get_table(
                 quoted_name=await workspace_manager.get_quoted_name(col_name),
                 native_type=native_type,
                 nullable=nullable,
+                description=description,
             )
         )
 

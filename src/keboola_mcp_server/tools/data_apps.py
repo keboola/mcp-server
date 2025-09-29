@@ -232,7 +232,7 @@ async def modify_data_app(
     ],
     authorization_required: Annotated[
         bool, Field(description='Whether the data app is authorized using simple password or not.')
-    ] = False,
+    ] = True,
     configuration_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
     ] = '',
@@ -252,6 +252,8 @@ async def modify_data_app(
     - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
     parameter.
     - If the data app is updated while running, it must be redeployed for the changes to take effect.
+    - The Data App requires basic authorization by default for security reasons, unless explicitly specified otherwise
+    by the user.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
