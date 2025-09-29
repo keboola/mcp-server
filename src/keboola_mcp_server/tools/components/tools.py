@@ -46,6 +46,7 @@ from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentSummary,
     ComponentType,
+    ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
@@ -61,6 +62,7 @@ from keboola_mcp_server.tools.components.utils import (
     list_configs_by_types,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
+    update_params,
 )
 from keboola_mcp_server.tools.validation import (
     validate_root_parameters_configuration,
@@ -842,12 +844,22 @@ async def update_config(
             ),
         ),
     ] = '',
+    parameter_updates: Annotated[
+        list[ConfigParamUpdate],
+        Field(
+            description=(
+                'List of partial parameter updates to apply. Each update specifies an action '
+                '(set, replace, delete) and the key to modify. '
+                'Only the specified parameters are changed, preserving all others.'
+            ),
+        ),
+    ] = None,
     parameters: Annotated[
         dict[str, Any],
         Field(
             description=(
                 'The component configuration parameters, adhering to the root_configuration_schema schema. '
-                'Only updated if provided.'
+                'Only updated if provided. Cannot be used with parameter_updates.'
             ),
         ),
     ] = None,
@@ -855,7 +867,7 @@ async def update_config(
         dict[str, Any],
         Field(
             description=(
-                'The table and/or file input / output mapping of the component configuration. '
+                'The table and/or file input/output mapping of the component configuration. '
                 'It is present only for components that are not row-based and have tables or file '
                 'input mapping defined. Only updated if provided.'
             ),
@@ -893,6 +905,10 @@ async def update_config(
 
     configuration_payload = current_config.get('configuration', {}).copy()
 
+    # Validate that only one of parameter_updates or parameters is provided
+    if parameter_updates and parameters:
+        raise ValueError('Cannot specify both parameter_updates and parameters. Use only one.')
+
     if storage is not None:
         storage_cfg = validate_root_storage_configuration(
             component=component,
@@ -901,7 +917,17 @@ async def update_config(
         )
         configuration_payload['storage'] = storage_cfg
 
-    if parameters is not None:
+    if parameter_updates:
+        current_params = configuration_payload.get('parameters', {})
+        updated_params = update_params(current_params, parameter_updates)
+
+        parameters_cfg = validate_root_parameters_configuration(
+            component=component,
+            parameters=updated_params,
+            initial_message='The updated "parameters" field is not valid.',
+        )
+        configuration_payload['parameters'] = parameters_cfg
+    elif parameters:
         parameters_cfg = validate_root_parameters_configuration(
             component=component,
             parameters=parameters,
@@ -983,7 +1009,7 @@ async def update_config_row(
         dict[str, Any],
         Field(
             description=(
-                'The table and/or file input / output mapping of the component configuration. '
+                'The table and/or file input/output mapping of the component configuration. '
                 'It is present only for components that have tables or file input mapping defined. '
                 'Only updated if provided.'
             ),

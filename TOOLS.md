@@ -582,6 +582,88 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "ConfigParamRemove": {
+      "description": "Remove a parameter key.",
+      "properties": {
+        "op": {
+          "const": "remove",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to remove",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "title": "ConfigParamRemove",
+      "type": "object"
+    },
+    "ConfigParamReplace": {
+      "description": "Replace a substring in a string parameter.",
+      "properties": {
+        "op": {
+          "const": "str_replace",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to modify",
+          "title": "Path",
+          "type": "string"
+        },
+        "search_for": {
+          "description": "Substring to search for",
+          "title": "Search For",
+          "type": "string"
+        },
+        "replace_with": {
+          "description": "Replacement string",
+          "title": "Replace With",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "search_for",
+        "replace_with"
+      ],
+      "title": "ConfigParamReplace",
+      "type": "object"
+    },
+    "ConfigParamSet": {
+      "description": "Set value of existing parameter key or create a new key.",
+      "properties": {
+        "op": {
+          "const": "set",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
+          "title": "Path",
+          "type": "string"
+        },
+        "new_val": {
+          "description": "New value to set",
+          "title": "New Val"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "new_val"
+      ],
+      "title": "ConfigParamSet",
+      "type": "object"
+    }
+  },
   "properties": {
     "change_description": {
       "description": "Description of the change made to the component configuration.",
@@ -610,17 +692,44 @@ EXAMPLES:
       "title": "Description",
       "type": "string"
     },
+    "parameter_updates": {
+      "default": null,
+      "description": "List of partial parameter updates to apply. Each update specifies an action (set, replace, delete) and the key to modify. Only the specified parameters are changed, preserving all others.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "remove": "#/$defs/ConfigParamRemove",
+            "set": "#/$defs/ConfigParamSet",
+            "str_replace": "#/$defs/ConfigParamReplace"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ConfigParamSet"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamReplace"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamRemove"
+          }
+        ]
+      },
+      "title": "Parameter Updates",
+      "type": "array"
+    },
     "parameters": {
       "additionalProperties": true,
       "default": null,
-      "description": "The component configuration parameters, adhering to the root_configuration_schema schema. Only updated if provided.",
+      "description": "The component configuration parameters, adhering to the root_configuration_schema schema. Only updated if provided. Cannot be used with parameter_updates.",
       "title": "Parameters",
       "type": "object"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined. Only updated if provided.",
+      "description": "The table and/or file input/output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined. Only updated if provided.",
       "title": "Storage",
       "type": "object"
     }
@@ -706,7 +815,7 @@ EXAMPLES:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined. Only updated if provided.",
+      "description": "The table and/or file input/output mapping of the component configuration. It is present only for components that have tables or file input mapping defined. Only updated if provided.",
       "title": "Storage",
       "type": "object"
     }

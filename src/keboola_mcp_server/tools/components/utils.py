@@ -23,9 +23,10 @@ This module contains helper functions and utilities used across the component to
 import logging
 import re
 import unicodedata
-from typing import Optional, Sequence, Union, cast, get_args
+from typing import Any, Optional, Sequence, Union, cast, get_args
 
 from httpx import HTTPStatusError
+from jsonpath_ng import parse
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
@@ -37,6 +38,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
+    ConfigParamUpdate,
     ConfigurationSummary,
 )
 
@@ -418,3 +420,96 @@ async def set_cfg_update_metadata(
         )
     except HTTPStatusError as e:
         logging.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
+
+
+# ============================================================================
+# PARAMETER UPDATE UTILITIES
+# ============================================================================
+
+
+def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> dict[str, Any]:
+    """
+    Apply a single parameter update to the given parameters dictionary.
+
+    :param params: Current parameter values
+    :param update: Parameter update operation to apply
+    :return: Updated parameters dictionary
+    :raises ValueError: If trying to set a nested value through a non-dict value in the path
+    """
+    jsonpath_expr = parse(update.path)
+
+    if update.op == 'set':
+        try:
+            matches = jsonpath_expr.find(params)
+            if not matches:
+                # Path doesn't exist, create it manually
+                _set_nested_value(params, update.path, update.new_val)
+            else:
+                params = jsonpath_expr.update(params, update.new_val)
+        except (TypeError, AttributeError) as e:
+            raise ValueError(f'Failed to set nested value at path "{update.path}": {e}')
+        return params
+
+    elif update.op == 'str_replace':
+        matches = jsonpath_expr.find(params)
+
+        if not matches:
+            raise ValueError(f'Path "{update.path}" does not exist')
+
+        current_value = matches[0].value
+        if not isinstance(current_value, str):
+            raise ValueError(f'Path "{update.path}" is not a string')
+
+        new_value = current_value.replace(update.search_for, update.replace_with)
+
+        return jsonpath_expr.update(params, new_value)
+
+    elif update.op == 'remove':
+        matches = jsonpath_expr.find(params)
+
+        if not matches:
+            raise ValueError(f'Path "{update.path}" does not exist')
+
+        return jsonpath_expr.filter(lambda x: True, params)
+
+
+def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
+    """
+    Set a value in a nested dictionary using a dot-separated path.
+
+    :param data: The dictionary to modify
+    :param path: Dot-separated path (e.g., 'database.host')
+    :param value: The value to set
+    :raises ValueError: If a non-dict value is encountered in the path
+    """
+    keys = path.split('.')
+    current = data
+
+    # Navigate to the parent of the target key
+    for i, key in enumerate(keys[:-1]):
+        if key not in current:
+            current[key] = {}
+        current = current[key]
+        if not isinstance(current, dict):
+            # Can't navigate further - non-dict value in path
+            path_so_far = '.'.join(keys[: i + 1])
+            raise ValueError(
+                f'Cannot set nested value at path "{path}": '
+                f'encountered non-dict value at "{path_so_far}" (type: {type(current).__name__})'
+            )
+
+    # Set the final value
+    current[keys[-1]] = value
+
+
+def update_params(params: dict[str, Any], updates: list[ConfigParamUpdate]) -> dict[str, Any]:
+    """
+    Apply a list of parameter updates to the given parameters dictionary.
+
+    :param params: Current parameter values
+    :param updates: List of parameter update operations
+    :return: Updated parameters dictionary
+    """
+    for update in updates:
+        params = _apply_param_update(params, update)
+    return params
