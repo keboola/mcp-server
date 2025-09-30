@@ -48,10 +48,7 @@ filtering.
 configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
-- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data
-
-Considerations:
-- The `source_code` parameter must be a complete and runnable Streamlit app.
+- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
@@ -981,7 +978,7 @@ Considerations:
 
 **Description**:
 
-Creates or updates a Streamlit data
+Creates or updates a Streamlit data app.
 
 Considerations:
 - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
