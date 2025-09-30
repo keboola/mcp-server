@@ -567,16 +567,18 @@ CONSIDERATIONS:
 - The configuration JSON object must follow the root_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the root_configuration_schema,
   which is available via the component_detail tool.
-- The configuration JSON object should adhere to the component's configuration examples if found
+- The configuration JSON object should be close to the component's configuration examples if applicable.
 
 USAGE:
 - Use when you want to update a root configuration of a specific component.
 
 EXAMPLES:
 - user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
-    - set the component_id, configuration_id and configuration parameters accordingly.
+- agent action:
+    - set the component_id, configuration_id and parameter updates accordingly.
     - set the change_description to the description of the change made to the component configuration.
-    - returns the updated component configuration if successful.
+- tool response:
+    - returns the configuration update summary
 
 
 **Input JSON Schema**:
@@ -694,7 +696,7 @@ EXAMPLES:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of partial parameter updates to apply. Each update specifies an action (set, replace, delete) and the key to modify. Only the specified parameters are changed, preserving all others.",
+      "description": "List of parameter updates to apply. Each one specifies an operation (set, str_replace, remove) and the key to modify. Only the specified parameters are changed, preserving all others.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -718,13 +720,6 @@ EXAMPLES:
       },
       "title": "Parameter Updates",
       "type": "array"
-    },
-    "parameters": {
-      "additionalProperties": true,
-      "default": null,
-      "description": "The component configuration parameters, adhering to the root_configuration_schema schema. Only updated if provided. Cannot be used with parameter_updates.",
-      "title": "Parameters",
-      "type": "object"
     },
     "storage": {
       "additionalProperties": true,

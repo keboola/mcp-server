@@ -205,6 +205,12 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamSet(op='set', path='messages[*].text', new_val='new'),
             {'messages': [{'text': 'new'}, {'text': 'new'}]},
         ),
+        # Test 'set' operation with '$' (root) JSONPath
+        (
+            {'messages': [{'text': 'old1'}, {'text': 'old2 old3'}]},
+            ConfigParamSet(op='set', path='$', new_val={'object': 'new'}),
+            {'object': 'new'},
+        ),
         # Test 'str_replace' operation on existing string
         (
             {'api_key': 'old_key_value'},

@@ -487,7 +487,7 @@ class Configuration(BaseModel):
 
 
 class ConfigToolOutput(BaseModel):
-    """Standard response model for configuration tool operations."""
+    """Response model for configuration tool operations."""
 
     component_id: str = Field(description='The ID of the component.')
     configuration_id: str = Field(description='The ID of the configuration.')
