@@ -26,8 +26,8 @@ import re
 import unicodedata
 from typing import Any, Optional, Sequence, Union, cast, get_args
 
+import jsonpath_ng
 from httpx import HTTPStatusError
-from jsonpath_ng import parse
 from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
@@ -466,13 +466,13 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
     :return: The modified parameters dictionary
     :raises ValueError: If trying to set a nested value through a non-dict value in the path
     """
-    jsonpath_expr = parse(update.path)
+    jsonpath_expr = jsonpath_ng.parse(update.path)
 
     if update.op == 'set':
         try:
             matches = jsonpath_expr.find(params)
             if not matches:
-                # Path doesn't exist, create it manually
+                # path doesn't exist, create it manually
                 _set_nested_value(params, update.path, update.new_val)
             else:
                 params = jsonpath_expr.update(params, update.new_val)
@@ -486,13 +486,15 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
         if not matches:
             raise ValueError(f'Path "{update.path}" does not exist')
 
-        current_value = matches[0].value
-        if not isinstance(current_value, str):
-            raise ValueError(f'Path "{update.path}" is not a string')
+        for match in matches:
+            current_value = match.value
+            if not isinstance(current_value, str):
+                raise ValueError(f'Path "{match.full_path}" is not a string')
 
-        new_value = current_value.replace(update.search_for, update.replace_with)
+            new_value = current_value.replace(update.search_for, update.replace_with)
+            params = match.full_path.update(params, new_value)
 
-        return jsonpath_expr.update(params, new_value)
+        return params
 
     elif update.op == 'remove':
         matches = jsonpath_expr.find(params)

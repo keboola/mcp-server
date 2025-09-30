@@ -199,6 +199,12 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamSet(op='set', path='config.timeout', new_val=300),
             {'config': {'timeout': 300}},
         ),
+        # Test 'set' operation with multiple JSONPath matches
+        (
+            {'messages': [{'text': 'old1'}, {'text': 'old2 old3'}]},
+            ConfigParamSet(op='set', path='messages[*].text', new_val='new'),
+            {'messages': [{'text': 'new'}, {'text': 'new'}]},
+        ),
         # Test 'str_replace' operation on existing string
         (
             {'api_key': 'old_key_value'},
@@ -223,6 +229,12 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamReplace(op='str_replace', path='message', search_for='old', replace_with='new'),
             {'message': 'new new new'},
         ),
+        # Test 'str_replace' with multiple JSONPath matches
+        (
+            {'messages': ['old1', 'old2 old3']},
+            ConfigParamReplace(op='str_replace', path='messages[*]', search_for='old', replace_with='new'),
+            {'messages': ['new1', 'new2 new3']},
+        ),
         # Test 'remove' operation on simple key
         (
             {'api_key': 'value', 'count': 42},
@@ -241,11 +253,17 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamRemove(op='remove', path='database'),
             {'api_key': 'value'},
         ),
+        # Test 'remove' operation with multiple JSONPath matches
+        (
+            {'messages': [{'text': 'old1'}, {'text': 'old2 old3', 'metadata': {'id': 1}}]},
+            ConfigParamRemove(op='remove', path='messages[*].text'),
+            {'messages': [{}, {'metadata': {'id': 1}}]},
+        ),
     ],
 )
 def test_apply_param_update(
     params: dict[str, Any],
-    update: ConfigParamSet | ConfigParamReplace | ConfigParamRemove,
+    update: ConfigParamUpdate,
     expected: dict[str, Any],
 ):
     """Test _apply_param_update function with valid operations."""
@@ -320,7 +338,7 @@ def test_apply_param_update(
 )
 def test_apply_param_update_errors(
     params: dict[str, Any],
-    update: ConfigParamSet | ConfigParamReplace | ConfigParamRemove,
+    update: ConfigParamUpdate,
     expected_error: str,
 ):
     """Test _apply_param_update function with error cases."""
