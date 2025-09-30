@@ -20,6 +20,7 @@ This module contains helper functions and utilities used across the component to
 - TransformationConfiguration: Pydantic model for SQL transformation structure
 """
 
+import copy
 import logging
 import re
 import unicodedata
@@ -427,13 +428,42 @@ async def set_cfg_update_metadata(
 # ============================================================================
 
 
+def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
+    """
+    Set a value in a nested dictionary using a dot-separated path.
+
+    :param data: The dictionary to modify
+    :param path: Dot-separated path (e.g., 'database.host')
+    :param value: The value to set
+    :raises ValueError: If a non-dict value is encountered in the path
+    """
+    keys = path.split('.')
+    current = data
+
+    for i, key in enumerate(keys[:-1]):
+        if key not in current:
+            current[key] = {}
+        current = current[key]
+        if not isinstance(current, dict):
+            path_so_far = '.'.join(keys[: i + 1])
+            raise ValueError(
+                f'Cannot set nested value at path "{path}": '
+                f'encountered non-dict value at "{path_so_far}" (type: {type(current).__name__})'
+            )
+
+    current[keys[-1]] = value
+
+
 def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> dict[str, Any]:
     """
     Apply a single parameter update to the given parameters dictionary.
 
-    :param params: Current parameter values
+    Note: This function modifies the input dictionary in place for efficiency.
+    The caller (update_params) is responsible for creating a copy if needed.
+
+    :param params: Current parameter values (will be modified in place)
     :param update: Parameter update operation to apply
-    :return: Updated parameters dictionary
+    :return: The modified parameters dictionary
     :raises ValueError: If trying to set a nested value through a non-dict value in the path
     """
     jsonpath_expr = parse(update.path)
@@ -473,43 +503,17 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
         return jsonpath_expr.filter(lambda x: True, params)
 
 
-def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
-    """
-    Set a value in a nested dictionary using a dot-separated path.
-
-    :param data: The dictionary to modify
-    :param path: Dot-separated path (e.g., 'database.host')
-    :param value: The value to set
-    :raises ValueError: If a non-dict value is encountered in the path
-    """
-    keys = path.split('.')
-    current = data
-
-    # Navigate to the parent of the target key
-    for i, key in enumerate(keys[:-1]):
-        if key not in current:
-            current[key] = {}
-        current = current[key]
-        if not isinstance(current, dict):
-            # Can't navigate further - non-dict value in path
-            path_so_far = '.'.join(keys[: i + 1])
-            raise ValueError(
-                f'Cannot set nested value at path "{path}": '
-                f'encountered non-dict value at "{path_so_far}" (type: {type(current).__name__})'
-            )
-
-    # Set the final value
-    current[keys[-1]] = value
-
-
-def update_params(params: dict[str, Any], updates: list[ConfigParamUpdate]) -> dict[str, Any]:
+def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) -> dict[str, Any]:
     """
     Apply a list of parameter updates to the given parameters dictionary.
+    The original dictionary is not modified.
 
     :param params: Current parameter values
-    :param updates: List of parameter update operations
-    :return: Updated parameters dictionary
+    :param updates: Sequence of parameter update operations
+    :return: New dictionary with all updates applied
     """
+    # Create a deep copy to avoid mutating the original
+    params = copy.deepcopy(params)
     for update in updates:
         params = _apply_param_update(params, update)
     return params

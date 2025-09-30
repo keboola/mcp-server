@@ -8,10 +8,12 @@ from keboola_mcp_server.tools.components.model import (
     ConfigParamRemove,
     ConfigParamReplace,
     ConfigParamSet,
+    ConfigParamUpdate,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
     _apply_param_update,
+    _set_nested_value,
     clean_bucket_name,
     get_transformation_configuration,
     handle_component_types,
@@ -167,6 +169,36 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamSet(op='set', path='new_key', new_val='new_value'),
             {'api_key': 'old_key', 'new_key': 'new_value'},
         ),
+        # Test 'set' operation creating deeply nested path
+        (
+            {'api_key': 'value'},
+            ConfigParamSet(op='set', path='config.database.connection.host', new_val='localhost'),
+            {'api_key': 'value', 'config': {'database': {'connection': {'host': 'localhost'}}}},
+        ),
+        # Test 'set' operation with different value types - list
+        (
+            {'config': {}},
+            ConfigParamSet(op='set', path='config.items', new_val=[1, 2, 3]),
+            {'config': {'items': [1, 2, 3]}},
+        ),
+        # Test 'set' operation with different value types - boolean
+        (
+            {'config': {}},
+            ConfigParamSet(op='set', path='config.enabled', new_val=True),
+            {'config': {'enabled': True}},
+        ),
+        # Test 'set' operation with different value types - None
+        (
+            {'config': {}},
+            ConfigParamSet(op='set', path='config.value', new_val=None),
+            {'config': {'value': None}},
+        ),
+        # Test 'set' operation with different value types - number
+        (
+            {'config': {}},
+            ConfigParamSet(op='set', path='config.timeout', new_val=300),
+            {'config': {'timeout': 300}},
+        ),
         # Test 'str_replace' operation on existing string
         (
             {'api_key': 'old_key_value'},
@@ -179,23 +211,35 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamReplace(op='str_replace', path='database.host', search_for='old', replace_with='new'),
             {'database': {'host': 'new_host_name'}},
         ),
+        # Test 'str_replace' when search string not found (returns unchanged)
+        (
+            {'api_key': 'my_secret_key'},
+            ConfigParamReplace(op='str_replace', path='api_key', search_for='notfound', replace_with='new'),
+            {'api_key': 'my_secret_key'},
+        ),
+        # Test 'str_replace' with multiple occurrences
+        (
+            {'message': 'old old old'},
+            ConfigParamReplace(op='str_replace', path='message', search_for='old', replace_with='new'),
+            {'message': 'new new new'},
+        ),
         # Test 'remove' operation on simple key
         (
             {'api_key': 'value', 'count': 42},
             ConfigParamRemove(op='remove', path='api_key'),
-            {'count': 42},  # api_key should be removed
+            {'count': 42},
         ),
         # Test 'remove' operation on nested key
         (
             {'database': {'host': 'localhost', 'port': 5432}},
             ConfigParamRemove(op='remove', path='database.port'),
-            {'database': {'host': 'localhost'}},  # port should be removed
+            {'database': {'host': 'localhost'}},
         ),
         # Test 'remove' operation on entire object
         (
             {'database': {'host': 'localhost', 'port': 5432}, 'api_key': 'value'},
             ConfigParamRemove(op='remove', path='database'),
-            {'api_key': 'value'},  # database should be removed
+            {'api_key': 'value'},
         ),
     ],
 )
@@ -204,125 +248,69 @@ def test_apply_param_update(
     update: ConfigParamSet | ConfigParamReplace | ConfigParamRemove,
     expected: dict[str, Any],
 ):
-    """Test _apply_param_update function with various operations."""
+    """Test _apply_param_update function with valid operations."""
     result = _apply_param_update(params, update)
     assert result == expected
-
-
-def test_update_params():
-    """Test update_params function with multiple operations."""
-    params = {
-        'api_key': 'old_key',
-        'database': {'host': 'localhost', 'port': 5432},
-        'deprecated_field': 'old_value',
-    }
-
-    updates = [
-        ConfigParamSet(op='set', path='api_key', new_val='new_key'),
-        ConfigParamReplace(op='str_replace', path='database.host', search_for='localhost', replace_with='remotehost'),
-        ConfigParamRemove(op='remove', path='deprecated_field'),
-    ]
-
-    expected = {
-        'api_key': 'new_key',
-        'database': {'host': 'remotehost', 'port': 5432},
-        # deprecated_field should be removed, not set to None
-    }
-
-    result = update_params(params, updates)
-    assert result == expected
-
-
-def test_update_params_empty_updates():
-    """Test update_params function with empty updates list."""
-    params = {'api_key': 'value'}
-    result = update_params(params, [])
-    assert result == params
 
 
 @pytest.mark.parametrize(
     ('params', 'update', 'expected_error'),
     [
-        # Test 'str_replace' operation on non-existent path should raise ValueError
+        # Test 'str_replace' operation on non-existent path
         (
             {'api_key': 'value'},
             ConfigParamReplace(op='str_replace', path='nonexistent.key', search_for='old', replace_with='new'),
             'Path "nonexistent.key" does not exist',
         ),
-        # Test 'str_replace' operation on non-string value should raise ValueError
+        # Test 'str_replace' operation on non-string value
         (
             {'count': 42},
             ConfigParamReplace(op='str_replace', path='count', search_for='4', replace_with='5'),
             'Path "count" is not a string',
         ),
-        # Test 'remove' operation on non-existent path should raise ValueError
+        # Test 'remove' operation on non-existent path
         (
             {'api_key': 'value'},
             ConfigParamRemove(op='remove', path='nonexistent_key'),
             'Path "nonexistent_key" does not exist',
         ),
-        # Test 'remove' operation on non-existent nested path should raise ValueError
+        # Test 'remove' operation on non-existent nested path
         (
             {'database': {'host': 'localhost'}},
             ConfigParamRemove(op='remove', path='database.nonexistent_field'),
             'Path "database.nonexistent_field" does not exist',
         ),
-        # Test 'remove' operation on completely non-existent nested path should raise ValueError
+        # Test 'remove' operation on completely non-existent nested path
         (
             {'api_key': 'value'},
             ConfigParamRemove(op='remove', path='nonexistent.nested.path'),
             'Path "nonexistent.nested.path" does not exist',
         ),
-    ],
-)
-def test_apply_param_update_error_cases(
-    params: dict[str, Any],
-    update: ConfigParamSet | ConfigParamReplace | ConfigParamRemove,
-    expected_error: str,
-):
-    """Test _apply_param_update function with error cases that should raise ValueError."""
-    with pytest.raises(ValueError, match=re.escape(expected_error)):
-        _apply_param_update(params, update)
-
-
-def test_update_params_single_update():
-    """Test update_params function with single update."""
-    params = {'api_key': 'old_key'}
-    updates = [ConfigParamSet(op='set', path='api_key', new_val='new_key')]
-    expected = {'api_key': 'new_key'}
-
-    result = update_params(params, updates)
-    assert result == expected
-
-
-@pytest.mark.parametrize(
-    ('params', 'update', 'expected_error_match'),
-    [
-        # Test setting nested value through string
+        # Test 'set' operation on nested value through string
         (
             {'api_key': 'string_value'},
             ConfigParamSet(op='set', path='api_key.nested', new_val='new_value'),
             'Cannot set nested value at path "api_key.nested"',
         ),
-        # Test setting deeply nested value through string
+        # Test 'set' operation on deeply nested value through string
         (
             {'database': {'config': 'string_value'}},
             ConfigParamSet(op='set', path='database.config.host', new_val='localhost'),
             'Cannot set nested value at path "database.config.host"',
         ),
-        # Test setting nested value through number
+        # Test 'set' operation on nested value through number
         (
             {'count': 42},
             ConfigParamSet(op='set', path='count.nested', new_val='new_value'),
             'Cannot set nested value at path "count.nested"',
         ),
-        # Test setting nested value through list
+        # Test 'set' operation on nested value through list
         (
             {'items': [1, 2, 3]},
             ConfigParamSet(op='set', path='items.nested', new_val='new_value'),
             'Cannot set nested value at path "items.nested"',
         ),
-        # Test setting nested value through boolean
+        # Test 'set' operation on nested value through boolean
         (
             {'flag': True},
             ConfigParamSet(op='set', path='flag.nested', new_val='new_value'),
@@ -330,66 +318,173 @@ def test_update_params_single_update():
         ),
     ],
 )
-def test_apply_param_update_set_nested_through_non_dict_errors(
+def test_apply_param_update_errors(
     params: dict[str, Any],
-    update: ConfigParamSet,
-    expected_error_match: str,
+    update: ConfigParamSet | ConfigParamReplace | ConfigParamRemove,
+    expected_error: str,
 ):
-    """Test _apply_param_update raises error when trying to set nested value through non-dict."""
-    with pytest.raises(ValueError, match=expected_error_match):
+    """Test _apply_param_update function with error cases."""
+    with pytest.raises(ValueError, match=re.escape(expected_error)):
         _apply_param_update(params, update)
 
 
 @pytest.mark.parametrize(
-    ('data', 'path', 'value', 'expected_error_match', 'expected_type'),
+    ('params', 'updates', 'expected'),
+    [
+        # Test with multiple operations
+        (
+            {
+                'api_key': 'old_key',
+                'database': {'host': 'localhost', 'port': 5432},
+                'deprecated_field': 'old_value',
+            },
+            [
+                ConfigParamSet(op='set', path='api_key', new_val='new_key'),
+                ConfigParamReplace(
+                    op='str_replace', path='database.host', search_for='localhost', replace_with='remotehost'
+                ),
+                ConfigParamRemove(op='remove', path='deprecated_field'),
+            ],
+            {
+                'api_key': 'new_key',
+                'database': {'host': 'remotehost', 'port': 5432},
+            },
+        ),
+        # Test with single update
+        (
+            {'api_key': 'old_key'},
+            [ConfigParamSet(op='set', path='api_key', new_val='new_key')],
+            {'api_key': 'new_key'},
+        ),
+        # Test with empty updates list
+        (
+            {'api_key': 'value'},
+            [],
+            {'api_key': 'value'},
+        ),
+        # Test sequential dependency - set then modify
+        (
+            {'config': {}},
+            [
+                ConfigParamSet(op='set', path='config.url', new_val='http://old.example.com'),
+                ConfigParamReplace(op='str_replace', path='config.url', search_for='old', replace_with='new'),
+            ],
+            {'config': {'url': 'http://new.example.com'}},
+        ),
+        # Test sequential dependency - set, modify, then set another dependent value
+        (
+            {},
+            [
+                ConfigParamSet(op='set', path='database.host', new_val='localhost'),
+                ConfigParamSet(op='set', path='database.port', new_val=5432),
+                ConfigParamSet(op='set', path='database.ssl', new_val=True),
+            ],
+            {'database': {'host': 'localhost', 'port': 5432, 'ssl': True}},
+        ),
+        # Test order matters - set, replace, then set again
+        (
+            {'value': 'initial'},
+            [
+                ConfigParamReplace(op='str_replace', path='value', search_for='initial', replace_with='modified'),
+                ConfigParamSet(op='set', path='value', new_val='final'),
+            ],
+            {'value': 'final'},
+        ),
+    ],
+)
+def test_update_params(
+    params: dict[str, Any],
+    updates: Sequence[ConfigParamUpdate],
+    expected: dict[str, Any],
+):
+    """Test update_params function with valid operations."""
+    result = update_params(params, updates)
+    assert result == expected
+
+
+def test_update_params_does_not_mutate_original_dict():
+    """Test that update_params does NOT mutate the original params dict."""
+    params = {'api_key': 'old_key', 'count': 42}
+    updates = [
+        ConfigParamSet(op='set', path='api_key', new_val='new_key'),
+        ConfigParamSet(op='set', path='count', new_val=100),
+    ]
+
+    result = update_params(params, updates)
+
+    # The function returns a new dict with updates
+    assert result == {'api_key': 'new_key', 'count': 100}
+    # The original dict is unchanged
+    assert params == {'api_key': 'old_key', 'count': 42}
+    # They are different objects
+    assert result is not params
+
+
+def test_update_params_with_error_in_middle():
+    """Test that update_params raises error if any update fails, and original dict is unchanged."""
+    params = {'api_key': 'value', 'count': 42}
+    original_params = params.copy()
+    updates = [
+        ConfigParamSet(op='set', path='api_key', new_val='new_key'),
+        ConfigParamRemove(op='remove', path='nonexistent_field'),  # This will fail
+        ConfigParamSet(op='set', path='count', new_val=100),  # This won't be reached
+    ]
+
+    with pytest.raises(ValueError, match='Path "nonexistent_field" does not exist'):
+        update_params(params, updates)
+
+    # Original dict is completely unchanged (no mutations)
+    assert params == original_params
+    assert params == {'api_key': 'value', 'count': 42}
+
+
+@pytest.mark.parametrize(
+    ('data', 'path', 'value', 'expected_error'),
     [
         # Test setting through string
         (
             {'api_key': 'string_value'},
             'api_key.nested',
             'new_value',
-            'Cannot set nested value at path "api_key.nested"',
-            'str',
+            'Cannot set nested value at path "api_key.nested": encountered non-dict value at "api_key" (type: str)',
         ),
         # Test setting through number
         (
             {'count': 42},
             'count.nested',
             'new_value',
-            'Cannot set nested value at path "count.nested"',
-            'int',
+            'Cannot set nested value at path "count.nested": encountered non-dict value at "count" (type: int)',
         ),
         # Test setting through list
         (
             {'items': [1, 2, 3]},
             'items.nested',
             'new_value',
-            'Cannot set nested value at path "items.nested"',
-            'list',
+            'Cannot set nested value at path "items.nested": encountered non-dict value at "items" (type: list)',
         ),
         # Test setting through boolean
         (
             {'flag': True},
             'flag.nested',
             'new_value',
-            'Cannot set nested value at path "flag.nested"',
-            'bool',
+            'Cannot set nested value at path "flag.nested": encountered non-dict value at "flag" (type: bool)',
         ),
         # Test setting through None
         (
             {'value': None},
             'value.nested',
             'new_value',
-            'Cannot set nested value at path "value.nested"',
-            'NoneType',
+            'Cannot set nested value at path "value.nested": encountered non-dict value at "value" (type: NoneType)',
         ),
         # Test deeply nested path with non-dict in middle
         (
             {'database': {'config': 'string_value'}},
             'database.config.host.port',
             5432,
-            'Cannot set nested value at path "database.config.host.port"',
-            'str',
+            (
+                'Cannot set nested value at path "database.config.host.port": '
+                'encountered non-dict value at "database.config" (type: str)'
+            ),
         ),
     ],
 )
@@ -397,15 +492,8 @@ def test_set_nested_value_through_non_dict_errors(
     data: dict[str, Any],
     path: str,
     value: Any,
-    expected_error_match: str,
-    expected_type: str,
+    expected_error: str,
 ):
     """Test _set_nested_value raises error when encountering non-dict in path."""
-    from keboola_mcp_server.tools.components.utils import _set_nested_value
-
-    with pytest.raises(ValueError, match=expected_error_match):
-        _set_nested_value(data, path, value)
-
-    # Also verify the error message contains the type information
-    with pytest.raises(ValueError, match=f'type: {expected_type}'):
+    with pytest.raises(ValueError, match=re.escape(expected_error)):
         _set_nested_value(data, path, value)
