@@ -15,7 +15,7 @@ description, and a list of created table names.
 - [list_configs](#list_configs): Retrieves configurations of components present in the project,
 optionally filtered by component types or specific component IDs.
 - [list_transformations](#list_transformations): Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
-- [update_config](#update_config): Updates a specific root component configuration using given by component ID, and configuration ID.
+- [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates a specific component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
@@ -561,24 +561,37 @@ EXAMPLES:
 
 **Description**:
 
-Updates a specific root component configuration using given by component ID, and configuration ID.
+Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 
-CONSIDERATIONS:
-- The configuration JSON object must follow the root_configuration_schema of the specified component.
-- Make sure the configuration parameters always adhere to the root_configuration_schema,
-  which is available via the component_detail tool.
-- The configuration JSON object should be close to the component's configuration examples if applicable.
+This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
+All other fields will remain unchanged.
+Use this tool when modifying existing configurations; for configuration rows, use update_config_row instead.
 
-USAGE:
-- Use when you want to update a root configuration of a specific component.
+WHEN TO USE:
+- Modifying configuration parameters (credentials, settings, API keys, etc.)
+- Updating storage mappings (input/output tables or files)
+- Changing configuration name or description
+- Any combination of the above
 
-EXAMPLES:
-- user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
-- agent action:
-    - set the component_id, configuration_id and parameter updates accordingly.
-    - set the change_description to the description of the change made to the component configuration.
-- tool response:
-    - returns the configuration update summary
+PREREQUISITES:
+- Configuration must already exist (use create_config for new configurations)
+- You must know both component_id and configuration_id
+- For parameter updates: Review the component's root_configuration_schema and config examples using get_component
+- For storage updates: Ensure mappings are valid for the component type
+
+IMPORTANT CONSIDERATIONS:
+- Parameter updates are PARTIAL - only specify fields you want to change
+- parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+- Parameters must conform to the component's root_configuration_schema
+- Validate schemas before calling: use get_component to retrieve root_configuration_schema
+- For row-based components, this updates the ROOT only (use update_config_row for individual rows)
+
+WORKFLOW:
+1. Retrieve current configuration using get_config (to understand current state)
+2. Identify specific parameters/storage mappings to modify
+3. Prepare parameter_updates list with targeted operations
+4. Call update_config with only the fields to change
+5. Verify update using the returned version number and links
 
 
 **Input JSON Schema**:
@@ -640,7 +653,7 @@ EXAMPLES:
       "type": "object"
     },
     "ConfigParamSet": {
-      "description": "Set value of existing parameter key or create a new key.",
+      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
       "properties": {
         "op": {
           "const": "set",
@@ -668,7 +681,7 @@ EXAMPLES:
   },
   "properties": {
     "change_description": {
-      "description": "Description of the change made to the component configuration.",
+      "description": "A clear, human-readable summary of what changed in this update. Be specific: e.g., \"Updated API key\", \"Added customers table to input mapping\".",
       "title": "Change Description",
       "type": "string"
     },
@@ -684,19 +697,19 @@ EXAMPLES:
     },
     "name": {
       "default": "",
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "description": "New name for the configuration. Only provide if changing the name. Name should be short (typically under 50 characters) and descriptive.",
       "title": "Name",
       "type": "string"
     },
     "description": {
       "default": "",
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "description": "New detailed description for the configuration. Only provide if changing the description. Should explain the purpose, data sources, and behavior of this configuration.",
       "title": "Description",
       "type": "string"
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of parameter updates to apply. Each one specifies an operation (set, str_replace, remove) and the key to modify. Only the specified parameters are changed, preserving all others.",
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -724,7 +737,7 @@ EXAMPLES:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The table and/or file input/output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined. Only updated if provided.",
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the component's storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "title": "Storage",
       "type": "object"
     }

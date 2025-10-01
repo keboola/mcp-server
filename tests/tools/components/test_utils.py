@@ -265,6 +265,12 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamRemove(op='remove', path='messages[*].text'),
             {'messages': [{}, {'metadata': {'id': 1}}]},
         ),
+        # Test 'remove' operation with '$' JSONPath - it doesn't do anything
+        (
+            {'messages': [{'text': 'old1'}, {'text': 'old2 old3'}]},
+            ConfigParamRemove(op='remove', path='$'),
+            {'messages': [{'text': 'old1'}, {'text': 'old2 old3'}]},
+        ),
     ],
 )
 def test_apply_param_update(

@@ -186,7 +186,14 @@ class Component(BaseModel):
 
 
 class ConfigParamSet(BaseModel):
-    """Set value of existing parameter key or create a new key."""
+    """
+    Set or create a parameter value at the specified path.
+
+    Use this operation to:
+    - Update an existing parameter value
+    - Create a new parameter key
+    - Replace a nested parameter value
+    """
 
     op: Literal['set']  # name 'op' inspired by JSON Patch (https://datatracker.ietf.org/doc/html/rfc6902)
     path: str = Field(description='JSONPath to the parameter key to set (e.g., "api_key", "database.host")')
