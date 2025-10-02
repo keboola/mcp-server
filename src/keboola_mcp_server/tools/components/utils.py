@@ -20,11 +20,13 @@ This module contains helper functions and utilities used across the component to
 - TransformationConfiguration: Pydantic model for SQL transformation structure
 """
 
+import copy
 import logging
 import re
 import unicodedata
-from typing import Optional, Sequence, Union, cast, get_args
+from typing import Any, Optional, Sequence, Union, cast, get_args
 
+import jsonpath_ng
 from httpx import HTTPStatusError
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -37,6 +39,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
+    ConfigParamUpdate,
     ConfigurationSummary,
 )
 
@@ -418,3 +421,114 @@ async def set_cfg_update_metadata(
         )
     except HTTPStatusError as e:
         logging.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
+
+
+# ============================================================================
+# PARAMETER UPDATE UTILITIES
+# ============================================================================
+
+
+def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
+    """
+    Sets a value in a nested dictionary using a dot-separated path.
+
+    :param data: The dictionary to modify
+    :param path: Dot-separated path (e.g., 'database.host')
+    :param value: The value to set
+    :raises ValueError: If a non-dict value is encountered in the path
+    """
+    keys = path.split('.')
+    current = data
+
+    for i, key in enumerate(keys[:-1]):
+        if key not in current:
+            current[key] = {}
+        current = current[key]
+        if not isinstance(current, dict):
+            path_so_far = '.'.join(keys[: i + 1])
+            raise ValueError(
+                f'Cannot set nested value at path "{path}": '
+                f'encountered non-dict value at "{path_so_far}" (type: {type(current).__name__})'
+            )
+
+    current[keys[-1]] = value
+
+
+def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> dict[str, Any]:
+    """
+    Applies a single parameter update to the given parameters dictionary.
+
+    Note: This function modifies the input dictionary in place for efficiency.
+    The caller (update_params) is responsible for creating a copy if needed.
+
+    :param params: Current parameter values (will be modified in place)
+    :param update: Parameter update operation to apply
+    :return: The modified parameters dictionary
+    :raises ValueError: If trying to set a nested value through a non-dict value in the path
+    """
+    jsonpath_expr = jsonpath_ng.parse(update.path)
+
+    if update.op == 'set':
+        try:
+            matches = jsonpath_expr.find(params)
+            if not matches:
+                # path doesn't exist, create it manually
+                _set_nested_value(params, update.path, update.new_val)
+            else:
+                params = jsonpath_expr.update(params, update.new_val)
+        except Exception as e:
+            raise ValueError(f'Failed to set nested value at path "{update.path}": {e}')
+        return params
+
+    elif update.op == 'str_replace':
+
+        if not update.search_for:
+            raise ValueError('Search string is empty')
+
+        if update.search_for == update.replace_with:
+            raise ValueError(f'Search string and replace string are the same: "{update.search_for}"')
+
+        matches = jsonpath_expr.find(params)
+
+        if not matches:
+            raise ValueError(f'Path "{update.path}" does not exist')
+
+        replace_cnt = 0
+        for match in matches:
+            current_value = match.value
+            if not isinstance(current_value, str):
+                raise ValueError(f'Path "{match.full_path}" is not a string')
+
+            new_value = current_value.replace(update.search_for, update.replace_with)
+            if new_value != current_value:
+                replace_cnt += 1
+                params = match.full_path.update(params, new_value)
+
+        if replace_cnt == 0:
+            raise ValueError(f'Search string "{update.search_for}" not found in path "{update.path}"')
+
+        return params
+
+    elif update.op == 'remove':
+        matches = jsonpath_expr.find(params)
+
+        if not matches:
+            raise ValueError(f'Path "{update.path}" does not exist')
+
+        return jsonpath_expr.filter(lambda x: True, params)
+
+
+def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) -> dict[str, Any]:
+    """
+    Applies a list of parameter updates to the given parameters dictionary.
+    The original dictionary is not modified.
+
+    :param params: Current parameter values
+    :param updates: Sequence of parameter update operations
+    :return: New dictionary with all updates applied
+    """
+    # Create a deep copy to avoid mutating the original
+    params = copy.deepcopy(params)
+    for update in updates:
+        params = _apply_param_update(params, update)
+    return params

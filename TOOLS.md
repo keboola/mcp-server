@@ -15,9 +15,8 @@ description, and a list of created table names.
 - [list_configs](#list_configs): Retrieves configurations of components present in the project,
 optionally filtered by component types or specific component IDs.
 - [list_transformations](#list_transformations): Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
-- [update_config](#update_config): Updates a specific root component configuration using given by component ID, and configuration ID.
-- [update_config_row](#update_config_row): Updates a specific component configuration row in the specified configuration_id, using the specified name,
-component ID, configuration JSON, and description.
+- [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
+- [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
 configuration.
 
@@ -561,30 +560,126 @@ EXAMPLES:
 
 **Description**:
 
-Updates a specific root component configuration using given by component ID, and configuration ID.
+Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 
-CONSIDERATIONS:
-- The configuration JSON object must follow the root_configuration_schema of the specified component.
-- Make sure the configuration parameters always adhere to the root_configuration_schema,
-  which is available via the component_detail tool.
-- The configuration JSON object should adhere to the component's configuration examples if found
+This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
+All other fields will remain unchanged.
+Use this tool when modifying existing configurations; for configuration rows, use update_config_row instead.
 
-USAGE:
-- Use when you want to update a root configuration of a specific component.
+WHEN TO USE:
+- Modifying configuration parameters (credentials, settings, API keys, etc.)
+- Updating storage mappings (input/output tables or files)
+- Changing configuration name or description
+- Any combination of the above
 
-EXAMPLES:
-- user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
-    - set the component_id, configuration_id and configuration parameters accordingly.
-    - set the change_description to the description of the change made to the component configuration.
-    - returns the updated component configuration if successful.
+PREREQUISITES:
+- Configuration must already exist (use create_config for new configurations)
+- You must know both component_id and configuration_id
+- For parameter updates: Review the component's root_configuration_schema using get_component.
+- For storage updates: Ensure mappings are valid for the component type
+
+IMPORTANT CONSIDERATIONS:
+- Parameter updates are PARTIAL - only specify fields you want to change
+- parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+- Parameters must conform to the component's root_configuration_schema
+- Validate schemas before calling: use get_component to retrieve root_configuration_schema
+- For row-based components, this updates the ROOT only (use update_config_row for individual rows)
+
+WORKFLOW:
+1. Retrieve current configuration using get_config (to understand current state)
+2. Identify specific parameters/storage mappings to modify
+3. Prepare parameter_updates list with targeted operations
+4. Call update_config with only the fields to change
 
 
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "ConfigParamRemove": {
+      "description": "Remove a parameter key.",
+      "properties": {
+        "op": {
+          "const": "remove",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to remove",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "title": "ConfigParamRemove",
+      "type": "object"
+    },
+    "ConfigParamReplace": {
+      "description": "Replace a substring in a string parameter.",
+      "properties": {
+        "op": {
+          "const": "str_replace",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to modify",
+          "title": "Path",
+          "type": "string"
+        },
+        "search_for": {
+          "description": "Substring to search for (non-empty)",
+          "title": "Search For",
+          "type": "string"
+        },
+        "replace_with": {
+          "description": "Replacement string (can be empty for deletion)",
+          "title": "Replace With",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "search_for",
+        "replace_with"
+      ],
+      "title": "ConfigParamReplace",
+      "type": "object"
+    },
+    "ConfigParamSet": {
+      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
+      "properties": {
+        "op": {
+          "const": "set",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
+          "title": "Path",
+          "type": "string"
+        },
+        "new_val": {
+          "description": "New value to set",
+          "title": "New Val"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "new_val"
+      ],
+      "title": "ConfigParamSet",
+      "type": "object"
+    }
+  },
   "properties": {
     "change_description": {
-      "description": "Description of the change made to the component configuration.",
+      "description": "A clear, human-readable summary of what changed in this update. Be specific: e.g., \"Updated API key\", \"Added customers table to input mapping\".",
       "title": "Change Description",
       "type": "string"
     },
@@ -600,27 +695,47 @@ EXAMPLES:
     },
     "name": {
       "default": "",
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "description": "New name for the configuration. Only provide if changing the name. Name should be short (typically under 50 characters) and descriptive.",
       "title": "Name",
       "type": "string"
     },
     "description": {
       "default": "",
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "description": "New detailed description for the configuration. Only provide if changing the description. Should explain the purpose, data sources, and behavior of this configuration.",
       "title": "Description",
       "type": "string"
     },
-    "parameters": {
-      "additionalProperties": true,
+    "parameter_updates": {
       "default": null,
-      "description": "The component configuration parameters, adhering to the root_configuration_schema schema. Only updated if provided.",
-      "title": "Parameters",
-      "type": "object"
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "remove": "#/$defs/ConfigParamRemove",
+            "set": "#/$defs/ConfigParamSet",
+            "str_replace": "#/$defs/ConfigParamReplace"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ConfigParamSet"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamReplace"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamRemove"
+          }
+        ]
+      },
+      "title": "Parameter Updates",
+      "type": "array"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined. Only updated if provided.",
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "title": "Storage",
       "type": "object"
     }
@@ -643,70 +758,189 @@ EXAMPLES:
 
 **Description**:
 
-Updates a specific component configuration row in the specified configuration_id, using the specified name,
-component ID, configuration JSON, and description.
+Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 
-CONSIDERATIONS:
-- The configuration JSON object must follow the row_configuration_schema of the specified component.
-- Make sure the configuration parameters always adhere to the row_configuration_schema,
-  which is available via the component_detail tool.
+This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
+All other fields will remain unchanged.
+Configuration rows are individual items within a configuration, often representing separate data sources,
+tables, or endpoints that share the same component type and parent configuration settings.
 
-USAGE:
-- Use when you want to update a row configuration for a specific component and configuration.
+WHEN TO USE:
+- Modifying row-specific parameters (table sources, filters, credentials, etc.)
+- Updating storage mappings for a specific row (input/output tables or files)
+- Changing row name or description
+- Any combination of the above
 
-EXAMPLES:
-- user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
-    - set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
-    - returns the updated component configuration if successful.
+PREREQUISITES:
+- The configuration row must already exist (use add_config_row for new rows)
+- You must know component_id, configuration_id, and configuration_row_id
+- For parameter updates: Review the component's row_configuration_schema using get_component
+- For storage updates: Ensure mappings are valid for row-level storage
+
+IMPORTANT CONSIDERATIONS:
+- Parameter updates are PARTIAL - only specify fields you want to change
+- parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+- Parameters must conform to the component's row_configuration_schema (not root schema)
+- Validate schemas before calling: use get_component to retrieve row_configuration_schema
+- Each row operates independently - changes to one row don't affect others
+- Row-level storage is separate from root-level storage configuration
+
+WORKFLOW:
+1. Retrieve current configuration using get_config to see existing rows
+2. Identify the specific row to modify by its configuration_row_id
+3. Prepare parameter_updates list with targeted operations for this row
+4. Call update_config_row with only the fields to change
 
 
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "ConfigParamRemove": {
+      "description": "Remove a parameter key.",
+      "properties": {
+        "op": {
+          "const": "remove",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to remove",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "title": "ConfigParamRemove",
+      "type": "object"
+    },
+    "ConfigParamReplace": {
+      "description": "Replace a substring in a string parameter.",
+      "properties": {
+        "op": {
+          "const": "str_replace",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to modify",
+          "title": "Path",
+          "type": "string"
+        },
+        "search_for": {
+          "description": "Substring to search for (non-empty)",
+          "title": "Search For",
+          "type": "string"
+        },
+        "replace_with": {
+          "description": "Replacement string (can be empty for deletion)",
+          "title": "Replace With",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "search_for",
+        "replace_with"
+      ],
+      "title": "ConfigParamReplace",
+      "type": "object"
+    },
+    "ConfigParamSet": {
+      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
+      "properties": {
+        "op": {
+          "const": "set",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
+          "title": "Path",
+          "type": "string"
+        },
+        "new_val": {
+          "description": "New value to set",
+          "title": "New Val"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "new_val"
+      ],
+      "title": "ConfigParamSet",
+      "type": "object"
+    }
+  },
   "properties": {
     "change_description": {
-      "description": "Description of the change made to the component configuration.",
+      "description": "A clear, human-readable summary of what changed in this row update. Be specific.",
       "title": "Change Description",
       "type": "string"
     },
     "component_id": {
-      "description": "The ID of the component to update.",
+      "description": "The ID of the component the configuration belongs to.",
       "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
-      "description": "The ID of the configuration to update.",
+      "description": "The ID of the parent configuration containing the row to update.",
       "title": "Configuration Id",
       "type": "string"
     },
     "configuration_row_id": {
-      "description": "The ID of the configuration row to update.",
+      "description": "The ID of the specific configuration row to update.",
       "title": "Configuration Row Id",
       "type": "string"
     },
     "name": {
       "default": "",
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "description": "New name for the configuration row. Only provide if changing the name. Name should be short (typically under 50 characters) and descriptive of this specific row.",
       "title": "Name",
       "type": "string"
     },
     "description": {
       "default": "",
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "description": "New detailed description for the configuration row. Only provide if changing the description. Should explain the specific purpose and behavior of this individual row.",
       "title": "Description",
       "type": "string"
     },
-    "parameters": {
-      "additionalProperties": true,
+    "parameter_updates": {
       "default": null,
-      "description": "The component row configuration parameters, adhering to the row_configuration_schema. Only updated if provided.",
-      "title": "Parameters",
-      "type": "object"
+      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "remove": "#/$defs/ConfigParamRemove",
+            "set": "#/$defs/ConfigParamSet",
+            "str_replace": "#/$defs/ConfigParamReplace"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ConfigParamSet"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamReplace"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamRemove"
+          }
+        ]
+      },
+      "title": "Parameter Updates",
+      "type": "array"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined. Only updated if provided.",
+      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_config first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "title": "Storage",
       "type": "object"
     }

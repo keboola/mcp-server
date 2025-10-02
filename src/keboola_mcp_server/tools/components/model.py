@@ -33,7 +33,7 @@ from individual tasks:
 """
 
 from datetime import datetime
-from typing import Any, List, Literal, Optional, Union
+from typing import Annotated, Any, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -178,6 +178,46 @@ class Component(BaseModel):
             configuration_schema=api_response.configuration_schema,
             configuration_row_schema=api_response.configuration_row_schema,
         )
+
+
+# ============================================================================
+# CONFIGURATION PARAMETER UPDATE MODELS
+# ============================================================================
+
+
+class ConfigParamSet(BaseModel):
+    """
+    Set or create a parameter value at the specified path.
+
+    Use this operation to:
+    - Update an existing parameter value
+    - Create a new parameter key
+    - Replace a nested parameter value
+    """
+
+    op: Literal['set']  # name 'op' inspired by JSON Patch (https://datatracker.ietf.org/doc/html/rfc6902)
+    path: str = Field(description='JSONPath to the parameter key to set (e.g., "api_key", "database.host")')
+    new_val: Any = Field(description='New value to set')
+
+
+class ConfigParamReplace(BaseModel):
+    """Replace a substring in a string parameter."""
+
+    op: Literal['str_replace']
+    path: str = Field(description='JSONPath to the parameter key to modify')
+    search_for: str = Field(description='Substring to search for (non-empty)')
+    replace_with: str = Field(description='Replacement string (can be empty for deletion)')
+
+
+class ConfigParamRemove(BaseModel):
+    """Remove a parameter key."""
+
+    op: Literal['remove']
+    path: str = Field(description='JSONPath to the parameter key to remove')
+
+
+# Discriminated union of all parameter update operations
+ConfigParamUpdate = Annotated[Union[ConfigParamSet, ConfigParamReplace, ConfigParamRemove], Field(discriminator='op')]
 
 
 # ============================================================================
@@ -454,7 +494,7 @@ class Configuration(BaseModel):
 
 
 class ConfigToolOutput(BaseModel):
-    """Standard response model for configuration tool operations."""
+    """Response model for configuration tool operations."""
 
     component_id: str = Field(description='The ID of the component.')
     configuration_id: str = Field(description='The ID of the configuration.')

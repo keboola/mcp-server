@@ -21,6 +21,10 @@ from keboola_mcp_server.tools.components import (
 from keboola_mcp_server.tools.components.model import (
     ComponentSummary,
     ComponentWithConfigurations,
+    ConfigParamRemove,
+    ConfigParamReplace,
+    ConfigParamSet,
+    ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
     ConfigurationRootSummary,
@@ -640,33 +644,75 @@ async def test_add_config_row(
 
 
 @pytest.mark.parametrize(
-    ('parameters', 'storage', 'expected_config'),
+    ('parameter_updates', 'storage', 'expected_config'),
     [
         pytest.param(
-            {'updated_param': 'updated_value'},
-            {'output': {'tables': []}},
-            {
-                'parameters': {'updated_param': 'updated_value'},
-                'storage': {'output': {'tables': []}},
-                'other_field': 'should_be_preserved',
-            },
-            id='both_provided',
-        ),
-        pytest.param(
-            {'updated_param': 'updated_value'},
+            [
+                ConfigParamSet(op='set', path='api_key', new_val='new_api_key'),
+                ConfigParamReplace(op='str_replace', path='database.host', search_for='old', replace_with='new'),
+                ConfigParamRemove(op='remove', path='deprecated_field'),
+            ],
             None,
             {
-                'parameters': {'updated_param': 'updated_value'},
+                'parameters': {
+                    'api_key': 'new_api_key',
+                    'database': {'host': 'new_host', 'port': 5432},
+                    'existing_param': 'existing_value',
+                    # 'deprecated_field' is removed
+                },
                 'storage': {'input': {'tables': ['existing_table']}},
                 'other_field': 'should_be_preserved',
             },
-            id='parameters_only',
+            id='parameter_updates_only1',
+        ),
+        pytest.param(
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
+            None,
+            {
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'updated_param': 'updated_value',
+                    # 'existing_param' is removed
+                },
+                'storage': {'input': {'tables': ['existing_table']}},
+                'other_field': 'should_be_preserved',
+            },
+            id='parameter_updates_only2',
+        ),
+        pytest.param(
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
+            {'output': {'tables': []}},
+            {
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'updated_param': 'updated_value',
+                    # 'existing_param' is removed
+                },
+                'storage': {'output': {'tables': []}},
+                'other_field': 'should_be_preserved',
+            },
+            id='both_parameter_updates_and_storage',
         ),
         pytest.param(
             None,
             {'output': {'tables': []}},
             {
-                'parameters': {'existing_param': 'existing_value'},
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'existing_param': 'existing_value',
+                },
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
             },
@@ -679,11 +725,11 @@ async def test_update_config(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
-    parameters: dict[str, Any] | None,
+    parameter_updates: list[ConfigParamUpdate] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
-    """Test update_component_root_configuration tool."""
+    """Test update_component_root_configuration tool with parameter_updates."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
@@ -695,7 +741,12 @@ async def test_update_config(
         'name': 'Existing Config',
         'description': 'Existing description',
         'configuration': {
-            'parameters': {'existing_param': 'existing_value'},
+            'parameters': {
+                'api_key': 'old_api_key',
+                'database': {'host': 'old_host', 'port': 5432},
+                'deprecated_field': 'old_value',
+                'existing_param': 'existing_value',
+            },
             'storage': {'input': {'tables': ['existing_table']}},
             'other_field': 'should_be_preserved',
         },
@@ -718,9 +769,9 @@ async def test_update_config(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
-    change_description = 'Test update'
+    change_description = 'Test update with parameter updates'
 
-    # Test the update_component_root_configuration tool
+    # Test the update_component_root_configuration tool with parameter_updates
     result = await update_config(
         ctx=context,
         name=updated_name,
@@ -728,7 +779,7 @@ async def test_update_config(
         change_description=change_description,
         component_id=component_id,
         configuration_id=configuration_id,
-        parameters=parameters,
+        parameter_updates=parameter_updates,
         storage=storage,
     )
 
@@ -752,27 +803,33 @@ async def test_update_config(
 
 
 @pytest.mark.parametrize(
-    ('parameters', 'storage', 'expected_config'),
+    ('parameter_updates', 'storage', 'expected_config'),
     [
         pytest.param(
-            {'updated_param': 'updated_value'},
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
             {'output': {'tables': []}},
             {
                 'parameters': {'updated_param': 'updated_value'},
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
             },
-            id='both_provided',
+            id='both_parameter_updates_and_storage',
         ),
         pytest.param(
-            {'updated_param': 'updated_value'},
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
             None,
             {
                 'parameters': {'updated_param': 'updated_value'},
                 'storage': {'input': {'tables': ['existing_table']}},
                 'other_field': 'should_be_preserved',
             },
-            id='parameters_only',
+            id='parameter_updates_only',
         ),
         pytest.param(
             None,
@@ -791,11 +848,11 @@ async def test_update_config_row(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
-    parameters: dict[str, Any] | None,
+    parameter_updates: list[ConfigParamUpdate] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
-    """Test update_component_row_configuration tool."""
+    """Test update_component_row_configuration tool with parameter_updates."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
@@ -830,7 +887,7 @@ async def test_update_config_row(
 
     change_description = 'Test row update'
 
-    # Test the update_component_row_configuration tool
+    # Test the update_component_row_configuration tool with parameter_updates
     result = await update_config_row(
         ctx=context,
         name=updated_name,
@@ -839,7 +896,7 @@ async def test_update_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_row_id=configuration_row_id,
-        parameters=parameters,
+        parameter_updates=parameter_updates,
         storage=storage,
     )
 
