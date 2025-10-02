@@ -223,22 +223,25 @@ async def create_conditional_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
 ) -> FlowToolOutput:
     """
-    Creates a new **conditional flow** configuration in Keboola.
+    Creates a new conditional flow configuration in Keboola.
 
-    If you haven't already called it, always use the `get_flow_schema` tool using `keboola.flow` flow type
-    to see the latest schema for conditional flows and also look at the examples under `get_flow_examples` tool.
+    BEFORE USING THIS TOOL:
+    - Call `get_flow_schema` with flow_type='keboola.flow' to see the required schema structure
+    - Call `get_flow_examples` with flow_type='keboola.flow' to see working examples
 
-    CONSIDERATIONS:
-    - Do not create conditions, unless user asks for them explicitly
-    - All IDs must be unique and clearly defined.
-    - The `phases` and `tasks` parameters must conform to the keboola.flow JSON schema.
-    - The phases cannot be empty.
-    - Conditional flows are the default and recommended flow type in Keboola.
+    REQUIREMENTS:
+    - All phase and task IDs must be unique strings
+    - The `phases` list cannot be empty
+    - The `phases` and `tasks` parameters must match the keboola.flow JSON schema structure
+    - Only include conditions/retry logic if the user explicitly requests them
+    - All phases must be connected: no dangling phases are allowed
+    - The flow must have exactly one entry point (one phase with no incoming transitions)
+    - Every phase must either transition to another phase or end the flow
 
-    USE CASES:
-    - user_input: Create a flow.
-    - user_input: Create a flow with complex conditional logic and retry mechanisms.
-    - user_input: Build a data pipeline with sophisticated error handling and notifications.
+    WHEN TO USE:
+    - User asks to "create a flow" (conditional flows are the default flow type)
+    - User requests conditional logic, retry mechanisms, or error handling
+    - User needs a data pipeline with sophisticated branching or notifications
     """
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
     processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
