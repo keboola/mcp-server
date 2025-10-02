@@ -430,7 +430,7 @@ async def set_cfg_update_metadata(
 
 def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
     """
-    Set a value in a nested dictionary using a dot-separated path.
+    Sets a value in a nested dictionary using a dot-separated path.
 
     :param data: The dictionary to modify
     :param path: Dot-separated path (e.g., 'database.host')
@@ -456,7 +456,7 @@ def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
 
 def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> dict[str, Any]:
     """
-    Apply a single parameter update to the given parameters dictionary.
+    Applies a single parameter update to the given parameters dictionary.
 
     Note: This function modifies the input dictionary in place for efficiency.
     The caller (update_params) is responsible for creating a copy if needed.
@@ -507,7 +507,7 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
 
 def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) -> dict[str, Any]:
     """
-    Apply a list of parameter updates to the given parameters dictionary.
+    Applies a list of parameter updates to the given parameters dictionary.
     The original dictionary is not modified.
 
     :param params: Current parameter values

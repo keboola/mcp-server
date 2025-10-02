@@ -859,7 +859,8 @@ async def update_config(
             description=(
                 'List of granular parameter update operations to apply. '
                 'Each operation (set, str_replace, remove) modifies a specific '
-                'parameter using JSONPath notation. Only provide if updating parameters. '
+                'parameter using JSONPath notation. Only provide if updating parameters -'
+                ' do not use for changing description or storage. '
                 'Prefer simple dot-delimited JSONPaths '
                 'and make the smallest possible updates - only change what needs changing. '
                 'In case you need to replace the whole parameters, you can use the `set` operation '
@@ -881,7 +882,7 @@ async def update_config(
                 '\n'
                 'Important:\n'
                 '- Not applicable for row-based components (they use row-level storage)\n'
-                "- Must conform to the component's storage schema\n"
+                '- Must conform to the Keboola storage schema\n'
                 '- Replaces ALL existing storage config - include all mappings you want to keep\n'
                 '- Use get_config first to see current storage configuration\n'
                 '- Leave unfilled to preserve existing storage configuration'
@@ -950,7 +951,7 @@ async def update_config(
         parameters_cfg = validate_root_parameters_configuration(
             component=component,
             parameters=updated_params,
-            initial_message='The updated "parameters" field is not valid.',
+            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
         )
         configuration_payload['parameters'] = parameters_cfg
 

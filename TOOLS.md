@@ -709,7 +709,7 @@ WORKFLOW:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -737,7 +737,7 @@ WORKFLOW:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the component's storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "title": "Storage",
       "type": "object"
     }
