@@ -803,27 +803,33 @@ async def test_update_config(
 
 
 @pytest.mark.parametrize(
-    ('parameters', 'storage', 'expected_config'),
+    ('parameter_updates', 'storage', 'expected_config'),
     [
         pytest.param(
-            {'updated_param': 'updated_value'},
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
             {'output': {'tables': []}},
             {
                 'parameters': {'updated_param': 'updated_value'},
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
             },
-            id='both_provided',
+            id='both_parameter_updates_and_storage',
         ),
         pytest.param(
-            {'updated_param': 'updated_value'},
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
             None,
             {
                 'parameters': {'updated_param': 'updated_value'},
                 'storage': {'input': {'tables': ['existing_table']}},
                 'other_field': 'should_be_preserved',
             },
-            id='parameters_only',
+            id='parameter_updates_only',
         ),
         pytest.param(
             None,
@@ -842,11 +848,11 @@ async def test_update_config_row(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
-    parameters: dict[str, Any] | None,
+    parameter_updates: list[ConfigParamUpdate] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
-    """Test update_component_row_configuration tool."""
+    """Test update_component_row_configuration tool with parameter_updates."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
@@ -881,7 +887,7 @@ async def test_update_config_row(
 
     change_description = 'Test row update'
 
-    # Test the update_component_row_configuration tool
+    # Test the update_component_row_configuration tool with parameter_updates
     result = await update_config_row(
         ctx=context,
         name=updated_name,
@@ -890,7 +896,7 @@ async def test_update_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_row_id=configuration_row_id,
-        parameters=parameters,
+        parameter_updates=parameter_updates,
         storage=storage,
     )
 

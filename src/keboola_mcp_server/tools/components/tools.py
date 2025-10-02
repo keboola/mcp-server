@@ -906,7 +906,7 @@ async def update_config(
     PREREQUISITES:
     - Configuration must already exist (use create_config for new configurations)
     - You must know both component_id and configuration_id
-    - For parameter updates: Review the component's root_configuration_schema and config examples using get_component
+    - For parameter updates: Review the component's root_configuration_schema using get_component.
     - For storage updates: Ensure mappings are valid for the component type
 
     IMPORTANT CONSIDERATIONS:
@@ -921,7 +921,6 @@ async def update_config(
     2. Identify specific parameters/storage mappings to modify
     3. Prepare parameter_updates list with targeted operations
     4. Call update_config with only the fields to change
-    5. Verify update using the returned version number and links
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -995,33 +994,44 @@ async def update_config_row(
     ctx: Context,
     change_description: Annotated[
         str,
-        Field(
-            description='Description of the change made to the component configuration.',
-        ),
+        Field(description=('A clear, human-readable summary of what changed in this row update. Be specific.')),
     ],
-    component_id: Annotated[str, Field(description='The ID of the component to update.')],
-    configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
-    configuration_row_id: Annotated[str, Field(description='The ID of the configuration row to update.')],
+    component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
+    configuration_id: Annotated[
+        str,
+        Field(description='The ID of the parent configuration containing the row to update.'),
+    ],
+    configuration_row_id: Annotated[str, Field(description='The ID of the specific configuration row to update.')],
     name: Annotated[
         str,
         Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
+            description=(
+                'New name for the configuration row. Only provide if changing the name. '
+                'Name should be short (typically under 50 characters) and descriptive of this specific row.'
+            )
         ),
     ] = '',
     description: Annotated[
         str,
         Field(
             description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
-            ),
+                'New detailed description for the configuration row. Only provide if changing the description. '
+                'Should explain the specific purpose and behavior of this individual row.'
+            )
         ),
     ] = '',
-    parameters: Annotated[
-        dict[str, Any],
+    parameter_updates: Annotated[
+        list[ConfigParamUpdate],
         Field(
             description=(
-                'The component row configuration parameters, adhering to the row_configuration_schema. '
-                'Only updated if provided.'
+                'List of granular parameter update operations to apply to this row. '
+                'Each operation (set, str_replace, remove) modifies a specific '
+                'parameter using JSONPath notation. Only provide if updating parameters - '
+                'do not use for changing description or storage. '
+                'Prefer simple dot-delimited JSONPaths '
+                'and make the smallest possible updates - only change what needs changing. '
+                'In case you need to replace the whole parameters, you can use the `set` operation '
+                'with `$` as path.'
             ),
         ),
     ] = None,
@@ -1029,29 +1039,57 @@ async def update_config_row(
         dict[str, Any],
         Field(
             description=(
-                'The table and/or file input/output mapping of the component configuration. '
-                'It is present only for components that have tables or file input mapping defined. '
-                'Only updated if provided.'
-            ),
+                'Complete storage configuration for this row containing input/output table and file mappings. '
+                'Only provide if updating storage mappings - this replaces the ENTIRE storage configuration '
+                'for this row. '
+                '\n\n'
+                'When to use:\n'
+                '- Adding/removing input or output tables for this specific row\n'
+                '- Modifying table/file mappings for this row\n'
+                '- Updating table destinations or sources for this row\n'
+                '\n'
+                'Important:\n'
+                "- Must conform to the component's row storage schema\n"
+                '- Replaces ALL existing storage config for this row - include all mappings you want to keep\n'
+                '- Use get_config first to see current row storage configuration\n'
+                '- Leave unfilled to preserve existing storage configuration'
+            )
         ),
     ] = None,
 ) -> ConfigToolOutput:
     """
-    Updates a specific component configuration row in the specified configuration_id, using the specified name,
-    component ID, configuration JSON, and description.
+    Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 
-    CONSIDERATIONS:
-    - The configuration JSON object must follow the row_configuration_schema of the specified component.
-    - Make sure the configuration parameters always adhere to the row_configuration_schema,
-      which is available via the component_detail tool.
+    This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
+    All other fields will remain unchanged.
+    Configuration rows are individual items within a configuration, often representing separate data sources,
+    tables, or endpoints that share the same component type and parent configuration settings.
 
-    USAGE:
-    - Use when you want to update a row configuration for a specific component and configuration.
+    WHEN TO USE:
+    - Modifying row-specific parameters (table sources, filters, credentials, etc.)
+    - Updating storage mappings for a specific row (input/output tables or files)
+    - Changing row name or description
+    - Any combination of the above
 
-    EXAMPLES:
-    - user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
-        - set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
-        - returns the updated component configuration if successful.
+    PREREQUISITES:
+    - The configuration row must already exist (use add_config_row for new rows)
+    - You must know component_id, configuration_id, and configuration_row_id
+    - For parameter updates: Review the component's row_configuration_schema using get_component
+    - For storage updates: Ensure mappings are valid for row-level storage
+
+    IMPORTANT CONSIDERATIONS:
+    - Parameter updates are PARTIAL - only specify fields you want to change
+    - parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+    - Parameters must conform to the component's row_configuration_schema (not root schema)
+    - Validate schemas before calling: use get_component to retrieve row_configuration_schema
+    - Each row operates independently - changes to one row don't affect others
+    - Row-level storage is separate from root-level storage configuration
+
+    WORKFLOW:
+    1. Retrieve current configuration using get_config to see existing rows
+    2. Identify the specific row to modify by its configuration_row_id
+    3. Prepare parameter_updates list with targeted operations for this row
+    4. Call update_config_row with only the fields to change
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1077,11 +1115,14 @@ async def update_config_row(
         )
         configuration_payload['storage'] = storage_cfg
 
-    if parameters is not None:
+    if parameter_updates:
+        current_params = configuration_payload.get('parameters', {})
+        updated_params = update_params(current_params, parameter_updates)
+
         parameters_cfg = validate_row_parameters_configuration(
             component=component,
-            parameters=parameters,
-            initial_message='Field "parameters" is not valid.\n',
+            parameters=updated_params,
+            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
         )
         configuration_payload['parameters'] = parameters_cfg
 

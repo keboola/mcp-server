@@ -505,12 +505,16 @@ async def initial_cmpconf_row(
         {
             'name': 'Updated Row Configuration',
             'description': 'Updated row configuration by automated test',
-            'parameters': {'updated_row_param': 'updated_row_value'},
+            'parameter_updates': [{'op': 'set', 'path': '$', 'new_val': {'updated_row_param': 'updated_row_value'}}],
             'storage': {},
         },
         {'name': 'Updated just name'},
         {'description': 'Updated just description'},
-        {'parameters': {'updated_row_param': 'Updated just parameters'}},
+        {
+            'parameter_updates': [
+                {'op': 'set', 'path': '$', 'new_val': {'updated_row_param': 'Updated just parameters'}}
+            ]
+        },
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
     ],
 )
@@ -590,8 +594,9 @@ async def test_update_config_row(
     row_config_data = updated_row['configuration']
     assert isinstance(row_config_data, dict), f'Expecting dict, got: {type(row_config_data)}'
 
-    if (expected_row_parameters := updates.get('parameters')) is not None:
-        assert row_config_data['parameters'] == expected_row_parameters
+    if (parameter_updates := updates.get('parameter_updates')) is not None:
+        # Using the assumption that parameter_updates is a list with one element with 'set' operation on root path
+        assert row_config_data['parameters'] == parameter_updates[0]['new_val']
 
     if (expected_storage := updates.get('storage')) is not None:
         # Storage API might return more keys than what we set, so we check subset
