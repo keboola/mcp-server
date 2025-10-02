@@ -1095,8 +1095,8 @@ async def update_config_row(
     links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
-        f'Updating configuration row for component: {component_id}, configuration id {configuration_id} '
-        f'and row id {configuration_row_id}.'
+        f'Updating configuration row for component: {component_id}, configuration id: {configuration_id}, '
+        f'row id: {configuration_row_id}.'
     )
 
     current_row = await client.storage_client.configuration_row_detail(
@@ -1122,7 +1122,7 @@ async def update_config_row(
         parameters_cfg = validate_row_parameters_configuration(
             component=component,
             parameters=updated_params,
-            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
+            initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
         )
         configuration_payload['parameters'] = parameters_cfg
 
@@ -1136,7 +1136,10 @@ async def update_config_row(
         updated_description=description,
     )
 
-    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
+    LOG.info(
+        f'Updated configuration row for component: {component_id}, configuration id: {configuration_id}, '
+        f'row id: {configuration_row_id}.'
+    )
 
     await set_cfg_update_metadata(
         client=client,
