@@ -633,12 +633,12 @@ WORKFLOW:
           "type": "string"
         },
         "search_for": {
-          "description": "Substring to search for",
+          "description": "Substring to search for (non-empty)",
           "title": "Search For",
           "type": "string"
         },
         "replace_with": {
-          "description": "Replacement string",
+          "description": "Replacement string (can be empty for deletion)",
           "title": "Replace With",
           "type": "string"
         }

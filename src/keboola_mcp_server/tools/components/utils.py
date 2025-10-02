@@ -481,18 +481,31 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
         return params
 
     elif update.op == 'str_replace':
+
+        if not update.search_for:
+            raise ValueError('Search string is empty')
+
+        if update.search_for == update.replace_with:
+            raise ValueError(f'Search string and replace string are the same: "{update.search_for}"')
+
         matches = jsonpath_expr.find(params)
 
         if not matches:
             raise ValueError(f'Path "{update.path}" does not exist')
 
+        replace_cnt = 0
         for match in matches:
             current_value = match.value
             if not isinstance(current_value, str):
                 raise ValueError(f'Path "{match.full_path}" is not a string')
 
             new_value = current_value.replace(update.search_for, update.replace_with)
-            params = match.full_path.update(params, new_value)
+            if new_value != current_value:
+                replace_cnt += 1
+                params = match.full_path.update(params, new_value)
+
+        if replace_cnt == 0:
+            raise ValueError(f'Search string "{update.search_for}" not found in path "{update.path}"')
 
         return params
 

@@ -217,17 +217,17 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamReplace(op='str_replace', path='api_key', search_for='old', replace_with='new'),
             {'api_key': 'new_key_value'},
         ),
+        # Test 'str_replace' operation with empty replace string
+        (
+            {'api_key': 'old_key_value'},
+            ConfigParamReplace(op='str_replace', path='api_key', search_for='old_', replace_with=''),
+            {'api_key': 'key_value'},
+        ),
         # Test 'str_replace' operation on nested string
         (
             {'database': {'host': 'old_host_name'}},
             ConfigParamReplace(op='str_replace', path='database.host', search_for='old', replace_with='new'),
             {'database': {'host': 'new_host_name'}},
-        ),
-        # Test 'str_replace' when search string not found (returns unchanged)
-        (
-            {'api_key': 'my_secret_key'},
-            ConfigParamReplace(op='str_replace', path='api_key', search_for='notfound', replace_with='new'),
-            {'api_key': 'my_secret_key'},
         ),
         # Test 'str_replace' with multiple occurrences
         (
@@ -297,6 +297,24 @@ def test_apply_param_update(
             {'count': 42},
             ConfigParamReplace(op='str_replace', path='count', search_for='4', replace_with='5'),
             'Path "count" is not a string',
+        ),
+        # Test 'str_replace' when search string is empty
+        (
+            {'api_key': 'my_secret_key'},
+            ConfigParamReplace(op='str_replace', path='api_key', search_for='', replace_with='a'),
+            'Search string is empty',
+        ),
+        # Test 'str_replace' when search string not found
+        (
+            {'api_key': 'my_secret_key'},
+            ConfigParamReplace(op='str_replace', path='api_key', search_for='notfound', replace_with='new'),
+            'Search string "notfound" not found in path "api_key"',
+        ),
+        # Test 'str_replace' when search string and replace string are the same
+        (
+            {'api_key': 'my_secret_key'},
+            ConfigParamReplace(op='str_replace', path='api_key', search_for='a', replace_with='a'),
+            'Search string and replace string are the same: "a"',
         ),
         # Test 'remove' operation on non-existent path
         (

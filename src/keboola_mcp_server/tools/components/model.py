@@ -205,8 +205,8 @@ class ConfigParamReplace(BaseModel):
 
     op: Literal['str_replace']
     path: str = Field(description='JSONPath to the parameter key to modify')
-    search_for: str = Field(description='Substring to search for')
-    replace_with: str = Field(description='Replacement string')
+    search_for: str = Field(description='Substring to search for (non-empty)')
+    replace_with: str = Field(description='Replacement string (can be empty for deletion)')
 
 
 class ConfigParamRemove(BaseModel):
