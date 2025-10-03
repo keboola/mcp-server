@@ -24,7 +24,7 @@ configuration.
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
 ### Flow Tools
-- [create_conditional_flow](#create_conditional_flow): Creates a new **conditional flow** configuration in Keboola.
+- [create_conditional_flow](#create_conditional_flow): Creates a new conditional flow configuration in Keboola.
 - [create_flow](#create_flow): Creates a new flow configuration in Keboola.
 - [get_flow](#get_flow): Gets detailed information about a specific flow configuration.
 - [get_flow_examples](#get_flow_examples): Retrieves examples of valid flow configurations.
@@ -1325,22 +1325,25 @@ Answers a question using the Keboola documentation as a source.
 
 **Description**:
 
-Creates a new **conditional flow** configuration in Keboola.
+Creates a new conditional flow configuration in Keboola.
 
-If you haven't already called it, always use the `get_flow_schema` tool using `keboola.flow` flow type
-to see the latest schema for conditional flows and also look at the examples under `get_flow_examples` tool.
+BEFORE USING THIS TOOL:
+- Call `get_flow_schema` with flow_type='keboola.flow' to see the required schema structure
+- Call `get_flow_examples` with flow_type='keboola.flow' to see working examples
 
-CONSIDERATIONS:
-- Do not create conditions, unless user asks for them explicitly
-- All IDs must be unique and clearly defined.
-- The `phases` and `tasks` parameters must conform to the keboola.flow JSON schema.
-- The phases cannot be empty.
-- Conditional flows are the default and recommended flow type in Keboola.
+REQUIREMENTS:
+- All phase and task IDs must be unique strings
+- The `phases` list cannot be empty
+- The `phases` and `tasks` parameters must match the keboola.flow JSON schema structure
+- Only include conditions/retry logic if the user explicitly requests them
+- All phases must be connected: no dangling phases are allowed
+- The flow must have exactly one entry point (one phase with no incoming transitions)
+- Every phase must either transition to another phase or end the flow
 
-USE CASES:
-- user_input: Create a flow.
-- user_input: Create a flow with complex conditional logic and retry mechanisms.
-- user_input: Build a data pipeline with sophisticated error handling and notifications.
+WHEN TO USE:
+- User asks to "create a flow" (conditional flows are the default flow type)
+- User requests conditional logic, retry mechanisms, or error handling
+- User needs a data pipeline with sophisticated branching or notifications
 
 
 **Input JSON Schema**:
