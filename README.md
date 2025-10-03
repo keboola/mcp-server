@@ -1,6 +1,5 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keboola/mcp-server)
 
-
 # Keboola MCP Server
 
 > Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agents when and where they need it.
@@ -474,3 +473,6 @@ The development team actively monitors issues and will respond as quickly as pos
 - [LinkedIn](https://www.linkedin.com/company/keboola)
 - [Twitter](https://x.com/keboola)
 - [Changelog](https://changelog.keboola.com/)
+
+
+[//]: # (mcp-name: com.keboola/mcp -- keep this line for registry.modelcontextprotocol.io)
