@@ -17,6 +17,22 @@
     {
       "type": "streamable-http",
       "url": "https://mcp.keboola.com/mcp"
+    },
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.us-east4.gcp.keboola.com/mcp"
+    },
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.eu-central-1.keboola.com/mcp"
+    },
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.north-europe.azure.keboola.com/mcp"
+    },
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.europe-west3.gcp.keboola.com/mcp"
     }
-  ]  
+  ]
 }
