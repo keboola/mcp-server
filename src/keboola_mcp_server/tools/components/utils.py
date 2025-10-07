@@ -24,7 +24,7 @@ import copy
 import logging
 import re
 import unicodedata
-from typing import Any, Optional, Sequence, Union, cast, get_args
+from typing import Any, Optional, Sequence, cast
 
 import jsonpath_ng
 from httpx import HTTPStatusError
@@ -35,7 +35,9 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components.model import (
-    AllComponentTypes,
+    ALL_COMPONENT_TYPES,
+    ALL_REGULAR_COMPONENT_TYPES,
+    ComponentCategory,
     ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
@@ -54,41 +56,34 @@ BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 
 
 # ============================================================================
-# COMPONENT TYPE HANDLING
-# ============================================================================
-
-
-def handle_component_types(
-    types: Optional[Union[ComponentType, Sequence[ComponentType]]],
-) -> Sequence[ComponentType]:
-    """
-    Utility function to handle the component types [extractors, writers, applications, all].
-    If the types include "all", it will be removed and the remaining types will be returned.
-
-    :param types: The component types/type to process.
-    :return: The processed component types.
-    """
-    if not types:
-        return [component_type for component_type in get_args(ComponentType)]
-    if isinstance(types, str):
-        types = [types]
-    return types
-
-
-# ============================================================================
 # CONFIGURATION LISTING UTILITIES
 # ============================================================================
 
 
+def expand_component_types(component_types: Sequence[ComponentCategory]) -> list[ComponentType]:
+    """
+    Expand 'all_regular' component category to individual component types.
+    """
+    if not component_types:
+        return ALL_COMPONENT_TYPES
+
+    out_component_types = set(component_types)
+
+    if 'all_regular' in component_types:
+        out_component_types.remove('all_regular')
+        out_component_types.update(ALL_REGULAR_COMPONENT_TYPES)
+
+    return cast(list[ComponentType], sorted(out_component_types))
+
+
 async def list_configs_by_types(
-    client: KeboolaClient, component_types: Sequence[AllComponentTypes]
+    client: KeboolaClient, component_types: Sequence[ComponentType]
 ) -> list[ComponentWithConfigurations]:
     """
     Retrieve components with their configurations filtered by component types.
 
     Used by:
     - list_configs tool
-    - list_transformations tool
 
     :param client: Authenticated Keboola client instance
     :param component_types: Types of components to retrieve (extractor, writer, application, transformation)
@@ -139,7 +134,6 @@ async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str
 
     Used by:
     - list_configs tool (when specific component IDs are requested)
-    - list_transformations tool (when specific transformation IDs are requested)
 
     :param client: Authenticated Keboola client instance
     :param component_ids: Specific component IDs to retrieve

@@ -1,9 +1,12 @@
 import re
-from typing import Any, Sequence, Union
+from typing import Any, Sequence
 
 import pytest
 
 from keboola_mcp_server.tools.components.model import (
+    ALL_COMPONENT_TYPES,
+    ALL_REGULAR_COMPONENT_TYPES,
+    ComponentCategory,
     ComponentType,
     ConfigParamRemove,
     ConfigParamReplace,
@@ -15,8 +18,8 @@ from keboola_mcp_server.tools.components.utils import (
     _apply_param_update,
     _set_nested_value,
     clean_bucket_name,
+    expand_component_types,
     get_transformation_configuration,
-    handle_component_types,
     update_params,
 )
 
@@ -24,18 +27,20 @@ from keboola_mcp_server.tools.components.utils import (
 @pytest.mark.parametrize(
     ('component_type', 'expected'),
     [
-        ('application', ['application']),
         (['extractor', 'writer'], ['extractor', 'writer']),
-        (None, ['application', 'extractor', 'writer']),
-        ([], ['application', 'extractor', 'writer']),
+        (['all_regular'], ALL_REGULAR_COMPONENT_TYPES),
+        (['all_regular', 'extractor'], ALL_REGULAR_COMPONENT_TYPES),
+        (['all_regular', 'transformation'], ALL_COMPONENT_TYPES),
+        ([], ALL_COMPONENT_TYPES),
+        (None, ALL_COMPONENT_TYPES),
     ],
 )
-def test_handle_component_types(
-    component_type: Union[ComponentType, Sequence[ComponentType], None],
+def test_expand_component_types(
+    component_type: Sequence[ComponentCategory],
     expected: list[ComponentType],
 ):
     """Test list_component_configurations tool with core component."""
-    assert handle_component_types(component_type) == expected
+    assert expand_component_types(component_type) == expected
 
 
 @pytest.mark.parametrize(

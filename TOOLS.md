@@ -12,9 +12,8 @@ description, and a list of created table names.
 - [get_component](#get_component): Gets information about a specific component given its ID.
 - [get_config](#get_config): Gets information about a specific component/transformation configuration.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
-- [list_configs](#list_configs): Retrieves configurations of components present in the project,
-optionally filtered by component types or specific component IDs.
-- [list_transformations](#list_transformations): Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
+- [list_configs](#list_configs): Lists all component configurations in the project with optional filtering by component type or specific
+component IDs.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
@@ -451,27 +450,51 @@ EXAMPLES:
 
 **Description**:
 
-Retrieves configurations of components present in the project,
-optionally filtered by component types or specific component IDs.
-If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
-component_types.
+Lists all component configurations in the project with optional filtering by component type or specific
+component IDs.
 
-USAGE:
-- Use when you want to see components configurations in the project for given component_types.
-- Use when you want to see components configurations in the project for given component_ids.
+Returns a list of components, each containing:
+- Component metadata (ID, name, type, description)
+- All configurations for that component
+- Links to the Keboola UI
+
+PARAMETER BEHAVIOR:
+- If component_ids is provided (non-empty): Returns ONLY those specific components, ignoring component_types
+- If component_ids is empty and component_types is empty: Returns ALL components (including transformations).
+- If component_ids is empty and component_types has values: Returns components matching those types
+
+WHEN TO USE:
+- User asks for "all configurations" or "list configurations" → Use component_types=["all_regular"]
+- User asks for specific component types (e.g., "extractors", "writers") → Use component_types
+- User asks for "all transformations" or "list transformations" → Use component_types=["transformation"]
+- User asks for specific component by ID → Use component_ids
+- User needs to see what's configured in the project → Use this tool with appropriate filters, not necessarily
+  treating transformations as a separate category.
 
 EXAMPLES:
-- user_input: `give me all components (in the project)`
-    - returns all components configurations in the project
-- user_input: `list me all extractor components (in the project)`
-    - set types to ["extractor"]
-    - returns all extractor components configurations in the project
-- user_input: `give me configurations for following component/s` | `give me configurations for this component`
-    - set component_ids to list of identifiers accordingly if you know them
-    - returns all configurations for the given components in the project
-- user_input: `give me configurations for 'specified-id'`
-    - set component_ids to ['specified-id']
-    - returns the configurations of the component with ID 'specified-id'
+- user_input: "Show me all components in the project"
+  → component_types=["all_regular"], component_ids=[]
+  → Returns component configurations (excluding transformations)
+
+- user_input: "List all extractor configurations"
+  → component_types=["extractor"], component_ids=[]
+  → Returns only extractor component configurations
+
+- user_input: "Show me all extractors and writers"
+  → component_types=["extractor", "writer"], component_ids=[]
+  → Returns extractor and writer configurations
+
+- user_input: "List all transformations"
+  → component_types=["transformation"], component_ids=[]
+  → Returns transformation configurations
+
+- user_input: "Show me configurations for keboola.ex-db-mysql"
+  → component_types=[], component_ids=["keboola.ex-db-mysql"]
+  → Returns only configurations for the MySQL extractor (component_types is ignored)
+
+- user_input: "Get configs for these components: ex-db-mysql and wr-google-sheets"
+  → component_types=[], component_ids=["keboola.ex-db-mysql", "keboola.wr-google-sheets"]
+  → Returns configurations for both specified components
 
 
 **Input JSON Schema**:
@@ -480,70 +503,34 @@ EXAMPLES:
   "properties": {
     "component_types": {
       "default": [],
-      "description": "List of component types to filter by. If none, return all components.",
+      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\", or \"all_regular\" (all types except transformations). The \"all_regular\" option is consistent with the Keboola UI where transformation configurations are separated from regular component configurations. Empty list returns ALL component types including transformations, which is useful for project exploration.This parameter is IGNORED if component_ids is provided.",
       "items": {
-        "enum": [
-          "application",
-          "extractor",
-          "writer"
-        ],
-        "type": "string"
+        "anyOf": [
+          {
+            "enum": [
+              "application",
+              "extractor",
+              "transformation",
+              "writer"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "all_regular",
+            "type": "string"
+          }
+        ]
       },
       "title": "Component Types",
       "type": "array"
     },
     "component_ids": {
       "default": [],
-      "description": "List of component IDs to retrieve configurations for. If none, return all components.",
+      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list uses component_types filtering instead. When provided, this parameter takes PRECEDENCE over component_types.",
       "items": {
         "type": "string"
       },
       "title": "Component Ids",
-      "type": "array"
-    }
-  },
-  "type": "object"
-}
-```
-
----
-<a name="list_transformations"></a>
-## list_transformations
-**Annotations**: `read-only`
-
-**Tags**: `components`
-
-**Description**:
-
-Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
-
-USAGE:
-- Use when you want to see transformation configurations in the project for given transformation_ids.
-- Use when you want to retrieve all transformation configurations, then set transformation_ids to an empty list.
-
-EXAMPLES:
-- user_input: `give me all transformations`
-    - returns all transformation configurations in the project
-- user_input: `give me configurations for following transformation/s` | `give me configurations for
-  this transformation`
-- set transformation_ids to list of identifiers accordingly if you know the IDs
-    - returns all transformation configurations for the given transformations IDs
-- user_input: `list me transformations for this transformation component 'specified-id'`
-    - set transformation_ids to ['specified-id']
-    - returns the transformation configurations with ID 'specified-id'
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "transformation_ids": {
-      "default": [],
-      "description": "List of transformation component IDs to retrieve configurations for.",
-      "items": {
-        "type": "string"
-      },
-      "title": "Transformation Ids",
       "type": "array"
     }
   },

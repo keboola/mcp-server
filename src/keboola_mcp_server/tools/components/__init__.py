@@ -14,7 +14,6 @@ from keboola_mcp_server.tools.components.tools import (
     get_config,
     get_config_examples,
     list_configs,
-    list_transformations,
     update_config,
     update_config_row,
     update_sql_transformation,
