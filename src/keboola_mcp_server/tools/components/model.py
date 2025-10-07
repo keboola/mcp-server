@@ -26,14 +26,13 @@ from individual tasks:
 ## Tool Output Models
 - ConfigToolOutput: Standard response for config create/update operations
 - ListConfigsOutput: Response for list_configs tool
-- ListTransformationsOutput: Response for list_transformations tool
 
 ## Legacy Models
 - ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
 """
 
 from datetime import datetime
-from typing import Annotated, Any, List, Literal, Optional, Union
+from typing import Annotated, Any, List, Literal, Optional, Union, get_args
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -44,10 +43,10 @@ from keboola_mcp_server.links import Link
 # TYPE DEFINITIONS
 # ============================================================================
 
-ComponentType = Literal['application', 'extractor', 'writer']
-TransformationType = Literal['transformation']
-AllComponentTypes = Union[ComponentType, TransformationType]
-
+ComponentType = Literal['application', 'extractor', 'transformation', 'writer']
+ComponentCategory = ComponentType | Literal['all_regular']
+ALL_COMPONENT_TYPES = [component_type for component_type in get_args(ComponentType)]
+ALL_REGULAR_COMPONENT_TYPES = sorted(set(ALL_COMPONENT_TYPES) - {'transformation'})
 
 # ============================================================================
 # COMPONENT MODELS
@@ -522,17 +521,6 @@ class ListConfigsOutput(BaseModel):
     )
     links: List[Link] = Field(
         description='The list of links relevant to the listing of components with configurations.',
-    )
-
-
-class ListTransformationsOutput(BaseModel):
-    """Response model for list_transformations tool."""
-
-    components_with_configurations: List[ComponentWithConfigurations] = Field(
-        description='The groupings of transformation components and their respective configurations.'
-    )
-    links: List[Link] = Field(
-        description='The list of links relevant to the listing of transformation components with configurations.',
     )
 
 

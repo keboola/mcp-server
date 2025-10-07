@@ -59,7 +59,6 @@ class TestServer:
             'list_flows',
             'list_jobs',
             'list_tables',
-            'list_transformations',
             'modify_data_app',
             'query_data',
             'run_job',
@@ -305,7 +304,6 @@ async def test_tool_annotations_and_tags():
         ('update_config', None, True, None, {COMPONENT_TOOLS_TAG}),
         ('add_config_row', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_config_row', None, True, None, {COMPONENT_TOOLS_TAG}),
-        ('list_transformations', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG}),
         # storage

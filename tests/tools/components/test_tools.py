@@ -13,12 +13,12 @@ from keboola_mcp_server.tools.components import (
     get_config,
     get_config_examples,
     list_configs,
-    list_transformations,
     update_config,
     update_config_row,
     update_sql_transformation,
 )
 from keboola_mcp_server.tools.components.model import (
+    ComponentCategory,
     ComponentSummary,
     ComponentWithConfigurations,
     ConfigParamRemove,
@@ -30,7 +30,6 @@ from keboola_mcp_server.tools.components.model import (
     ConfigurationRootSummary,
     ConfigurationSummary,
     ListConfigsOutput,
-    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import TransformationConfiguration, clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -39,7 +38,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 @pytest.fixture
 def assert_retrieve_components() -> Callable[
     [
-        ListConfigsOutput | ListTransformationsOutput,
+        ListConfigsOutput,
         list[dict[str, Any]],
         list[dict[str, Any]],
     ],
@@ -48,7 +47,7 @@ def assert_retrieve_components() -> Callable[
     """Assert that the _retrieve_components_in_project tool returns the correct components and configurations."""
 
     def _assert_retrieve_components(
-        result: ListConfigsOutput | ListTransformationsOutput,
+        result: ListConfigsOutput,
         components: list[dict[str, Any]],
         configurations: list[dict[str, Any]],
     ):
@@ -104,61 +103,66 @@ def assert_retrieve_components() -> Callable[
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('component_types', 'expected_types', 'expected_mock_components'),
+    [
+        # No filter - should retrieve all component types (including transformation)
+        # Order: application, extractor, transformation, writer
+        ([], ['application', 'extractor', 'transformation', 'writer'], [2, 0, 3, 1]),
+        # all_regular - should retrieve all types except transformation
+        # Order: application, extractor, writer
+        (['all_regular'], ['application', 'extractor', 'writer'], [2, 0, 1]),
+        # Single type - extractor only
+        (['extractor'], ['extractor'], [0]),
+        # Single type - writer only
+        (['writer'], ['writer'], [1]),
+        # Single type - application only
+        (['application'], ['application'], [2]),
+        # Single type - transformation only
+        (['transformation'], ['transformation'], [3]),
+        # Multiple types - extractor and writer
+        # Order: extractor, writer
+        (['extractor', 'writer'], ['extractor', 'writer'], [0, 1]),
+        # Multiple types - extractor, writer, and application
+        # Order: application, extractor, writer
+        (['extractor', 'writer', 'application'], ['application', 'extractor', 'writer'], [2, 0, 1]),
+    ],
+)
 async def test_list_configs_by_types(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
     assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
+    component_types: list[ComponentCategory],
+    expected_types: list[ComponentCategory],
+    expected_mock_components: list[int],
 ):
-    """Test list_configs when component types are provided."""
+    """Test list_configs when component types are provided with various filters."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
-    # mock the component_list method to return the mock_component with the mock_configurations
-    # simulate the response from the API
-    keboola_client.storage_client.component_list = mocker.AsyncMock(
-        side_effect=[[{**component, 'configurations': mock_configurations}] for component in mock_components]
-    )
 
-    result = await list_configs(ctx=context, component_types=[])
+    # Create a mapping of component_type to the matching mock component
+    component_type_map = {comp['type']: comp for comp in mock_components}
 
-    assert_retrieve_components(result, mock_components, mock_configurations)
+    # Create a side_effect function that returns the correct component based on component_type
+    async def mock_component_list(component_type: ComponentCategory, include: list[str] | None = None):
+        # Return matching component or empty list if no transformation exists
+        if component_type in component_type_map:
+            return [{**component_type_map[component_type], 'configurations': mock_configurations}]
+        return []
 
-    # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.component_list.assert_has_calls(
-        [
-            mocker.call(component_type='application', include=['configuration']),
-            mocker.call(component_type='extractor', include=['configuration']),
-            mocker.call(component_type='writer', include=['configuration']),
-        ]
-    )
+    keboola_client.storage_client.component_list = mocker.AsyncMock(side_effect=mock_component_list)
 
+    result = await list_configs(ctx=context, component_types=component_types)
 
-@pytest.mark.asyncio
-async def test_list_transformations(
-    mocker: MockerFixture,
-    mcp_context_components_configs: Context,
-    mock_component: dict[str, Any],
-    mock_configurations: list[dict[str, Any]],
-    assert_retrieve_components: Callable[[ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
-):
-    """Test list_transformations."""
-    context = mcp_context_components_configs
-    keboola_client = KeboolaClient.from_state(context.session.state)
-    # mock the component_list method to return the mock_component with the mock_configurations
-    # simulate the response from the API
-    keboola_client.storage_client.component_list = mocker.AsyncMock(
-        return_value=[{**mock_component, 'configurations': mock_configurations}]
-    )
+    # Get the expected components based on the indices
+    expected_components = [mock_components[i] for i in expected_mock_components]
+    assert_retrieve_components(result, expected_components, mock_configurations)
 
-    result = await list_transformations(context)
-
-    assert_retrieve_components(result, [mock_component], mock_configurations)
-
-    # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.component_list.assert_called_once_with(
-        component_type='transformation', include=['configuration']
-    )
+    # Verify the calls were made with the correct arguments (in sorted order)
+    expected_calls = [mocker.call(component_type=comp_type, include=['configuration']) for comp_type in expected_types]
+    keboola_client.storage_client.component_list.assert_has_calls(expected_calls)
 
 
 @pytest.mark.asyncio
@@ -181,29 +185,6 @@ async def test_list_configs_from_ids(
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
     # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
-    keboola_client.storage_client.component_detail.assert_called_once_with(component_id=mock_component['id'])
-
-
-@pytest.mark.asyncio
-async def test_list_transformations_from_ids(
-    mocker: MockerFixture,
-    mcp_context_components_configs: Context,
-    mock_configurations: list[dict[str, Any]],
-    mock_component: dict[str, Any],
-    assert_retrieve_components: Callable[[ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
-):
-    """Test list_transformations when transformation IDs are provided."""
-    context = mcp_context_components_configs
-    keboola_client = KeboolaClient.from_state(context.session.state)
-
-    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=mock_configurations)
-    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
-
-    result = await list_transformations(context, transformation_ids=[mock_component['id']])
-
-    assert_retrieve_components(result, [mock_component], mock_configurations)
-
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
     keboola_client.storage_client.component_detail.assert_called_once_with(component_id=mock_component['id'])
 
