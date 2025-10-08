@@ -19,6 +19,7 @@ dependencies = [
     "pyjwt ~= 2.10",
     "json-log-formatter ~= 1.0",
     "cryptography ~= 45.0",
+    "pydantic >=2.0,<2.12",
 ]
 [project.optional-dependencies]
 codestyle = [
