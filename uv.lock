@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -988,6 +988,7 @@ dependencies = [
     { name = "jsonpath-ng" },
     { name = "jsonschema" },
     { name = "mcp" },
+    { name = "pydantic" },
     { name = "pyjwt" },
 ]
 
@@ -1042,6 +1043,7 @@ requires-dist = [
     { name = "kbcstorage", marker = "extra == 'integtests'", specifier = "~=0.9" },
     { name = "mcp", specifier = "==1.12.3" },
     { name = "pep8-naming", marker = "extra == 'codestyle'", specifier = "~=0.14" },
+    { name = "pydantic", specifier = ">=2.0,<2.12" },
     { name = "pyjwt", specifier = "~=2.10" },
     { name = "pytest", marker = "extra == 'tests'", specifier = "~=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'tests'", specifier = "~=0.25" },
