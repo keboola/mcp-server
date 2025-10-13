@@ -41,6 +41,8 @@ class Config:
     """The secret key for encoding and decoding JWT tokens."""
     bearer_token: Optional[str] = None
     """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
+    conversation_id: Optional[str] = None
+    """The ID of the ongoing conversation with the MCP server. This is supplied only by the HTTP header."""
 
     def __post_init__(self) -> None:
         for f in dataclasses.fields(self):
