@@ -1,0 +1,17 @@
+{
+    "parameters": {
+        "blocks": [
+            {
+                "name": "Blocks",
+                "codes": [
+                    {
+                        "name": "Hello World",
+                        "script": [
+                            "SELECT 'Hello World'"
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}
