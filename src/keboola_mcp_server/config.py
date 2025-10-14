@@ -49,15 +49,17 @@ class Config:
                 continue
             value = getattr(self, f.name)
             if value:
+                orig_value = value
                 url_value = urlparse(value)
-                print(f'value="{value}" url_value={url_value}, url_value.hostname={url_value.hostname}')
                 if url_value.hostname:
                     value = urlunparse(('https', url_value.hostname, '', '', '', ''))
                 elif url_value.path:
                     value = urlunparse(('https', url_value.path.split('/', maxsplit=1)[0], '', '', '', ''))
                 else:
                     raise ValueError(f'Invalid URL: {value}')
-                object.__setattr__(self, f.name, value)
+                if value != orig_value:
+                    LOG.warning(f'Amended "{f.name}" value from "{orig_value}" to "{value}".')
+                    object.__setattr__(self, f.name, value)
 
         if self.branch_id is not None and self.branch_id.lower() in ['', 'none', 'null', 'default', 'production']:
             object.__setattr__(self, 'branch_id', None)

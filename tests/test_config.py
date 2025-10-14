@@ -96,6 +96,7 @@ class TestConfig:
             ('foo.bar/v2/storage', 'https://foo.bar'),
             ('test:foo.bar/v2/storage', 'https://foo.bar'),
             ('https://foo.bar/v2/storage', 'https://foo.bar'),
+            ('https://foo.bar', 'https://foo.bar'),
         ],
     )
     def test_url_field(self, url: str, expected: str) -> None:
