@@ -104,7 +104,7 @@ def assert_retrieve_components() -> Callable[
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('component_types', 'expected_types', 'expected_mock_components'),
+    ('component_types', 'expected_types', 'expected_mock_comp_idxs'),
     [
         # No filter - should retrieve all component types (including transformation)
         # Order: application, extractor, transformation, writer
@@ -133,9 +133,12 @@ async def test_list_configs_by_types(
     assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
     component_types: list[ComponentType],
     expected_types: list[ComponentType],
-    expected_mock_components: list[int],
+    expected_mock_comp_idxs: list[int],
 ):
-    """Test list_configs when component types are provided with various filters."""
+    """
+    Test list_configs when component types are provided with various filters.
+    The expected_mock_comp_idxs are the indices of mock_components that should be returned.
+    """
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
@@ -154,7 +157,7 @@ async def test_list_configs_by_types(
     result = await list_configs(ctx=context, component_types=component_types)
 
     # Get the expected components based on the indices
-    expected_components = [mock_components[i] for i in expected_mock_components]
+    expected_components = [mock_components[i] for i in expected_mock_comp_idxs]
     assert_retrieve_components(result, expected_components, mock_configurations)
 
     # Verify the calls were made with the correct arguments (in sorted order)
