@@ -205,6 +205,7 @@ jobs:
         run: |
           set -euo pipefail
           mcp-publisher login dns --domain mcp.us-east4.gcp.keboola.com --private-key $(openssl pkey -in key.pem -noout -text | grep -A3 "priv:" | tail -n +2 | tr -d ' :\n')
+          mcp-publisher publish
 
       - name: Clean up private key
         if: always()
