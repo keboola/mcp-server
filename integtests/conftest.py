@@ -184,6 +184,11 @@ _CONFIG_DEFS_IN = [
         configuration_id=None,
         internal_id='test_config1',
     ),
+    ConfigDef(
+        component_id='keboola.snowflake-transformation',
+        configuration_id=None,
+        internal_id='test_config2',
+    ),
 ]
 
 
@@ -191,12 +196,13 @@ def _create_configs(storage_client: SyncStorageClient) -> list[ConfigDef]:
     configs = []
     for config in _CONFIG_DEFS_IN:
         LOG.info(f'Creating config with internal ID={config.internal_id}')
-        created_config = storage_client.configurations.create(
-            component_id=config.component_id,
-            name=config.internal_id,
-            configuration_id=None,
-            configuration=json.load(config.file_path.open('r', encoding='utf-8')),
-        )
+        with config.file_path.open('r', encoding='utf-8') as cfg_file:
+            created_config = storage_client.configurations.create(
+                component_id=config.component_id,
+                name=config.internal_id,
+                configuration_id=None,
+                configuration=json.load(cfg_file),
+            )
         config = dataclasses.replace(config, configuration_id=created_config['id'])
         configs.append(config)
         LOG.info(f'Created config with component ID={config.component_id} and config ID={config.configuration_id}')

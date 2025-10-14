@@ -18,7 +18,6 @@ from keboola_mcp_server.tools.components import (
     get_config,
     get_config_examples,
     list_configs,
-    list_transformations,
 )
 from keboola_mcp_server.tools.components.model import (
     Component,
@@ -28,10 +27,10 @@ from keboola_mcp_server.tools.components.model import (
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
-    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
+    expand_component_types,
     get_sql_transformation_id_from_sql_dialect,
     update_params,
 )
@@ -89,25 +88,30 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
             assert config.configuration_root.component_id == item.component.component_id
 
 
+@pytest.mark.parametrize(
+    ('component_types', 'expected_count'),
+    [
+        (['extractor'], 1),
+        (['transformation'], 1),
+        (['application', 'extractor', 'transformation'], 2),
+        ([], 2),
+    ],
+)
 @pytest.mark.asyncio
-async def test_list_configs_by_types(mcp_context: Context, configs: list[ConfigDef]):
+async def test_list_configs_by_types(
+    mcp_context: Context, configs: list[ConfigDef], component_types: list[ComponentType], expected_count: int
+):
     """Tests that `list_configs` returns components filtered by component types."""
-
-    # Get unique component IDs from test configs
-    component_ids = list({config.component_id for config in configs})
-    assert len(component_ids) > 0
-
-    component_types: list[ComponentType] = ['extractor']
 
     result = await list_configs(ctx=mcp_context, component_types=component_types)
 
     assert isinstance(result, ListConfigsOutput)
-    # Currently, we only have extractor components in the project
-    assert len(result.components_with_configurations) == len(component_ids)
+
+    assert sum(len(cmp.configurations) for cmp in result.components_with_configurations) == expected_count
 
     for item in result.components_with_configurations:
         assert isinstance(item, ComponentWithConfigurations)
-        assert item.component.component_type == 'extractor'
+        assert item.component.component_type in expand_component_types(component_types)
 
 
 @pytest.mark.asyncio
@@ -926,69 +930,6 @@ async def test_update_sql_transformation(
     assert meta_value == 'true'
     # Check that the original creation metadata is still there
     assert get_metadata_property(metadata, MetadataField.CREATED_BY_MCP) == 'true'
-
-
-@pytest.mark.asyncio
-async def test_list_transformations(mcp_context: Context):
-    """Tests that `list_transformations` returns transformation configurations."""
-    result = await list_transformations(ctx=mcp_context)
-
-    assert isinstance(result, ListTransformationsOutput)
-    for item in result.components_with_configurations:
-        assert isinstance(item, ComponentWithConfigurations)
-        assert item.component.component_type == 'transformation'
-
-
-@pytest.mark.asyncio
-async def test_list_transformations_by_ids(mcp_context: Context):
-    """Tests that `list_transformations` returns only the specific transformations when IDs are provided."""
-    # First create a SQL transformation to get its ID
-    transformation_name = 'Test SQL Transformation for list_transformations_by_ids'
-    transformation_description = 'Test transformation created for testing list_transformations with specific IDs'
-
-    sql_code_blocks = [
-        TransformationConfiguration.Parameters.Block.Code(
-            name='Test transformation block', sql_statements=['SELECT 1 as test_column']
-        )
-    ]
-
-    created_table_names = ['test_output_table']
-
-    client = KeboolaClient.from_state(mcp_context.session.state)
-
-    # Create the transformation
-    created_transformation = await create_sql_transformation(
-        ctx=mcp_context,
-        name=transformation_name,
-        description=transformation_description,
-        sql_code_blocks=sql_code_blocks,
-        created_table_names=created_table_names,
-    )
-
-    try:
-        transformation_ids = [created_transformation.component_id]
-        result = await list_transformations(ctx=mcp_context, transformation_ids=transformation_ids)
-
-        assert isinstance(result, ListTransformationsOutput)
-        assert len(result.components_with_configurations) == 1
-
-        # Verify it's the transformation we specified
-        component_with_configs = result.components_with_configurations[0]
-        assert isinstance(component_with_configs, ComponentWithConfigurations)
-        assert component_with_configs.component.component_id == created_transformation.component_id
-        assert component_with_configs.component.component_type == 'transformation'
-        assert (
-            component_with_configs.configurations[0].configuration_root.configuration_id
-            == created_transformation.configuration_id
-        )
-
-    finally:
-        # Clean up: Delete the transformation
-        await client.storage_client.configuration_delete(
-            component_id=created_transformation.component_id,
-            configuration_id=created_transformation.configuration_id,
-            skip_trash=True,
-        )
 
 
 @pytest.mark.asyncio

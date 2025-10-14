@@ -21,7 +21,6 @@ component-related operations in the MCP server.
 - `update_config_row`: Update existing configuration rows
 
 ### SQL Transformations
-- `list_transformations`: List transformation configurations
 - `create_sql_transformation`: Create new SQL transformations with code blocks
 - `update_sql_transformation`: Update existing SQL transformation configurations
 """
@@ -50,14 +49,13 @@ from keboola_mcp_server.tools.components.model import (
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
-    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
+    expand_component_types,
     fetch_component,
     get_sql_transformation_id_from_sql_dialect,
     get_transformation_configuration,
-    handle_component_types,
     list_configs_by_ids,
     list_configs_by_types,
     set_cfg_creation_metadata,
@@ -147,13 +145,6 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     # SQL transformation tools
     mcp.add_tool(
         FunctionTool.from_function(
-            list_transformations,
-            tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
-        )
-    )
-    mcp.add_tool(
-        FunctionTool.from_function(
             create_sql_transformation,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
@@ -180,89 +171,86 @@ async def list_configs(
     ctx: Context,
     component_types: Annotated[
         Sequence[ComponentType],
-        Field(description='List of component types to filter by. If none, return all components.'),
+        Field(
+            description=(
+                'Filter by component types. Options: "application", "extractor", "transformation", "writer". '
+                'Empty list [] means ALL component types will be returned '
+                '(application, extractor, transformation, writer). '
+                'This parameter is IGNORED when component_ids is provided (non-empty).'
+            )
+        ),
     ] = tuple(),
     component_ids: Annotated[
         Sequence[str],
-        Field(description='List of component IDs to retrieve configurations for. If none, return all components.'),
+        Field(
+            description=(
+                'Filter by specific component IDs (e.g., ["keboola.ex-db-mysql", "keboola.wr-google-sheets"]). '
+                'Empty list [] uses component_types filtering instead. '
+                'When provided (non-empty), this parameter takes PRECEDENCE over component_types '
+                'and component_types is IGNORED.'
+            )
+        ),
     ] = tuple(),
 ) -> ListConfigsOutput:
     """
-    Retrieves configurations of components present in the project,
-    optionally filtered by component types or specific component IDs.
-    If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
-    component_types.
+    Lists all component configurations in the project with optional filtering by component type or specific
+    component IDs.
 
-    USAGE:
-    - Use when you want to see components configurations in the project for given component_types.
-    - Use when you want to see components configurations in the project for given component_ids.
+    Returns a list of components, each containing:
+    - Component metadata (ID, name, type, description)
+    - All configurations for that component
+    - Links to the Keboola UI
+
+    PARAMETER BEHAVIOR:
+    - If component_ids is provided (non-empty): Returns ONLY those specific components, component_types is IGNORED
+    - If component_ids is empty [] and component_types is empty []: Returns ALL component types
+      (application, extractor, transformation, writer)
+    - If component_ids is empty [] and component_types has values: Returns components matching ONLY those types
+
+    WHEN TO USE:
+    - User asks for "all configurations" or "list configurations" → Use component_types=[], component_ids=[]
+    - User asks for specific component types (e.g., "extractors", "writers") → Use component_types with specific types
+    - User asks for "all transformations" or "list transformations" → Use component_types=["transformation"]
+    - User asks for specific component by ID → Use component_ids with the specific ID(s)
 
     EXAMPLES:
-    - user_input: `give me all components (in the project)`
-        - returns all components configurations in the project
-    - user_input: `list me all extractor components (in the project)`
-        - set types to ["extractor"]
-        - returns all extractor components configurations in the project
-    - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-        - set component_ids to list of identifiers accordingly if you know them
-        - returns all configurations for the given components in the project
-    - user_input: `give me configurations for 'specified-id'`
-        - set component_ids to ['specified-id']
-        - returns the configurations of the component with ID 'specified-id'
+    - user_input: "Show me all components in the project"
+      → component_types=[], component_ids=[]
+      → Returns ALL component types (application, extractor, transformation, writer) with their configurations
+
+    - user_input: "List all extractor configurations"
+      → component_types=["extractor"], component_ids=[]
+      → Returns only extractor component configurations
+
+    - user_input: "Show me all extractors and writers"
+      → component_types=["extractor", "writer"], component_ids=[]
+      → Returns extractor and writer configurations only
+
+    - user_input: "List all transformations"
+      → component_types=["transformation"], component_ids=[]
+      → Returns transformation configurations only
+
+    - user_input: "Show me configurations for keboola.ex-db-mysql"
+      → component_types=[], component_ids=["keboola.ex-db-mysql"]
+      → Returns only configurations for the MySQL extractor (component_types is ignored)
+
+    - user_input: "Get configs for these components: ex-db-mysql and wr-google-sheets"
+      → component_types=[], component_ids=["keboola.ex-db-mysql", "keboola.wr-google-sheets"]
+      → Returns configurations for both specified components (component_types is ignored)
     """
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if not component_ids:
-        component_types = handle_component_types(component_types)  # if none, return all types
+        component_types = expand_component_types(component_types)
         components_with_configurations = await list_configs_by_types(client, component_types)
     # If component IDs are provided, retrieve component configurations by IDs
     else:
         components_with_configurations = await list_configs_by_ids(client, component_ids)
-    links = [links_manager.get_used_components_link()]
+
+    links = [links_manager.get_used_components_link(), links_manager.get_transformations_dashboard_link()]
 
     return ListConfigsOutput(components_with_configurations=components_with_configurations, links=links)
-
-
-@tool_errors()
-async def list_transformations(
-    ctx: Context,
-    transformation_ids: Annotated[
-        Sequence[str],
-        Field(description='List of transformation component IDs to retrieve configurations for.'),
-    ] = tuple(),
-) -> ListTransformationsOutput:
-    """
-    Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
-
-    USAGE:
-    - Use when you want to see transformation configurations in the project for given transformation_ids.
-    - Use when you want to retrieve all transformation configurations, then set transformation_ids to an empty list.
-
-    EXAMPLES:
-    - user_input: `give me all transformations`
-        - returns all transformation configurations in the project
-    - user_input: `give me configurations for following transformation/s` | `give me configurations for
-      this transformation`
-    - set transformation_ids to list of identifiers accordingly if you know the IDs
-        - returns all transformation configurations for the given transformations IDs
-    - user_input: `list me transformations for this transformation component 'specified-id'`
-        - set transformation_ids to ['specified-id']
-        - returns the transformation configurations with ID 'specified-id'
-    """
-    # If no transformation IDs are provided, retrieve transformation configurations by transformation type
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-
-    if not transformation_ids:
-        components_with_configurations = await list_configs_by_types(client, ['transformation'])
-    # If transformation IDs are provided, retrieve transformation configurations by IDs
-    else:
-        components_with_configurations = await list_configs_by_ids(client, transformation_ids)
-
-    links = [links_manager.get_transformations_dashboard_link()]
-
-    return ListTransformationsOutput(components_with_configurations=components_with_configurations, links=links)
 
 
 # ============================================================================
