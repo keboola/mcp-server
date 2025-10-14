@@ -21,6 +21,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
+    ConfigParamListAppend,
     ConfigParamRemove,
     ConfigParamReplace,
     ConfigParamSet,
@@ -356,35 +357,52 @@ async def test_create_sql_transformation_fail(
 
 
 @pytest.mark.parametrize(
-    ('sql_dialect', 'expected_component_id', 'parameters', 'storage', 'expected_config'),
+    ('sql_dialect', 'expected_component_id', 'parameter_updates', 'storage', 'expected_config'),
     [
         pytest.param(
             'Snowflake',
             'keboola.snowflake-transformation',
-            {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]},
+            [
+                ConfigParamSet(op='set', path='blocks[0].name', new_val='Updated Blocks'),
+                ConfigParamListAppend(
+                    op='list_append', path='blocks[0].codes[0].script', value='SELECT * FROM new_table'
+                ),
+            ],
             {'output': {'tables': []}},
             {
                 'parameters': {
-                    'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]
+                    'blocks': [
+                        {
+                            'name': 'Updated Blocks',
+                            'codes': [{'name': 'Existing Code', 'script': ['SELECT 1', 'SELECT * FROM new_table']}],
+                        }
+                    ]
                 },
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
             },
-            id='snowflake_both_provided',
+            id='snowflake_with_list_append_and_set',
         ),
         pytest.param(
             'BigQuery',
             'keboola.google-bigquery-transformation',
-            {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]},
+            [
+                ConfigParamReplace(
+                    op='str_replace',
+                    path='blocks[0].codes[0].script[0]',
+                    search_for='SELECT 1',
+                    replace_with='SELECT 2',
+                ),
+            ],
             None,
             {
                 'parameters': {
-                    'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]
+                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 2']}]}]
                 },
                 'storage': {'input': {'tables': ['existing_table']}},
                 'other_field': 'should_be_preserved',
             },
-            id='bigquery_parameters_only',
+            id='bigquery_with_str_replace',
         ),
         pytest.param(
             'Snowflake',
@@ -410,11 +428,11 @@ async def test_update_sql_transformation(
     mock_configuration: dict[str, Any],
     sql_dialect: str,
     expected_component_id: str,
-    parameters: dict[str, Any] | None,
+    parameter_updates: list[ConfigParamUpdate] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
-    """Test update_sql_transformation tool."""
+    """Test update_sql_transformation tool with parameter_updates."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     # Mock the WorkspaceManager
@@ -444,16 +462,11 @@ async def test_update_sql_transformation(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
-    # Convert parameters dict to TransformationConfiguration.Parameters if provided
-    transformation_parameters = None
-    if parameters is not None:
-        transformation_parameters = TransformationConfiguration.Parameters.model_validate(parameters)
-
     updated_result = await update_sql_transformation(
         context,
         mock_configuration['id'],
         new_change_description,
-        parameters=transformation_parameters,
+        parameter_updates=parameter_updates,
         storage=storage,
         updated_description=str(),
         is_disabled=False,

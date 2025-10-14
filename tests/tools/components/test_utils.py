@@ -6,6 +6,7 @@ import pytest
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentType,
+    ConfigParamListAppend,
     ConfigParamRemove,
     ConfigParamReplace,
     ConfigParamSet,
@@ -272,6 +273,36 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamRemove(op='remove', path='$'),
             {'messages': [{'text': 'old1'}, {'text': 'old2 old3'}]},
         ),
+        # Test 'list_append' operation on simple list
+        (
+            {'items': [1, 2, 3]},
+            ConfigParamListAppend(op='list_append', path='items', value=4),
+            {'items': [1, 2, 3, 4]},
+        ),
+        # Test 'list_append' operation on nested list
+        (
+            {'config': {'values': ['a', 'b']}},
+            ConfigParamListAppend(op='list_append', path='config.values', value='c'),
+            {'config': {'values': ['a', 'b', 'c']}},
+        ),
+        # Test 'list_append' operation on deeply nested list (like SQL transformation structure)
+        (
+            {'blocks': [{'codes': [{'script': ['SELECT 1']}]}]},
+            ConfigParamListAppend(op='list_append', path='blocks[0].codes[0].script', value='SELECT 2'),
+            {'blocks': [{'codes': [{'script': ['SELECT 1', 'SELECT 2']}]}]},
+        ),
+        # Test 'list_append' operation with multiple JSONPath matches
+        (
+            {'messages': [{'items': [1]}, {'items': [2]}]},
+            ConfigParamListAppend(op='list_append', path='messages[*].items', value=99),
+            {'messages': [{'items': [1, 99]}, {'items': [2, 99]}]},
+        ),
+        # Test 'list_append' operation with different value types - dict
+        (
+            {'config': {'entries': [{'id': 1}]}},
+            ConfigParamListAppend(op='list_append', path='config.entries', value={'id': 2}),
+            {'config': {'entries': [{'id': 1}, {'id': 2}]}},
+        ),
     ],
 )
 def test_apply_param_update(
@@ -364,6 +395,36 @@ def test_apply_param_update(
             {'flag': True},
             ConfigParamSet(op='set', path='flag.nested', new_val='new_value'),
             'Cannot set nested value at path "flag.nested"',
+        ),
+        # Test 'list_append' operation on non-existent path
+        (
+            {'items': [1, 2, 3]},
+            ConfigParamListAppend(op='list_append', path='nonexistent_list', value=4),
+            'Path "nonexistent_list" does not exist',
+        ),
+        # Test 'list_append' operation on non-existent nested path
+        (
+            {'config': {'values': [1, 2]}},
+            ConfigParamListAppend(op='list_append', path='config.nonexistent', value=3),
+            'Path "config.nonexistent" does not exist',
+        ),
+        # Test 'list_append' operation on non-list value (string)
+        (
+            {'api_key': 'my_value'},
+            ConfigParamListAppend(op='list_append', path='api_key', value='extra'),
+            'Path "api_key" is not a list',
+        ),
+        # Test 'list_append' operation on non-list value (dict)
+        (
+            {'config': {'host': 'localhost'}},
+            ConfigParamListAppend(op='list_append', path='config', value='item'),
+            'Path "config" is not a list',
+        ),
+        # Test 'list_append' operation on non-list value (number)
+        (
+            {'count': 42},
+            ConfigParamListAppend(op='list_append', path='count', value=1),
+            'Path "count" is not a list',
         ),
     ],
 )
