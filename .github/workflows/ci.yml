@@ -148,6 +148,7 @@ jobs:
           reporter: 'java-junit'
 
   deploy_to_pypi:
+    name: Deploy to pypi.org
     needs:
       - build
       - integration_tests
@@ -168,3 +169,42 @@ jobs:
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
+
+  register-with-anthropic:
+    name: Register with Anthropic
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from pyproject.toml
+        id: get_version
+        run: |
+          VERSION=$(grep -E '^version = ".*"$' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Prepare server.json
+        run: |
+          sed 's/{{ MCP_SERVER_VERSION }}/${{ steps.get_version.outputs.version }}/g' server.json.template > server.json
+          cat server.json
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/download/latest/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Create private key file
+        run: |
+          echo "${{ secrets.ANTHROPIC_REGISTRY_PVK }}" > key.pem
+          chmod 600 key.pem
+
+      - name: Register with Anthropic
+        run: |
+          set -euo pipefail
+          mcp-publisher login dns --domain mcp.us-east4.gcp.keboola.com --private-key $(openssl pkey -in key.pem -noout -text | grep -A3 "priv:" | tail -n +2 | tr -d ' :\n')
+
+      - name: Clean up private key
+        if: always()
+        run: |
+          rm -f key.pem
