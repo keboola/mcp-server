@@ -20,21 +20,26 @@ This module contains helper functions and utilities used across the component to
 - TransformationConfiguration: Pydantic model for SQL transformation structure
 """
 
+import copy
 import logging
 import re
 import unicodedata
-from typing import Optional, Sequence, Union, cast, get_args
+from typing import Any, Optional, Sequence, cast
 
+import jsonpath_ng
 from httpx import HTTPStatusError
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import ComponentAPIResponse, ConfigurationAPIResponse, JsonDict, KeboolaClient
+from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components.model import (
-    AllComponentTypes,
+    ALL_COMPONENT_TYPES,
     ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
+    ConfigParamUpdate,
     ConfigurationSummary,
 )
 
@@ -49,41 +54,30 @@ BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 
 
 # ============================================================================
-# COMPONENT TYPE HANDLING
-# ============================================================================
-
-
-def handle_component_types(
-    types: Optional[Union[ComponentType, Sequence[ComponentType]]],
-) -> Sequence[ComponentType]:
-    """
-    Utility function to handle the component types [extractors, writers, applications, all].
-    If the types include "all", it will be removed and the remaining types will be returned.
-
-    :param types: The component types/type to process.
-    :return: The processed component types.
-    """
-    if not types:
-        return [component_type for component_type in get_args(ComponentType)]
-    if isinstance(types, str):
-        types = [types]
-    return types
-
-
-# ============================================================================
 # CONFIGURATION LISTING UTILITIES
 # ============================================================================
 
 
+def expand_component_types(component_types: Sequence[ComponentType]) -> tuple[ComponentType, ...]:
+    """
+    Expand empty component types list to all component types.
+    """
+    if not component_types:
+        return ALL_COMPONENT_TYPES
+
+    out_component_types = set(component_types)
+
+    return tuple(sorted(out_component_types))
+
+
 async def list_configs_by_types(
-    client: KeboolaClient, component_types: Sequence[AllComponentTypes]
+    client: KeboolaClient, component_types: Sequence[ComponentType]
 ) -> list[ComponentWithConfigurations]:
     """
-    Retrieve components with their configurations filtered by component types.
+    Retrieves components with their configurations filtered by component types.
 
     Used by:
     - list_configs tool
-    - list_transformations tool
 
     :param client: Authenticated Keboola client instance
     :param component_types: Types of components to retrieve (extractor, writer, application, transformation)
@@ -130,11 +124,10 @@ async def list_configs_by_types(
 
 async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str]) -> list[ComponentWithConfigurations]:
     """
-    Retrieve components with their configurations filtered by specific component IDs.
+    Retrieves components with their configurations filtered by specific component IDs.
 
     Used by:
     - list_configs tool (when specific component IDs are requested)
-    - list_transformations tool (when specific transformation IDs are requested)
 
     :param client: Authenticated Keboola client instance
     :param component_ids: Specific component IDs to retrieve
@@ -185,7 +178,7 @@ async def fetch_component(
     component_id: str,
 ) -> ComponentAPIResponse:
     """
-    Utility function to fetch a component by ID, returning the raw API response.
+    Fetches a component by ID, returning the raw API response.
 
     First tries to get component from the AI service catalog. If the component
     is not found (404) or returns empty data (private components), falls back to using the
@@ -252,11 +245,11 @@ def get_sql_transformation_id_from_sql_dialect(
 
 def clean_bucket_name(bucket_name: str) -> str:
     """
-    Utility function to clean the bucket name.
-    Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
-    Converts spaces to dashes.
-    Removes leading underscores, dashes, and whitespace.
-    Removes any character that is not alphanumeric, dash, or underscore.
+    Cleans the bucket name:
+    - Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
+    - Converts spaces to dashes.
+    - Removes leading underscores, dashes, and whitespace.
+    - Removes any character that is not alphanumeric, dash, or underscore.
     """
     max_bucket_length = 96
     bucket_name = bucket_name.strip()
@@ -280,7 +273,7 @@ def clean_bucket_name(bucket_name: str) -> str:
 
 class TransformationConfiguration(BaseModel):
     """
-    Utility class to create the transformation configuration, a schema for the transformation configuration in the API.
+    Creates the transformation configuration, a schema for the transformation configuration in the API.
     Currently, the storage configuration uses only input and output tables, excluding files, etc.
     """
 
@@ -336,13 +329,13 @@ def get_transformation_configuration(
     output_tables: Sequence[str],
 ) -> TransformationConfiguration:
     """
-    Utility function to set the transformation configuration from code statements.
-    It creates the expected configuration for the transformation, parameters and storage.
+    Sets the transformation configuration from code statements.
+    Creates the expected configuration for the transformation, parameters and storage.
 
-    :param statements: The code blocks (sql for now)
+    :param codes: The code blocks (sql for now)
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
-    :return: Dictionary with parameters and storage following the TransformationConfiguration schema
+    :return: TransformationConfiguration with parameters and storage
     """
     storage = TransformationConfiguration.Storage()
     # build parameters configuration out of code blocks
@@ -375,7 +368,7 @@ def get_transformation_configuration(
 
 async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
     """
-    Sets configuration metadata to indicate it was created by MCP.
+    Sets the configuration metadata to indicate it was created by MCP.
 
     :param client: KeboolaClient instance
     :param component_id: ID of the component
@@ -400,7 +393,7 @@ async def set_cfg_update_metadata(
     configuration_version: int,
 ) -> None:
     """
-    Sets configuration metadata to indicate it was updated by MCP.
+    Sets the configuration metadata to indicate it was updated by MCP.
 
     :param client: KeboolaClient instance
     :param component_id: ID of the component
@@ -416,3 +409,114 @@ async def set_cfg_update_metadata(
         )
     except HTTPStatusError as e:
         logging.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
+
+
+# ============================================================================
+# PARAMETER UPDATE UTILITIES
+# ============================================================================
+
+
+def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
+    """
+    Sets a value in a nested dictionary using a dot-separated path.
+
+    :param data: The dictionary to modify
+    :param path: Dot-separated path (e.g., 'database.host')
+    :param value: The value to set
+    :raises ValueError: If a non-dict value is encountered in the path
+    """
+    keys = path.split('.')
+    current = data
+
+    for i, key in enumerate(keys[:-1]):
+        if key not in current:
+            current[key] = {}
+        current = current[key]
+        if not isinstance(current, dict):
+            path_so_far = '.'.join(keys[: i + 1])
+            raise ValueError(
+                f'Cannot set nested value at path "{path}": '
+                f'encountered non-dict value at "{path_so_far}" (type: {type(current).__name__})'
+            )
+
+    current[keys[-1]] = value
+
+
+def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> dict[str, Any]:
+    """
+    Applies a single parameter update to the given parameters dictionary.
+
+    Note: This function modifies the input dictionary in place for efficiency.
+    The caller (update_params) is responsible for creating a copy if needed.
+
+    :param params: Current parameter values (will be modified in place)
+    :param update: Parameter update operation to apply
+    :return: The modified parameters dictionary
+    :raises ValueError: If trying to set a nested value through a non-dict value in the path
+    """
+    jsonpath_expr = jsonpath_ng.parse(update.path)
+
+    if update.op == 'set':
+        try:
+            matches = jsonpath_expr.find(params)
+            if not matches:
+                # path doesn't exist, create it manually
+                _set_nested_value(params, update.path, update.new_val)
+            else:
+                params = jsonpath_expr.update(params, update.new_val)
+        except Exception as e:
+            raise ValueError(f'Failed to set nested value at path "{update.path}": {e}')
+        return params
+
+    elif update.op == 'str_replace':
+
+        if not update.search_for:
+            raise ValueError('Search string is empty')
+
+        if update.search_for == update.replace_with:
+            raise ValueError(f'Search string and replace string are the same: "{update.search_for}"')
+
+        matches = jsonpath_expr.find(params)
+
+        if not matches:
+            raise ValueError(f'Path "{update.path}" does not exist')
+
+        replace_cnt = 0
+        for match in matches:
+            current_value = match.value
+            if not isinstance(current_value, str):
+                raise ValueError(f'Path "{match.full_path}" is not a string')
+
+            new_value = current_value.replace(update.search_for, update.replace_with)
+            if new_value != current_value:
+                replace_cnt += 1
+                params = match.full_path.update(params, new_value)
+
+        if replace_cnt == 0:
+            raise ValueError(f'Search string "{update.search_for}" not found in path "{update.path}"')
+
+        return params
+
+    elif update.op == 'remove':
+        matches = jsonpath_expr.find(params)
+
+        if not matches:
+            raise ValueError(f'Path "{update.path}" does not exist')
+
+        return jsonpath_expr.filter(lambda x: True, params)
+
+
+def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) -> dict[str, Any]:
+    """
+    Applies a list of parameter updates to the given parameters dictionary.
+    The original dictionary is not modified.
+
+    :param params: Current parameter values
+    :param updates: Sequence of parameter update operations
+    :return: New dictionary with all updates applied
+    """
+    # Create a deep copy to avoid mutating the original
+    params = copy.deepcopy(params)
+    for update in updates:
+        params = _apply_param_update(params, update)
+    return params

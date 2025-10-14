@@ -1,12 +1,16 @@
 """Configuration handling for the Keboola MCP server."""
 
 import dataclasses
+import importlib.metadata
 import logging
+import os
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 LOG = logging.getLogger(__name__)
 _NO_VALUE_MARKER = '__NO_VALUE_MARKER__'
+Transport = Literal['stdio', 'sse', 'streamable-http', 'http-compat/sse', 'http-compat/streamable-http']
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,8 @@ class Config:
     """The URL to the Storage API."""
     storage_token: Optional[str] = field(default=None, metadata={'aliases': ['storage_api_token']})
     """The token to access the storage API using the MCP tools."""
+    branch_id: Optional[str] = None
+    """The branch ID to access the storage API using the MCP tools."""
     workspace_schema: Optional[str] = None
     """Workspace schema to access the buckets, tables and execute sql queries."""
     accept_secrets_in_url: Optional[bool] = None
@@ -44,6 +50,9 @@ class Config:
             if value and not value.startswith(('http://', 'https://')):
                 value = f'https://{value}'
                 object.__setattr__(self, f.name, value)
+
+        if self.branch_id is not None and self.branch_id.lower() in ['', 'none', 'null', 'default', 'production']:
+            object.__setattr__(self, 'branch_id', None)
 
     @staticmethod
     def _normalize(name: str) -> str:
@@ -117,6 +126,26 @@ class Config:
         return f'Config({joined_params})'
 
 
+@dataclass(frozen=True)
+class ServerRuntimeInfo:
+    """Server runtime Information."""
+
+    transport: Transport
+    """Transport used by the MCP server (e.g., 'stdio', 'sse', 'streamable-http')."""
+    server_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    """The ID of the MCP server."""
+    app_env: str = field(default_factory=lambda: os.getenv('APP_ENV') or 'local')
+    """The environment of the MCP server application."""
+    app_version: str = field(default_factory=lambda: os.getenv('APP_VERSION') or 'DEV')
+    """The version of the MCP server application."""
+    server_version: str = importlib.metadata.version('keboola_mcp_server')
+    """The version of the Keboola MCP server library."""
+    mcp_library_version: str = importlib.metadata.version('mcp')
+    """The version of the MCP library."""
+    fastmcp_library_version: str = importlib.metadata.version('fastmcp')
+    """The version of the FastMCP library."""
+
+
 class MetadataField:
     """
     Predefined names of Keboola metadata fields.
@@ -134,7 +163,7 @@ class MetadataField:
     # expected value: 'true'
     UPDATED_BY_MCP_PREFIX = 'KBC.MCP.updatedBy.version.'
 
-    # Brnach filtering works only for "fake development branches"
+    # Branch filtering works only for "fake development branches"
     FAKE_DEVELOPMENT_BRANCH = 'KBC.createdBy.branch.id'
 
     # Data type metadata fields

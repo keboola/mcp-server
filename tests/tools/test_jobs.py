@@ -6,7 +6,7 @@ from httpx import HTTPError
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.jobs import (
     JobDetail,
@@ -242,8 +242,14 @@ async def test_run_job(
     assert job_detail.config_id == configuration_id
     assert job_detail.result == {}
     assert set(job_detail.links) == {
-        Link(type='ui-detail', title='Job: 123', url='test://api.keboola.com/admin/projects/69420/queue/123'),
-        Link(type='ui-dashboard', title='Jobs in the project', url='test://api.keboola.com/admin/projects/69420/queue'),
+        Link(
+            type='ui-detail', title='Job: 123', url='https://connection.test.keboola.com/admin/projects/69420/queue/123'
+        ),
+        Link(
+            type='ui-dashboard',
+            title='Jobs in the project',
+            url='https://connection.test.keboola.com/admin/projects/69420/queue',
+        ),
     }
 
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(

@@ -5,9 +5,12 @@ from typing import Annotated, Any, Sequence
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.client import GlobalSearchResponse, ItemType, KeboolaClient, SuggestedComponent
+from keboola_mcp_server.clients.ai_service import SuggestedComponent
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import GlobalSearchResponse, ItemType
 from keboola_mcp_server.errors import tool_errors
 
 LOG = logging.getLogger(__name__)
@@ -15,17 +18,28 @@ LOG = logging.getLogger(__name__)
 SEARCH_TOOL_NAME = 'search'
 MAX_GLOBAL_SEARCH_LIMIT = 100
 DEFAULT_GLOBAL_SEARCH_LIMIT = 50
+SEARCH_TOOLS_TAG = 'search'
 
 
 def add_search_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
-    search_tools = [
-        (find_component_id, None),
-        (search, SEARCH_TOOL_NAME),
-    ]
-    for tool_fn, tool_name in search_tools:
-        LOG.info(f'Adding tool {tool_fn.__name__} to the MCP server.')
-        mcp.add_tool(FunctionTool.from_function(tool_fn, name=tool_name))
+    LOG.info(f'Adding tool {find_component_id.__name__} to the MCP server.')
+    mcp.add_tool(
+        FunctionTool.from_function(
+            find_component_id,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={SEARCH_TOOLS_TAG},
+        )
+    )
+    LOG.info(f'Adding tool {search.__name__} to the MCP server.')
+    mcp.add_tool(
+        FunctionTool.from_function(
+            search,
+            name=SEARCH_TOOL_NAME,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={SEARCH_TOOLS_TAG},
+        )
+    )
 
     LOG.info('Search tools initialized.')
 
@@ -113,10 +127,7 @@ async def search(
         ),
     ] = DEFAULT_GLOBAL_SEARCH_LIMIT,
     offset: Annotated[int, Field(description='Number of matching items to skip, pagination.')] = 0,
-) -> Annotated[
-    GlobalSearchOutput,
-    Field(description='Search results grouped by item type, ordered by relevance and creation time.'),
-]:
+) -> GlobalSearchOutput:
     """
     Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
     potentially narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.

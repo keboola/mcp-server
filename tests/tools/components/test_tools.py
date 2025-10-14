@@ -4,7 +4,7 @@ import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     add_config_row,
@@ -13,20 +13,23 @@ from keboola_mcp_server.tools.components import (
     get_config,
     get_config_examples,
     list_configs,
-    list_transformations,
     update_config,
     update_config_row,
     update_sql_transformation,
 )
 from keboola_mcp_server.tools.components.model import (
     ComponentSummary,
+    ComponentType,
     ComponentWithConfigurations,
+    ConfigParamRemove,
+    ConfigParamReplace,
+    ConfigParamSet,
+    ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
     ConfigurationRootSummary,
     ConfigurationSummary,
     ListConfigsOutput,
-    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import TransformationConfiguration, clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -35,7 +38,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 @pytest.fixture
 def assert_retrieve_components() -> Callable[
     [
-        ListConfigsOutput | ListTransformationsOutput,
+        ListConfigsOutput,
         list[dict[str, Any]],
         list[dict[str, Any]],
     ],
@@ -44,7 +47,7 @@ def assert_retrieve_components() -> Callable[
     """Assert that the _retrieve_components_in_project tool returns the correct components and configurations."""
 
     def _assert_retrieve_components(
-        result: ListConfigsOutput | ListTransformationsOutput,
+        result: ListConfigsOutput,
         components: list[dict[str, Any]],
         configurations: list[dict[str, Any]],
     ):
@@ -100,61 +103,66 @@ def assert_retrieve_components() -> Callable[
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('component_types', 'expected_types', 'expected_mock_comp_idxs'),
+    [
+        # No filter - should retrieve all component types (including transformation)
+        # Order: application, extractor, transformation, writer
+        ([], ['application', 'extractor', 'transformation', 'writer'], [2, 0, 3, 1]),
+        # Single type - extractor only
+        (['extractor'], ['extractor'], [0]),
+        # Single type - writer only
+        (['writer'], ['writer'], [1]),
+        # Single type - application only
+        (['application'], ['application'], [2]),
+        # Single type - transformation only
+        (['transformation'], ['transformation'], [3]),
+        # Multiple types - extractor and writer
+        # Order: extractor, writer
+        (['extractor', 'writer'], ['extractor', 'writer'], [0, 1]),
+        # Multiple types - extractor, writer, and application
+        # Order: application, extractor, writer
+        (['extractor', 'writer', 'application'], ['application', 'extractor', 'writer'], [2, 0, 1]),
+    ],
+)
 async def test_list_configs_by_types(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
     assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
+    component_types: list[ComponentType],
+    expected_types: list[ComponentType],
+    expected_mock_comp_idxs: list[int],
 ):
-    """Test list_configs when component types are provided."""
+    """
+    Test list_configs when component types are provided with various filters.
+    The expected_mock_comp_idxs are the indices of mock_components that should be returned.
+    """
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
-    # mock the component_list method to return the mock_component with the mock_configurations
-    # simulate the response from the API
-    keboola_client.storage_client.component_list = mocker.AsyncMock(
-        side_effect=[[{**component, 'configurations': mock_configurations}] for component in mock_components]
-    )
 
-    result = await list_configs(ctx=context, component_types=[])
+    # Create a mapping of component_type to the matching mock component
+    component_type_map = {comp['type']: comp for comp in mock_components}
 
-    assert_retrieve_components(result, mock_components, mock_configurations)
+    # Create a side_effect function that returns the correct component based on component_type
+    async def mock_component_list(component_type: ComponentType, include: list[str] | None = None):
+        # Return matching component or empty list if no transformation exists
+        if component_type in component_type_map:
+            return [{**component_type_map[component_type], 'configurations': mock_configurations}]
+        return []
 
-    # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.component_list.assert_has_calls(
-        [
-            mocker.call(component_type='application', include=['configuration']),
-            mocker.call(component_type='extractor', include=['configuration']),
-            mocker.call(component_type='writer', include=['configuration']),
-        ]
-    )
+    keboola_client.storage_client.component_list = mocker.AsyncMock(side_effect=mock_component_list)
 
+    result = await list_configs(ctx=context, component_types=component_types)
 
-@pytest.mark.asyncio
-async def test_list_transformations(
-    mocker: MockerFixture,
-    mcp_context_components_configs: Context,
-    mock_component: dict[str, Any],
-    mock_configurations: list[dict[str, Any]],
-    assert_retrieve_components: Callable[[ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
-):
-    """Test list_transformations."""
-    context = mcp_context_components_configs
-    keboola_client = KeboolaClient.from_state(context.session.state)
-    # mock the component_list method to return the mock_component with the mock_configurations
-    # simulate the response from the API
-    keboola_client.storage_client.component_list = mocker.AsyncMock(
-        return_value=[{**mock_component, 'configurations': mock_configurations}]
-    )
+    # Get the expected components based on the indices
+    expected_components = [mock_components[i] for i in expected_mock_comp_idxs]
+    assert_retrieve_components(result, expected_components, mock_configurations)
 
-    result = await list_transformations(context)
-
-    assert_retrieve_components(result, [mock_component], mock_configurations)
-
-    # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.component_list.assert_called_once_with(
-        component_type='transformation', include=['configuration']
-    )
+    # Verify the calls were made with the correct arguments (in sorted order)
+    expected_calls = [mocker.call(component_type=comp_type, include=['configuration']) for comp_type in expected_types]
+    keboola_client.storage_client.component_list.assert_has_calls(expected_calls)
 
 
 @pytest.mark.asyncio
@@ -177,29 +185,6 @@ async def test_list_configs_from_ids(
     assert_retrieve_components(result, [mock_component], mock_configurations)
 
     # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
-    keboola_client.storage_client.component_detail.assert_called_once_with(component_id=mock_component['id'])
-
-
-@pytest.mark.asyncio
-async def test_list_transformations_from_ids(
-    mocker: MockerFixture,
-    mcp_context_components_configs: Context,
-    mock_configurations: list[dict[str, Any]],
-    mock_component: dict[str, Any],
-    assert_retrieve_components: Callable[[ListTransformationsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
-):
-    """Test list_transformations when transformation IDs are provided."""
-    context = mcp_context_components_configs
-    keboola_client = KeboolaClient.from_state(context.session.state)
-
-    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=mock_configurations)
-    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
-
-    result = await list_transformations(context, transformation_ids=[mock_component['id']])
-
-    assert_retrieve_components(result, [mock_component], mock_configurations)
-
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
     keboola_client.storage_client.component_detail.assert_called_once_with(component_id=mock_component['id'])
 
@@ -243,14 +228,14 @@ async def test_get_config(
             type='ui-detail',
             title=f'Configuration: {mock_configuration["name"]}',
             url=(
-                f'test://api.keboola.com/admin/projects/69420/components/'
+                f'https://connection.test.keboola.com/admin/projects/69420/components/'
                 f'{mock_component["id"]}/{mock_configuration["id"]}'
             ),
         ),
         Link(
             type='ui-dashboard',
             title=f'{mock_component["id"]} Configurations Dashboard',
-            url=f'test://api.keboola.com/admin/projects/69420/components/{mock_component["id"]}',
+            url=f'https://connection.test.keboola.com/admin/projects/69420/components/{mock_component["id"]}',
         ),
     }
 
@@ -317,6 +302,7 @@ async def test_create_sql_transformation(
     assert new_transformation_configuration.component_id == expected_component_id
     assert new_transformation_configuration.configuration_id == mock_configuration['id']
     assert new_transformation_configuration.description == mock_configuration['description']
+    assert new_transformation_configuration.version == mock_configuration['version']
 
     keboola_client.storage_client.configuration_create.assert_called_once_with(
         component_id=expected_component_id,
@@ -477,6 +463,7 @@ async def test_update_sql_transformation(
     assert updated_result.component_id == expected_component_id
     assert updated_result.configuration_id == mock_configuration['id']
     assert updated_result.description == mock_configuration['description']
+    assert updated_result.version == updated_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_with(component_id=expected_component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
@@ -571,6 +558,7 @@ async def test_create_config(
     assert result.description == description
     assert result.success is True
     assert result.timestamp is not None
+    assert result.version == configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
     keboola_client.storage_client.configuration_create.assert_called_once_with(
@@ -624,6 +612,7 @@ async def test_add_config_row(
     assert result.description == description
     assert result.success is True
     assert result.timestamp is not None
+    assert result.version == row_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
     keboola_client.storage_client.configuration_row_create.assert_called_once_with(
@@ -636,33 +625,75 @@ async def test_add_config_row(
 
 
 @pytest.mark.parametrize(
-    ('parameters', 'storage', 'expected_config'),
+    ('parameter_updates', 'storage', 'expected_config'),
     [
         pytest.param(
-            {'updated_param': 'updated_value'},
-            {'output': {'tables': []}},
-            {
-                'parameters': {'updated_param': 'updated_value'},
-                'storage': {'output': {'tables': []}},
-                'other_field': 'should_be_preserved',
-            },
-            id='both_provided',
-        ),
-        pytest.param(
-            {'updated_param': 'updated_value'},
+            [
+                ConfigParamSet(op='set', path='api_key', new_val='new_api_key'),
+                ConfigParamReplace(op='str_replace', path='database.host', search_for='old', replace_with='new'),
+                ConfigParamRemove(op='remove', path='deprecated_field'),
+            ],
             None,
             {
-                'parameters': {'updated_param': 'updated_value'},
+                'parameters': {
+                    'api_key': 'new_api_key',
+                    'database': {'host': 'new_host', 'port': 5432},
+                    'existing_param': 'existing_value',
+                    # 'deprecated_field' is removed
+                },
                 'storage': {'input': {'tables': ['existing_table']}},
                 'other_field': 'should_be_preserved',
             },
-            id='parameters_only',
+            id='parameter_updates_only1',
+        ),
+        pytest.param(
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
+            None,
+            {
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'updated_param': 'updated_value',
+                    # 'existing_param' is removed
+                },
+                'storage': {'input': {'tables': ['existing_table']}},
+                'other_field': 'should_be_preserved',
+            },
+            id='parameter_updates_only2',
+        ),
+        pytest.param(
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
+            {'output': {'tables': []}},
+            {
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'updated_param': 'updated_value',
+                    # 'existing_param' is removed
+                },
+                'storage': {'output': {'tables': []}},
+                'other_field': 'should_be_preserved',
+            },
+            id='both_parameter_updates_and_storage',
         ),
         pytest.param(
             None,
             {'output': {'tables': []}},
             {
-                'parameters': {'existing_param': 'existing_value'},
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'existing_param': 'existing_value',
+                },
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
             },
@@ -675,11 +706,11 @@ async def test_update_config(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
-    parameters: dict[str, Any] | None,
+    parameter_updates: list[ConfigParamUpdate] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
-    """Test update_component_root_configuration tool."""
+    """Test update_component_root_configuration tool with parameter_updates."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
@@ -691,7 +722,12 @@ async def test_update_config(
         'name': 'Existing Config',
         'description': 'Existing description',
         'configuration': {
-            'parameters': {'existing_param': 'existing_value'},
+            'parameters': {
+                'api_key': 'old_api_key',
+                'database': {'host': 'old_host', 'port': 5432},
+                'deprecated_field': 'old_value',
+                'existing_param': 'existing_value',
+            },
             'storage': {'input': {'tables': ['existing_table']}},
             'other_field': 'should_be_preserved',
         },
@@ -714,9 +750,9 @@ async def test_update_config(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
-    change_description = 'Test update'
+    change_description = 'Test update with parameter updates'
 
-    # Test the update_component_root_configuration tool
+    # Test the update_component_root_configuration tool with parameter_updates
     result = await update_config(
         ctx=context,
         name=updated_name,
@@ -724,7 +760,7 @@ async def test_update_config(
         change_description=change_description,
         component_id=component_id,
         configuration_id=configuration_id,
-        parameters=parameters,
+        parameter_updates=parameter_updates,
         storage=storage,
     )
 
@@ -734,6 +770,7 @@ async def test_update_config(
     assert result.description == updated_description
     assert result.success is True
     assert result.timestamp is not None
+    assert result.version == updated_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
@@ -747,27 +784,33 @@ async def test_update_config(
 
 
 @pytest.mark.parametrize(
-    ('parameters', 'storage', 'expected_config'),
+    ('parameter_updates', 'storage', 'expected_config'),
     [
         pytest.param(
-            {'updated_param': 'updated_value'},
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
             {'output': {'tables': []}},
             {
                 'parameters': {'updated_param': 'updated_value'},
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
             },
-            id='both_provided',
+            id='both_parameter_updates_and_storage',
         ),
         pytest.param(
-            {'updated_param': 'updated_value'},
+            [
+                ConfigParamRemove(op='remove', path='existing_param'),
+                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+            ],
             None,
             {
                 'parameters': {'updated_param': 'updated_value'},
                 'storage': {'input': {'tables': ['existing_table']}},
                 'other_field': 'should_be_preserved',
             },
-            id='parameters_only',
+            id='parameter_updates_only',
         ),
         pytest.param(
             None,
@@ -786,11 +829,11 @@ async def test_update_config_row(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
-    parameters: dict[str, Any] | None,
+    parameter_updates: list[ConfigParamUpdate] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
-    """Test update_component_row_configuration tool."""
+    """Test update_component_row_configuration tool with parameter_updates."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
@@ -825,7 +868,7 @@ async def test_update_config_row(
 
     change_description = 'Test row update'
 
-    # Test the update_component_row_configuration tool
+    # Test the update_component_row_configuration tool with parameter_updates
     result = await update_config_row(
         ctx=context,
         name=updated_name,
@@ -834,7 +877,7 @@ async def test_update_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         configuration_row_id=configuration_row_id,
-        parameters=parameters,
+        parameter_updates=parameter_updates,
         storage=storage,
     )
 
@@ -844,6 +887,7 @@ async def test_update_config_row(
     assert result.description == updated_description
     assert result.success is True
     assert result.timestamp is not None
+    assert result.version == updated_row_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_once_with(component_id=component_id)
     keboola_client.storage_client.configuration_row_update.assert_called_once_with(

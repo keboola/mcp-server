@@ -3,38 +3,27 @@ This document provides details about the tools available in the Keboola MCP serv
 
 ## Index
 
-### Storage Tools
-- [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
-- [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
-- [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
-- [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
-- [update_description](#update_description): Updates the description for a Keboola storage item.
-
-### SQL Tools
-- [get_sql_dialect](#get_sql_dialect): Gets the name of the SQL dialect used by Keboola project's underlying database.
-- [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
-
 ### Component Tools
 - [add_config_row](#add_config_row): Creates a component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and a list of created table names.
-- [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
 - [get_component](#get_component): Gets information about a specific component given its ID.
 - [get_config](#get_config): Gets information about a specific component/transformation configuration.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
-- [list_configs](#list_configs): Retrieves configurations of components present in the project,
-optionally filtered by component types or specific component IDs.
-- [list_transformations](#list_transformations): Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
-- [update_config](#update_config): Updates a specific root component configuration using given by component ID, and configuration ID.
-- [update_config_row](#update_config_row): Updates a specific component configuration row in the specified configuration_id, using the specified name,
-component ID, configuration JSON, and description.
+- [list_configs](#list_configs): Lists all component configurations in the project with optional filtering by component type or specific
+component IDs.
+- [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
+- [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
 configuration.
 
+### Documentation Tools
+- [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
+
 ### Flow Tools
-- [create_conditional_flow](#create_conditional_flow): Creates a new **conditional flow** configuration in Keboola.
+- [create_conditional_flow](#create_conditional_flow): Creates a new conditional flow configuration in Keboola.
 - [create_flow](#create_flow): Creates a new flow configuration in Keboola.
 - [get_flow](#get_flow): Gets detailed information about a specific flow configuration.
 - [get_flow_examples](#get_flow_examples): Retrieves examples of valid flow configurations.
@@ -49,271 +38,45 @@ results, and any relevant metadata.
 filtering.
 - [run_job](#run_job): Starts a new job for a given component or transformation.
 
-### Documentation Tools
-- [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
+### OAuth Tools
+- [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
-- [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
-- [get_project_info](#get_project_info): Return structured project information pulled from multiple endpoints.
+- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops running data app in the Keboola environment given the action and
+configuration ID.
+- [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
+providing their configuration IDs.
+- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
+
+### Project Tools
+- [get_project_info](#get_project_info): Retrieves structured information about the current project,
+including essential context and base instructions for working with it
+(e.
+
+### SQL Tools
+- [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
+
+### Search Tools
+- [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
 - [search](#search): Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
 potentially narrowed down by item type, limited and paginated.
 
----
-
-# Storage Tools
-<a name="get_bucket"></a>
-## get_bucket
-**Description**:
-
-Gets detailed information about a specific bucket.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "title": "Bucket Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "bucket_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="get_table"></a>
-## get_table
-**Description**:
-
-Gets detailed information about a specific table including its DB identifier and column information.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "table_id": {
-      "description": "Unique ID of the table.",
-      "title": "Table Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "table_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="list_buckets"></a>
-## list_buckets
-**Description**:
-
-Retrieves information about all buckets in the project.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
-<a name="list_tables"></a>
-## list_tables
-**Description**:
-
-Retrieves all tables in a specific bucket with their basic information.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "title": "Bucket Id",
-      "type": "string"
-    }
-  },
-  "required": [
-    "bucket_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="update_description"></a>
-## update_description
-**Description**:
-
-Updates the description for a Keboola storage item.
-
-The tool supports three item types and validates the required identifiers based on the selected type:
-
-- item_type = "bucket": requires bucket_id
-- item_type = "table": requires table_id
-- item_type = "column": requires table_id and column_name
-
-Usage examples:
-- Update a bucket: item_type="bucket", bucket_id="in.c-my-bucket",
-  description="New bucket description"
-- Update a table: item_type="table", table_id="in.c-my-bucket.my-table",
-  description="New table description"
-- Update a column: item_type="column", table_id="in.c-my-bucket.my-table",
-  column_name="my_column", description="New column description"
-
-:return: The update result containing the stored description, timestamp, success flag, and optional links.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "item_type": {
-      "description": "Type of the item to update. One of: bucket, table, column.",
-      "enum": [
-        "bucket",
-        "table",
-        "column"
-      ],
-      "title": "Item Type",
-      "type": "string"
-    },
-    "description": {
-      "description": "The new description to set for the specified item.",
-      "title": "Description",
-      "type": "string"
-    },
-    "bucket_id": {
-      "default": "",
-      "description": "Bucket ID. Required when item_type is \"bucket\".",
-      "title": "Bucket Id",
-      "type": "string"
-    },
-    "table_id": {
-      "default": "",
-      "description": "Table ID. Required when item_type is \"table\" or \"column\".",
-      "title": "Table Id",
-      "type": "string"
-    },
-    "column_name": {
-      "default": "",
-      "description": "Column name. Required when item_type is \"column\".",
-      "title": "Column Name",
-      "type": "string"
-    }
-  },
-  "required": [
-    "item_type",
-    "description"
-  ],
-  "type": "object"
-}
-```
-
----
-
-# SQL Tools
-<a name="get_sql_dialect"></a>
-## get_sql_dialect
-**Description**:
-
-Gets the name of the SQL dialect used by Keboola project's underlying database.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
-<a name="query_data"></a>
-## query_data
-**Description**:
-
-Executes an SQL SELECT query to get the data from the underlying database.
-
-CRITICAL SQL REQUIREMENTS:
-
-* ALWAYS check the SQL dialect first using get_sql_dialect tool before constructing queries
-* Do not include any comments in the SQL code
-
-DIALECT-SPECIFIC REQUIREMENTS:
-* Snowflake: Use double quotes for identifiers: "column_name", "table_name"
-* BigQuery: Use backticks for identifiers: `column_name`, `table_name`
-* Never mix quoting styles within a single query
-
-TABLE AND COLUMN REFERENCES:
-* Always use fully qualified table names that include database name, schema name and table name
-* Get fully qualified table names using table information tools - use exact format shown
-* Snowflake format: "DATABASE"."SCHEMA"."TABLE"
-* BigQuery format: `project`.`dataset`.`table`
-* Always use quoted column names when referring to table columns (exact quotes from table info)
-
-CTE (WITH CLAUSE) RULES:
-* ALL column references in main query MUST match exact case used in the CTE
-* If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
-* For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
-* Define all column aliases explicitly in CTEs
-* Quote identifiers in both CTE definition and references to preserve case
-
-FUNCTION COMPATIBILITY:
-* Snowflake: Use LISTAGG instead of STRING_AGG
-* Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
-* Cast VARCHAR columns to appropriate types before using in date/numeric functions
-
-ERROR PREVENTION:
-* Never pass empty strings ('') where numeric or date values are expected
-* Use NULLIF or CASE statements to handle empty values
-* Always use TRY_CAST or similar safe casting functions when converting data types
-* Check for division by zero using NULLIF(denominator, 0)
-
-DATA VALIDATION:
-* When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
-* Ensure valid filtering by checking actual data values first
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "sql_query": {
-      "description": "SQL SELECT query to run.",
-      "title": "Sql Query",
-      "type": "string"
-    },
-    "query_name": {
-      "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
-      "title": "Query Name",
-      "type": "string"
-    }
-  },
-  "required": [
-    "sql_query",
-    "query_name"
-  ],
-  "type": "object"
-}
-```
+### Storage Tools
+- [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
+- [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
+- [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
+- [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
+- [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
 
 # Component Tools
 <a name="add_config_row"></a>
 ## add_config_row
+**Annotations**: 
+
+**Tags**: `components`
+
 **Description**:
 
 Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -386,6 +149,10 @@ EXAMPLES:
 ---
 <a name="create_config"></a>
 ## create_config
+**Annotations**: 
+
+**Tags**: `components`
+
 **Description**:
 
 Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -451,6 +218,10 @@ EXAMPLES:
 ---
 <a name="create_sql_transformation"></a>
 ## create_sql_transformation
+**Annotations**: 
+
+**Tags**: `components`
+
 **Description**:
 
 Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -550,40 +321,12 @@ EXAMPLES:
 ```
 
 ---
-<a name="find_component_id"></a>
-## find_component_id
-**Description**:
-
-Returns list of component IDs that match the given query.
-
-USAGE:
-- Use when you want to find the component for a specific purpose.
-
-EXAMPLES:
-- user_input: `I am looking for a salesforce extractor component`
-    - returns a list of component IDs that match the query, ordered by relevance/best match.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "query": {
-      "description": "Natural language query to find the requested component.",
-      "title": "Query",
-      "type": "string"
-    }
-  },
-  "required": [
-    "query"
-  ],
-  "type": "object"
-}
-```
-
----
 <a name="get_component"></a>
 ## get_component
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
 Gets information about a specific component given its ID.
@@ -620,6 +363,10 @@ EXAMPLES:
 ---
 <a name="get_config"></a>
 ## get_config
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
 Gets information about a specific component/transformation configuration.
@@ -660,6 +407,10 @@ EXAMPLES:
 ---
 <a name="get_config_examples"></a>
 ## get_config_examples
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
 Retrieves sample configuration examples for a specific component.
@@ -693,29 +444,56 @@ EXAMPLES:
 ---
 <a name="list_configs"></a>
 ## list_configs
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
 **Description**:
 
-Retrieves configurations of components present in the project,
-optionally filtered by component types or specific component IDs.
-If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
-component_types.
+Lists all component configurations in the project with optional filtering by component type or specific
+component IDs.
 
-USAGE:
-- Use when you want to see components configurations in the project for given component_types.
-- Use when you want to see components configurations in the project for given component_ids.
+Returns a list of components, each containing:
+- Component metadata (ID, name, type, description)
+- All configurations for that component
+- Links to the Keboola UI
+
+PARAMETER BEHAVIOR:
+- If component_ids is provided (non-empty): Returns ONLY those specific components, component_types is IGNORED
+- If component_ids is empty [] and component_types is empty []: Returns ALL component types
+  (application, extractor, transformation, writer)
+- If component_ids is empty [] and component_types has values: Returns components matching ONLY those types
+
+WHEN TO USE:
+- User asks for "all configurations" or "list configurations" → Use component_types=[], component_ids=[]
+- User asks for specific component types (e.g., "extractors", "writers") → Use component_types with specific types
+- User asks for "all transformations" or "list transformations" → Use component_types=["transformation"]
+- User asks for specific component by ID → Use component_ids with the specific ID(s)
 
 EXAMPLES:
-- user_input: `give me all components (in the project)`
-    - returns all components configurations in the project
-- user_input: `list me all extractor components (in the project)`
-    - set types to ["extractor"]
-    - returns all extractor components configurations in the project
-- user_input: `give me configurations for following component/s` | `give me configurations for this component`
-    - set component_ids to list of identifiers accordingly if you know them
-    - returns all configurations for the given components in the project
-- user_input: `give me configurations for 'specified-id'`
-    - set component_ids to ['specified-id']
-    - returns the configurations of the component with ID 'specified-id'
+- user_input: "Show me all components in the project"
+  → component_types=[], component_ids=[]
+  → Returns ALL component types (application, extractor, transformation, writer) with their configurations
+
+- user_input: "List all extractor configurations"
+  → component_types=["extractor"], component_ids=[]
+  → Returns only extractor component configurations
+
+- user_input: "Show me all extractors and writers"
+  → component_types=["extractor", "writer"], component_ids=[]
+  → Returns extractor and writer configurations only
+
+- user_input: "List all transformations"
+  → component_types=["transformation"], component_ids=[]
+  → Returns transformation configurations only
+
+- user_input: "Show me configurations for keboola.ex-db-mysql"
+  → component_types=[], component_ids=["keboola.ex-db-mysql"]
+  → Returns only configurations for the MySQL extractor (component_types is ignored)
+
+- user_input: "Get configs for these components: ex-db-mysql and wr-google-sheets"
+  → component_types=[], component_ids=["keboola.ex-db-mysql", "keboola.wr-google-sheets"]
+  → Returns configurations for both specified components (component_types is ignored)
 
 
 **Input JSON Schema**:
@@ -724,11 +502,12 @@ EXAMPLES:
   "properties": {
     "component_types": {
       "default": [],
-      "description": "List of component types to filter by. If none, return all components.",
+      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\". Empty list [] means ALL component types will be returned (application, extractor, transformation, writer). This parameter is IGNORED when component_ids is provided (non-empty).",
       "items": {
         "enum": [
           "application",
           "extractor",
+          "transformation",
           "writer"
         ],
         "type": "string"
@@ -738,7 +517,7 @@ EXAMPLES:
     },
     "component_ids": {
       "default": [],
-      "description": "List of component IDs to retrieve configurations for. If none, return all components.",
+      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list [] uses component_types filtering instead. When provided (non-empty), this parameter takes PRECEDENCE over component_types and component_types is IGNORED.",
       "items": {
         "type": "string"
       },
@@ -751,75 +530,134 @@ EXAMPLES:
 ```
 
 ---
-<a name="list_transformations"></a>
-## list_transformations
-**Description**:
-
-Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
-
-USAGE:
-- Use when you want to see transformation configurations in the project for given transformation_ids.
-- Use when you want to retrieve all transformation configurations, then set transformation_ids to an empty list.
-
-EXAMPLES:
-- user_input: `give me all transformations`
-    - returns all transformation configurations in the project
-- user_input: `give me configurations for following transformation/s` | `give me configurations for
-  this transformation`
-- set transformation_ids to list of identifiers accordingly if you know the IDs
-    - returns all transformation configurations for the given transformations IDs
-- user_input: `list me transformations for this transformation component 'specified-id'`
-    - set transformation_ids to ['specified-id']
-    - returns the transformation configurations with ID 'specified-id'
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "transformation_ids": {
-      "default": [],
-      "description": "List of transformation component IDs to retrieve configurations for.",
-      "items": {
-        "type": "string"
-      },
-      "title": "Transformation Ids",
-      "type": "array"
-    }
-  },
-  "type": "object"
-}
-```
-
----
 <a name="update_config"></a>
 ## update_config
+**Annotations**: `destructive`
+
+**Tags**: `components`
+
 **Description**:
 
-Updates a specific root component configuration using given by component ID, and configuration ID.
+Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 
-CONSIDERATIONS:
-- The configuration JSON object must follow the root_configuration_schema of the specified component.
-- Make sure the configuration parameters always adhere to the root_configuration_schema,
-  which is available via the component_detail tool.
-- The configuration JSON object should adhere to the component's configuration examples if found
+This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
+All other fields will remain unchanged.
+Use this tool when modifying existing configurations; for configuration rows, use update_config_row instead.
 
-USAGE:
-- Use when you want to update a root configuration of a specific component.
+WHEN TO USE:
+- Modifying configuration parameters (credentials, settings, API keys, etc.)
+- Updating storage mappings (input/output tables or files)
+- Changing configuration name or description
+- Any combination of the above
 
-EXAMPLES:
-- user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
-    - set the component_id, configuration_id and configuration parameters accordingly.
-    - set the change_description to the description of the change made to the component configuration.
-    - returns the updated component configuration if successful.
+PREREQUISITES:
+- Configuration must already exist (use create_config for new configurations)
+- You must know both component_id and configuration_id
+- For parameter updates: Review the component's root_configuration_schema using get_component.
+- For storage updates: Ensure mappings are valid for the component type
+
+IMPORTANT CONSIDERATIONS:
+- Parameter updates are PARTIAL - only specify fields you want to change
+- parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+- Parameters must conform to the component's root_configuration_schema
+- Validate schemas before calling: use get_component to retrieve root_configuration_schema
+- For row-based components, this updates the ROOT only (use update_config_row for individual rows)
+
+WORKFLOW:
+1. Retrieve current configuration using get_config (to understand current state)
+2. Identify specific parameters/storage mappings to modify
+3. Prepare parameter_updates list with targeted operations
+4. Call update_config with only the fields to change
 
 
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "ConfigParamRemove": {
+      "description": "Remove a parameter key.",
+      "properties": {
+        "op": {
+          "const": "remove",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to remove",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "title": "ConfigParamRemove",
+      "type": "object"
+    },
+    "ConfigParamReplace": {
+      "description": "Replace a substring in a string parameter.",
+      "properties": {
+        "op": {
+          "const": "str_replace",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to modify",
+          "title": "Path",
+          "type": "string"
+        },
+        "search_for": {
+          "description": "Substring to search for (non-empty)",
+          "title": "Search For",
+          "type": "string"
+        },
+        "replace_with": {
+          "description": "Replacement string (can be empty for deletion)",
+          "title": "Replace With",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "search_for",
+        "replace_with"
+      ],
+      "title": "ConfigParamReplace",
+      "type": "object"
+    },
+    "ConfigParamSet": {
+      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
+      "properties": {
+        "op": {
+          "const": "set",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
+          "title": "Path",
+          "type": "string"
+        },
+        "new_val": {
+          "description": "New value to set",
+          "title": "New Val"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "new_val"
+      ],
+      "title": "ConfigParamSet",
+      "type": "object"
+    }
+  },
   "properties": {
     "change_description": {
-      "description": "Description of the change made to the component configuration.",
+      "description": "A clear, human-readable summary of what changed in this update. Be specific: e.g., \"Updated API key\", \"Added customers table to input mapping\".",
       "title": "Change Description",
       "type": "string"
     },
@@ -835,27 +673,47 @@ EXAMPLES:
     },
     "name": {
       "default": "",
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "description": "New name for the configuration. Only provide if changing the name. Name should be short (typically under 50 characters) and descriptive.",
       "title": "Name",
       "type": "string"
     },
     "description": {
       "default": "",
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "description": "New detailed description for the configuration. Only provide if changing the description. Should explain the purpose, data sources, and behavior of this configuration.",
       "title": "Description",
       "type": "string"
     },
-    "parameters": {
-      "additionalProperties": true,
+    "parameter_updates": {
       "default": null,
-      "description": "The component configuration parameters, adhering to the root_configuration_schema schema. Only updated if provided.",
-      "title": "Parameters",
-      "type": "object"
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "remove": "#/$defs/ConfigParamRemove",
+            "set": "#/$defs/ConfigParamSet",
+            "str_replace": "#/$defs/ConfigParamReplace"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ConfigParamSet"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamReplace"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamRemove"
+          }
+        ]
+      },
+      "title": "Parameter Updates",
+      "type": "array"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that are not row-based and have tables or file input mapping defined. Only updated if provided.",
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "title": "Storage",
       "type": "object"
     }
@@ -872,72 +730,195 @@ EXAMPLES:
 ---
 <a name="update_config_row"></a>
 ## update_config_row
+**Annotations**: `destructive`
+
+**Tags**: `components`
+
 **Description**:
 
-Updates a specific component configuration row in the specified configuration_id, using the specified name,
-component ID, configuration JSON, and description.
+Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 
-CONSIDERATIONS:
-- The configuration JSON object must follow the row_configuration_schema of the specified component.
-- Make sure the configuration parameters always adhere to the row_configuration_schema,
-  which is available via the component_detail tool.
+This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
+All other fields will remain unchanged.
+Configuration rows are individual items within a configuration, often representing separate data sources,
+tables, or endpoints that share the same component type and parent configuration settings.
 
-USAGE:
-- Use when you want to update a row configuration for a specific component and configuration.
+WHEN TO USE:
+- Modifying row-specific parameters (table sources, filters, credentials, etc.)
+- Updating storage mappings for a specific row (input/output tables or files)
+- Changing row name or description
+- Any combination of the above
 
-EXAMPLES:
-- user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
-    - set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
-    - returns the updated component configuration if successful.
+PREREQUISITES:
+- The configuration row must already exist (use add_config_row for new rows)
+- You must know component_id, configuration_id, and configuration_row_id
+- For parameter updates: Review the component's row_configuration_schema using get_component
+- For storage updates: Ensure mappings are valid for row-level storage
+
+IMPORTANT CONSIDERATIONS:
+- Parameter updates are PARTIAL - only specify fields you want to change
+- parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+- Parameters must conform to the component's row_configuration_schema (not root schema)
+- Validate schemas before calling: use get_component to retrieve row_configuration_schema
+- Each row operates independently - changes to one row don't affect others
+- Row-level storage is separate from root-level storage configuration
+
+WORKFLOW:
+1. Retrieve current configuration using get_config to see existing rows
+2. Identify the specific row to modify by its configuration_row_id
+3. Prepare parameter_updates list with targeted operations for this row
+4. Call update_config_row with only the fields to change
 
 
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "ConfigParamRemove": {
+      "description": "Remove a parameter key.",
+      "properties": {
+        "op": {
+          "const": "remove",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to remove",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "title": "ConfigParamRemove",
+      "type": "object"
+    },
+    "ConfigParamReplace": {
+      "description": "Replace a substring in a string parameter.",
+      "properties": {
+        "op": {
+          "const": "str_replace",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to modify",
+          "title": "Path",
+          "type": "string"
+        },
+        "search_for": {
+          "description": "Substring to search for (non-empty)",
+          "title": "Search For",
+          "type": "string"
+        },
+        "replace_with": {
+          "description": "Replacement string (can be empty for deletion)",
+          "title": "Replace With",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "search_for",
+        "replace_with"
+      ],
+      "title": "ConfigParamReplace",
+      "type": "object"
+    },
+    "ConfigParamSet": {
+      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
+      "properties": {
+        "op": {
+          "const": "set",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
+          "title": "Path",
+          "type": "string"
+        },
+        "new_val": {
+          "description": "New value to set",
+          "title": "New Val"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "new_val"
+      ],
+      "title": "ConfigParamSet",
+      "type": "object"
+    }
+  },
   "properties": {
     "change_description": {
-      "description": "Description of the change made to the component configuration.",
+      "description": "A clear, human-readable summary of what changed in this row update. Be specific.",
       "title": "Change Description",
       "type": "string"
     },
     "component_id": {
-      "description": "The ID of the component to update.",
+      "description": "The ID of the component the configuration belongs to.",
       "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
-      "description": "The ID of the configuration to update.",
+      "description": "The ID of the parent configuration containing the row to update.",
       "title": "Configuration Id",
       "type": "string"
     },
     "configuration_row_id": {
-      "description": "The ID of the configuration row to update.",
+      "description": "The ID of the specific configuration row to update.",
       "title": "Configuration Row Id",
       "type": "string"
     },
     "name": {
       "default": "",
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
+      "description": "New name for the configuration row. Only provide if changing the name. Name should be short (typically under 50 characters) and descriptive of this specific row.",
       "title": "Name",
       "type": "string"
     },
     "description": {
       "default": "",
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
+      "description": "New detailed description for the configuration row. Only provide if changing the description. Should explain the specific purpose and behavior of this individual row.",
       "title": "Description",
       "type": "string"
     },
-    "parameters": {
-      "additionalProperties": true,
+    "parameter_updates": {
       "default": null,
-      "description": "The component row configuration parameters, adhering to the row_configuration_schema. Only updated if provided.",
-      "title": "Parameters",
-      "type": "object"
+      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "remove": "#/$defs/ConfigParamRemove",
+            "set": "#/$defs/ConfigParamSet",
+            "str_replace": "#/$defs/ConfigParamReplace"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ConfigParamSet"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamReplace"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamRemove"
+          }
+        ]
+      },
+      "title": "Parameter Updates",
+      "type": "array"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined. Only updated if provided.",
+      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_config first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "title": "Storage",
       "type": "object"
     }
@@ -955,6 +936,10 @@ EXAMPLES:
 ---
 <a name="update_sql_transformation"></a>
 ## update_sql_transformation
+**Annotations**: `destructive`
+
+**Tags**: `components`
+
 **Description**:
 
 Updates an existing SQL transformation configuration, optionally updating the description and disabling the
@@ -1104,27 +1089,239 @@ EXAMPLES:
 
 ---
 
+# Other Tools
+<a name="deploy_data_app"></a>
+## deploy_data_app
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Deploys/redeploys a data app or stops running data app in the Keboola environment given the action and
+configuration ID.
+
+Considerations:
+- Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
+because it needs to restart.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "action": {
+      "description": "The action to perform.",
+      "enum": [
+        "deploy",
+        "stop"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the data app configuration.",
+      "title": "Configuration Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "action",
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_data_apps"></a>
+## get_data_apps
+**Annotations**: `read-only`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
+providing their configuration IDs.
+
+Considerations:
+- If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
+- If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+- Data App details contain configurations, deployment info along with logs and links to the data app dashboard.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_ids": {
+      "default": [],
+      "description": "The IDs of the data app configurations.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Configuration Ids",
+      "type": "array"
+    },
+    "limit": {
+      "default": 100,
+      "description": "The limit of the data apps to fetch.",
+      "title": "Limit",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "The offset of the data apps to fetch.",
+      "title": "Offset",
+      "type": "integer"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="modify_data_app"></a>
+## modify_data_app
+**Annotations**: `destructive`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Creates or updates a Streamlit data app.
+
+Considerations:
+- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
+`{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function accepts a string of SQL
+query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
+- Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
+`query_data` tool to inspect the data in the workspace before using it in the data app.
+- If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
+parameter.
+- If the data app is updated while running, it must be redeployed for the changes to take effect.
+- The Data App requires basic authorization by default for security reasons, unless explicitly specified otherwise
+by the user.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "Name of the data app.",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "description": "Description of the data app.",
+      "title": "Description",
+      "type": "string"
+    },
+    "source_code": {
+      "description": "Complete Python/Streamlit source code for the data app.",
+      "title": "Source Code",
+      "type": "string"
+    },
+    "packages": {
+      "description": "Python packages used in the source code that will be installed by `pip install` into the environment before the code runs. For example: [\"pandas\", \"requests~=2.32\"].",
+      "items": {
+        "type": "string"
+      },
+      "title": "Packages",
+      "type": "array"
+    },
+    "authorization_required": {
+      "default": true,
+      "description": "Whether the data app is authorized using simple password or not.",
+      "title": "Authorization Required",
+      "type": "boolean"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "The ID of existing data app configuration when updating, otherwise empty string.",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "change_description": {
+      "default": "",
+      "description": "The description of the change when updating (e.g. \"Update Code\"), otherwise empty string.",
+      "title": "Change Description",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "source_code",
+    "packages"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# Documentation Tools
+<a name="docs_query"></a>
+## docs_query
+**Annotations**: `read-only`
+
+**Tags**: `docs`
+
+**Description**:
+
+Answers a question using the Keboola documentation as a source.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "query": {
+      "description": "Natural language query to search for in the documentation.",
+      "title": "Query",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "type": "object"
+}
+```
+
+---
+
 # Flow Tools
 <a name="create_conditional_flow"></a>
 ## create_conditional_flow
+**Annotations**: 
+
+**Tags**: `flows`
+
 **Description**:
 
-Creates a new **conditional flow** configuration in Keboola.
+Creates a new conditional flow configuration in Keboola.
 
-If you haven't already called it, always use the `get_flow_schema` tool using `keboola.flow` flow type
-to see the latest schema for conditional flows and also look at the examples under `get_flow_examples` tool.
+BEFORE USING THIS TOOL:
+- Call `get_flow_schema` with flow_type='keboola.flow' to see the required schema structure
+- Call `get_flow_examples` with flow_type='keboola.flow' to see working examples
 
-CONSIDERATIONS:
-- Do not create conditions, unless user asks for them explicitly
-- All IDs must be unique and clearly defined.
-- The `phases` and `tasks` parameters must conform to the keboola.flow JSON schema.
-- The phases cannot be empty.
-- Conditional flows are the default and recommended flow type in Keboola.
+REQUIREMENTS:
+- All phase and task IDs must be unique strings
+- The `phases` list cannot be empty
+- The `phases` and `tasks` parameters must match the keboola.flow JSON schema structure
+- Only include conditions/retry logic if the user explicitly requests them
+- All phases must be connected: no dangling phases are allowed
+- The flow must have exactly one entry point (one phase with no incoming transitions)
+- Every phase must either transition to another phase or end the flow
 
-USE CASES:
-- user_input: Create a flow.
-- user_input: Create a flow with complex conditional logic and retry mechanisms.
-- user_input: Build a data pipeline with sophisticated error handling and notifications.
+WHEN TO USE:
+- User asks to "create a flow" (conditional flows are the default flow type)
+- User requests conditional logic, retry mechanisms, or error handling
+- User needs a data pipeline with sophisticated branching or notifications
 
 
 **Input JSON Schema**:
@@ -1173,6 +1370,10 @@ USE CASES:
 ---
 <a name="create_flow"></a>
 ## create_flow
+**Annotations**: 
+
+**Tags**: `flows`
+
 **Description**:
 
 Creates a new flow configuration in Keboola.
@@ -1251,6 +1452,10 @@ EXAMPLES:
 ---
 <a name="get_flow"></a>
 ## get_flow
+**Annotations**: `read-only`
+
+**Tags**: `flows`
+
 **Description**:
 
 Gets detailed information about a specific flow configuration.
@@ -1276,6 +1481,10 @@ Gets detailed information about a specific flow configuration.
 ---
 <a name="get_flow_examples"></a>
 ## get_flow_examples
+**Annotations**: `read-only`
+
+**Tags**: `flows`
+
 **Description**:
 
 Retrieves examples of valid flow configurations.
@@ -1310,6 +1519,10 @@ CONSIDERATIONS:
 ---
 <a name="get_flow_schema"></a>
 ## get_flow_schema
+**Annotations**: `read-only`
+
+**Tags**: `flows`
+
 **Description**:
 
 Returns the JSON schema for the given flow type in markdown format.
@@ -1348,6 +1561,10 @@ Usage:
 ---
 <a name="list_flows"></a>
 ## list_flows
+**Annotations**: `read-only`
+
+**Tags**: `flows`
+
 **Description**:
 
 Retrieves flow configurations from the project. Optionally filtered by IDs.
@@ -1374,6 +1591,10 @@ Retrieves flow configurations from the project. Optionally filtered by IDs.
 ---
 <a name="update_flow"></a>
 ## update_flow
+**Annotations**: `destructive`
+
+**Tags**: `flows`
+
 **Description**:
 
 Updates an existing flow configuration in Keboola.
@@ -1487,6 +1708,10 @@ EXAMPLES:
 # Jobs Tools
 <a name="get_job"></a>
 ## get_job
+**Annotations**: `read-only`
+
+**Tags**: `jobs`
+
 **Description**:
 
 Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
@@ -1516,6 +1741,10 @@ EXAMPLES:
 ---
 <a name="list_jobs"></a>
 ## list_jobs
+**Annotations**: `read-only`
+
+**Tags**: `jobs`
+
 **Description**:
 
 Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
@@ -1614,6 +1843,10 @@ EXAMPLES:
 ---
 <a name="run_job"></a>
 ## run_job
+**Annotations**: `destructive`
+
+**Tags**: `jobs`
+
 **Description**:
 
 Starts a new job for a given component or transformation.
@@ -1644,36 +1877,13 @@ Starts a new job for a given component or transformation.
 
 ---
 
-# Documentation Tools
-<a name="docs_query"></a>
-## docs_query
-**Description**:
-
-Answers a question using the Keboola documentation as a source.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "query": {
-      "description": "Natural language query to search for in the documentation.",
-      "title": "Query",
-      "type": "string"
-    }
-  },
-  "required": [
-    "query"
-  ],
-  "type": "object"
-}
-```
-
----
-
-# Other Tools
+# OAuth Tools
 <a name="create_oauth_url"></a>
 ## create_oauth_url
+**Annotations**: `destructive`
+
+**Tags**: `oauth`
+
 **Description**:
 
 Generates an OAuth authorization URL for a Keboola component configuration.
@@ -1709,11 +1919,22 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 ```
 
 ---
+
+# Project Tools
 <a name="get_project_info"></a>
 ## get_project_info
+**Annotations**: `read-only`
+
+**Tags**: `project`
+
 **Description**:
 
-Return structured project information pulled from multiple endpoints.
+Retrieves structured information about the current project,
+including essential context and base instructions for working with it
+(e.g., transformations, components, workflows, and dependencies).
+
+Always call this tool at least once at the start of a conversation
+to establish the project context before using other tools.
 
 
 **Input JSON Schema**:
@@ -1725,8 +1946,50 @@ Return structured project information pulled from multiple endpoints.
 ```
 
 ---
+
+# Search Tools
+<a name="find_component_id"></a>
+## find_component_id
+**Annotations**: `read-only`
+
+**Tags**: `search`
+
+**Description**:
+
+Returns list of component IDs that match the given query.
+
+USAGE:
+- Use when you want to find the component for a specific purpose.
+
+EXAMPLES:
+- user_input: `I am looking for a salesforce extractor component`
+    - returns a list of component IDs that match the query, ordered by relevance/best match.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "query": {
+      "description": "Natural language query to find the requested component.",
+      "title": "Query",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="search"></a>
 ## search
+**Annotations**: `read-only`
+
+**Tags**: `search`
+
 **Description**:
 
 Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
@@ -1785,6 +2048,260 @@ Considerations:
   },
   "required": [
     "name_prefixes"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# SQL Tools
+<a name="query_data"></a>
+## query_data
+**Annotations**: `read-only`
+
+**Tags**: `sql`
+
+**Description**:
+
+Executes an SQL SELECT query to get the data from the underlying database.
+
+CRITICAL SQL REQUIREMENTS:
+
+* ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
+* Do not include any comments in the SQL code
+
+DIALECT-SPECIFIC REQUIREMENTS:
+* Snowflake: Use double quotes for identifiers: "column_name", "table_name"
+* BigQuery: Use backticks for identifiers: `column_name`, `table_name`
+* Never mix quoting styles within a single query
+
+TABLE AND COLUMN REFERENCES:
+* Always use fully qualified table names that include database name, schema name and table name
+* Get fully qualified table names using table information tools - use exact format shown
+* Snowflake format: "DATABASE"."SCHEMA"."TABLE"
+* BigQuery format: `project`.`dataset`.`table`
+* Always use quoted column names when referring to table columns (exact quotes from table info)
+
+CTE (WITH CLAUSE) RULES:
+* ALL column references in main query MUST match exact case used in the CTE
+* If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
+* For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
+* Define all column aliases explicitly in CTEs
+* Quote identifiers in both CTE definition and references to preserve case
+
+FUNCTION COMPATIBILITY:
+* Snowflake: Use LISTAGG instead of STRING_AGG
+* Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
+* Cast VARCHAR columns to appropriate types before using in date/numeric functions
+
+ERROR PREVENTION:
+* Never pass empty strings ('') where numeric or date values are expected
+* Use NULLIF or CASE statements to handle empty values
+* Always use TRY_CAST or similar safe casting functions when converting data types
+* Check for division by zero using NULLIF(denominator, 0)
+
+DATA VALIDATION:
+* When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
+* Ensure valid filtering by checking actual data values first
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "sql_query": {
+      "description": "SQL SELECT query to run.",
+      "title": "Sql Query",
+      "type": "string"
+    },
+    "query_name": {
+      "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
+      "title": "Query Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sql_query",
+    "query_name"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# Storage Tools
+<a name="get_bucket"></a>
+## get_bucket
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Gets detailed information about a specific bucket.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "bucket_id": {
+      "description": "Unique ID of the bucket.",
+      "title": "Bucket Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bucket_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_table"></a>
+## get_table
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Gets detailed information about a specific table including its DB identifier and column information.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "table_id": {
+      "description": "Unique ID of the table.",
+      "title": "Table Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "table_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="list_buckets"></a>
+## list_buckets
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Retrieves information about all buckets in the project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="list_tables"></a>
+## list_tables
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Retrieves all tables in a specific bucket with their basic information.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "bucket_id": {
+      "description": "Unique ID of the bucket.",
+      "title": "Bucket Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bucket_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="update_descriptions"></a>
+## update_descriptions
+**Annotations**: `destructive`
+
+**Tags**: `storage`
+
+**Description**:
+
+Updates the description for a Keboola storage item.
+
+This tool supports three item types, inferred from the provided item_id:
+
+- bucket: item_id = "in.c-bucket"
+- table: item_id = "in.c-bucket.table"
+- column: item_id = "in.c-bucket.table.column"
+
+Usage examples (payload uses a list of DescriptionUpdate objects):
+- Update a bucket:
+  updates=[DescriptionUpdate(item_id="in.c-my-bucket", description="New bucket description")]
+- Update a table:
+  updates=[DescriptionUpdate(item_id="in.c-my-bucket.my-table", description="New table description")]
+- Update a column:
+  updates=[DescriptionUpdate(item_id="in.c-my-bucket.my-table.my_column", description="New column description")]
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "DescriptionUpdate": {
+      "description": "Structured update describing a storage item and its new description.",
+      "properties": {
+        "item_id": {
+          "description": "Storage item name: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "description": {
+          "description": "New description to set for the storage item.",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "description"
+      ],
+      "title": "DescriptionUpdate",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "updates": {
+      "description": "List of DescriptionUpdate objects with storage item_id and new description. Examples: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
+      "items": {
+        "$ref": "#/$defs/DescriptionUpdate"
+      },
+      "title": "Updates",
+      "type": "array"
+    }
+  },
+  "required": [
+    "updates"
   ],
   "type": "object"
 }

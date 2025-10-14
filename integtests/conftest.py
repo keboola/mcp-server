@@ -20,8 +20,8 @@ from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 
-from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -184,6 +184,11 @@ _CONFIG_DEFS_IN = [
         configuration_id=None,
         internal_id='test_config1',
     ),
+    ConfigDef(
+        component_id='keboola.snowflake-transformation',
+        configuration_id=None,
+        internal_id='test_config2',
+    ),
 ]
 
 
@@ -191,12 +196,13 @@ def _create_configs(storage_client: SyncStorageClient) -> list[ConfigDef]:
     configs = []
     for config in _CONFIG_DEFS_IN:
         LOG.info(f'Creating config with internal ID={config.internal_id}')
-        created_config = storage_client.configurations.create(
-            component_id=config.component_id,
-            name=config.internal_id,
-            configuration_id=None,
-            configuration=json.load(config.file_path.open('r', encoding='utf-8')),
-        )
+        with config.file_path.open('r', encoding='utf-8') as cfg_file:
+            created_config = storage_client.configurations.create(
+                component_id=config.component_id,
+                name=config.internal_id,
+                configuration_id=None,
+                configuration=json.load(cfg_file),
+            )
         config = dataclasses.replace(config, configuration_id=created_config['id'])
         configs.append(config)
         LOG.info(f'Created config with component ID={config.component_id} and config ID={config.configuration_id}')
@@ -248,7 +254,7 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
     if 'global-search' in token_info['owner'].get('fetaures', []):
         # Give the global search time to catch up on the changes done in the testing project.
         # See https://help.keboola.com/management/global-search/#limitations for moe info.
-        time.sleep(5)
+        time.sleep(10)
 
     LOG.info(f'Test setup for project {project_id} complete')
     yield ProjectDef(project_id=project_id, buckets=buckets, tables=tables, configs=configs)
@@ -326,7 +332,7 @@ def mcp_context(
     client_context.client_id = None
     client_context.session_id = None
     client_context.request_context = mocker.MagicMock(RequestContext)
-    client_context.request_context.lifespan_context = ServerState(mcp_config)
+    client_context.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeInfo(transport='stdio'))
 
     return client_context
 

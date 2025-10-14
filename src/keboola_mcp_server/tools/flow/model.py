@@ -7,7 +7,8 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import ORCHESTRATOR_COMPONENT_ID, APIFlowResponse, FlowType
+from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
+from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.links import Link
 
 # =============================================================================
@@ -22,19 +23,23 @@ class ListFlowsOutput(BaseModel):
     links: list[Link] = Field(description='The list of links relevant to the flows.')
 
 
-class FlowToolResponse(BaseModel):
+class FlowToolOutput(BaseModel):
     """
     Standard response model for flow tool operations.
 
-    :param id: The id of the flow.
+    :param configuration_id: The configuration ID of the flow.
+    :param component_id: The component ID of the flow.
     :param description: The description of the Flow.
     :param timestamp: The timestamp of the operation.
     :param success: Indicates if the operation succeeded.
     :param links: The links relevant to the flow.
+    :param version: The version number of the flow configuration.
     """
 
-    id: str = Field(description='The id of the flow.')
+    configuration_id: str = Field(description='The configuration ID of the flow.')
+    component_id: str = Field(description='The ID of the component.')
     description: str = Field(description='The description of the Flow.')
+    version: int = Field(description='The version number of the flow configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the flow.')

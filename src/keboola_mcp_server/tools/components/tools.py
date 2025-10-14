@@ -21,7 +21,6 @@ component-related operations in the MCP server.
 - `update_config_row`: Update existing configuration rows
 
 ### SQL Transformations
-- `list_transformations`: List transformation configurations
 - `create_sql_transformation`: Create new SQL transformations with code blocks
 - `update_sql_transformation`: Update existing SQL transformation configurations
 """
@@ -34,41 +33,46 @@ from typing import Annotated, Any, Sequence, cast
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from keboola_mcp_server.client import ConfigurationAPIResponse, JsonDict, KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import ConfigurationAPIResponse, JsonDict
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, exclude_none_serializer
+from keboola_mcp_server.mcp import KeboolaMcpServer
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentSummary,
     ComponentType,
+    ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
-    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
+    expand_component_types,
     fetch_component,
     get_sql_transformation_id_from_sql_dialect,
     get_transformation_configuration,
-    handle_component_types,
     list_configs_by_ids,
     list_configs_by_types,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
+    update_params,
 )
-from keboola_mcp_server.tools.sql import get_sql_dialect
 from keboola_mcp_server.tools.validation import (
     validate_root_parameters_configuration,
     validate_root_storage_configuration,
     validate_row_parameters_configuration,
     validate_row_storage_configuration,
 )
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
+
+COMPONENT_TOOLS_TAG = 'components'
 
 
 # ============================================================================
@@ -79,21 +83,80 @@ LOG = logging.getLogger(__name__)
 def add_component_tools(mcp: KeboolaMcpServer) -> None:
     """Add tools to the MCP server."""
     # Component/Configuration discovery tools
-    mcp.add_tool(FunctionTool.from_function(get_component))
-    mcp.add_tool(FunctionTool.from_function(get_config))
-    mcp.add_tool(FunctionTool.from_function(list_configs, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(get_config_examples))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_component,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_configs,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_config_examples,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
 
     # Configuration management tools
-    mcp.add_tool(FunctionTool.from_function(create_config))
-    mcp.add_tool(FunctionTool.from_function(update_config))
-    mcp.add_tool(FunctionTool.from_function(add_config_row))
-    mcp.add_tool(FunctionTool.from_function(update_config_row))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            add_config_row,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_config_row,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
 
     # SQL transformation tools
-    mcp.add_tool(FunctionTool.from_function(list_transformations, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(create_sql_transformation))
-    mcp.add_tool(FunctionTool.from_function(update_sql_transformation))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_sql_transformation,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_sql_transformation,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
 
     LOG.info('Component tools added to the MCP server.')
 
@@ -108,89 +171,86 @@ async def list_configs(
     ctx: Context,
     component_types: Annotated[
         Sequence[ComponentType],
-        Field(description='List of component types to filter by. If none, return all components.'),
+        Field(
+            description=(
+                'Filter by component types. Options: "application", "extractor", "transformation", "writer". '
+                'Empty list [] means ALL component types will be returned '
+                '(application, extractor, transformation, writer). '
+                'This parameter is IGNORED when component_ids is provided (non-empty).'
+            )
+        ),
     ] = tuple(),
     component_ids: Annotated[
         Sequence[str],
-        Field(description='List of component IDs to retrieve configurations for. If none, return all components.'),
+        Field(
+            description=(
+                'Filter by specific component IDs (e.g., ["keboola.ex-db-mysql", "keboola.wr-google-sheets"]). '
+                'Empty list [] uses component_types filtering instead. '
+                'When provided (non-empty), this parameter takes PRECEDENCE over component_types '
+                'and component_types is IGNORED.'
+            )
+        ),
     ] = tuple(),
 ) -> ListConfigsOutput:
     """
-    Retrieves configurations of components present in the project,
-    optionally filtered by component types or specific component IDs.
-    If component_ids are supplied, only those components identified by the IDs are retrieved, disregarding
-    component_types.
+    Lists all component configurations in the project with optional filtering by component type or specific
+    component IDs.
 
-    USAGE:
-    - Use when you want to see components configurations in the project for given component_types.
-    - Use when you want to see components configurations in the project for given component_ids.
+    Returns a list of components, each containing:
+    - Component metadata (ID, name, type, description)
+    - All configurations for that component
+    - Links to the Keboola UI
+
+    PARAMETER BEHAVIOR:
+    - If component_ids is provided (non-empty): Returns ONLY those specific components, component_types is IGNORED
+    - If component_ids is empty [] and component_types is empty []: Returns ALL component types
+      (application, extractor, transformation, writer)
+    - If component_ids is empty [] and component_types has values: Returns components matching ONLY those types
+
+    WHEN TO USE:
+    - User asks for "all configurations" or "list configurations" → Use component_types=[], component_ids=[]
+    - User asks for specific component types (e.g., "extractors", "writers") → Use component_types with specific types
+    - User asks for "all transformations" or "list transformations" → Use component_types=["transformation"]
+    - User asks for specific component by ID → Use component_ids with the specific ID(s)
 
     EXAMPLES:
-    - user_input: `give me all components (in the project)`
-        - returns all components configurations in the project
-    - user_input: `list me all extractor components (in the project)`
-        - set types to ["extractor"]
-        - returns all extractor components configurations in the project
-    - user_input: `give me configurations for following component/s` | `give me configurations for this component`
-        - set component_ids to list of identifiers accordingly if you know them
-        - returns all configurations for the given components in the project
-    - user_input: `give me configurations for 'specified-id'`
-        - set component_ids to ['specified-id']
-        - returns the configurations of the component with ID 'specified-id'
+    - user_input: "Show me all components in the project"
+      → component_types=[], component_ids=[]
+      → Returns ALL component types (application, extractor, transformation, writer) with their configurations
+
+    - user_input: "List all extractor configurations"
+      → component_types=["extractor"], component_ids=[]
+      → Returns only extractor component configurations
+
+    - user_input: "Show me all extractors and writers"
+      → component_types=["extractor", "writer"], component_ids=[]
+      → Returns extractor and writer configurations only
+
+    - user_input: "List all transformations"
+      → component_types=["transformation"], component_ids=[]
+      → Returns transformation configurations only
+
+    - user_input: "Show me configurations for keboola.ex-db-mysql"
+      → component_types=[], component_ids=["keboola.ex-db-mysql"]
+      → Returns only configurations for the MySQL extractor (component_types is ignored)
+
+    - user_input: "Get configs for these components: ex-db-mysql and wr-google-sheets"
+      → component_types=[], component_ids=["keboola.ex-db-mysql", "keboola.wr-google-sheets"]
+      → Returns configurations for both specified components (component_types is ignored)
     """
     # If no component IDs are provided, retrieve component configurations by types (default is all types)
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if not component_ids:
-        component_types = handle_component_types(component_types)  # if none, return all types
+        component_types = expand_component_types(component_types)
         components_with_configurations = await list_configs_by_types(client, component_types)
     # If component IDs are provided, retrieve component configurations by IDs
     else:
         components_with_configurations = await list_configs_by_ids(client, component_ids)
-    links = [links_manager.get_used_components_link()]
+
+    links = [links_manager.get_used_components_link(), links_manager.get_transformations_dashboard_link()]
 
     return ListConfigsOutput(components_with_configurations=components_with_configurations, links=links)
-
-
-@tool_errors()
-async def list_transformations(
-    ctx: Context,
-    transformation_ids: Annotated[
-        Sequence[str],
-        Field(description='List of transformation component IDs to retrieve configurations for.'),
-    ] = tuple(),
-) -> ListTransformationsOutput:
-    """
-    Retrieves transformation configurations in the project, optionally filtered by specific transformation IDs.
-
-    USAGE:
-    - Use when you want to see transformation configurations in the project for given transformation_ids.
-    - Use when you want to retrieve all transformation configurations, then set transformation_ids to an empty list.
-
-    EXAMPLES:
-    - user_input: `give me all transformations`
-        - returns all transformation configurations in the project
-    - user_input: `give me configurations for following transformation/s` | `give me configurations for
-      this transformation`
-    - set transformation_ids to list of identifiers accordingly if you know the IDs
-        - returns all transformation configurations for the given transformations IDs
-    - user_input: `list me transformations for this transformation component 'specified-id'`
-        - set transformation_ids to ['specified-id']
-        - returns the transformation configurations with ID 'specified-id'
-    """
-    # If no transformation IDs are provided, retrieve transformation configurations by transformation type
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-
-    if not transformation_ids:
-        components_with_configurations = await list_configs_by_types(client, ['transformation'])
-    # If transformation IDs are provided, retrieve transformation configurations by IDs
-    else:
-        components_with_configurations = await list_configs_by_ids(client, transformation_ids)
-
-    links = [links_manager.get_transformations_dashboard_link()]
-
-    return ListTransformationsOutput(components_with_configurations=components_with_configurations, links=links)
 
 
 # ============================================================================
@@ -346,7 +406,7 @@ async def create_sql_transformation(
 
     # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
-    sql_dialect = await get_sql_dialect(ctx)
+    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
@@ -391,6 +451,7 @@ async def create_sql_transformation(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
+        version=new_raw_transformation_configuration['version'],
     )
 
 
@@ -465,7 +526,8 @@ async def update_sql_transformation(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(await get_sql_dialect(ctx))
+    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
     current_config = await client.storage_client.configuration_detail(
@@ -523,6 +585,7 @@ async def update_sql_transformation(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
+        version=updated_raw_configuration['version'],
     )
 
 
@@ -620,6 +683,7 @@ async def create_config(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
+        version=new_raw_configuration['version'],
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -738,6 +802,7 @@ async def add_config_row(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
+        version=new_raw_configuration['version'],
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -749,30 +814,45 @@ async def update_config(
     ctx: Context,
     change_description: Annotated[
         str,
-        Field(description='Description of the change made to the component configuration.'),
+        Field(
+            description=(
+                'A clear, human-readable summary of what changed in this update. '
+                'Be specific: e.g., "Updated API key", "Added customers table to input mapping".'
+            ),
+        ),
     ],
     component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
     configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
     name: Annotated[
         str,
         Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
+            description=(
+                'New name for the configuration. Only provide if changing the name. '
+                'Name should be short (typically under 50 characters) and descriptive.'
+            )
         ),
     ] = '',
     description: Annotated[
         str,
         Field(
             description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
+                'New detailed description for the configuration. Only provide if changing the description. '
+                'Should explain the purpose, data sources, and behavior of this configuration.'
             ),
         ),
     ] = '',
-    parameters: Annotated[
-        dict[str, Any],
+    parameter_updates: Annotated[
+        list[ConfigParamUpdate],
         Field(
             description=(
-                'The component configuration parameters, adhering to the root_configuration_schema schema. '
-                'Only updated if provided.'
+                'List of granular parameter update operations to apply. '
+                'Each operation (set, str_replace, remove) modifies a specific '
+                'parameter using JSONPath notation. Only provide if updating parameters -'
+                ' do not use for changing description or storage. '
+                'Prefer simple dot-delimited JSONPaths '
+                'and make the smallest possible updates - only change what needs changing. '
+                'In case you need to replace the whole parameters, you can use the `set` operation '
+                'with `$` as path.'
             ),
         ),
     ] = None,
@@ -780,30 +860,55 @@ async def update_config(
         dict[str, Any],
         Field(
             description=(
-                'The table and/or file input / output mapping of the component configuration. '
-                'It is present only for components that are not row-based and have tables or file '
-                'input mapping defined. Only updated if provided.'
-            ),
+                'Complete storage configuration containing input/output table and file mappings. '
+                'Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. '
+                '\n\n'
+                'When to use:\n'
+                '- Adding/removing input or output tables\n'
+                '- Modifying table/file mappings\n'
+                '- Updating table destinations or sources\n'
+                '\n'
+                'Important:\n'
+                '- Not applicable for row-based components (they use row-level storage)\n'
+                '- Must conform to the Keboola storage schema\n'
+                '- Replaces ALL existing storage config - include all mappings you want to keep\n'
+                '- Use get_config first to see current storage configuration\n'
+                '- Leave unfilled to preserve existing storage configuration'
+            )
         ),
     ] = None,
 ) -> ConfigToolOutput:
     """
-    Updates a specific root component configuration using given by component ID, and configuration ID.
+    Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 
-    CONSIDERATIONS:
-    - The configuration JSON object must follow the root_configuration_schema of the specified component.
-    - Make sure the configuration parameters always adhere to the root_configuration_schema,
-      which is available via the component_detail tool.
-    - The configuration JSON object should adhere to the component's configuration examples if found
+    This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
+    All other fields will remain unchanged.
+    Use this tool when modifying existing configurations; for configuration rows, use update_config_row instead.
 
-    USAGE:
-    - Use when you want to update a root configuration of a specific component.
+    WHEN TO USE:
+    - Modifying configuration parameters (credentials, settings, API keys, etc.)
+    - Updating storage mappings (input/output tables or files)
+    - Changing configuration name or description
+    - Any combination of the above
 
-    EXAMPLES:
-    - user_input: `Update a configuration for component X and configuration ID 1234 with these settings`
-        - set the component_id, configuration_id and configuration parameters accordingly.
-        - set the change_description to the description of the change made to the component configuration.
-        - returns the updated component configuration if successful.
+    PREREQUISITES:
+    - Configuration must already exist (use create_config for new configurations)
+    - You must know both component_id and configuration_id
+    - For parameter updates: Review the component's root_configuration_schema using get_component.
+    - For storage updates: Ensure mappings are valid for the component type
+
+    IMPORTANT CONSIDERATIONS:
+    - Parameter updates are PARTIAL - only specify fields you want to change
+    - parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+    - Parameters must conform to the component's root_configuration_schema
+    - Validate schemas before calling: use get_component to retrieve root_configuration_schema
+    - For row-based components, this updates the ROOT only (use update_config_row for individual rows)
+
+    WORKFLOW:
+    1. Retrieve current configuration using get_config (to understand current state)
+    2. Identify specific parameters/storage mappings to modify
+    3. Prepare parameter_updates list with targeted operations
+    4. Call update_config with only the fields to change
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -826,11 +931,14 @@ async def update_config(
         )
         configuration_payload['storage'] = storage_cfg
 
-    if parameters is not None:
+    if parameter_updates:
+        current_params = configuration_payload.get('parameters', {})
+        updated_params = update_params(current_params, parameter_updates)
+
         parameters_cfg = validate_root_parameters_configuration(
             component=component,
-            parameters=parameters,
-            initial_message='The "parameters" field is not valid.',
+            parameters=updated_params,
+            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
         )
         configuration_payload['parameters'] = parameters_cfg
 
@@ -865,6 +973,7 @@ async def update_config(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
+        version=updated_raw_configuration['version'],
     )
 
 
@@ -873,33 +982,44 @@ async def update_config_row(
     ctx: Context,
     change_description: Annotated[
         str,
-        Field(
-            description='Description of the change made to the component configuration.',
-        ),
+        Field(description=('A clear, human-readable summary of what changed in this row update. Be specific.')),
     ],
-    component_id: Annotated[str, Field(description='The ID of the component to update.')],
-    configuration_id: Annotated[str, Field(description='The ID of the configuration to update.')],
-    configuration_row_id: Annotated[str, Field(description='The ID of the configuration row to update.')],
+    component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
+    configuration_id: Annotated[
+        str,
+        Field(description='The ID of the parent configuration containing the row to update.'),
+    ],
+    configuration_row_id: Annotated[str, Field(description='The ID of the specific configuration row to update.')],
     name: Annotated[
         str,
         Field(
-            description='A short, descriptive name summarizing the purpose of the component configuration.',
+            description=(
+                'New name for the configuration row. Only provide if changing the name. '
+                'Name should be short (typically under 50 characters) and descriptive of this specific row.'
+            )
         ),
     ] = '',
     description: Annotated[
         str,
         Field(
             description=(
-                'The detailed description of the component configuration explaining its purpose and functionality.'
-            ),
+                'New detailed description for the configuration row. Only provide if changing the description. '
+                'Should explain the specific purpose and behavior of this individual row.'
+            )
         ),
     ] = '',
-    parameters: Annotated[
-        dict[str, Any],
+    parameter_updates: Annotated[
+        list[ConfigParamUpdate],
         Field(
             description=(
-                'The component row configuration parameters, adhering to the row_configuration_schema. '
-                'Only updated if provided.'
+                'List of granular parameter update operations to apply to this row. '
+                'Each operation (set, str_replace, remove) modifies a specific '
+                'parameter using JSONPath notation. Only provide if updating parameters - '
+                'do not use for changing description or storage. '
+                'Prefer simple dot-delimited JSONPaths '
+                'and make the smallest possible updates - only change what needs changing. '
+                'In case you need to replace the whole parameters, you can use the `set` operation '
+                'with `$` as path.'
             ),
         ),
     ] = None,
@@ -907,36 +1027,64 @@ async def update_config_row(
         dict[str, Any],
         Field(
             description=(
-                'The table and/or file input / output mapping of the component configuration. '
-                'It is present only for components that have tables or file input mapping defined. '
-                'Only updated if provided.'
-            ),
+                'Complete storage configuration for this row containing input/output table and file mappings. '
+                'Only provide if updating storage mappings - this replaces the ENTIRE storage configuration '
+                'for this row. '
+                '\n\n'
+                'When to use:\n'
+                '- Adding/removing input or output tables for this specific row\n'
+                '- Modifying table/file mappings for this row\n'
+                '- Updating table destinations or sources for this row\n'
+                '\n'
+                'Important:\n'
+                "- Must conform to the component's row storage schema\n"
+                '- Replaces ALL existing storage config for this row - include all mappings you want to keep\n'
+                '- Use get_config first to see current row storage configuration\n'
+                '- Leave unfilled to preserve existing storage configuration'
+            )
         ),
     ] = None,
 ) -> ConfigToolOutput:
     """
-    Updates a specific component configuration row in the specified configuration_id, using the specified name,
-    component ID, configuration JSON, and description.
+    Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 
-    CONSIDERATIONS:
-    - The configuration JSON object must follow the row_configuration_schema of the specified component.
-    - Make sure the configuration parameters always adhere to the row_configuration_schema,
-      which is available via the component_detail tool.
+    This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
+    All other fields will remain unchanged.
+    Configuration rows are individual items within a configuration, often representing separate data sources,
+    tables, or endpoints that share the same component type and parent configuration settings.
 
-    USAGE:
-    - Use when you want to update a row configuration for a specific component and configuration.
+    WHEN TO USE:
+    - Modifying row-specific parameters (table sources, filters, credentials, etc.)
+    - Updating storage mappings for a specific row (input/output tables or files)
+    - Changing row name or description
+    - Any combination of the above
 
-    EXAMPLES:
-    - user_input: `Update a configuration row of configuration ID 123 for component X with these settings`
-        - set the component_id, configuration_id, configuration_row_id and configuration parameters accordingly
-        - returns the updated component configuration if successful.
+    PREREQUISITES:
+    - The configuration row must already exist (use add_config_row for new rows)
+    - You must know component_id, configuration_id, and configuration_row_id
+    - For parameter updates: Review the component's row_configuration_schema using get_component
+    - For storage updates: Ensure mappings are valid for row-level storage
+
+    IMPORTANT CONSIDERATIONS:
+    - Parameter updates are PARTIAL - only specify fields you want to change
+    - parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+    - Parameters must conform to the component's row_configuration_schema (not root schema)
+    - Validate schemas before calling: use get_component to retrieve row_configuration_schema
+    - Each row operates independently - changes to one row don't affect others
+    - Row-level storage is separate from root-level storage configuration
+
+    WORKFLOW:
+    1. Retrieve current configuration using get_config to see existing rows
+    2. Identify the specific row to modify by its configuration_row_id
+    3. Prepare parameter_updates list with targeted operations for this row
+    4. Call update_config_row with only the fields to change
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
-        f'Updating configuration row for component: {component_id}, configuration id {configuration_id} '
-        f'and row id {configuration_row_id}.'
+        f'Updating configuration row for component: {component_id}, configuration id: {configuration_id}, '
+        f'row id: {configuration_row_id}.'
     )
 
     current_row = await client.storage_client.configuration_row_detail(
@@ -955,11 +1103,14 @@ async def update_config_row(
         )
         configuration_payload['storage'] = storage_cfg
 
-    if parameters is not None:
+    if parameter_updates:
+        current_params = configuration_payload.get('parameters', {})
+        updated_params = update_params(current_params, parameter_updates)
+
         parameters_cfg = validate_row_parameters_configuration(
             component=component,
-            parameters=parameters,
-            initial_message='Field "parameters" is not valid.\n',
+            parameters=updated_params,
+            initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
         )
         configuration_payload['parameters'] = parameters_cfg
 
@@ -973,7 +1124,10 @@ async def update_config_row(
         updated_description=description,
     )
 
-    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
+    LOG.info(
+        f'Updated configuration row for component: {component_id}, configuration id: {configuration_id}, '
+        f'row id: {configuration_row_id}.'
+    )
 
     await set_cfg_update_metadata(
         client=client,
@@ -995,6 +1149,7 @@ async def update_config_row(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
+        version=updated_raw_configuration['version'],
     )
 
 

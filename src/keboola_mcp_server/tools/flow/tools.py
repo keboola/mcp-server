@@ -8,20 +8,20 @@ from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from keboola_mcp_server import resources
-from keboola_mcp_server.client import (
+from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     ORCHESTRATOR_COMPONENT_ID,
-    CreateConfigurationAPIResponse,
     FlowType,
-    JsonDict,
     KeboolaClient,
 )
+from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import exclude_none_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
@@ -29,7 +29,7 @@ from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowPhase,
     FlowTask,
-    FlowToolResponse,
+    FlowToolOutput,
     ListFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.utils import (
@@ -46,16 +46,60 @@ from keboola_mcp_server.tools.validation import validate_flow_configuration_agai
 
 LOG = logging.getLogger(__name__)
 
+FLOW_TOOLS_TAG = 'flows'
+
 
 def add_flow_tools(mcp: FastMCP) -> None:
     """Add flow tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(create_flow))
-    mcp.add_tool(FunctionTool.from_function(create_conditional_flow))
-    mcp.add_tool(FunctionTool.from_function(list_flows, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(update_flow))
-    mcp.add_tool(FunctionTool.from_function(get_flow))
-    mcp.add_tool(FunctionTool.from_function(get_flow_examples))
-    mcp.add_tool(FunctionTool.from_function(get_flow_schema))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_flow,
+            tags={FLOW_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_conditional_flow,
+            tags={FLOW_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_flows,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={FLOW_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_flow,
+            annotations=ToolAnnotations(destructiveHint=True),
+            tags={FLOW_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_flow,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={FLOW_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_flow_examples,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={FLOW_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_flow_schema,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={FLOW_TOOLS_TAG},
+        )
+    )
 
     LOG.info('Flow tools initialized.')
 
@@ -98,7 +142,7 @@ async def create_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
-) -> FlowToolResponse:
+) -> FlowToolOutput:
     """
     Creates a new flow configuration in Keboola.
     A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
@@ -156,9 +200,11 @@ async def create_flow(
     )
 
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
-    tool_response = FlowToolResponse(
-        id=api_config.id,
-        description=api_config.description,
+    tool_response = FlowToolOutput(
+        configuration_id=api_config.id,
+        component_id=flow_type,
+        description=api_config.description or '',
+        version=api_config.version,
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
@@ -175,24 +221,27 @@ async def create_conditional_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions for conditional flows.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
-) -> FlowToolResponse:
+) -> FlowToolOutput:
     """
-    Creates a new **conditional flow** configuration in Keboola.
+    Creates a new conditional flow configuration in Keboola.
 
-    If you haven't already called it, always use the `get_flow_schema` tool using `keboola.flow` flow type
-    to see the latest schema for conditional flows and also look at the examples under `get_flow_examples` tool.
+    BEFORE USING THIS TOOL:
+    - Call `get_flow_schema` with flow_type='keboola.flow' to see the required schema structure
+    - Call `get_flow_examples` with flow_type='keboola.flow' to see working examples
 
-    CONSIDERATIONS:
-    - Do not create conditions, unless user asks for them explicitly
-    - All IDs must be unique and clearly defined.
-    - The `phases` and `tasks` parameters must conform to the keboola.flow JSON schema.
-    - The phases cannot be empty.
-    - Conditional flows are the default and recommended flow type in Keboola.
+    REQUIREMENTS:
+    - All phase and task IDs must be unique strings
+    - The `phases` list cannot be empty
+    - The `phases` and `tasks` parameters must match the keboola.flow JSON schema structure
+    - Only include conditions/retry logic if the user explicitly requests them
+    - All phases must be connected: no dangling phases are allowed
+    - The flow must have exactly one entry point (one phase with no incoming transitions)
+    - Every phase must either transition to another phase or end the flow
 
-    USE CASES:
-    - user_input: Create a flow.
-    - user_input: Create a flow with complex conditional logic and retry mechanisms.
-    - user_input: Build a data pipeline with sophisticated error handling and notifications.
+    WHEN TO USE:
+    - User asks to "create a flow" (conditional flows are the default flow type)
+    - User requests conditional logic, retry mechanisms, or error handling
+    - User needs a data pipeline with sophisticated branching or notifications
     """
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
     processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
@@ -220,9 +269,11 @@ async def create_conditional_flow(
     )
 
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
-    tool_response = FlowToolResponse(
-        id=api_config.id,
-        description=api_config.description,
+    tool_response = FlowToolOutput(
+        configuration_id=api_config.id,
+        component_id=flow_type,
+        description=api_config.description or '',
+        version=api_config.version,
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
@@ -250,7 +301,7 @@ async def update_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
     name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
-) -> FlowToolResponse:
+) -> FlowToolOutput:
     """
     Updates an existing flow configuration in Keboola.
 
@@ -357,9 +408,11 @@ async def update_flow(
     )
 
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
-    tool_response = FlowToolResponse(
-        id=api_config.id,
+    tool_response = FlowToolOutput(
+        configuration_id=api_config.id,
+        component_id=flow_type,
         description=api_config.description or '',
+        version=api_config.version,
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,

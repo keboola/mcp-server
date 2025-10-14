@@ -26,27 +26,25 @@ from individual tasks:
 ## Tool Output Models
 - ConfigToolOutput: Standard response for config create/update operations
 - ListConfigsOutput: Response for list_configs tool
-- ListTransformationsOutput: Response for list_transformations tool
 
 ## Legacy Models
 - ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
 """
 
 from datetime import datetime
-from typing import Any, List, Literal, Optional, Union
+from typing import Annotated, Any, List, Literal, Optional, Union, get_args
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.client import ComponentAPIResponse, ConfigurationAPIResponse
+from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
 
 # ============================================================================
 # TYPE DEFINITIONS
 # ============================================================================
 
-ComponentType = Literal['application', 'extractor', 'writer']
-TransformationType = Literal['transformation']
-AllComponentTypes = Union[ComponentType, TransformationType]
+ComponentType = Literal['application', 'extractor', 'transformation', 'writer']
+ALL_COMPONENT_TYPES = tuple(component_type for component_type in get_args(ComponentType))
 
 
 # ============================================================================
@@ -178,6 +176,46 @@ class Component(BaseModel):
             configuration_schema=api_response.configuration_schema,
             configuration_row_schema=api_response.configuration_row_schema,
         )
+
+
+# ============================================================================
+# CONFIGURATION PARAMETER UPDATE MODELS
+# ============================================================================
+
+
+class ConfigParamSet(BaseModel):
+    """
+    Set or create a parameter value at the specified path.
+
+    Use this operation to:
+    - Update an existing parameter value
+    - Create a new parameter key
+    - Replace a nested parameter value
+    """
+
+    op: Literal['set']  # name 'op' inspired by JSON Patch (https://datatracker.ietf.org/doc/html/rfc6902)
+    path: str = Field(description='JSONPath to the parameter key to set (e.g., "api_key", "database.host")')
+    new_val: Any = Field(description='New value to set')
+
+
+class ConfigParamReplace(BaseModel):
+    """Replace a substring in a string parameter."""
+
+    op: Literal['str_replace']
+    path: str = Field(description='JSONPath to the parameter key to modify')
+    search_for: str = Field(description='Substring to search for (non-empty)')
+    replace_with: str = Field(description='Replacement string (can be empty for deletion)')
+
+
+class ConfigParamRemove(BaseModel):
+    """Remove a parameter key."""
+
+    op: Literal['remove']
+    path: str = Field(description='JSONPath to the parameter key to remove')
+
+
+# Discriminated union of all parameter update operations
+ConfigParamUpdate = Annotated[Union[ConfigParamSet, ConfigParamReplace, ConfigParamRemove], Field(discriminator='op')]
 
 
 # ============================================================================
@@ -454,11 +492,12 @@ class Configuration(BaseModel):
 
 
 class ConfigToolOutput(BaseModel):
-    """Standard response model for configuration tool operations."""
+    """Response model for configuration tool operations."""
 
     component_id: str = Field(description='The ID of the component.')
     configuration_id: str = Field(description='The ID of the configuration.')
     description: str = Field(description='The description of the configuration.')
+    version: int = Field(description='The version number of the configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the configuration.')
@@ -481,17 +520,6 @@ class ListConfigsOutput(BaseModel):
     )
     links: List[Link] = Field(
         description='The list of links relevant to the listing of components with configurations.',
-    )
-
-
-class ListTransformationsOutput(BaseModel):
-    """Response model for list_transformations tool."""
-
-    components_with_configurations: List[ComponentWithConfigurations] = Field(
-        description='The groupings of transformation components and their respective configurations.'
-    )
-    links: List[Link] = Field(
-        description='The list of links relevant to the listing of transformation components with configurations.',
     )
 
 

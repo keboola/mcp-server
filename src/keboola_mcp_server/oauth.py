@@ -2,6 +2,8 @@ import gzip
 import json
 import logging
 import math
+import os
+import re
 import secrets
 import time
 from http.client import HTTPException
@@ -23,6 +25,80 @@ from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull,
 from pydantic import AnyHttpUrl, AnyUrl
 
 LOG = logging.getLogger(__name__)
+_OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
+_WELL_KNOWN_DOMAINS = [
+    re.compile(r'^.+\.keboola\.(com|dev)$', re.IGNORECASE),
+    re.compile(r'^.*chatgpt\.com$', re.IGNORECASE),
+    re.compile(r'^.*claude\.ai$', re.IGNORECASE),
+    re.compile(r'^librechat\.glami-ml\.com$', re.IGNORECASE),  # no subdomains allowed
+    re.compile(r'^.*make\.com$', re.IGNORECASE),
+]
+_FORBIDDEN_SCHEMES = [
+    # # Web/HTTP
+    # 'http',
+    # 'https',
+    # File transfer
+    'ftp',
+    'ftps',
+    'sftp',
+    'tftp',
+    # Email
+    'mailto',
+    'smtp',
+    'smtps',
+    'pop3',
+    'pop3s',
+    'imap',
+    'imaps',
+    # Real-time Communication
+    'ws',
+    'wss',
+    'sip',
+    'sips',
+    'xmpp',
+    # Remote Access
+    'ssh',
+    'telnet',
+    'rdp',
+    'vnc',
+    # File Systems
+    'file',
+    'nfs',
+    'smb',
+    'cifs',
+    'afp',
+    # Database
+    'jdbc',
+    'mysql',
+    'postgresql',
+    'mongodb',
+    'redis',
+    'ldap',
+    'ldaps',
+    # Media/Streaming
+    'rtsp',
+    'rtmp',
+    'mms',
+    'rtmps',
+    # Other Common Schemes
+    'dns',
+    'snmp',
+    'gopher',
+    'news',
+    'nntp',
+    'irc',
+    'git',
+    'svn',
+]
+
+
+def _log_debug(msg: str) -> None:
+    """
+    Logs the message at the DEBUG level if the environment variable KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL is set.
+    Use this function for logging sensitive information. It logs nothing by default.
+    """
+    if _OAUTH_LOG_ALL:
+        LOG.debug(msg)
 
 
 class _OAuthClientInformationFull(OAuthClientInformationFull):
@@ -39,12 +115,28 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
         # Ideally, this should verify the redirect_uri against the URI registered by the client.
         # That, however, would require a persistent registry of clients.
         # So, instead we require the clients to send their redirect URI in the authorization request,
-        # and we just use that.
-        if redirect_uri is not None:
-            LOG.debug(f'[validate_redirect_uri] redirect_uri={redirect_uri}]')
-            return redirect_uri
-        else:
+        # and we discard all URIs that are not on a whitelist.
+        if not redirect_uri:
+            LOG.debug('[validate_redirect_uri] No redirect_uri specified.')
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
+        if not redirect_uri.scheme:
+            LOG.debug(f'[validate_redirect_uri] No scheme in redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
+        if redirect_uri.scheme in _FORBIDDEN_SCHEMES:
+            LOG.debug(f'[validate_redirect_uri] Forbidden scheme in redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
+        if redirect_uri.scheme == 'http' and redirect_uri.host not in ['localhost', '127.0.0.1']:
+            LOG.debug(f'[validate_redirect_uri] Not a localhost redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
+        if redirect_uri.scheme == 'https' and not any([p.fullmatch(redirect_uri.host) for p in _WELL_KNOWN_DOMAINS]):
+            LOG.debug(f'[validate_redirect_uri] Unknown domain in redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
+
+        # All other schemes are allowed (e.g. cursor://). They require a custom handler registered in a browser.
+        # They are used for redirecting a browser to a locally running app.
+
+        LOG.debug(f'[validate_redirect_uri] Accepted redirect_uri: {redirect_uri}]')
+        return redirect_uri
 
 
 class _ExtendedAuthorizationCode(AuthorizationCode):
@@ -224,7 +316,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 )
 
             data = response.json()
-            LOG.debug(f'[handle_oauth_callback] OAuth server response: {data}')
+            _log_debug(f'[handle_oauth_callback] OAuth server response: {data}')
 
             if 'error' in data:
                 LOG.error(f'[handle_oauth_callback] Error when exchanging code for token: data={data}')
@@ -280,7 +372,7 @@ class SimpleOAuthProvider(OAuthProvider):
         auth_code = _ExtendedAuthorizationCode.model_validate(
             auth_code_raw | {'redirect_uri': AnyUrl(auth_code_raw['redirect_uri'])}
         )
-        LOG.debug(
+        _log_debug(
             f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
             f'auth_code={auth_code}'
         )
@@ -310,7 +402,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :raises HTTPException: If the OAuth server response indicates an error.
         """
-        LOG.debug(
+        _log_debug(
             f'[exchange_authorization_code] authorization_code={authorization_code}, ' f'client_id={client.client_id}'
         )
         # Check that we get the instance loaded by load_authorization_code() function.
@@ -351,7 +443,7 @@ class SimpleOAuthProvider(OAuthProvider):
             scope=' '.join(access_token.scopes),
         )
 
-        LOG.debug(
+        _log_debug(
             f'[exchange_authorization_code] access_token={access_token}, refresh_token={refresh_token},'
             f'oauth_token={oauth_token}'
         )
@@ -374,7 +466,7 @@ class SimpleOAuthProvider(OAuthProvider):
             return None
 
         proxy_token = ProxyAccessToken.model_validate(access_token_raw)
-        LOG.debug(f'[load_access_token] token={token}, proxy_token={proxy_token}')
+        _log_debug(f'[load_access_token] token={token}, proxy_token={proxy_token}')
 
         # Log the expired authorization code.
         # The mcp library itself performs the check and returns a proper response, but no logs.
@@ -404,7 +496,7 @@ class SimpleOAuthProvider(OAuthProvider):
             return None
 
         proxy_token = ProxyRefreshToken.model_validate(refresh_token_raw)
-        LOG.debug(f'[load_refresh_token] token={refresh_token}, proxy_token={proxy_token}')
+        _log_debug(f'[load_refresh_token] token={refresh_token}, proxy_token={proxy_token}')
 
         # Log the expired authorization code.
         # The mcp library itself performs the check and returns a proper response, but no logs.
@@ -436,7 +528,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :raises HTTPException: If the OAuth server response indicates an error.
         """
-        LOG.debug(
+        _log_debug(
             f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, ' f'scopes={scopes}'
         )
 
@@ -465,7 +557,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 )
 
             data = response.json()
-            LOG.debug(f'[exchange_refresh_token] OAuth server response: {data}')
+            _log_debug(f'[exchange_refresh_token] OAuth server response: {data}')
 
             if 'error' in data:
                 LOG.exception(f'[exchange_refresh_token] Error when refreshing token: data={data}')
@@ -507,7 +599,7 @@ class SimpleOAuthProvider(OAuthProvider):
             scope=' '.join(access_token.scopes),
         )
 
-        LOG.debug(
+        _log_debug(
             f'[exchange_refresh_token] access_token={access_token}, refresh_token={refresh_token}, '
             f'oauth_token={oauth_token}'
         )
@@ -524,7 +616,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :param token: The token to be revoked.
         :param token_type_hint: An optional hint about the type of the token.
         """
-        LOG.debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
+        _log_debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
         # This is no-op as we don't store the tokens.
 
     def _read_oauth_tokens(self, data: dict[str, Any], scopes: list[str]) -> tuple[AccessToken, RefreshToken]:
@@ -590,7 +682,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 )
 
             data = response.json()
-            LOG.debug(f'[_create_sapi_token] Storage API response: {data}')
+            _log_debug(f'[_create_sapi_token] Storage API response: {data}')
 
             return data['token']
 

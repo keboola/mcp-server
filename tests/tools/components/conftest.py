@@ -4,7 +4,7 @@ import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 
 
 @pytest.fixture
@@ -30,6 +30,13 @@ def mock_components() -> list[dict[str, Any]]:
             'name': 'Google Drive Application',
             'type': 'application',
             'description': 'Application for Google Drive',
+            'version': '1',
+        },
+        {
+            'id': 'keboola.snowflake-transformation',
+            'name': 'Snowflake Transformation',
+            'type': 'transformation',
+            'description': 'Snowflake SQL transformation',
             'version': '1',
         },
     ]

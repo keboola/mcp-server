@@ -3,12 +3,11 @@ from typing import Any, AsyncGenerator, cast
 
 import pytest
 import pytest_asyncio
-from fastmcp import Client, FastMCP
-from mcp.server.fastmcp import Context
+from fastmcp import Client, Context, FastMCP
 
 from integtests.conftest import ConfigDef, ProjectDef
-from keboola_mcp_server.client import KeboolaClient, get_metadata_property
-from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components import (
@@ -19,22 +18,23 @@ from keboola_mcp_server.tools.components import (
     get_config,
     get_config_examples,
     list_configs,
-    list_transformations,
 )
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentType,
     ComponentWithConfigurations,
+    ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
-    ListTransformationsOutput,
 )
 from keboola_mcp_server.tools.components.utils import (
     TransformationConfiguration,
+    expand_component_types,
     get_sql_transformation_id_from_sql_dialect,
+    update_params,
 )
-from keboola_mcp_server.tools.sql import get_sql_dialect
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -88,25 +88,30 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
             assert config.configuration_root.component_id == item.component.component_id
 
 
+@pytest.mark.parametrize(
+    ('component_types', 'expected_count'),
+    [
+        (['extractor'], 1),
+        (['transformation'], 1),
+        (['application', 'extractor', 'transformation'], 2),
+        ([], 2),
+    ],
+)
 @pytest.mark.asyncio
-async def test_list_configs_by_types(mcp_context: Context, configs: list[ConfigDef]):
+async def test_list_configs_by_types(
+    mcp_context: Context, configs: list[ConfigDef], component_types: list[ComponentType], expected_count: int
+):
     """Tests that `list_configs` returns components filtered by component types."""
-
-    # Get unique component IDs from test configs
-    component_ids = list({config.component_id for config in configs})
-    assert len(component_ids) > 0
-
-    component_types: list[ComponentType] = ['extractor']
 
     result = await list_configs(ctx=mcp_context, component_types=component_types)
 
     assert isinstance(result, ListConfigsOutput)
-    # Currently, we only have extractor components in the project
-    assert len(result.components_with_configurations) == len(component_ids)
+
+    assert sum(len(cmp.configurations) for cmp in result.components_with_configurations) == expected_count
 
     for item in result.components_with_configurations:
         assert isinstance(item, ComponentWithConfigurations)
-        assert item.component.component_type == 'extractor'
+        assert item.component.component_type in expand_component_types(component_types)
 
 
 @pytest.mark.asyncio
@@ -144,6 +149,7 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
         assert created_config.description == test_description
         assert created_config.success is True
         assert created_config.timestamp is not None
+        assert created_config.version is not None
         assert frozenset(created_config.links) == frozenset(
             [
                 Link(
@@ -200,7 +206,9 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
 @pytest.fixture
 def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
     config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
-    return create_server(config)
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+    assert isinstance(server, FastMCP)
+    return server
 
 
 @pytest_asyncio.fixture
@@ -242,12 +250,12 @@ async def initial_cmpconf(
         {
             'name': 'Updated Test Configuration',
             'description': 'Updated test configuration by automated test',
-            'parameters': {'updated_param': 'updated_value'},
+            'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'new_val': 'updated_value'}],
             'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}},
         },
         {'name': 'Updated just name'},
         {'description': 'Updated just description'},
-        {'parameters': {'updated_param': 'Updated just parameters'}},
+        {'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'new_val': 'Updated just parameters'}]},
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
     ],
 )
@@ -262,6 +270,23 @@ async def test_update_config(
     project_id = keboola_project.project_id
     component_id = initial_cmpconf.component_id
     configuration_id = initial_cmpconf.configuration_id
+    param_update_dicts = updates.get('parameter_updates')
+
+    if param_update_dicts is not None:
+        # Get the original configuration so we can compare the parameters
+        orig_config = await keboola_client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=configuration_id
+        )
+        orig_parameters = cast(dict, orig_config.get('configuration', {}).get('parameters', {}))
+
+        # Convert the parameter update dicts to ConfigParamUpdate objects
+        from pydantic import TypeAdapter
+
+        param_updates = []
+        for update_dict in param_update_dicts:
+            update = TypeAdapter(ConfigParamUpdate).validate_python(update_dict)
+            param_updates.append(update)
+
     tool_result = await mcp_client.call_tool(
         name='update_config',
         arguments={
@@ -273,16 +298,17 @@ async def test_update_config(
     )
 
     # Check the tool's output
-    updated_config = ConfigToolOutput.model_validate(tool_result.structured_content)
-    assert updated_config.component_id == component_id
-    assert updated_config.configuration_id == configuration_id
-    assert updated_config.success is True
-    assert updated_config.timestamp is not None
+    update_result = ConfigToolOutput.model_validate(tool_result.structured_content)
+    assert update_result.component_id == component_id
+    assert update_result.configuration_id == configuration_id
+    assert update_result.success is True
+    assert update_result.timestamp is not None
+    assert update_result.version is not None
 
     expected_name = updates.get('name') or 'Initial Test Configuration'
     expected_description = updates.get('description') or initial_cmpconf.description
-    assert updated_config.description == expected_description
-    assert frozenset(updated_config.links) == frozenset(
+    assert update_result.description == expected_description
+    assert frozenset(update_result.links) == frozenset(
         [
             Link(
                 type='ui-detail',
@@ -299,32 +325,33 @@ async def test_update_config(
     )
 
     # Verify the configuration was updated
-    config_detail = await keboola_client.storage_client.configuration_detail(
-        component_id=updated_config.component_id, configuration_id=updated_config.configuration_id
+    updated_config = await keboola_client.storage_client.configuration_detail(
+        component_id=update_result.component_id, configuration_id=update_result.configuration_id
     )
 
-    assert config_detail['name'] == expected_name
-    assert config_detail['description'] == expected_description
+    assert updated_config['name'] == expected_name
+    assert updated_config['description'] == expected_description
 
-    config_data = config_detail.get('configuration')
-    assert isinstance(config_data, dict), f'Expecting dict, got: {type(config_data)}'
+    updated_config_data = updated_config.get('configuration')
+    assert isinstance(updated_config_data, dict), f'Expecting dict, got: {type(updated_config_data)}'
 
-    if (expected_parameters := updates.get('parameters')) is not None:
-        assert config_data['parameters'] == expected_parameters
+    if param_update_dicts is not None:
+        expected_parameters = update_params(orig_parameters, param_updates)
+        assert updated_config_data['parameters'] == expected_parameters
 
     if (expected_storage := updates.get('storage')) is not None:
         # Storage API might return more keys than what we set, so we check subset
         for k, v in expected_storage.items():
-            assert k in config_data['storage']
-            assert config_data['storage'][k] == v
+            assert k in updated_config_data['storage']
+            assert updated_config_data['storage'][k] == v
 
-    current_version = config_detail['version']
+    current_version = updated_config['version']
     assert isinstance(current_version, int), f'Expecting int, got: {type(current_version)}'
     assert current_version == 2
 
     # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
     metadata = await keboola_client.storage_client.configuration_metadata_get(
-        component_id=updated_config.component_id, configuration_id=updated_config.configuration_id
+        component_id=update_result.component_id, configuration_id=update_result.configuration_id
     )
     assert isinstance(metadata, list), f'Expecting list, got: {type(metadata)}'
 
@@ -388,6 +415,7 @@ async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], ke
         assert created_row_config.description == row_description
         assert created_row_config.component_id == component_id
         assert created_row_config.configuration_id == root_config.configuration_id
+        assert created_row_config.version is not None
         assert frozenset(created_row_config.links) == frozenset(
             [
                 Link(
@@ -481,12 +509,16 @@ async def initial_cmpconf_row(
         {
             'name': 'Updated Row Configuration',
             'description': 'Updated row configuration by automated test',
-            'parameters': {'updated_row_param': 'updated_row_value'},
+            'parameter_updates': [{'op': 'set', 'path': '$', 'new_val': {'updated_row_param': 'updated_row_value'}}],
             'storage': {},
         },
         {'name': 'Updated just name'},
         {'description': 'Updated just description'},
-        {'parameters': {'updated_row_param': 'Updated just parameters'}},
+        {
+            'parameter_updates': [
+                {'op': 'set', 'path': '$', 'new_val': {'updated_row_param': 'Updated just parameters'}}
+            ]
+        },
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
     ],
 )
@@ -528,6 +560,7 @@ async def test_update_config_row(
     assert updated_row_config.configuration_id == configuration_id
     assert updated_row_config.success is True
     assert updated_row_config.timestamp is not None
+    assert updated_row_config.version is not None
 
     expected_row_name = updates.get('name') or 'Initial Test Row Configuration'
     expected_row_description = updates.get('description') or initial_cmpconf_row.description
@@ -565,8 +598,9 @@ async def test_update_config_row(
     row_config_data = updated_row['configuration']
     assert isinstance(row_config_data, dict), f'Expecting dict, got: {type(row_config_data)}'
 
-    if (expected_row_parameters := updates.get('parameters')) is not None:
-        assert row_config_data['parameters'] == expected_row_parameters
+    if (parameter_updates := updates.get('parameter_updates')) is not None:
+        # Using the assumption that parameter_updates is a list with one element with 'set' operation on root path
+        assert row_config_data['parameters'] == parameter_updates[0]['new_val']
 
     if (expected_storage := updates.get('storage')) is not None:
         # Storage API might return more keys than what we set, so we check subset
@@ -617,7 +651,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         sql_code_blocks=test_sql_code_blocks,
         created_table_names=test_created_table_names,
     )
-    sql_dialect = await get_sql_dialect(mcp_context)
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
     expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     project_id = keboola_project.project_id
 
@@ -629,6 +663,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         assert created_transformation.description == test_description
         assert created_transformation.component_id == expected_component_id
         assert created_transformation.configuration_id is not None
+        assert created_transformation.version is not None
         expected_links = frozenset(
             [
                 Link(
@@ -831,6 +866,7 @@ async def test_update_sql_transformation(
     assert updated_trfm.configuration_id == configuration_id
     assert updated_trfm.success is True
     assert updated_trfm.timestamp is not None
+    assert updated_trfm.version is not None
 
     expected_name = updates.get('name') or 'Initial Test SQL Transformation'
     expected_description = updates.get('updated_description') or initial_sqltrfm.description
@@ -894,69 +930,6 @@ async def test_update_sql_transformation(
     assert meta_value == 'true'
     # Check that the original creation metadata is still there
     assert get_metadata_property(metadata, MetadataField.CREATED_BY_MCP) == 'true'
-
-
-@pytest.mark.asyncio
-async def test_list_transformations(mcp_context: Context):
-    """Tests that `list_transformations` returns transformation configurations."""
-    result = await list_transformations(ctx=mcp_context)
-
-    assert isinstance(result, ListTransformationsOutput)
-    for item in result.components_with_configurations:
-        assert isinstance(item, ComponentWithConfigurations)
-        assert item.component.component_type == 'transformation'
-
-
-@pytest.mark.asyncio
-async def test_list_transformations_by_ids(mcp_context: Context):
-    """Tests that `list_transformations` returns only the specific transformations when IDs are provided."""
-    # First create a SQL transformation to get its ID
-    transformation_name = 'Test SQL Transformation for list_transformations_by_ids'
-    transformation_description = 'Test transformation created for testing list_transformations with specific IDs'
-
-    sql_code_blocks = [
-        TransformationConfiguration.Parameters.Block.Code(
-            name='Test transformation block', sql_statements=['SELECT 1 as test_column']
-        )
-    ]
-
-    created_table_names = ['test_output_table']
-
-    client = KeboolaClient.from_state(mcp_context.session.state)
-
-    # Create the transformation
-    created_transformation = await create_sql_transformation(
-        ctx=mcp_context,
-        name=transformation_name,
-        description=transformation_description,
-        sql_code_blocks=sql_code_blocks,
-        created_table_names=created_table_names,
-    )
-
-    try:
-        transformation_ids = [created_transformation.component_id]
-        result = await list_transformations(ctx=mcp_context, transformation_ids=transformation_ids)
-
-        assert isinstance(result, ListTransformationsOutput)
-        assert len(result.components_with_configurations) == 1
-
-        # Verify it's the transformation we specified
-        component_with_configs = result.components_with_configurations[0]
-        assert isinstance(component_with_configs, ComponentWithConfigurations)
-        assert component_with_configs.component.component_id == created_transformation.component_id
-        assert component_with_configs.component.component_type == 'transformation'
-        assert (
-            component_with_configs.configurations[0].configuration_root.configuration_id
-            == created_transformation.configuration_id
-        )
-
-    finally:
-        # Clean up: Delete the transformation
-        await client.storage_client.configuration_delete(
-            component_id=created_transformation.component_id,
-            configuration_id=created_transformation.configuration_id,
-            skip_trash=True,
-        )
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ from httpx import HTTPStatusError
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 
 LOG = logging.getLogger(__name__)
 
@@ -228,7 +228,9 @@ class WorkspaceManager:
         return instance
 
     def __init__(self, client: KeboolaClient, workspace_schema: str | None = None):
-        self._client = client
+        # We use the read-only workspace with access to all project data which lives in the production branch.
+        # Hence we need KeboolaClient bound to the production/default branch.
+        self._client = client.with_branch_id(None)
         self._workspace_schema = workspace_schema
         self._workspace: _Workspace | None = None
         self._table_fqn_cache: dict[str, TableFqn] = {}
@@ -422,3 +424,7 @@ class WorkspaceManager:
     async def get_sql_dialect(self) -> str:
         workspace = await self._get_workspace()
         return workspace.get_sql_dialect()
+
+    async def get_workspace_id(self) -> int:
+        workspace = await self._get_workspace()
+        return workspace.id

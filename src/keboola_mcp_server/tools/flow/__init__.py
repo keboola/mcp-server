@@ -3,7 +3,7 @@ from keboola_mcp_server.tools.flow.model import (
     FlowConfiguration,
     FlowPhase,
     FlowTask,
-    FlowToolResponse,
+    FlowToolOutput,
     ListFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.tools import (

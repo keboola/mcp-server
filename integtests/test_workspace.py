@@ -5,7 +5,7 @@ import pytest
 import requests
 from kbcstorage.client import Client as SyncStorageClient
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -61,7 +61,8 @@ def dynamic_manager(
         except requests.HTTPError:
             LOG.exception(f'Failed to delete workspace {meta["value"]}')
         try:
-            storage_client.branches._delete(f'{storage_client.branches.base_url}branch/default/metadata/{meta["id"]}')
+            url = storage_client.branches.base_url.rstrip('/')
+            storage_client.branches._delete(f'{url}/branch/default/metadata/{meta["id"]}')
             LOG.info(f'Deleted workspaces metadata: {meta["id"]}')
         except requests.HTTPError as e:
             LOG.exception(f'Failed to delete workspace metadata {meta["id"]}: {e}')

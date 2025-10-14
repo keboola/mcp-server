@@ -6,8 +6,8 @@ from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
-from keboola_mcp_server.client import KeboolaClient
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import Configuration
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -27,7 +27,8 @@ async def test_stdio_setup(
     config = Config(storage_api_url=storage_api_url)
     # We expect getting the credentials from environment variables.
 
-    server = create_server(config)
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+    assert isinstance(server, FastMCP)
     component_config = configs[0]
     async with Client(server) as client:
         await _assert_basic_setup(server, client)
@@ -55,7 +56,8 @@ async def test_sse_setup(
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
 
-    server = create_server(config)
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='sse'))
+    assert isinstance(server, FastMCP)
     component_config = configs[0]
 
     async with run_server_remote(server, 'sse') as url:
@@ -92,9 +94,11 @@ async def test_http_setup(
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
 
-    server = create_server(config)
+    transport = 'streamable-http'
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
+    assert isinstance(server, FastMCP)
     component_config = configs[0]
-    async with run_server_remote(server, 'streamable-http') as url:
+    async with run_server_remote(server, transport) as url:
         # test both cases: with headers and without headers using query params
         if use_headers:
             headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
@@ -102,7 +106,7 @@ async def test_http_setup(
             headers = None
             url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
 
-        async with run_client('streamable-http', url, headers) as client:
+        async with run_client(transport, url, headers) as client:
             await _assert_basic_setup(server, client)
             await _assert_get_component_details_tool_call(client, component_config)
 
@@ -122,10 +126,11 @@ async def test_http_multiple_clients(
     config = Config()
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
-
-    server = create_server(config)
+    transport = 'streamable-http'
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
+    assert isinstance(server, FastMCP)
     component_config = configs[0]
-    async with run_server_remote(server, 'streamable-http') as url:
+    async with run_server_remote(server, transport) as url:
         headers = {
             'storage_token': storage_api_token,
             'workspace_schema': workspace_schema,
@@ -133,9 +138,9 @@ async def test_http_multiple_clients(
         }
         url = url
         async with (
-            run_client('streamable-http', url, headers) as client_1,
-            run_client('streamable-http', url, headers) as client_2,
-            run_client('streamable-http', url, headers) as client_3,
+            run_client(transport, url, headers) as client_1,
+            run_client(transport, url, headers) as client_2,
+            run_client(transport, url, headers) as client_3,
         ):
             await _assert_basic_setup(server, client_1)
             await _assert_basic_setup(server, client_2)
@@ -155,7 +160,6 @@ async def test_http_multiple_clients_with_different_headers(
     """
     Test that the server can handle multiple clients with different headers and checks the values of the headers.
     """
-
     config = Config(storage_api_url=storage_api_url)
     # we do not delete env vars, we want the env vars to be overwritten by http request params
 
@@ -172,13 +176,15 @@ async def test_http_multiple_clients_with_different_headers(
         assert workspace_schema == headers[which_client]['workspace_schema']
         return f'{which_client}'
 
-    server = create_server(config)
+    transport = 'streamable-http'
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
+    assert isinstance(server, FastMCP)
     server.add_tool(FunctionTool.from_function(assessed_function))
 
     async with run_server_remote(server, 'streamable-http') as url:
         async with (
-            run_client('streamable-http', url, headers['client_1']) as client_1,
-            run_client('streamable-http', url, headers['client_2']) as client_2,
+            run_client(transport, url, headers['client_1']) as client_1,
+            run_client(transport, url, headers['client_2']) as client_2,
         ):
             await _assert_basic_setup(server, client_1)
             await _assert_basic_setup(server, client_2)
@@ -205,15 +211,17 @@ async def test_http_server_header_and_query_params_client(
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
 
-    server = create_server(config)
+    transport = 'streamable-http'
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
+    assert isinstance(server, FastMCP)
     component_config = configs[0]
 
-    async with run_server_remote(server, 'streamable-http') as url:
+    async with run_server_remote(server, transport) as url:
         headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
         url_params = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
         async with (
-            run_client('streamable-http', url, headers) as client_1,
-            run_client('streamable-http', url_params, None) as client_2,
+            run_client(transport, url, headers) as client_1,
+            run_client(transport, url_params, None) as client_2,
         ):
             await _assert_basic_setup(server, client_1)
             await _assert_basic_setup(server, client_2)

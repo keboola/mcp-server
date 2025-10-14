@@ -6,11 +6,13 @@ import logging.config
 import os
 import pathlib
 import sys
+from dataclasses import replace
 from typing import Optional
 
+from fastmcp import FastMCP
 from starlette.middleware import Middleware
 
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ForwardSlashMiddleware
 from keboola_mcp_server.server import create_server
 
@@ -26,7 +28,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         '--transport',
-        choices=['stdio', 'sse', 'streamable-http'],
+        choices=['stdio', 'sse', 'streamable-http', 'http-compat'],
         default='stdio',
         help='Transport to use for MCP communication',
     )
@@ -64,10 +66,15 @@ async def run_server(args: Optional[list[str]] = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
 
-    if parsed_args.log_config:
-        logging.config.fileConfig(parsed_args.log_config, disable_existing_loggers=False)
-    elif os.environ.get('LOG_CONFIG'):
-        logging.config.fileConfig(os.environ['LOG_CONFIG'], disable_existing_loggers=False)
+    log_config: pathlib.Path | None = parsed_args.log_config
+    if not log_config and os.environ.get('LOG_CONFIG'):
+        log_config = pathlib.Path(os.environ.get('LOG_CONFIG'))
+    if log_config and not log_config.is_file():
+        LOG.warning(f'Invalid log config file: {log_config}. Using default logging configuration.')
+        log_config = None
+
+    if log_config:
+        logging.config.fileConfig(log_config, disable_existing_loggers=False)
     else:
         logging.basicConfig(
             format='%(asctime)s %(name)s %(levelname)s: %(message)s',
@@ -85,16 +92,78 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
     try:
         # Create and run the server
-        keboola_mcp_server = create_server(config)
         if parsed_args.transport == 'stdio':
+            runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)
+            keboola_mcp_server: FastMCP = create_server(config, runtime_info=runtime_config)
             if config.oauth_client_id or config.oauth_client_secret:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
+        elif parsed_args.transport == 'http-compat':
+            # Compatibility mode to support both Streamable-HTTP and SSE transports.
+            # SSE transport is deprecated and will be removed in the future.
+            # Supporting both transports is implemented by creating a parent app and mounting
+            # two apps (SSE and Streamable-HTTP) to it. The custom routes (like health check)
+            # are added to the parent app. We use local imports here due to temporary nature of this code.
+
+            from contextlib import asynccontextmanager
+
+            import uvicorn
+            from starlette.applications import Starlette
+
+            http_runtime_config = ServerRuntimeInfo('http-compat/streamable-http')
+            http_mcp_server, custom_routes = create_server(
+                config, runtime_info=http_runtime_config, custom_routes_handling='return'
+            )
+            http_app = http_mcp_server.http_app(
+                path='/',
+                transport='streamable-http',
+            )
+
+            sse_runtime_config = replace(http_runtime_config, transport='http-compat/sse')
+            sse_mcp_server, custom_routes = create_server(
+                config, runtime_info=sse_runtime_config, custom_routes_handling='return'
+            )
+            sse_app = sse_mcp_server.http_app(
+                path='/',
+                transport='sse',
+            )
+
+            @asynccontextmanager
+            async def lifespan(app: Starlette):
+                async with http_app.lifespan(app):
+                    async with sse_app.lifespan(app):
+                        yield
+
+            app = Starlette(middleware=[Middleware(ForwardSlashMiddleware)], lifespan=lifespan)
+            app.mount('/mcp', http_app)
+            app.mount('/sse', sse_app)  # serves /sse/ and /messages
+            custom_routes.add_to_starlette(app)
+
+            config = uvicorn.Config(
+                app,
+                host=parsed_args.host,
+                port=parsed_args.port,
+                log_config=log_config,
+                timeout_graceful_shutdown=0,
+                lifespan='on',
+            )
+            server = uvicorn.Server(config)
+            LOG.info(
+                f'Starting MCP server with Streamable-HTTP and SSE transports'
+                f' on http://{parsed_args.host}:{parsed_args.port}/'
+            )
+
+            await server.serve()
+
         else:
+            runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)
+            keboola_mcp_server: FastMCP = create_server(config, runtime_info=runtime_config)
             await keboola_mcp_server.run_http_async(
+                show_banner=False,
                 transport=parsed_args.transport,
                 host=parsed_args.host,
                 port=parsed_args.port,
+                uvicorn_config={'log_config': log_config} if log_config else None,
                 # Adding ForwardSlashMiddleware in KeboolaMcpServer's constructor doesn't seem to have any effect.
                 # See https://github.com/jlowin/fastmcp/pull/896 for the related changes in the fastmcp==2.9.0 library.
                 middleware=[Middleware(ForwardSlashMiddleware)],

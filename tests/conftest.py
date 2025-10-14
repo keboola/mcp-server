@@ -3,14 +3,12 @@ from fastmcp import Context
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 
-from keboola_mcp_server.client import (
-    AIServiceClient,
-    AsyncStorageClient,
-    JobsQueueClient,
-    KeboolaClient,
-    RawKeboolaClient,
-)
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.clients.ai_service import AIServiceClient
+from keboola_mcp_server.clients.base import RawKeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -19,11 +17,12 @@ from keboola_mcp_server.workspace import WorkspaceManager
 def keboola_client(mocker) -> KeboolaClient:
     """Creates mocked `KeboolaClient` instance with mocked sub-clients."""
     client = mocker.MagicMock(KeboolaClient)
+    client.storage_api_url = 'https://connection.test.keboola.com'
+    client.branch_id = None
+    client.with_branch_id.return_value = client
 
     # Mock API clients
     client.storage_client = mocker.MagicMock(AsyncStorageClient)
-    client.storage_client.base_api_url = 'test://api.keboola.com'
-    client.storage_client.branch_id = 'default'
     client.storage_client.project_id.return_value = '69420'
     client.jobs_queue_client = mocker.MagicMock(JobsQueueClient)
     client.ai_service_client = mocker.MagicMock(AIServiceClient)
@@ -52,7 +51,7 @@ def empty_context(mocker) -> Context:
     ctx.session_id = None
     ctx.client_id = None
     ctx.request_context = mocker.MagicMock(RequestContext)
-    ctx.request_context.lifespan_context = ServerState(Config())
+    ctx.request_context.lifespan_context = ServerState(Config(), ServerRuntimeInfo(transport='stdio'))
     return ctx
 
 

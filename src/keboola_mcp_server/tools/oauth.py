@@ -6,20 +6,27 @@ from urllib.parse import urlencode, urlunsplit
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import KeboolaMcpServer
 
 LOG = logging.getLogger(__name__)
 
-TOOL_GROUP_NAME = 'OAUTH'
+OAUTH_TOOLS_TAG = 'oauth'
 
 
 def add_oauth_tools(mcp: KeboolaMcpServer) -> None:
     """Adds OAuth tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(create_oauth_url))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_oauth_url,
+            annotations=ToolAnnotations(destructiveHint=True),
+            tags={OAUTH_TOOLS_TAG},
+        )
+    )
     LOG.info('OAuth tools added to the MCP server.')
 
 
@@ -30,7 +37,7 @@ async def create_oauth_url(
     ],
     config_id: Annotated[str, Field(description='The configuration ID for the component.')],
     ctx: Context,
-) -> str:
+) -> Annotated[str, Field(description='The OAuth authorization URL.')]:
     """
     Generates an OAuth authorization URL for a Keboola component configuration.
 
@@ -52,11 +59,8 @@ async def create_oauth_url(
     # Extract the token from response
     sapi_token = token_response['token']
 
-    # Get the storage API URL from client
-    storage_api_url = client.storage_client.base_api_url
-
     # Generate OAuth URL
-    query_params = urlencode({'token': sapi_token, 'sapiUrl': storage_api_url})
+    query_params = urlencode({'token': sapi_token, 'sapiUrl': client.storage_api_url})
     fragment = f'/{component_id}/{config_id}'
 
     oauth_url = urlunsplit(

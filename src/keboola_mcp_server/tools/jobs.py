@@ -4,14 +4,17 @@ from typing import Annotated, Any, Literal, Optional, Union
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
+from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from keboola_mcp_server.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, exclude_none_serializer
+from keboola_mcp_server.mcp import KeboolaMcpServer
 
 LOG = logging.getLogger(__name__)
+
+JOB_TOOLS_TAG = 'jobs'
 
 
 # Add jobs tools to MCP SERVER ##################################
@@ -19,9 +22,27 @@ LOG = logging.getLogger(__name__)
 
 def add_job_tools(mcp: KeboolaMcpServer) -> None:
     """Add job tools to the MCP server."""
-    mcp.add_tool(FunctionTool.from_function(get_job))
-    mcp.add_tool(FunctionTool.from_function(list_jobs, serializer=exclude_none_serializer))
-    mcp.add_tool(FunctionTool.from_function(run_job))
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_job,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={JOB_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_jobs,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={JOB_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            run_job,
+            annotations=ToolAnnotations(destructiveHint=True),
+            tags={JOB_TOOLS_TAG},
+        )
+    )
 
     LOG.info('Job tools added to the MCP server.')
 
@@ -236,7 +257,7 @@ async def get_job(
         Field(description='The unique identifier of the job whose details should be retrieved.'),
     ],
     ctx: Context,
-) -> Annotated[JobDetail, Field(description='The detailed information about the job.')]:
+) -> JobDetail:
     """
     Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
     results, and any relevant metadata.
@@ -261,7 +282,7 @@ async def run_job(
         Field(description='The ID of the component or transformation for which to start a job.'),
     ],
     configuration_id: Annotated[str, Field(description='The ID of the configuration for which to start a job.')],
-) -> Annotated[JobDetail, Field(description='The newly started job details.')]:
+) -> JobDetail:
     """
     Starts a new job for a given component or transformation.
     """

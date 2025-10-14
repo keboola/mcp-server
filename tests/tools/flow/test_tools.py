@@ -7,7 +7,7 @@ import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
     ConditionalFlowTask,
@@ -18,7 +18,7 @@ from keboola_mcp_server.tools.flow.model import (
     ListFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.tools import (
-    FlowToolResponse,
+    FlowToolOutput,
     create_conditional_flow,
     create_flow,
     get_flow,
@@ -227,12 +227,14 @@ class TestCreateFlowTool:
             tasks=legacy_flow_tasks,
         )
 
-        assert isinstance(result, FlowToolResponse)
+        assert isinstance(result, FlowToolOutput)
         assert result.success is True
-        assert result.id == mock_legacy_flow_create_update['id']
+        assert result.configuration_id == mock_legacy_flow_create_update['id']
+        assert result.component_id == 'keboola.orchestrator'
         assert result.description == mock_legacy_flow_create_update['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
+        assert result.version == mock_legacy_flow_create_update['version']
 
         keboola_client.storage_client.configuration_create.assert_called_once()
 
@@ -257,12 +259,14 @@ class TestCreateFlowTool:
             tasks=mock_conditional_flow_create_update['configuration']['tasks'],
         )
 
-        assert isinstance(result, FlowToolResponse)
+        assert isinstance(result, FlowToolOutput)
         assert result.success is True
-        assert result.id == mock_conditional_flow_create_update['id']
+        assert result.configuration_id == mock_conditional_flow_create_update['id']
+        assert result.component_id == 'keboola.flow'
         assert result.description == mock_conditional_flow_create_update['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
+        assert result.version == mock_conditional_flow_create_update['version']
 
         keboola_client.storage_client.configuration_create.assert_called_once()
 
@@ -315,12 +319,14 @@ class TestUpdateFlowTool:
             change_description='Added data validation phase and enhanced error handling',
         )
 
-        assert isinstance(result, FlowToolResponse)
+        assert isinstance(result, FlowToolOutput)
         assert result.success is True
-        assert result.id == 'legacy_flow_123'
+        assert result.configuration_id == 'legacy_flow_123'
+        assert result.component_id == 'keboola.orchestrator'
         assert result.description == 'Updated legacy ETL pipeline'
         assert result.timestamp is not None
         assert len(result.links) == 3
+        assert result.version == updated_config['version']
 
         keboola_client.storage_client.configuration_update.assert_called_once()
 
@@ -360,12 +366,14 @@ class TestUpdateFlowTool:
             change_description='Enhanced error handling and added notification phase',
         )
 
-        assert isinstance(result, FlowToolResponse)
+        assert isinstance(result, FlowToolOutput)
         assert result.success is True
-        assert result.id == updated_config['id']
+        assert result.configuration_id == updated_config['id']
+        assert result.component_id == 'keboola.flow'
         assert result.description == updated_config['description']
         assert result.timestamp is not None
         assert len(result.links) == 3
+        assert result.version == updated_config['version']
 
         keboola_client.storage_client.configuration_update.assert_called_once()
 

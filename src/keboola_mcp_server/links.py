@@ -2,7 +2,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from keboola_mcp_server.client import CONDITIONAL_FLOW_COMPONENT_ID, FlowType, KeboolaClient
+from keboola_mcp_server.clients.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    FlowType,
+    KeboolaClient,
+)
 
 URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
 
@@ -30,18 +34,22 @@ class Link(BaseModel):
 class ProjectLinksManager:
     FLOW_DOCUMENTATION_URL = 'https://help.keboola.com/flows/'
 
-    def __init__(self, base_url: str, project_id: str):
+    def __init__(self, *, base_url: str, project_id: str, branch_id: str | None):
         self._base_url = base_url
         self._project_id = project_id
+        self._branch_id = branch_id
 
     @classmethod
     async def from_client(cls, client: KeboolaClient) -> 'ProjectLinksManager':
-        base_url = client.storage_client.base_api_url
         project_id = await client.storage_client.project_id()
-        return cls(base_url=base_url, project_id=project_id)
+        return cls(base_url=client.storage_api_url, project_id=project_id, branch_id=client.branch_id)
 
     def _url(self, path: str) -> str:
-        return f'{self._base_url}/admin/projects/{self._project_id}/{path}'
+        parts = [self._base_url, 'admin/projects', self._project_id]
+        if self._branch_id:
+            parts += ['branch', self._branch_id]
+        parts.append(path)
+        return '/'.join(parts)
 
     # --- Project ---
     def get_project_detail_link(self) -> Link:
@@ -95,6 +103,40 @@ class ProjectLinksManager:
             self.get_config_dashboard_link(component_id=component_id, component_name=component_id),
         ]
 
+    # --- Data Apps ---
+    def get_data_app_config_link(self, configuration_id: str, configuration_name: str, is_authorized: bool) -> Link:
+        title = (
+            f'Data App Configuration (To see password, click on "OPEN DATA APP"): {configuration_name}'
+            if is_authorized
+            else f'Data App Configuration: {configuration_name}'
+        )
+        return Link.detail(title=title, url=self._url(f'data-apps/{configuration_id}'))
+
+    def get_data_app_dashboard_link(self) -> Link:
+        return Link.dashboard(title='Data Apps in the project', url=self._url('data-apps'))
+
+    def get_data_app_deployment_link(self, deployment_link: str) -> Link:
+        return Link.detail(title='Data App Deployment', url=deployment_link)
+
+    def get_data_app_links(
+        self,
+        configuration_id: str,
+        configuration_name: str,
+        deployment_link: str | None = None,
+        is_authorized: bool = False,
+    ) -> list[Link]:
+        links = [
+            self.get_data_app_config_link(
+                configuration_id=configuration_id,
+                configuration_name=configuration_name,
+                is_authorized=is_authorized,
+            ),
+            self.get_data_app_dashboard_link(),
+        ]
+        if deployment_link:
+            links.append(self.get_data_app_deployment_link(deployment_link))
+        return links
+
     # --- Transformations ---
     def get_transformations_dashboard_link(self) -> Link:
         return Link.dashboard(title='Transformations dashboard', url=self._url('transformations-v2'))
@@ -126,8 +168,8 @@ class ProjectLinksManager:
     def get_table_detail_link(self, bucket_id: str, table_name: str) -> Link:
         return Link.detail(title=f'Table: {table_name}', url=self._url(f'storage/{bucket_id}/table/{table_name}'))
 
-    def get_table_links(self, bucket_id: str, table_name: str) -> list[Link]:
+    def get_table_links(self, bucket_id: str, bucket_name: str, table_name: str) -> list[Link]:
         return [
             self.get_table_detail_link(bucket_id, table_name),
-            self.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_id),
+            self.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=bucket_name),
         ]

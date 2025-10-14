@@ -3,10 +3,10 @@ from typing import Any, Mapping
 
 import pytest
 from mcp.server.auth.provider import AccessToken, RefreshToken
-from mcp.shared.auth import OAuthClientInformationFull
-from pydantic import AnyUrl
+from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
+from pydantic import AnyHttpUrl, AnyUrl
 
-from keboola_mcp_server.oauth import SimpleOAuthProvider, _ExtendedAuthorizationCode
+from keboola_mcp_server.oauth import SimpleOAuthProvider, _ExtendedAuthorizationCode, _OAuthClientInformationFull
 
 JWT_KEY = 'secret'
 
@@ -103,3 +103,39 @@ class TestSimpleOAuthProvider:
         assert refresh_token.token == raw_rt
         assert refresh_token.scopes == scopes
         assert 0 <= rt_expires_in - (refresh_token.expires_at - time.time()) < 1
+
+    @pytest.mark.parametrize(
+        ('uri', 'valid'),
+        [
+            (AnyUrl('http://localhost:8080/foo'), True),
+            (AnyUrl('http://localhost:20388/oauth/callback'), True),
+            (AnyUrl('http://127.0.0.1:1234/bar'), True),
+            (AnyUrl('http://127.0.0.1:54750/auth/callback'), True),
+            (AnyUrl('https://foo.keboola.com/bar/baz'), True),
+            (AnyUrl('https://bar.keboola.dev/baz'), True),
+            (AnyUrl('https://chatgpt.com'), True),
+            (AnyUrl('https://foo.chatgpt.com/bar'), True),
+            (AnyUrl('https://chatgpt.com/connector_platform_oauth_redirect'), True),
+            (AnyUrl('https://claude.ai'), True),
+            (AnyUrl('https://foo.claude.ai/bar'), True),
+            (AnyUrl('https://claude.ai/api/mcp/auth_callback'), True),
+            (AnyUrl('https://librechat.glami-ml.com'), True),
+            (AnyUrl('https://librechat.glami-ml.com/api/mcp/keboola/oauth/callback'), True),
+            (AnyUrl('https://foo.librechat.glami-ml.com/bar'), False),  # no subdomains allowed
+            (AnyUrl('https://make.com'), True),
+            (AnyUrl('https://foo.make.com/bar'), True),
+            (AnyUrl('https://www.make.com/oauth/cb/mcp'), True),
+            (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
+            (None, False),
+            (AnyUrl('https://foo.bar.com/callback'), False),
+            (AnyUrl('ftp://foo.bar.com'), False),
+        ],
+    )
+    def test_validate_redirect_uri(self, uri: AnyUrl, valid: bool):
+        info = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo')
+        if valid:
+            actual = info.validate_redirect_uri(uri)
+            assert actual == uri
+        else:
+            with pytest.raises(InvalidRedirectUriError):
+                info.validate_redirect_uri(uri)
