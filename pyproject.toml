@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.23.1"
+version = "1.23.2"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,7 @@ dependencies = [
     "pyjwt ~= 2.10",
     "json-log-formatter ~= 1.0",
     "cryptography ~= 45.0",
+    "pydantic >=2.0,<2.12",
 ]
 [project.optional-dependencies]
 codestyle = [
