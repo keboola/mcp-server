@@ -214,8 +214,18 @@ class ConfigParamRemove(BaseModel):
     path: str = Field(description='JSONPath to the parameter key to remove')
 
 
+class ConfigParamListAppend(BaseModel):
+    """Append a value to a list parameter."""
+
+    op: Literal['list_append']
+    path: str = Field(description='JSONPath to the list parameter')
+    value: Any = Field(description='Value to append to the list')
+
+
 # Discriminated union of all parameter update operations
-ConfigParamUpdate = Annotated[Union[ConfigParamSet, ConfigParamReplace, ConfigParamRemove], Field(discriminator='op')]
+ConfigParamUpdate = Annotated[
+    Union[ConfigParamSet, ConfigParamReplace, ConfigParamRemove, ConfigParamListAppend], Field(discriminator='op')
+]
 
 
 # ============================================================================

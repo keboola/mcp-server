@@ -505,6 +505,21 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
 
         return jsonpath_expr.filter(lambda x: True, params)
 
+    elif update.op == 'list_append':
+        matches = jsonpath_expr.find(params)
+
+        if not matches:
+            raise ValueError(f'Path "{update.path}" does not exist')
+
+        for match in matches:
+            current_value = match.value
+            if not isinstance(current_value, list):
+                raise ValueError(f'Path "{match.full_path}" is not a list')
+
+            current_value.append(update.value)
+
+        return params
+
 
 def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) -> dict[str, Any]:
     """

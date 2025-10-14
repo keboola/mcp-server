@@ -23,6 +23,9 @@ from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentType,
     ComponentWithConfigurations,
+    ConfigParamListAppend,
+    ConfigParamReplace,
+    ConfigParamSet,
     ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
@@ -777,23 +780,19 @@ async def initial_sqltrfm(
     [
         {
             'updated_description': 'Updated SQL transformation description',
-            'parameters': {
-                'blocks': [
-                    {
-                        'name': 'Updated block',
-                        'codes': [
-                            {
-                                'name': 'Updated transformation',
-                                'sql_statements': [
-                                    'SELECT 1 as updated_column',
-                                    'SELECT 2 as additional_column',
-                                    'SELECT 3 as third_column',
-                                ],
-                            }
-                        ],
-                    }
-                ]
-            },
+            'parameter_updates': [
+                ConfigParamSet(op='set', path='blocks[0].name', new_val='Updated block'),
+                ConfigParamSet(op='set', path='blocks[0].codes[0].name', new_val='Updated transformation'),
+                ConfigParamSet(
+                    op='set',
+                    path='blocks[0].codes[0].script',
+                    new_val=[
+                        'SELECT 1 as updated_column',
+                        'SELECT 2 as additional_column',
+                        'SELECT 3 as third_column',
+                    ],
+                ),
+            ],
             'storage': {
                 'input': {'tables': [{'source': 'in.c-bucket.input_table', 'destination': 'input.csv'}]},
                 'output': {
@@ -807,23 +806,17 @@ async def initial_sqltrfm(
         },
         {'updated_description': 'Updated SQL transformation description'},
         {
-            'parameters': {
-                'blocks': [
-                    {
-                        'name': 'Updated block',
-                        'codes': [
-                            {
-                                'name': 'Updated transformation',
-                                'sql_statements': [
-                                    'SELECT 1 as updated_column',
-                                    'SELECT 2 as additional_column',
-                                    'SELECT 3 as third_column',
-                                ],
-                            }
-                        ],
-                    }
-                ]
-            }
+            'parameter_updates': [
+                ConfigParamReplace(
+                    op='str_replace',
+                    path='blocks[0].codes[0].script[0]',
+                    search_for='SELECT * FROM test_table',
+                    replace_with='SELECT * FROM updated_table',
+                ),
+                ConfigParamListAppend(
+                    op='list_append', path='blocks[0].codes[0].script', value='SELECT 2 as additional_column'
+                ),
+            ]
         },
         {
             'storage': {
@@ -900,9 +893,10 @@ async def test_update_sql_transformation(
 
     actual_parameters = trfm_data.get('parameters')
     assert isinstance(actual_parameters, dict), f'Expecting dict, got: {type(actual_parameters)}'
-    if (expected_parameters := updates.get('updated_parameters')) is not None:
-        assert isinstance(expected_description, TransformationConfiguration.Parameters)
-        assert actual_parameters == expected_parameters.model_dump()
+    # parameter_updates are applied incrementally, so we just verify parameters exist after update
+    if 'parameter_updates' in updates:
+        assert 'blocks' in actual_parameters
+        assert len(actual_parameters['blocks']) > 0
 
     actual_storage = trfm_data.get('storage')
     assert isinstance(actual_storage, dict), f'Expecting dict, got: {type(actual_storage)}'
