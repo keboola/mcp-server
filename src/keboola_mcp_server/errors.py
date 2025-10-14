@@ -78,6 +78,7 @@ async def _trigger_event(
             # For the HTTP-based transports use the HTTP session ID. For other transports use the server ID.
             'sessionId': ctx.session_id or server_state.runtime_info.server_id,
             'serverTransport': server_state.runtime_info.transport.split('/')[-1],
+            'conversationId': server_state.config.conversation_id or '',
         },
         'tool': {
             'name': tool_name,
