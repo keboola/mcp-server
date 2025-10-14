@@ -32,6 +32,13 @@ def mock_components() -> list[dict[str, Any]]:
             'description': 'Application for Google Drive',
             'version': '1',
         },
+        {
+            'id': 'keboola.snowflake-transformation',
+            'name': 'Snowflake Transformation',
+            'type': 'transformation',
+            'description': 'Snowflake SQL transformation',
+            'version': '1',
+        },
     ]
 
 
