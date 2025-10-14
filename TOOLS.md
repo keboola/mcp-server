@@ -103,35 +103,29 @@ EXAMPLES:
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "title": "Description",
       "type": "string"
     },
     "component_id": {
       "description": "The ID of the component for which to create the configuration.",
-      "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
       "description": "The ID of the configuration for which to create the configuration row.",
-      "title": "Configuration Id",
       "type": "string"
     },
     "parameters": {
       "additionalProperties": true,
       "description": "The component row configuration parameters, adhering to the row_configuration_schema",
-      "title": "Parameters",
       "type": "object"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage",
       "type": "object"
     }
   },
@@ -178,30 +172,25 @@ EXAMPLES:
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "title": "Description",
       "type": "string"
     },
     "component_id": {
       "description": "The ID of the component for which to create the configuration.",
-      "title": "Component Id",
       "type": "string"
     },
     "parameters": {
       "additionalProperties": true,
       "description": "The component configuration parameters, adhering to the root_configuration_schema",
-      "title": "Parameters",
       "type": "object"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "title": "Storage",
       "type": "object"
     }
   },
@@ -262,7 +251,6 @@ EXAMPLES:
       "properties": {
         "name": {
           "description": "The name of the current code block describing the purpose of the block",
-          "title": "Name",
           "type": "string"
         },
         "sql_statements": {
@@ -270,7 +258,6 @@ EXAMPLES:
           "items": {
             "type": "string"
           },
-          "title": "Sql Statements",
           "type": "array"
         }
       },
@@ -278,19 +265,16 @@ EXAMPLES:
         "name",
         "sql_statements"
       ],
-      "title": "Code",
       "type": "object"
     }
   },
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the SQL transformation.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "description": "The detailed description of the SQL transformation capturing the user intent, explaining the SQL query, and the expected output.",
-      "title": "Description",
       "type": "string"
     },
     "sql_code_blocks": {
@@ -298,7 +282,6 @@ EXAMPLES:
       "items": {
         "$ref": "#/$defs/Code"
       },
-      "title": "Sql Code Blocks",
       "type": "array"
     },
     "created_table_names": {
@@ -307,7 +290,6 @@ EXAMPLES:
       "items": {
         "type": "string"
       },
-      "title": "Created Table Names",
       "type": "array"
     }
   },
@@ -349,7 +331,6 @@ EXAMPLES:
   "properties": {
     "component_id": {
       "description": "ID of the component/transformation",
-      "title": "Component Id",
       "type": "string"
     }
   },
@@ -387,12 +368,10 @@ EXAMPLES:
   "properties": {
     "component_id": {
       "description": "ID of the component/transformation",
-      "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
       "description": "ID of the component/transformation configuration",
-      "title": "Configuration Id",
       "type": "string"
     }
   },
@@ -430,7 +409,6 @@ EXAMPLES:
   "properties": {
     "component_id": {
       "description": "The ID of the component to get configuration examples for.",
-      "title": "Component Id",
       "type": "string"
     }
   },
@@ -512,7 +490,6 @@ EXAMPLES:
         ],
         "type": "string"
       },
-      "title": "Component Types",
       "type": "array"
     },
     "component_ids": {
@@ -521,7 +498,6 @@ EXAMPLES:
       "items": {
         "type": "string"
       },
-      "title": "Component Ids",
       "type": "array"
     }
   },
@@ -579,12 +555,10 @@ WORKFLOW:
       "properties": {
         "op": {
           "const": "remove",
-          "title": "Op",
           "type": "string"
         },
         "path": {
           "description": "JSONPath to the parameter key to remove",
-          "title": "Path",
           "type": "string"
         }
       },
@@ -592,7 +566,6 @@ WORKFLOW:
         "op",
         "path"
       ],
-      "title": "ConfigParamRemove",
       "type": "object"
     },
     "ConfigParamReplace": {
@@ -600,22 +573,18 @@ WORKFLOW:
       "properties": {
         "op": {
           "const": "str_replace",
-          "title": "Op",
           "type": "string"
         },
         "path": {
           "description": "JSONPath to the parameter key to modify",
-          "title": "Path",
           "type": "string"
         },
         "search_for": {
           "description": "Substring to search for (non-empty)",
-          "title": "Search For",
           "type": "string"
         },
         "replace_with": {
           "description": "Replacement string (can be empty for deletion)",
-          "title": "Replace With",
           "type": "string"
         }
       },
@@ -625,7 +594,6 @@ WORKFLOW:
         "search_for",
         "replace_with"
       ],
-      "title": "ConfigParamReplace",
       "type": "object"
     },
     "ConfigParamSet": {
@@ -633,12 +601,10 @@ WORKFLOW:
       "properties": {
         "op": {
           "const": "set",
-          "title": "Op",
           "type": "string"
         },
         "path": {
           "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
-          "title": "Path",
           "type": "string"
         },
         "new_val": {
@@ -651,36 +617,30 @@ WORKFLOW:
         "path",
         "new_val"
       ],
-      "title": "ConfigParamSet",
       "type": "object"
     }
   },
   "properties": {
     "change_description": {
       "description": "A clear, human-readable summary of what changed in this update. Be specific: e.g., \"Updated API key\", \"Added customers table to input mapping\".",
-      "title": "Change Description",
       "type": "string"
     },
     "component_id": {
       "description": "The ID of the component the configuration belongs to.",
-      "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
       "description": "The ID of the configuration to update.",
-      "title": "Configuration Id",
       "type": "string"
     },
     "name": {
       "default": "",
       "description": "New name for the configuration. Only provide if changing the name. Name should be short (typically under 50 characters) and descriptive.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "default": "",
       "description": "New detailed description for the configuration. Only provide if changing the description. Should explain the purpose, data sources, and behavior of this configuration.",
-      "title": "Description",
       "type": "string"
     },
     "parameter_updates": {
@@ -707,14 +667,12 @@ WORKFLOW:
           }
         ]
       },
-      "title": "Parameter Updates",
       "type": "array"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
       "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "title": "Storage",
       "type": "object"
     }
   },
@@ -779,12 +737,10 @@ WORKFLOW:
       "properties": {
         "op": {
           "const": "remove",
-          "title": "Op",
           "type": "string"
         },
         "path": {
           "description": "JSONPath to the parameter key to remove",
-          "title": "Path",
           "type": "string"
         }
       },
@@ -792,7 +748,6 @@ WORKFLOW:
         "op",
         "path"
       ],
-      "title": "ConfigParamRemove",
       "type": "object"
     },
     "ConfigParamReplace": {
@@ -800,22 +755,18 @@ WORKFLOW:
       "properties": {
         "op": {
           "const": "str_replace",
-          "title": "Op",
           "type": "string"
         },
         "path": {
           "description": "JSONPath to the parameter key to modify",
-          "title": "Path",
           "type": "string"
         },
         "search_for": {
           "description": "Substring to search for (non-empty)",
-          "title": "Search For",
           "type": "string"
         },
         "replace_with": {
           "description": "Replacement string (can be empty for deletion)",
-          "title": "Replace With",
           "type": "string"
         }
       },
@@ -825,7 +776,6 @@ WORKFLOW:
         "search_for",
         "replace_with"
       ],
-      "title": "ConfigParamReplace",
       "type": "object"
     },
     "ConfigParamSet": {
@@ -833,12 +783,10 @@ WORKFLOW:
       "properties": {
         "op": {
           "const": "set",
-          "title": "Op",
           "type": "string"
         },
         "path": {
           "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
-          "title": "Path",
           "type": "string"
         },
         "new_val": {
@@ -851,41 +799,34 @@ WORKFLOW:
         "path",
         "new_val"
       ],
-      "title": "ConfigParamSet",
       "type": "object"
     }
   },
   "properties": {
     "change_description": {
       "description": "A clear, human-readable summary of what changed in this row update. Be specific.",
-      "title": "Change Description",
       "type": "string"
     },
     "component_id": {
       "description": "The ID of the component the configuration belongs to.",
-      "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
       "description": "The ID of the parent configuration containing the row to update.",
-      "title": "Configuration Id",
       "type": "string"
     },
     "configuration_row_id": {
       "description": "The ID of the specific configuration row to update.",
-      "title": "Configuration Row Id",
       "type": "string"
     },
     "name": {
       "default": "",
       "description": "New name for the configuration row. Only provide if changing the name. Name should be short (typically under 50 characters) and descriptive of this specific row.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "default": "",
       "description": "New detailed description for the configuration row. Only provide if changing the description. Should explain the specific purpose and behavior of this individual row.",
-      "title": "Description",
       "type": "string"
     },
     "parameter_updates": {
@@ -912,14 +853,12 @@ WORKFLOW:
           }
         ]
       },
-      "title": "Parameter Updates",
       "type": "array"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
       "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_config first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "title": "Storage",
       "type": "object"
     }
   },
@@ -979,7 +918,6 @@ EXAMPLES:
       "properties": {
         "name": {
           "description": "The name of the current block",
-          "title": "Name",
           "type": "string"
         },
         "codes": {
@@ -987,7 +925,6 @@ EXAMPLES:
           "items": {
             "$ref": "#/$defs/Code"
           },
-          "title": "Codes",
           "type": "array"
         }
       },
@@ -995,7 +932,6 @@ EXAMPLES:
         "name",
         "codes"
       ],
-      "title": "Block",
       "type": "object"
     },
     "Code": {
@@ -1003,7 +939,6 @@ EXAMPLES:
       "properties": {
         "name": {
           "description": "The name of the current code block describing the purpose of the block",
-          "title": "Name",
           "type": "string"
         },
         "sql_statements": {
@@ -1011,7 +946,6 @@ EXAMPLES:
           "items": {
             "type": "string"
           },
-          "title": "Sql Statements",
           "type": "array"
         }
       },
@@ -1019,7 +953,6 @@ EXAMPLES:
         "name",
         "sql_statements"
       ],
-      "title": "Code",
       "type": "object"
     },
     "Parameters": {
@@ -1030,52 +963,44 @@ EXAMPLES:
           "items": {
             "$ref": "#/$defs/Block"
           },
-          "title": "Blocks",
           "type": "array"
         }
       },
       "required": [
         "blocks"
       ],
-      "title": "Parameters",
       "type": "object"
     }
   },
   "properties": {
     "configuration_id": {
       "description": "ID of the transformation configuration to update",
-      "title": "Configuration Id",
       "type": "string"
     },
     "change_description": {
       "description": "Description of the changes made to the transformation configuration.",
-      "title": "Change Description",
       "type": "string"
     },
     "parameters": {
       "$ref": "#/$defs/Parameters",
       "default": null,
       "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
-      "title": "Parameters",
       "type": "object"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
       "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
-      "title": "Storage",
       "type": "object"
     },
     "updated_description": {
       "default": "",
       "description": "Updated transformation description reflecting the changes made in the behavior of the transformation. If no behavior changes are made, empty string preserves the original description.",
-      "title": "Updated Description",
       "type": "string"
     },
     "is_disabled": {
       "default": false,
       "description": "Whether to disable the transformation configuration. Default is False.",
-      "title": "Is Disabled",
       "type": "boolean"
     }
   },
@@ -1116,12 +1041,10 @@ because it needs to restart.
         "deploy",
         "stop"
       ],
-      "title": "Action",
       "type": "string"
     },
     "configuration_id": {
       "description": "The ID of the data app configuration.",
-      "title": "Configuration Id",
       "type": "string"
     }
   },
@@ -1161,19 +1084,16 @@ Considerations:
       "items": {
         "type": "string"
       },
-      "title": "Configuration Ids",
       "type": "array"
     },
     "limit": {
       "default": 100,
       "description": "The limit of the data apps to fetch.",
-      "title": "Limit",
       "type": "integer"
     },
     "offset": {
       "default": 0,
       "description": "The offset of the data apps to fetch.",
-      "title": "Offset",
       "type": "integer"
     }
   },
@@ -1211,17 +1131,14 @@ by the user.
   "properties": {
     "name": {
       "description": "Name of the data app.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "description": "Description of the data app.",
-      "title": "Description",
       "type": "string"
     },
     "source_code": {
       "description": "Complete Python/Streamlit source code for the data app.",
-      "title": "Source Code",
       "type": "string"
     },
     "packages": {
@@ -1229,25 +1146,21 @@ by the user.
       "items": {
         "type": "string"
       },
-      "title": "Packages",
       "type": "array"
     },
     "authorization_required": {
       "default": true,
       "description": "Whether the data app is authorized using simple password or not.",
-      "title": "Authorization Required",
       "type": "boolean"
     },
     "configuration_id": {
       "default": "",
       "description": "The ID of existing data app configuration when updating, otherwise empty string.",
-      "title": "Configuration Id",
       "type": "string"
     },
     "change_description": {
       "default": "",
       "description": "The description of the change when updating (e.g. \"Update Code\"), otherwise empty string.",
-      "title": "Change Description",
       "type": "string"
     }
   },
@@ -1281,7 +1194,6 @@ Answers a question using the Keboola documentation as a source.
   "properties": {
     "query": {
       "description": "Natural language query to search for in the documentation.",
-      "title": "Query",
       "type": "string"
     }
   },
@@ -1330,12 +1242,10 @@ WHEN TO USE:
   "properties": {
     "name": {
       "description": "A short, descriptive name for the flow.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "description": "Detailed description of the flow purpose.",
-      "title": "Description",
       "type": "string"
     },
     "phases": {
@@ -1344,7 +1254,6 @@ WHEN TO USE:
         "additionalProperties": true,
         "type": "object"
       },
-      "title": "Phases",
       "type": "array"
     },
     "tasks": {
@@ -1353,7 +1262,6 @@ WHEN TO USE:
         "additionalProperties": true,
         "type": "object"
       },
-      "title": "Tasks",
       "type": "array"
     }
   },
@@ -1412,12 +1320,10 @@ EXAMPLES:
   "properties": {
     "name": {
       "description": "A short, descriptive name for the flow.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "description": "Detailed description of the flow purpose.",
-      "title": "Description",
       "type": "string"
     },
     "phases": {
@@ -1426,7 +1332,6 @@ EXAMPLES:
         "additionalProperties": true,
         "type": "object"
       },
-      "title": "Phases",
       "type": "array"
     },
     "tasks": {
@@ -1435,7 +1340,6 @@ EXAMPLES:
         "additionalProperties": true,
         "type": "object"
       },
-      "title": "Tasks",
       "type": "array"
     }
   },
@@ -1467,7 +1371,6 @@ Gets detailed information about a specific flow configuration.
   "properties": {
     "configuration_id": {
       "description": "ID of the flow to retrieve.",
-      "title": "Configuration Id",
       "type": "string"
     }
   },
@@ -1505,7 +1408,6 @@ CONSIDERATIONS:
         "keboola.flow",
         "keboola.orchestrator"
       ],
-      "title": "Flow Type",
       "type": "string"
     }
   },
@@ -1547,7 +1449,6 @@ Usage:
         "keboola.flow",
         "keboola.orchestrator"
       ],
-      "title": "Flow Type",
       "type": "string"
     }
   },
@@ -1580,7 +1481,6 @@ Retrieves flow configurations from the project. Optionally filtered by IDs.
       "items": {
         "type": "string"
       },
-      "title": "Flow Ids",
       "type": "array"
     }
   },
@@ -1644,7 +1544,6 @@ EXAMPLES:
   "properties": {
     "configuration_id": {
       "description": "ID of the flow configuration to update.",
-      "title": "Configuration Id",
       "type": "string"
     },
     "flow_type": {
@@ -1653,12 +1552,10 @@ EXAMPLES:
         "keboola.flow",
         "keboola.orchestrator"
       ],
-      "title": "Flow Type",
       "type": "string"
     },
     "change_description": {
       "description": "Description of changes made.",
-      "title": "Change Description",
       "type": "string"
     },
     "phases": {
@@ -1668,7 +1565,6 @@ EXAMPLES:
         "additionalProperties": true,
         "type": "object"
       },
-      "title": "Phases",
       "type": "array"
     },
     "tasks": {
@@ -1678,19 +1574,16 @@ EXAMPLES:
         "additionalProperties": true,
         "type": "object"
       },
-      "title": "Tasks",
       "type": "array"
     },
     "name": {
       "default": "",
       "description": "Updated flow name. Only updated if provided.",
-      "title": "Name",
       "type": "string"
     },
     "description": {
       "default": "",
       "description": "Updated flow description. Only updated if provided.",
-      "title": "Description",
       "type": "string"
     }
   },
@@ -1727,7 +1620,6 @@ EXAMPLES:
   "properties": {
     "job_id": {
       "description": "The unique identifier of the job whose details should be retrieved.",
-      "title": "Job Id",
       "type": "string"
     }
   },
@@ -1782,19 +1674,16 @@ EXAMPLES:
         "cancelled",
         "terminated"
       ],
-      "title": "Status",
       "type": "string"
     },
     "component_id": {
       "default": null,
       "description": "The optional ID of the component whose jobs you want to list, default = None.",
-      "title": "Component Id",
       "type": "string"
     },
     "config_id": {
       "default": null,
       "description": "The optional ID of the component configuration whose jobs you want to list, default = None.",
-      "title": "Config Id",
       "type": "string"
     },
     "limit": {
@@ -1802,14 +1691,12 @@ EXAMPLES:
       "description": "The number of jobs to list, default = 100, max = 500.",
       "maximum": 500,
       "minimum": 1,
-      "title": "Limit",
       "type": "integer"
     },
     "offset": {
       "default": 0,
       "description": "The offset of the jobs to list, default = 0.",
       "minimum": 0,
-      "title": "Offset",
       "type": "integer"
     },
     "sort_by": {
@@ -1822,7 +1709,6 @@ EXAMPLES:
         "durationSeconds",
         "id"
       ],
-      "title": "Sort By",
       "type": "string"
     },
     "sort_order": {
@@ -1832,7 +1718,6 @@ EXAMPLES:
         "asc",
         "desc"
       ],
-      "title": "Sort Order",
       "type": "string"
     }
   },
@@ -1858,12 +1743,10 @@ Starts a new job for a given component or transformation.
   "properties": {
     "component_id": {
       "description": "The ID of the component or transformation for which to start a job.",
-      "title": "Component Id",
       "type": "string"
     },
     "configuration_id": {
       "description": "The ID of the configuration for which to start a job.",
-      "title": "Configuration Id",
       "type": "string"
     }
   },
@@ -1901,12 +1784,10 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
   "properties": {
     "component_id": {
       "description": "The component ID to grant access to (e.g., \"keboola.ex-google-analytics-v4\").",
-      "title": "Component Id",
       "type": "string"
     },
     "config_id": {
       "description": "The configuration ID for the component.",
-      "title": "Config Id",
       "type": "string"
     }
   },
@@ -1972,7 +1853,6 @@ EXAMPLES:
   "properties": {
     "query": {
       "description": "Natural language query to find the requested component.",
-      "title": "Query",
       "type": "string"
     }
   },
@@ -2009,7 +1889,6 @@ Considerations:
       "items": {
         "type": "string"
       },
-      "title": "Name Prefixes",
       "type": "array"
     },
     "item_types": {
@@ -2030,19 +1909,16 @@ Considerations:
         ],
         "type": "string"
       },
-      "title": "Item Types",
       "type": "array"
     },
     "limit": {
       "default": 50,
       "description": "Maximum number of items to return (default: 50, max: 100).",
-      "title": "Limit",
       "type": "integer"
     },
     "offset": {
       "default": 0,
       "description": "Number of matching items to skip, pagination.",
-      "title": "Offset",
       "type": "integer"
     }
   },
@@ -2112,12 +1988,10 @@ DATA VALIDATION:
   "properties": {
     "sql_query": {
       "description": "SQL SELECT query to run.",
-      "title": "Sql Query",
       "type": "string"
     },
     "query_name": {
       "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
-      "title": "Query Name",
       "type": "string"
     }
   },
@@ -2149,7 +2023,6 @@ Gets detailed information about a specific bucket.
   "properties": {
     "bucket_id": {
       "description": "Unique ID of the bucket.",
-      "title": "Bucket Id",
       "type": "string"
     }
   },
@@ -2178,7 +2051,6 @@ Gets detailed information about a specific table including its DB identifier and
   "properties": {
     "table_id": {
       "description": "Unique ID of the table.",
-      "title": "Table Id",
       "type": "string"
     }
   },
@@ -2227,7 +2099,6 @@ Retrieves all tables in a specific bucket with their basic information.
   "properties": {
     "bucket_id": {
       "description": "Unique ID of the bucket.",
-      "title": "Bucket Id",
       "type": "string"
     }
   },
@@ -2273,12 +2144,10 @@ Usage examples (payload uses a list of DescriptionUpdate objects):
       "properties": {
         "item_id": {
           "description": "Storage item name: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
-          "title": "Item Id",
           "type": "string"
         },
         "description": {
           "description": "New description to set for the storage item.",
-          "title": "Description",
           "type": "string"
         }
       },
@@ -2286,7 +2155,6 @@ Usage examples (payload uses a list of DescriptionUpdate objects):
         "item_id",
         "description"
       ],
-      "title": "DescriptionUpdate",
       "type": "object"
     }
   },
@@ -2296,7 +2164,6 @@ Usage examples (payload uses a list of DescriptionUpdate objects):
       "items": {
         "$ref": "#/$defs/DescriptionUpdate"
       },
-      "title": "Updates",
       "type": "array"
     }
   },

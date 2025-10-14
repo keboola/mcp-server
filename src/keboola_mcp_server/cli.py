@@ -74,6 +74,11 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         log_config = None
 
     if log_config:
+        # remove fastmcp's rich handler, which is aggressively set up during "import fastmcp"
+        fastmcp_logger = logging.getLogger('fastmcp')
+        for hdlr in fastmcp_logger.handlers[:]:
+            fastmcp_logger.removeHandler(hdlr)
+        fastmcp_logger.propagate = True
         logging.config.fileConfig(log_config, disable_existing_loggers=False)
     else:
         logging.basicConfig(
