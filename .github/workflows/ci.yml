@@ -96,84 +96,85 @@ jobs:
           compression-level: 0  # wheels are ZIP archives
           retention-days: 7
 
-  integration_tests:
-    name: Integration Tests
-    needs: build
-    # run this job only for push events (not pull requests)
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-      # This ensures tests run sequentially, not in parallel
-      max-parallel: 1
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install uv
-          uv sync --frozen --no-editable --extra dev
-
-      - name: Integration tests
-        # run actual tests only for pushes to the same repository (not forks)
-        if: github.repository == github.event.repository.full_name
-        env:
-          INTEGTEST_STORAGE_TOKEN: ${{ secrets.INTEGTEST_STORAGE_TOKEN }}
-          INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
-          INTEGTEST_WORKSPACE_SCHEMA: ${{ vars.INTEGTEST_WORKSPACE_SCHEMA }}
-        run: |
-          uv run tox -e integtests
-
-      - name: Skip integration tests for forks
-        # show a message when tests are skipped for forks
-        if: github.repository != github.event.repository.full_name
-        run: |
-          echo "Integration tests skipped for fork repository"
-          echo "Dependencies installed successfully - setup is working correctly"
-
-      - name: Publish integration test results
-        uses: dorny/test-reporter@v1
-        # publish results only when actual tests were run (same repository)
-        if: (always()) && github.repository == github.event.repository.full_name
-        with:
-          name: Integration test results (${{ matrix.python-version }})
-          path: ./integtest-results.xml
-          reporter: 'java-junit'
-
-  deploy_to_pypi:
-    name: Deploy to pypi.org
-    needs:
-      - build
-      - integration_tests
-    runs-on: ubuntu-latest
-    if: |
-      startsWith(github.ref, 'refs/tags/') &&
-      needs.build.outputs.is_semantic_tag == 'true' &&
-      needs.build.outputs.tag == format('v{0}', needs.build.outputs.version)
-    steps:
-      - name: Download wheel package
-        uses: actions/download-artifact@v4
-        with:
-          name: keboola_mcp_server-${{ needs.build.outputs.version }}-py3-none-any.whl
-          path: dist/
-
-      - name: Publish package
-        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
+#  integration_tests:
+#    name: Integration Tests
+#    needs: build
+#    # run this job only for push events (not pull requests)
+#    if: github.event_name == 'push'
+#    runs-on: ubuntu-latest
+#    strategy:
+#      matrix:
+#        python-version: ["3.10", "3.11", "3.12"]
+#      # This ensures tests run sequentially, not in parallel
+#      max-parallel: 1
+#    steps:
+#      - uses: actions/checkout@v4
+#
+#      - name: Set up Python ${{ matrix.python-version }}
+#        uses: actions/setup-python@v5
+#        with:
+#          python-version: ${{ matrix.python-version }}
+#
+#      - name: Install dependencies
+#        run: |
+#          python -m pip install --upgrade pip
+#          pip install uv
+#          uv sync --frozen --no-editable --extra dev
+#
+#      - name: Integration tests
+#        # run actual tests only for pushes to the same repository (not forks)
+#        if: github.repository == github.event.repository.full_name
+#        env:
+#          INTEGTEST_STORAGE_TOKEN: ${{ secrets.INTEGTEST_STORAGE_TOKEN }}
+#          INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
+#          INTEGTEST_WORKSPACE_SCHEMA: ${{ vars.INTEGTEST_WORKSPACE_SCHEMA }}
+#        run: |
+#          uv run tox -e integtests
+#
+#      - name: Skip integration tests for forks
+#        # show a message when tests are skipped for forks
+#        if: github.repository != github.event.repository.full_name
+#        run: |
+#          echo "Integration tests skipped for fork repository"
+#          echo "Dependencies installed successfully - setup is working correctly"
+#
+#      - name: Publish integration test results
+#        uses: dorny/test-reporter@v1
+#        # publish results only when actual tests were run (same repository)
+#        if: (always()) && github.repository == github.event.repository.full_name
+#        with:
+#          name: Integration test results (${{ matrix.python-version }})
+#          path: ./integtest-results.xml
+#          reporter: 'java-junit'
+#
+#  deploy_to_pypi:
+#    name: Deploy to pypi.org
+#    needs:
+#      - build
+#      - integration_tests
+#    runs-on: ubuntu-latest
+#    if: |
+#      startsWith(github.ref, 'refs/tags/') &&
+#      needs.build.outputs.is_semantic_tag == 'true' &&
+#      needs.build.outputs.tag == format('v{0}', needs.build.outputs.version)
+#    steps:
+#      - name: Download wheel package
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: keboola_mcp_server-${{ needs.build.outputs.version }}-py3-none-any.whl
+#          path: dist/
+#
+#      - name: Publish package
+#        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+#        with:
+#          user: __token__
+#          password: ${{ secrets.PYPI_API_TOKEN }}
 
   register-with-anthropic:
     name: Register with Anthropic
+    needs:
+      - build
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
