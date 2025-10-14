@@ -363,43 +363,7 @@ What buckets and tables are in my Keboola project?
 
 **Note:** Your AI agents will automatically adjust to new tools.
 
-| Category | Tool | Description |
-|----------|------|-------------|
-| **Project** | `get_project_info` | Returns structured information about your Keboola project |
-| **Storage** | `get_bucket` | Gets detailed information about a specific bucket |
-| | `get_table` | Gets detailed information about a specific table, including DB identifier and columns |
-| | `list_buckets` | Retrieves all buckets in the project |
-| | `list_tables` | Retrieves all tables in a specific bucket |
-| | `update_description` | Updates description for a bucket, table, or column |
-| **SQL** | `query_data` | Executes a SELECT query against the underlying database |
-| **Component** | `add_config_row` | Creates a configuration row for a component configuration |
-| | `create_config` | Creates a root component configuration |
-| | `create_sql_transformation` | Creates an SQL transformation from one or more SQL code blocks |
-| | `find_component_id` | Finds component IDs matching a natural-language query |
-| | `get_component` | Retrieves details of a component by ID |
-| | `get_config` | Retrieves a specific component/transformation configuration |
-| | `get_config_examples` | Retrieves example configurations for a component |
-| | `list_configs` | Lists configurations in the project, optionally filtered |
-| | `list_transformations` | Lists transformation configurations in the project |
-| | `update_config` | Updates a root component configuration |
-| | `update_config_row` | Updates a component configuration row |
-| | `update_sql_transformation` | Updates an existing SQL transformation configuration |
-| **Flow** | `create_conditional_flow` | Creates a conditional flow (`keboola.flow`) |
-| | `create_flow` | Creates a legacy flow (`keboola.orchestrator`) |
-| | `get_flow` | Retrieves details of a specific flow configuration |
-| | `get_flow_examples` | Retrieves examples of valid flow configurations |
-| | `get_flow_schema` | Returns the JSON schema for the specified flow type |
-| | `list_flows` | Lists flow configurations in the project |
-| | `update_flow` | Updates an existing flow configuration |
-| **Jobs** | `get_job` | Retrieves detailed information about a specific job |
-| | `list_jobs` | Lists jobs with optional filtering, sorting, and pagination |
-| | `run_job` | Starts a job for a component or transformation |
-| **Data Apps** | `get_data_apps` | Retrieves detailed information about a specific Data Apps or List Data Apps in the project. |
-| | `modify_data_app` | Creates or updates Data Apps |
-| | `deploy_data_app` | Deploys or supsends Streamlit Data Apps in the Keboola environment. |
-| **Documentation** | `docs_query` | Answers questions using Keboola documentation as the source |
-| **Other** | `create_oauth_url` | Generates an OAuth authorization URL for a component configuration |
-| | `search` | Searches for items in the project by name prefixes |
+For a complete list of available tools with detailed descriptions, parameters, and usage examples, see [TOOLS.md](TOOLS.md).
 
 ## Troubleshooting
 
