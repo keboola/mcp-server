@@ -5,8 +5,6 @@ import pytest
 
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
-    ALL_REGULAR_COMPONENT_TYPES,
-    ComponentCategory,
     ComponentType,
     ConfigParamRemove,
     ConfigParamReplace,
@@ -27,16 +25,14 @@ from keboola_mcp_server.tools.components.utils import (
 @pytest.mark.parametrize(
     ('component_type', 'expected'),
     [
-        (['extractor', 'writer'], ['extractor', 'writer']),
-        (['all_regular'], ALL_REGULAR_COMPONENT_TYPES),
-        (['all_regular', 'extractor'], ALL_REGULAR_COMPONENT_TYPES),
-        (['all_regular', 'transformation'], ALL_COMPONENT_TYPES),
+        (['extractor', 'writer'], ('extractor', 'writer')),
+        (['writer', 'extractor', 'writer', 'extractor'], ('extractor', 'writer')),
         ([], ALL_COMPONENT_TYPES),
         (None, ALL_COMPONENT_TYPES),
     ],
 )
 def test_expand_component_types(
-    component_type: Sequence[ComponentCategory],
+    component_type: Sequence[ComponentType],
     expected: list[ComponentType],
 ):
     """Test list_component_configurations tool with core component."""

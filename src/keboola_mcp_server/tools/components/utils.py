@@ -36,8 +36,6 @@ from keboola_mcp_server.clients.storage import ComponentAPIResponse, Configurati
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
-    ALL_REGULAR_COMPONENT_TYPES,
-    ComponentCategory,
     ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
@@ -60,27 +58,23 @@ BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 # ============================================================================
 
 
-def expand_component_types(component_types: Sequence[ComponentCategory]) -> list[ComponentType]:
+def expand_component_types(component_types: Sequence[ComponentType]) -> tuple[ComponentType, ...]:
     """
-    Expand 'all_regular' component category to individual component types.
+    Expand empty component types list to all component types.
     """
     if not component_types:
         return ALL_COMPONENT_TYPES
 
     out_component_types = set(component_types)
 
-    if 'all_regular' in component_types:
-        out_component_types.remove('all_regular')
-        out_component_types.update(ALL_REGULAR_COMPONENT_TYPES)
-
-    return cast(list[ComponentType], sorted(out_component_types))
+    return tuple(sorted(out_component_types))
 
 
 async def list_configs_by_types(
     client: KeboolaClient, component_types: Sequence[ComponentType]
 ) -> list[ComponentWithConfigurations]:
     """
-    Retrieve components with their configurations filtered by component types.
+    Retrieves components with their configurations filtered by component types.
 
     Used by:
     - list_configs tool
@@ -130,7 +124,7 @@ async def list_configs_by_types(
 
 async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str]) -> list[ComponentWithConfigurations]:
     """
-    Retrieve components with their configurations filtered by specific component IDs.
+    Retrieves components with their configurations filtered by specific component IDs.
 
     Used by:
     - list_configs tool (when specific component IDs are requested)
@@ -184,7 +178,7 @@ async def fetch_component(
     component_id: str,
 ) -> ComponentAPIResponse:
     """
-    Utility function to fetch a component by ID, returning the raw API response.
+    Fetches a component by ID, returning the raw API response.
 
     First tries to get component from the AI service catalog. If the component
     is not found (404) or returns empty data (private components), falls back to using the
@@ -251,11 +245,11 @@ def get_sql_transformation_id_from_sql_dialect(
 
 def clean_bucket_name(bucket_name: str) -> str:
     """
-    Utility function to clean the bucket name.
-    Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
-    Converts spaces to dashes.
-    Removes leading underscores, dashes, and whitespace.
-    Removes any character that is not alphanumeric, dash, or underscore.
+    Cleans the bucket name:
+    - Converts the bucket name to ASCII. (Handle diacritics like český -> cesky)
+    - Converts spaces to dashes.
+    - Removes leading underscores, dashes, and whitespace.
+    - Removes any character that is not alphanumeric, dash, or underscore.
     """
     max_bucket_length = 96
     bucket_name = bucket_name.strip()
@@ -279,7 +273,7 @@ def clean_bucket_name(bucket_name: str) -> str:
 
 class TransformationConfiguration(BaseModel):
     """
-    Utility class to create the transformation configuration, a schema for the transformation configuration in the API.
+    Creates the transformation configuration, a schema for the transformation configuration in the API.
     Currently, the storage configuration uses only input and output tables, excluding files, etc.
     """
 
@@ -335,13 +329,13 @@ def get_transformation_configuration(
     output_tables: Sequence[str],
 ) -> TransformationConfiguration:
     """
-    Utility function to set the transformation configuration from code statements.
-    It creates the expected configuration for the transformation, parameters and storage.
+    Sets the transformation configuration from code statements.
+    Creates the expected configuration for the transformation, parameters and storage.
 
-    :param statements: The code blocks (sql for now)
+    :param codes: The code blocks (sql for now)
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
-    :return: Dictionary with parameters and storage following the TransformationConfiguration schema
+    :return: TransformationConfiguration with parameters and storage
     """
     storage = TransformationConfiguration.Storage()
     # build parameters configuration out of code blocks
@@ -374,7 +368,7 @@ def get_transformation_configuration(
 
 async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
     """
-    Sets configuration metadata to indicate it was created by MCP.
+    Sets the configuration metadata to indicate it was created by MCP.
 
     :param client: KeboolaClient instance
     :param component_id: ID of the component
@@ -399,7 +393,7 @@ async def set_cfg_update_metadata(
     configuration_version: int,
 ) -> None:
     """
-    Sets configuration metadata to indicate it was updated by MCP.
+    Sets the configuration metadata to indicate it was updated by MCP.
 
     :param client: KeboolaClient instance
     :param component_id: ID of the component

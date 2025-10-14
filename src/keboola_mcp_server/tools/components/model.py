@@ -44,9 +44,8 @@ from keboola_mcp_server.links import Link
 # ============================================================================
 
 ComponentType = Literal['application', 'extractor', 'transformation', 'writer']
-ComponentCategory = ComponentType | Literal['all_regular']
-ALL_COMPONENT_TYPES = [component_type for component_type in get_args(ComponentType)]
-ALL_REGULAR_COMPONENT_TYPES = sorted(set(ALL_COMPONENT_TYPES) - {'transformation'})
+ALL_COMPONENT_TYPES = tuple(component_type for component_type in get_args(ComponentType))
+
 
 # ============================================================================
 # COMPONENT MODELS

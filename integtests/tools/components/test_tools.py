@@ -21,7 +21,7 @@ from keboola_mcp_server.tools.components import (
 )
 from keboola_mcp_server.tools.components.model import (
     Component,
-    ComponentCategory,
+    ComponentType,
     ComponentWithConfigurations,
     ConfigParamUpdate,
     ConfigToolOutput,
@@ -93,13 +93,13 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
     [
         (['extractor'], 1),
         (['transformation'], 1),
-        (['all_regular'], 1),
+        (['application', 'extractor', 'transformation'], 2),
         ([], 2),
     ],
 )
 @pytest.mark.asyncio
 async def test_list_configs_by_types(
-    mcp_context: Context, configs: list[ConfigDef], component_types: list[ComponentCategory], expected_count: int
+    mcp_context: Context, configs: list[ConfigDef], component_types: list[ComponentType], expected_count: int
 ):
     """Tests that `list_configs` returns components filtered by component types."""
 

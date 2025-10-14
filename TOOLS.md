@@ -459,22 +459,21 @@ Returns a list of components, each containing:
 - Links to the Keboola UI
 
 PARAMETER BEHAVIOR:
-- If component_ids is provided (non-empty): Returns ONLY those specific components, ignoring component_types
-- If component_ids is empty and component_types is empty: Returns ALL components (including transformations).
-- If component_ids is empty and component_types has values: Returns components matching those types
+- If component_ids is provided (non-empty): Returns ONLY those specific components, component_types is IGNORED
+- If component_ids is empty [] and component_types is empty []: Returns ALL component types
+  (application, extractor, transformation, writer)
+- If component_ids is empty [] and component_types has values: Returns components matching ONLY those types
 
 WHEN TO USE:
-- User asks for "all configurations" or "list configurations" → Use component_types=["all_regular"]
-- User asks for specific component types (e.g., "extractors", "writers") → Use component_types
+- User asks for "all configurations" or "list configurations" → Use component_types=[], component_ids=[]
+- User asks for specific component types (e.g., "extractors", "writers") → Use component_types with specific types
 - User asks for "all transformations" or "list transformations" → Use component_types=["transformation"]
-- User asks for specific component by ID → Use component_ids
-- User needs to see what's configured in the project → Use this tool with appropriate filters, not necessarily
-  treating transformations as a separate category.
+- User asks for specific component by ID → Use component_ids with the specific ID(s)
 
 EXAMPLES:
 - user_input: "Show me all components in the project"
-  → component_types=["all_regular"], component_ids=[]
-  → Returns component configurations (excluding transformations)
+  → component_types=[], component_ids=[]
+  → Returns ALL component types (application, extractor, transformation, writer) with their configurations
 
 - user_input: "List all extractor configurations"
   → component_types=["extractor"], component_ids=[]
@@ -482,11 +481,11 @@ EXAMPLES:
 
 - user_input: "Show me all extractors and writers"
   → component_types=["extractor", "writer"], component_ids=[]
-  → Returns extractor and writer configurations
+  → Returns extractor and writer configurations only
 
 - user_input: "List all transformations"
   → component_types=["transformation"], component_ids=[]
-  → Returns transformation configurations
+  → Returns transformation configurations only
 
 - user_input: "Show me configurations for keboola.ex-db-mysql"
   → component_types=[], component_ids=["keboola.ex-db-mysql"]
@@ -494,7 +493,7 @@ EXAMPLES:
 
 - user_input: "Get configs for these components: ex-db-mysql and wr-google-sheets"
   → component_types=[], component_ids=["keboola.ex-db-mysql", "keboola.wr-google-sheets"]
-  → Returns configurations for both specified components
+  → Returns configurations for both specified components (component_types is ignored)
 
 
 **Input JSON Schema**:
@@ -503,30 +502,22 @@ EXAMPLES:
   "properties": {
     "component_types": {
       "default": [],
-      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\", or \"all_regular\" (all types except transformations). The \"all_regular\" option is consistent with the Keboola UI where transformation configurations are separated from regular component configurations. Empty list returns ALL component types including transformations, which is useful for project exploration.This parameter is IGNORED if component_ids is provided.",
+      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\". Empty list [] means ALL component types will be returned (application, extractor, transformation, writer). This parameter is IGNORED when component_ids is provided (non-empty).",
       "items": {
-        "anyOf": [
-          {
-            "enum": [
-              "application",
-              "extractor",
-              "transformation",
-              "writer"
-            ],
-            "type": "string"
-          },
-          {
-            "const": "all_regular",
-            "type": "string"
-          }
-        ]
+        "enum": [
+          "application",
+          "extractor",
+          "transformation",
+          "writer"
+        ],
+        "type": "string"
       },
       "title": "Component Types",
       "type": "array"
     },
     "component_ids": {
       "default": [],
-      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list uses component_types filtering instead. When provided, this parameter takes PRECEDENCE over component_types.",
+      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list [] uses component_types filtering instead. When provided (non-empty), this parameter takes PRECEDENCE over component_types and component_types is IGNORED.",
       "items": {
         "type": "string"
       },

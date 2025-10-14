@@ -18,8 +18,8 @@ from keboola_mcp_server.tools.components import (
     update_sql_transformation,
 )
 from keboola_mcp_server.tools.components.model import (
-    ComponentCategory,
     ComponentSummary,
+    ComponentType,
     ComponentWithConfigurations,
     ConfigParamRemove,
     ConfigParamReplace,
@@ -109,9 +109,6 @@ def assert_retrieve_components() -> Callable[
         # No filter - should retrieve all component types (including transformation)
         # Order: application, extractor, transformation, writer
         ([], ['application', 'extractor', 'transformation', 'writer'], [2, 0, 3, 1]),
-        # all_regular - should retrieve all types except transformation
-        # Order: application, extractor, writer
-        (['all_regular'], ['application', 'extractor', 'writer'], [2, 0, 1]),
         # Single type - extractor only
         (['extractor'], ['extractor'], [0]),
         # Single type - writer only
@@ -134,8 +131,8 @@ async def test_list_configs_by_types(
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
     assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
-    component_types: list[ComponentCategory],
-    expected_types: list[ComponentCategory],
+    component_types: list[ComponentType],
+    expected_types: list[ComponentType],
     expected_mock_components: list[int],
 ):
     """Test list_configs when component types are provided with various filters."""
@@ -146,7 +143,7 @@ async def test_list_configs_by_types(
     component_type_map = {comp['type']: comp for comp in mock_components}
 
     # Create a side_effect function that returns the correct component based on component_type
-    async def mock_component_list(component_type: ComponentCategory, include: list[str] | None = None):
+    async def mock_component_list(component_type: ComponentType, include: list[str] | None = None):
         # Return matching component or empty list if no transformation exists
         if component_type in component_type_map:
             return [{**component_type_map[component_type], 'configurations': mock_configurations}]
