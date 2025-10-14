@@ -4,7 +4,8 @@
   "description": "Connect your AI assistants to Keboola and expose your data, transformations, SQL queries, ...",
   "version": "{{ MCP_SERVER_VERSION }}",
   "repository": {
-    "url": "https://github.com/keboola/mcp-server"
+    "url": "https://github.com/keboola/mcp-server",
+    "source": "github"
   },
   "packages": [
   ],
