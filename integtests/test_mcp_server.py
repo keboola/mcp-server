@@ -7,7 +7,7 @@ from mcp.types import TextContent
 
 from integtests.conftest import AsyncContextClientRunner, AsyncContextServerRemoteRunner, ConfigDef
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import Configuration
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -36,11 +36,8 @@ async def test_stdio_setup(
 
 
 @pytest.mark.asyncio
-# if use_headers: we pass headers else we pass query params in the url.
-@pytest.mark.parametrize('use_headers', [True, False])
 async def test_sse_setup(
     mocker,
-    use_headers: bool,
     run_server_remote: AsyncContextServerRemoteRunner,
     run_client: AsyncContextClientRunner,
     configs: list[ConfigDef],
@@ -48,10 +45,7 @@ async def test_sse_setup(
     workspace_schema: str,
     storage_api_url: str,
 ):
-    if use_headers:
-        config = Config(storage_api_url=storage_api_url)
-    else:
-        config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
+    config = Config(storage_api_url=storage_api_url)
 
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
@@ -62,23 +56,15 @@ async def test_sse_setup(
 
     async with run_server_remote(server, 'sse') as url:
         # test both cases: with headers and without headers using query params
-        if use_headers:
-            headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
-        else:
-            headers = None
-            url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
-
+        headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
         async with run_client('sse', url, headers) as client:
             await _assert_basic_setup(server, client)
             await _assert_get_component_details_tool_call(client, component_config)
 
 
 @pytest.mark.asyncio
-# if use_headers: we pass headers else we pass query params in the url.
-@pytest.mark.parametrize('use_headers', [True, False])
 async def test_http_setup(
     mocker,
-    use_headers: bool,
     run_server_remote: AsyncContextServerRemoteRunner,
     run_client: AsyncContextClientRunner,
     configs: list[ConfigDef],
@@ -86,26 +72,18 @@ async def test_http_setup(
     workspace_schema: str,
     storage_api_url: str,
 ):
-    if use_headers:
-        config = Config(storage_api_url=storage_api_url)
-    else:
-        config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
+    config = Config(storage_api_url=storage_api_url)
 
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
 
-    transport = 'streamable-http'
+    transport: Transport = 'streamable-http'
     server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
     assert isinstance(server, FastMCP)
     component_config = configs[0]
     async with run_server_remote(server, transport) as url:
         # test both cases: with headers and without headers using query params
-        if use_headers:
-            headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
-        else:
-            headers = None
-            url = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
-
+        headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
         async with run_client(transport, url, headers) as client:
             await _assert_basic_setup(server, client)
             await _assert_get_component_details_tool_call(client, component_config)
@@ -126,7 +104,7 @@ async def test_http_multiple_clients(
     config = Config()
     # we delete env vars to ensure the server uses http request
     mocker.patch('keboola_mcp_server.server.os.environ', {})
-    transport = 'streamable-http'
+    transport: Transport = 'streamable-http'
     server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
     assert isinstance(server, FastMCP)
     component_config = configs[0]
@@ -176,7 +154,7 @@ async def test_http_multiple_clients_with_different_headers(
         assert workspace_schema == headers[which_client]['workspace_schema']
         return f'{which_client}'
 
-    transport = 'streamable-http'
+    transport: Transport = 'streamable-http'
     server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
     assert isinstance(server, FastMCP)
     server.add_tool(FunctionTool.from_function(assessed_function))
@@ -194,39 +172,6 @@ async def test_http_multiple_clients_with_different_headers(
             assert isinstance(ret_2.content[0], TextContent)
             assert ret_1.content[0].text == 'client_1'
             assert ret_2.content[0].text == 'client_2'
-
-
-@pytest.mark.asyncio
-async def test_http_server_header_and_query_params_client(
-    mocker,
-    run_server_remote: AsyncContextServerRemoteRunner,
-    run_client: AsyncContextClientRunner,
-    configs: list[ConfigDef],
-    storage_api_token: str,
-    workspace_schema: str,
-    storage_api_url: str,
-):
-    config = Config(storage_api_url=storage_api_url, accept_secrets_in_url=True)
-
-    # we delete env vars to ensure the server uses http request
-    mocker.patch('keboola_mcp_server.server.os.environ', {})
-
-    transport = 'streamable-http'
-    server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
-    assert isinstance(server, FastMCP)
-    component_config = configs[0]
-
-    async with run_server_remote(server, transport) as url:
-        headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
-        url_params = f'{url}?storage_token={storage_api_token}&workspace_schema={workspace_schema}'
-        async with (
-            run_client(transport, url, headers) as client_1,
-            run_client(transport, url_params, None) as client_2,
-        ):
-            await _assert_basic_setup(server, client_1)
-            await _assert_basic_setup(server, client_2)
-            await _assert_get_component_details_tool_call(client_1, component_config)
-            await _assert_get_component_details_tool_call(client_2, component_config)
 
 
 async def _assert_basic_setup(server: FastMCP, client: Client):

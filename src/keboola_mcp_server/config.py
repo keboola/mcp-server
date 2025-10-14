@@ -25,8 +25,6 @@ class Config:
     """The branch ID to access the storage API using the MCP tools."""
     workspace_schema: Optional[str] = None
     """Workspace schema to access the buckets, tables and execute sql queries."""
-    accept_secrets_in_url: Optional[bool] = None
-    """If true, the configuration values are also read from the URL query parameters."""
     oauth_client_id: Optional[str] = None
     """OAuth client ID registered in the Keboola OAuth Server."""
     oauth_client_secret: Optional[str] = None
@@ -44,7 +42,7 @@ class Config:
 
     def __post_init__(self) -> None:
         for f in dataclasses.fields(self):
-            if 'url' not in f.name or f.name == 'accept_secrets_in_url':
+            if 'url' not in f.name:
                 continue
             value = getattr(self, f.name)
             if value and not value.startswith(('http://', 'https://')):
