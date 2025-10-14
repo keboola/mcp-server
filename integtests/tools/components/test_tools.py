@@ -810,7 +810,7 @@ async def initial_sqltrfm(
                 ConfigParamReplace(
                     op='str_replace',
                     path='blocks[0].codes[0].script[0]',
-                    search_for='SELECT * FROM test_table',
+                    search_for='SELECT 1 as initial_column',
                     replace_with='SELECT * FROM updated_table',
                 ),
                 ConfigParamListAppend(
