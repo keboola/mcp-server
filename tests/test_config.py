@@ -88,12 +88,23 @@ class TestConfig:
             'jwt_secret=None, bearer_token=None)'
         )
 
-    def test_url_field(self):
+    @pytest.mark.parametrize(
+        ('url', 'expected'),
+        [
+            ('foo.bar', 'https://foo.bar'),
+            ('ftp://foo.bar', 'https://foo.bar'),
+            ('foo.bar/v2/storage', 'https://foo.bar'),
+            ('test:foo.bar/v2/storage', 'https://foo.bar'),
+            ('https://foo.bar/v2/storage', 'https://foo.bar'),
+            ('https://foo.bar', 'https://foo.bar'),
+        ],
+    )
+    def test_url_field(self, url: str, expected: str) -> None:
         config = Config(
-            storage_api_url='foo.bar',
-            oauth_server_url='foo.bar',
-            mcp_server_url='foo.bar',
+            storage_api_url=url,
+            oauth_server_url=url,
+            mcp_server_url=url,
         )
-        assert config.storage_api_url == 'https://foo.bar'
-        assert config.oauth_server_url == 'https://foo.bar'
-        assert config.mcp_server_url == 'https://foo.bar'
+        assert config.storage_api_url == expected
+        assert config.oauth_server_url == expected
+        assert config.mcp_server_url == expected
