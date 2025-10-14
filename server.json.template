@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "com.keboola/mcp",
-  "description": "Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agents when and where they need it.",
+  "description": "Connect your AI assistants to Keboola and expose your data, transformations, SQL queries, ...",
   "version": "{{ MCP_SERVER_VERSION }}",
   "packages": [
     {
