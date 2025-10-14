@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, cast
 import pytest
 import pytest_asyncio
 from fastmcp import Client, Context, FastMCP
+from pydantic import TypeAdapter
 
 from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
@@ -283,8 +284,6 @@ async def test_update_config(
         orig_parameters = cast(dict, orig_config.get('configuration', {}).get('parameters', {}))
 
         # Convert the parameter update dicts to ConfigParamUpdate objects
-        from pydantic import TypeAdapter
-
         param_updates = []
         for update_dict in param_update_dicts:
             update = TypeAdapter(ConfigParamUpdate).validate_python(update_dict)
@@ -843,6 +842,24 @@ async def test_update_sql_transformation(
     project_id = keboola_project.project_id
     component_id = initial_sqltrfm.component_id
     configuration_id = initial_sqltrfm.configuration_id
+    param_update_objects = updates.get('parameter_updates')
+
+    if param_update_objects is not None:
+        # Get the original configuration so we can compare the parameters
+        orig_config = await keboola_client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=configuration_id
+        )
+        orig_parameters = cast(dict, orig_config.get('configuration', {}).get('parameters', {}))
+
+        # Convert the parameter update objects to ConfigParamUpdate if needed
+        param_updates: list[ConfigParamUpdate] = []
+        for update_obj in param_update_objects:
+            if isinstance(update_obj, dict):
+                update = TypeAdapter(ConfigParamUpdate).validate_python(update_obj)
+            else:
+                update = update_obj
+            param_updates.append(update)
+
     tool_result = await mcp_client.call_tool(
         name='update_sql_transformation',
         arguments={
@@ -893,10 +910,10 @@ async def test_update_sql_transformation(
 
     actual_parameters = trfm_data.get('parameters')
     assert isinstance(actual_parameters, dict), f'Expecting dict, got: {type(actual_parameters)}'
-    # parameter_updates are applied incrementally, so we just verify parameters exist after update
-    if 'parameter_updates' in updates:
-        assert 'blocks' in actual_parameters
-        assert len(actual_parameters['blocks']) > 0
+
+    if param_update_objects is not None:
+        expected_parameters = update_params(orig_parameters, param_updates)
+        assert actual_parameters == expected_parameters
 
     actual_storage = trfm_data.get('storage')
     assert isinstance(actual_storage, dict), f'Expecting dict, got: {type(actual_storage)}'
