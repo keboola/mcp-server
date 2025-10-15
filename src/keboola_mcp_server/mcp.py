@@ -29,6 +29,7 @@ from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
+CONVERSATION_ID = 'conversation_id'
 
 
 @dataclass(frozen=True)
@@ -202,6 +203,7 @@ class SessionStateMiddleware(fmw.Middleware):
             LOG.error(f'Failed to initialize Storage API Workspace manager: {e}')
             raise
 
+        state[CONVERSATION_ID] = config.conversation_id
         return state
 
 

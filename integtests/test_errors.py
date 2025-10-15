@@ -1,5 +1,4 @@
 import asyncio
-import dataclasses
 import json
 import math
 import re
@@ -14,7 +13,7 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import CONVERSATION_ID
 from keboola_mcp_server.tools.doc import docs_query
 from keboola_mcp_server.tools.jobs import get_job
 from keboola_mcp_server.tools.sql import query_data
@@ -123,10 +122,7 @@ class TestStorageEvents:
             capabilities=ClientCapabilities(),
             clientInfo=Implementation(name='integtest', version='1.2.3'),
         )
-        server_state = ServerState.from_context(mcp_context)
-        mcp_context.request_context.lifespan_context = dataclasses.replace(
-            server_state, config=dataclasses.replace(server_state.config, conversation_id='#987654321')
-        )
+        mcp_context.session.state[CONVERSATION_ID] = '#987654321'
         unique = uuid.uuid4().hex
         tool_func = getattr(self, tool_name)
         try:

@@ -9,7 +9,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -63,4 +63,5 @@ def mcp_context_client(
     client_context = empty_context
     client_context.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
     client_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+    client_context.session.state[CONVERSATION_ID] = 'convo-1234'
     return client_context
