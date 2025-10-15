@@ -10,7 +10,7 @@ from fastmcp.utilities.types import find_kwarg_by_type
 from pydantic import BaseModel
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.mcp import ServerState, get_http_request_or_none
+from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
 
 LOG = logging.getLogger(__name__)
 F = TypeVar('F', bound=Callable[..., Any])
@@ -58,7 +58,8 @@ async def _trigger_event(
         f'Expecting instance of "Context", got {type(ctx)}.'
     )
 
-    server_state = ServerState.from_context(ctx)
+    runtime_info = ServerState.from_context(ctx).runtime_info
+
     user_agent: str | None = None
     if client_params := ctx.session.client_params:
         user_agent = f'{client_params.clientInfo.name}/{client_params.clientInfo.version}'
@@ -72,13 +73,13 @@ async def _trigger_event(
     # for the JSON schema describing the 'keboola.mcp-server-tool' component's event params.
     event_params: dict[str, Any] = {
         'mcpServerContext': {
-            'appEnv': server_state.runtime_info.app_version,
-            'version': server_state.runtime_info.server_version,
+            'appEnv': runtime_info.app_version,
+            'version': runtime_info.server_version,
             'userAgent': user_agent or '',
             # For the HTTP-based transports use the HTTP session ID. For other transports use the server ID.
-            'sessionId': ctx.session_id or server_state.runtime_info.server_id,
-            'serverTransport': server_state.runtime_info.transport.split('/')[-1],
-            'conversationId': server_state.config.conversation_id or '',
+            'sessionId': ctx.session_id or runtime_info.server_id,
+            'serverTransport': runtime_info.transport.split('/')[-1],
+            'conversationId': ctx.session.state.get(CONVERSATION_ID) or '',
         },
         'tool': {
             'name': tool_name,
