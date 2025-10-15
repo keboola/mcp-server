@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "com.keboola/mcp",
+  "description": "Connect your AI assistants to Keboola and expose your data, transformations, SQL queries, ...",
+  "version": "__MCP_SERVER_VERSION__",
+  "repository": {
+    "url": "https://github.com/keboola/mcp-server",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "keboola-mcp-server",
+      "version": "__MCP_SERVER_VERSION__",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.us-east4.gcp.keboola.com/mcp"
+    }
+  ]
+}
