@@ -1,3 +1,4 @@
+import dataclasses
 from typing import Mapping
 
 import pytest
@@ -28,6 +29,10 @@ class TestConfig:
             (
                 {'foo': 'bar', 'storage_api_url': 'http://nowhere'},
                 Config(storage_api_url='http://nowhere'),
+            ),
+            (
+                {'X-Conversation-ID': '1234'},
+                Config(conversation_id='1234'),
             ),
         ],
     )
@@ -69,10 +74,8 @@ class TestConfig:
 
     def test_defaults(self) -> None:
         config = Config()
-        assert config.storage_api_url is None
-        assert config.storage_token is None
-        assert config.branch_id is None
-        assert config.workspace_schema is None
+        for f in dataclasses.fields(Config):
+            assert getattr(config, f.name) is None, f'Expected default value for {f.name} to be None'
 
     def test_no_token_password_in_repr(self) -> None:
         config = Config(storage_token='foo')
@@ -80,15 +83,26 @@ class TestConfig:
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
-            'jwt_secret=None, bearer_token=None)'
+            'jwt_secret=None, bearer_token=None, conversation_id=None)'
         )
 
-    def test_url_field(self):
+    @pytest.mark.parametrize(
+        ('url', 'expected'),
+        [
+            ('foo.bar', 'https://foo.bar'),
+            ('ftp://foo.bar', 'https://foo.bar'),
+            ('foo.bar/v2/storage', 'https://foo.bar'),
+            ('test:foo.bar/v2/storage', 'https://foo.bar'),
+            ('https://foo.bar/v2/storage', 'https://foo.bar'),
+            ('https://foo.bar', 'https://foo.bar'),
+        ],
+    )
+    def test_url_field(self, url: str, expected: str) -> None:
         config = Config(
-            storage_api_url='foo.bar',
-            oauth_server_url='foo.bar',
-            mcp_server_url='foo.bar',
+            storage_api_url=url,
+            oauth_server_url=url,
+            mcp_server_url=url,
         )
-        assert config.storage_api_url == 'https://foo.bar'
-        assert config.oauth_server_url == 'https://foo.bar'
-        assert config.mcp_server_url == 'https://foo.bar'
+        assert config.storage_api_url == expected
+        assert config.oauth_server_url == expected
+        assert config.mcp_server_url == expected
