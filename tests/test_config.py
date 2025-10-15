@@ -31,10 +31,6 @@ class TestConfig:
                 Config(storage_api_url='http://nowhere'),
             ),
             (
-                {'accept_secrets_in_url': 'true'},
-                Config(accept_secrets_in_url=True),
-            ),
-            (
                 {'X-Conversation-ID': '1234'},
                 Config(conversation_id='1234'),
             ),
@@ -85,7 +81,7 @@ class TestConfig:
         config = Config(storage_token='foo')
         assert str(config) == (
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
-            'accept_secrets_in_url=None, oauth_client_id=None, oauth_client_secret=None, '
+            'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             'jwt_secret=None, bearer_token=None, conversation_id=None)'
         )

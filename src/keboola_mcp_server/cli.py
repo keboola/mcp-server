@@ -50,13 +50,6 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
-    parser.add_argument(
-        '--accept-secrets-in-url',
-        action='store_true',
-        help='(NOT RECOMMENDED) Read Storage API token and other configuration parameters from the query part '
-        'of the MCP server URL. Please note that the URL query parameters are not secure '
-        'for sending sensitive information.',
-    )
     parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
 
     return parser.parse_args(args)
@@ -74,6 +67,11 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         log_config = None
 
     if log_config:
+        # remove fastmcp's rich handler, which is aggressively set up during "import fastmcp"
+        fastmcp_logger = logging.getLogger('fastmcp')
+        for hdlr in fastmcp_logger.handlers[:]:
+            fastmcp_logger.removeHandler(hdlr)
+        fastmcp_logger.propagate = True
         logging.config.fileConfig(log_config, disable_existing_loggers=False)
     else:
         logging.basicConfig(
@@ -87,7 +85,6 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         storage_api_url=parsed_args.api_url,
         storage_token=parsed_args.storage_token,
         workspace_schema=parsed_args.workspace_schema,
-        accept_secrets_in_url=parsed_args.accept_secrets_in_url,
     )
 
     try:
