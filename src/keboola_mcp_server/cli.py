@@ -2,11 +2,11 @@
 
 import argparse
 import asyncio
+import contextlib
 import logging.config
 import os
 import pathlib
 import sys
-from dataclasses import replace
 from typing import Optional
 
 from fastmcp import FastMCP
@@ -14,7 +14,7 @@ from starlette.middleware import Middleware
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ForwardSlashMiddleware
-from keboola_mcp_server.server import create_server
+from keboola_mcp_server.server import CustomRoutes, create_server
 
 LOG = logging.getLogger(__name__)
 
@@ -72,6 +72,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         for hdlr in fastmcp_logger.handlers[:]:
             fastmcp_logger.removeHandler(hdlr)
         fastmcp_logger.propagate = True
+        fastmcp_logger.setLevel(logging.NOTSET)
         logging.config.fileConfig(log_config, disable_existing_loggers=False)
     else:
         logging.basicConfig(
@@ -95,7 +96,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             if config.oauth_client_id or config.oauth_client_secret:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
-        elif parsed_args.transport == 'http-compat':
+        else:
             # Compatibility mode to support both Streamable-HTTP and SSE transports.
             # SSE transport is deprecated and will be removed in the future.
             # Supporting both transports is implemented by creating a parent app and mounting
@@ -105,35 +106,48 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             from contextlib import asynccontextmanager
 
             import uvicorn
+            from fastmcp.server.http import StarletteWithLifespan
             from starlette.applications import Starlette
 
-            http_runtime_config = ServerRuntimeInfo('http-compat/streamable-http')
-            http_mcp_server, custom_routes = create_server(
-                config, runtime_info=http_runtime_config, custom_routes_handling='return'
-            )
-            http_app = http_mcp_server.http_app(
-                path='/',
-                transport='streamable-http',
-            )
+            mount_paths: dict[str, StarletteWithLifespan] = {}
+            custom_routes: CustomRoutes | None = None
+            transports: list[str] = []
 
-            sse_runtime_config = replace(http_runtime_config, transport='http-compat/sse')
-            sse_mcp_server, custom_routes = create_server(
-                config, runtime_info=sse_runtime_config, custom_routes_handling='return'
-            )
-            sse_app = sse_mcp_server.http_app(
-                path='/',
-                transport='sse',
-            )
+            if parsed_args.transport in ['http-compat', 'streamable-http']:
+                http_runtime_config = ServerRuntimeInfo('http-compat/streamable-http')
+                http_mcp_server, custom_routes = create_server(
+                    config, runtime_info=http_runtime_config, custom_routes_handling='return'
+                )
+                http_app: StarletteWithLifespan = http_mcp_server.http_app(
+                    path='/',
+                    transport='streamable-http',
+                )
+                mount_paths['/mcp'] = http_app
+                transports.append('Streamable-HTTP')
+
+            if parsed_args.transport in ['http-compat', 'sse']:
+                sse_runtime_config = ServerRuntimeInfo('http-compat/sse')
+                sse_mcp_server, custom_routes = create_server(
+                    config, runtime_info=sse_runtime_config, custom_routes_handling='return'
+                )
+                sse_app: StarletteWithLifespan = sse_mcp_server.http_app(
+                    path='/',
+                    transport='sse',
+                )
+                mount_paths['/sse'] = sse_app  # serves /sse/ and /messages
+                transports.append('SSE')
 
             @asynccontextmanager
-            async def lifespan(app: Starlette):
-                async with http_app.lifespan(app):
-                    async with sse_app.lifespan(app):
-                        yield
+            async def lifespan(_app: Starlette):
+                async with contextlib.AsyncExitStack() as stack:
+                    for _inner_app in mount_paths.values():
+                        await stack.enter_async_context(_inner_app.lifespan(_app))
+                    yield
 
             app = Starlette(middleware=[Middleware(ForwardSlashMiddleware)], lifespan=lifespan)
-            app.mount('/mcp', http_app)
-            app.mount('/sse', sse_app)  # serves /sse/ and /messages
+            for path, inner_app in mount_paths.items():
+                app.mount(path, inner_app)
+
             custom_routes.add_to_starlette(app)
 
             config = uvicorn.Config(
@@ -146,25 +160,12 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             )
             server = uvicorn.Server(config)
             LOG.info(
-                f'Starting MCP server with Streamable-HTTP and SSE transports'
+                f'Starting MCP server with {", ".join(transports)} transport{"s" if len(transports) > 1 else ""}'
                 f' on http://{parsed_args.host}:{parsed_args.port}/'
             )
 
             await server.serve()
 
-        else:
-            runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)
-            keboola_mcp_server: FastMCP = create_server(config, runtime_info=runtime_config)
-            await keboola_mcp_server.run_http_async(
-                show_banner=False,
-                transport=parsed_args.transport,
-                host=parsed_args.host,
-                port=parsed_args.port,
-                uvicorn_config={'log_config': log_config} if log_config else None,
-                # Adding ForwardSlashMiddleware in KeboolaMcpServer's constructor doesn't seem to have any effect.
-                # See https://github.com/jlowin/fastmcp/pull/896 for the related changes in the fastmcp==2.9.0 library.
-                middleware=[Middleware(ForwardSlashMiddleware)],
-            )
     except Exception as e:
         LOG.exception(f'Server failed: {e}')
         sys.exit(1)
