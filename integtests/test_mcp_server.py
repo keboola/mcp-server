@@ -19,6 +19,7 @@ from integtests.conftest import (
     ConfigDef,
 )
 from keboola_mcp_server.tools.components.model import Configuration
+from keboola_mcp_server.tools.project import ProjectInfo
 
 LOG = logging.getLogger(__name__)
 HttpTransportStr = Literal['sse', 'streamable-http']
@@ -105,49 +106,43 @@ async def test_http_multiple_clients(
             await _assert_get_component_details_tool_call(client_3, component_config)
 
 
-# TODO: fix this test to use another set of ENV vars for another testing Keboola project
-# @pytest.mark.asyncio
-# async def test_http_multiple_clients_with_different_headers(
-#     storage_api_url: str,
-#     storage_api_token: str,
-# ):
-#     """
-#     Test that the server can handle multiple clients with different headers and checks the values of the headers.
-#     """
-#     config = Config(storage_api_url=storage_api_url)
-#     # we do not delete env vars, we want the env vars to be overwritten by http request params
-#
-#     headers = {
-#         'client_1': {'storage_token': storage_api_token, 'workspace_schema': 'client_1_workspace_schema'},
-#         'client_2': {'storage_token': storage_api_token, 'workspace_schema': 'client_2_workspace_schema'},
-#     }
-#
-#     async def assessed_function(ctx: Context, which_client: str) -> str:
-#         storage_token = KeboolaClient.from_state(ctx.session.state).token
-#         workspace_schema = WorkspaceManager.from_state(ctx.session.state)._workspace_schema
-#         assert which_client in headers.keys()
-#         assert storage_token == headers[which_client]['storage_token']
-#         assert workspace_schema == headers[which_client]['workspace_schema']
-#         return f'{which_client}'
-#
-#     transport: Transport = 'streamable-http'
-#     server = create_server(config, runtime_info=ServerRuntimeInfo(transport=transport))
-#     assert isinstance(server, FastMCP)
-#     server.add_tool(FunctionTool.from_function(assessed_function))
-#
-#     async with run_server_remote(server, 'streamable-http') as url:
-#         async with (
-#             run_client(transport, url, headers['client_1']) as client_1,
-#             run_client(transport, url, headers['client_2']) as client_2,
-#         ):
-#             await _assert_basic_setup(client_1)
-#             await _assert_basic_setup(client_2)
-#             ret_1 = await client_1.call_tool('assessed_function', {'which_client': 'client_1'})
-#             ret_2 = await client_2.call_tool('assessed_function', {'which_client': 'client_2'})
-#             assert isinstance(ret_1.content[0], TextContent)
-#             assert isinstance(ret_2.content[0], TextContent)
-#             assert ret_1.content[0].text == 'client_1'
-#             assert ret_2.content[0].text == 'client_2'
+@pytest.mark.asyncio
+async def test_http_multiple_clients_with_different_headers(
+    storage_api_url: str,
+    storage_api_token: str,
+    workspace_schema: str,
+    storage_api_token_2: str | None,
+    workspace_schema_2: str | None,
+):
+    """
+    Test that the server can handle multiple clients with different headers and checks the values of the headers.
+    """
+    if not storage_api_token_2 or not workspace_schema_2:
+        pytest.skip('No SAPI token or workspace schema for the second client. Skipping test.')
+
+    headers = {
+        'client_1': {'storage_token': storage_api_token, 'workspace_schema': workspace_schema},
+        'client_2': {'storage_token': storage_api_token_2, 'workspace_schema': workspace_schema_2},
+    }
+
+    transport: HttpTransportStr = 'streamable-http'
+    async with _run_server_remote(storage_api_url, transport) as url:
+        async with (
+            _run_client(transport, url, headers['client_1']) as client_1,
+            _run_client(transport, url, headers['client_2']) as client_2,
+        ):
+            await _assert_basic_setup(client_1)
+            await _assert_basic_setup(client_2)
+
+            response_1 = await client_1.call_tool('get_project_info')
+            project_info_1 = ProjectInfo.model_validate(response_1.structured_content)
+            project_info_1.project_id = storage_api_token.split(sep='-')[0]
+            LOG.info(f'project_info_1={project_info_1}')
+
+            response_2 = await client_2.call_tool('get_project_info')
+            project_info_2 = ProjectInfo.model_validate(response_2.structured_content)
+            project_info_2.project_id = storage_api_token_2.split(sep='-')[0]
+            LOG.info(f'project_info_2={project_info_2}')
 
 
 async def _assert_basic_setup(client: Client):
