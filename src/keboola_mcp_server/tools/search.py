@@ -115,9 +115,22 @@ class GlobalSearchOutput(BaseModel):
 @tool_errors()
 async def search(
     ctx: Context,
-    name_prefixes: Annotated[list[str], Field(description='Name prefixes to match against item names.')],
+    name_prefixes: Annotated[
+        list[str],
+        Field(
+            description='One or more name prefixes to search for. An item matches if its name (or any word in the '
+            'name) starts with any of these prefixes. Case-insensitive. Examples: ["customer"], ["sales", "revenue"], '
+            '["test"]'
+        ),
+    ],
     item_types: Annotated[
-        Sequence[ItemType], Field(description='Optional list of keboola item types to filter by.')
+        Sequence[ItemType],
+        Field(
+            description='Optional filter for specific Keboola item types. Leave empty to search all types. '
+            'Common values: "table" (data tables), "bucket" (table containers), "transformation" '
+            '(SQL/Python transformations), "configuration" (extractor/writer configs), "flow" (orchestration flows). '
+            "Use when you know what type of item you're looking for."
+        ),
     ] = tuple(),
     limit: Annotated[
         int,
@@ -126,15 +139,52 @@ async def search(
             f'{MAX_GLOBAL_SEARCH_LIMIT}).'
         ),
     ] = DEFAULT_GLOBAL_SEARCH_LIMIT,
-    offset: Annotated[int, Field(description='Number of matching items to skip, pagination.')] = 0,
+    offset: Annotated[int, Field(description='Number of matching items to skip for pagination (default: 0).')] = 0,
 ) -> GlobalSearchOutput:
     """
-    Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
-    potentially narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.
+    Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.) in the current project
+    by name. Returns matching items grouped by type with their IDs and metadata.
 
-    Considerations:
-    - The search is purely name-based, and an item is returned when its name or any word in the name starts with any
-      of the "name_prefixes" parameter.
+    WHEN TO USE:
+    - User asks to "find", "locate", or "search for" something by name
+    - User mentions a partial name and you need to find the full item (e.g., "find the customer table")
+    - User asks "what tables/configs/flows do I have with X in the name?"
+    - You need to discover items before performing operations on them
+    - User asks to "list all items with [name] in it"
+
+    HOW IT WORKS:
+    - Searches by name prefix matching: an item matches if its name or any word in the name starts with the search term
+    - Case-insensitive search
+    - Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
+    - Each result includes the item's ID, name, creation date, and relevant metadata
+
+    IMPORTANT:
+    - Always use this tool when the user mentions a name but you don't have the exact ID
+    - The search returns IDs that you can use with other tools (e.g., get_table, get_config, get_flow)
+    - Results are ordered by relevance, then creation time
+
+    USAGE EXAMPLES:
+    - user_input: "Find all tables with 'customer' in the name"
+      → name_prefixes=["customer"], item_types=["table"]
+      → Returns all tables whose name contains a word starting with "customer"
+
+    - user_input: "Search for the sales transformation"
+      → name_prefixes=["sales"], item_types=["transformation"]
+      → Returns transformations with "sales" in the name
+
+    - user_input: "Find items named 'daily report' or 'weekly summary'"
+      → name_prefixes=["daily", "report", "weekly", "summary"], item_types=[]
+      → Returns all items matching any of these name parts
+
+    - user_input: "Show me all configurations related to Google Analytics"
+      → name_prefixes=["google", "analytics"], item_types=["configuration"]
+      → Returns configurations with "google" or "analytics" in the name
+
+    CONSIDERATIONS:
+    - Search is purely name-based (does not search descriptions or other metadata)
+    - Multiple prefixes work as OR condition - matches items containing ANY of the prefixes
+    - For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
+    - Use find_component_id and list_configs tools to find configurations related to a specific component
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
