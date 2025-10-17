@@ -189,6 +189,44 @@ Config file locations:
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
+#### Claude Code Configuration
+
+Claude Code is a command-line interface tool that allows you to interact with Claude using your terminal. You can install the Keboola MCP Server integration using a simple command.
+
+**Prerequisites:**
+- Ensure Node.js is installed on your system. If not, visit [https://nodejs.org](https://nodejs.org) to download and install it.
+
+**Installation:**
+
+Run the following command in your terminal, replacing `<YOUR_REGION>` with your Keboola region:
+
+```bash
+claude mcp add keboola npx mcp-remote https://mcp.<YOUR_REGION>.keboola.com/mcp
+```
+
+**Region-specific URLs:**
+
+| Region | MCP Server URL |
+|--------|----------------|
+| US Virginia AWS | `https://mcp.keboola.com/mcp` |
+| US Virginia GCP | `https://mcp.us-east4.gcp.keboola.com/mcp` |
+| EU Frankfurt AWS | `https://mcp.eu-central-1.keboola.com/mcp` |
+| EU Ireland Azure | `https://mcp.north-europe.azure.keboola.com/mcp` |
+| EU Frankfurt GCP | `https://mcp.europe-west3.gcp.keboola.com/mcp` |
+
+**Usage:**
+
+Once installed, you can use the Keboola MCP Server in Claude Code by typing `/mcp` in your conversation and selecting the Keboola tools you want to use.
+
+**Authentication:**
+
+When you first use the Keboola MCP Server in Claude Code, a browser window will open prompting you to:
+1. Log in with your Keboola account
+2. Select the project you want to connect to
+3. Authorize the connection
+
+After authentication, you can start using Keboola tools directly from Claude Code.
+
 #### Cursor Configuration
 
 1. Go to Settings → MCP
