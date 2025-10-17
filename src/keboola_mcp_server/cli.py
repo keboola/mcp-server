@@ -97,7 +97,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
         else:
-            # Compatibility mode to support both Streamable-HTTP and SSE transports.
+            # 'http-compat' is a compatibility mode to support both Streamable-HTTP and SSE transports.
             # SSE transport is deprecated and will be removed in the future.
             # Supporting both transports is implemented by creating a parent app and mounting
             # two apps (SSE and Streamable-HTTP) to it. The custom routes (like health check)
