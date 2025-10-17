@@ -193,26 +193,23 @@ Config file locations:
 
 Claude Code is a command-line interface tool that allows you to interact with Claude using your terminal. You can install the Keboola MCP Server integration using a simple command.
 
-**Prerequisites:**
-- Ensure Node.js is installed on your system. If not, visit [https://nodejs.org](https://nodejs.org) to download and install it.
-
 **Installation:**
 
 Run the following command in your terminal, replacing `<YOUR_REGION>` with your Keboola region:
 
 ```bash
-claude mcp add keboola npx mcp-remote https://mcp.<YOUR_REGION>.keboola.com/mcp
+claude mcp add --transport http keboola https://mcp.<YOUR_REGION>.keboola.com/mcp
 ```
 
-**Region-specific URLs:**
+**Region-specific commands:**
 
-| Region | MCP Server URL |
-|--------|----------------|
-| US Virginia AWS | `https://mcp.keboola.com/mcp` |
-| US Virginia GCP | `https://mcp.us-east4.gcp.keboola.com/mcp` |
-| EU Frankfurt AWS | `https://mcp.eu-central-1.keboola.com/mcp` |
-| EU Ireland Azure | `https://mcp.north-europe.azure.keboola.com/mcp` |
-| EU Frankfurt GCP | `https://mcp.europe-west3.gcp.keboola.com/mcp` |
+| Region | Installation Command |
+|--------|----------------------|
+| US Virginia AWS | `claude mcp add --transport http keboola https://mcp.keboola.com/mcp` |
+| US Virginia GCP | `claude mcp add --transport http keboola https://mcp.us-east4.gcp.keboola.com/mcp` |
+| EU Frankfurt AWS | `claude mcp add --transport http keboola https://mcp.eu-central-1.keboola.com/mcp` |
+| EU Ireland Azure | `claude mcp add --transport http keboola https://mcp.north-europe.azure.keboola.com/mcp` |
+| EU Frankfurt GCP | `claude mcp add --transport http keboola https://mcp.europe-west3.gcp.keboola.com/mcp` |
 
 **Usage:**
 
