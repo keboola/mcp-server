@@ -278,7 +278,7 @@ EXAMPLES:
       "type": "string"
     },
     "sql_code_blocks": {
-      "description": "The SQL query code blocks, each containing a descriptive name and a sequence of semantically related independently executable sql_statements written in the current SQL dialect.",
+      "description": "The SQL query code blocks, each containing a descriptive name and sql_statements. The sql_statements field can be either: (1) a concatenated string with semicolon-separated statements (recommended for ease of use), or (2) a sequence of individual executable SQL statements. Both formats are automatically handled and converted to the correct backend format.",
       "items": {
         "$ref": "#/$defs/Code"
       },
@@ -984,7 +984,7 @@ EXAMPLES:
     "parameters": {
       "$ref": "#/$defs/Parameters",
       "default": null,
-      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
+      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided. SQL statements within code blocks can be provided as either concatenated strings (semicolon-separated) or as arrays of individual statements - both formats are supported.",
       "type": "object"
     },
     "storage": {

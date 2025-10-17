@@ -50,7 +50,10 @@ from keboola_mcp_server.tools.components.model import (
     Configuration,
     ListConfigsOutput,
 )
+from keboola_mcp_server.tools.components.sql_utils import join_sql_statements, split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
+    BIGQUERY_TRANSFORMATION_ID,
+    SNOWFLAKE_TRANSFORMATION_ID,
     TransformationConfiguration,
     expand_component_types,
     fetch_component,
@@ -282,6 +285,68 @@ async def get_component(
     return Component.from_api_response(api_component)
 
 
+def _normalize_sql_code_blocks(
+    sql_code_blocks: Sequence[TransformationConfiguration.Parameters.Block.Code],
+) -> list[TransformationConfiguration.Parameters.Block.Code]:
+    """
+    Normalize SQL code blocks by converting string scripts to arrays.
+
+    This function supports both the legacy array format and the new flattened string format.
+    If a code block's sql_statements is a string, it will be split into an array.
+
+    :param sql_code_blocks: Sequence of code blocks with sql_statements (can be string or list)
+    :return: List of code blocks with sql_statements as arrays
+    """
+    normalized_blocks = []
+
+    for code_block in sql_code_blocks:
+        code_dict = code_block.model_dump(by_alias=True)
+        script = code_dict.get('script', [])
+
+        if isinstance(script, str):
+            code_dict['script'] = split_sql_statements(script)
+        elif not isinstance(script, list):
+            raise ValueError(f'SQL script must be a string or list, got {type(script).__name__}')
+
+        normalized_blocks.append(
+            TransformationConfiguration.Parameters.Block.Code.model_validate(code_dict)
+        )
+
+    return normalized_blocks
+
+
+def _flatten_sql_scripts_in_config(config_dict: JsonDict, component_id: str) -> JsonDict:
+    """
+    Flatten SQL scripts from arrays to concatenated strings for SQL transformations.
+
+    This makes it easier for LLMs to work with SQL code by presenting it as
+    a single string instead of nested arrays.
+
+    :param config_dict: The configuration dictionary
+    :param component_id: Component ID to check if it's a SQL transformation
+    :return: Modified configuration dictionary with flattened scripts
+    """
+    if component_id not in (SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID):
+        return config_dict
+
+    try:
+        configuration = config_dict.get('configuration', {})
+        parameters = configuration.get('parameters', {})
+        blocks = parameters.get('blocks', [])
+
+        for block in blocks:
+            codes = block.get('codes', [])
+            for code in codes:
+                script = code.get('script', [])
+                if isinstance(script, list) and script:
+                    code['script'] = join_sql_statements(script)
+
+    except Exception as e:
+        LOG.warning(f'Failed to flatten SQL scripts in configuration: {e}')
+
+    return config_dict
+
+
 @tool_errors()
 async def get_config(
     component_id: Annotated[str, Field(description='ID of the component/transformation')],
@@ -312,6 +377,8 @@ async def get_config(
         JsonDict,
         await client.storage_client.configuration_detail(component_id=component_id, configuration_id=configuration_id),
     )
+
+    raw_configuration = _flatten_sql_scripts_in_config(raw_configuration, component_id)
 
     api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': component_id})
     api_component = await fetch_component(client=client, component_id=component_id)
@@ -359,8 +426,11 @@ async def create_sql_transformation(
         Sequence[TransformationConfiguration.Parameters.Block.Code],
         Field(
             description=(
-                'The SQL query code blocks, each containing a descriptive name and a sequence of '
-                'semantically related independently executable sql_statements written in the current SQL dialect.'
+                'The SQL query code blocks, each containing a descriptive name and sql_statements. '
+                'The sql_statements field can be either: '
+                '(1) a concatenated string with semicolon-separated statements (recommended for ease of use), or '
+                '(2) a sequence of individual executable SQL statements. '
+                'Both formats are automatically handled and converted to the correct backend format.'
             ),
         ),
     ],
@@ -410,10 +480,13 @@ async def create_sql_transformation(
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
+    # Normalize code blocks: convert string scripts to arrays if needed
+    normalized_code_blocks = _normalize_sql_code_blocks(sql_code_blocks)
+
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
     transformation_configuration_payload = get_transformation_configuration(
-        codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names
+        codes=normalized_code_blocks, transformation_name=name, output_tables=created_table_names
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -468,7 +541,9 @@ async def update_sql_transformation(
         Field(
             description=(
                 'The updated "parameters" part of the transformation configuration that contains the newly '
-                'applied settings and preserves all other existing settings. Only updated if provided.'
+                'applied settings and preserves all other existing settings. Only updated if provided. '
+                'SQL statements within code blocks can be provided as either concatenated strings '
+                '(semicolon-separated) or as arrays of individual statements - both formats are supported.'
             ),
             json_schema_extra={'type': 'object'},
         ),
@@ -539,7 +614,15 @@ async def update_sql_transformation(
     updated_configuration = current_config.get('configuration', {})
 
     if parameters is not None:
-        updated_configuration['parameters'] = parameters.model_dump(by_alias=True)
+        params_dict = parameters.model_dump(by_alias=True)
+        blocks = params_dict.get('blocks', [])
+        for block in blocks:
+            codes = block.get('codes', [])
+            for code in codes:
+                script = code.get('script', [])
+                if isinstance(script, str):
+                    code['script'] = split_sql_statements(script)
+        updated_configuration['parameters'] = params_dict
 
     if storage is not None:
         storage_cfg = validate_root_storage_configuration(
