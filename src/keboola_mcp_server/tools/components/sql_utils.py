@@ -60,8 +60,8 @@ def split_sql_statements(script: str, timeout_seconds: float = 5.0) -> List[str]
                     f'Timeout: {timeout_seconds}s'
                 )
 
-        if statements and ''.join(statements) != script:
-            raise ValueError('SQL script is not valid (round-trip validation failed)')
+        if statements is None:
+            raise ValueError('SQL script is not valid (no matches found)')
 
         normalized = [stmt.strip() for stmt in statements if stmt.strip()]
 
