@@ -1,21 +1,16 @@
-import asyncio
 import dataclasses
 import json
 import logging
 import os
-import random
 import time
 import uuid
-from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
 from dataclasses import dataclass
-from multiprocessing import Process
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Generator, Literal
+from typing import Any, Generator
 
 import pytest
 from dotenv import load_dotenv
-from fastmcp import Client, Context, FastMCP
-from fastmcp.client.transports import SSETransport, StreamableHttpTransport
+from fastmcp import Context
 from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
@@ -24,13 +19,6 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
-
-AsyncContextServerRemoteRunner = Callable[
-    [FastMCP, Literal['sse', 'streamable-http']], _AsyncGeneratorContextManager[str]
-]
-AsyncContextClientRunner = Callable[
-    [Literal['sse', 'streamable-http'], str, dict[str, str] | None], _AsyncGeneratorContextManager[Client]
-]
 
 LOG = logging.getLogger(__name__)
 
@@ -335,84 +323,3 @@ def mcp_context(
     client_context.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeInfo(transport='stdio'))
 
     return client_context
-
-
-@pytest.fixture
-def run_server_remote() -> AsyncContextServerRemoteRunner:
-    """
-    Fixture providing an async context manager to run the server in a subprocess.
-    """
-
-    @asynccontextmanager
-    async def _run_server_remote(
-        server: FastMCP, transport: Literal['sse', 'streamable-http']
-    ) -> AsyncGenerator[str, None]:
-        """
-        Run the server in a subprocess with async context manager which ensures that the server is properly closed
-        after the test.
-        :param server: The server to run.
-        :param transport: The transport to use.
-        :return: The url of the remote server.
-        """
-
-        port = random.randint(8000, 9000)
-        proc = Process(target=lambda: asyncio.run(server.run_async(transport=transport, port=port)))
-        proc.start()
-
-        if transport == 'sse':
-            url = f'http://127.0.0.1:{port}/sse'
-        else:
-            url = f'http://127.0.0.1:{port}/mcp'
-
-        LOG.info(f'Running MCP server in subprocess listening on {url} with {transport} transport.')
-        try:
-            await asyncio.sleep(1.0)  # wait for the server to start
-            yield url
-        finally:
-            LOG.info('Terminating MCP server subprocess.')
-            proc.terminate()
-            proc.join()
-
-    return _run_server_remote
-
-
-@pytest.fixture
-def run_client() -> AsyncContextClientRunner:
-    """Fixture providing an async context manager to use the client connected to the server url."""
-
-    @asynccontextmanager
-    async def _run_client(
-        transport: Literal['sse', 'streamable-http'], url: str, headers: dict[str, str] | None = None
-    ) -> AsyncGenerator[Client, None]:
-        """
-        Run the client in an async context manager which will ensure that the client is properly closed after the test.
-        The client is created with the given transport and connected to the url of the remote server with which it
-        communicates.
-        :param transport: The transport of the server to which the client will be connected.
-        :param url: The url of the remote server to which the client will be connected.
-        :param headers: The headers to use for the client.
-        :return: The Client connected to the remote server.
-        """
-        if transport == 'sse':
-            transport_explicit = SSETransport(url=url, headers=headers)
-        else:
-            transport_explicit = StreamableHttpTransport(url=url, headers=headers)
-
-        client_explicit = Client(transport_explicit)
-        exception_from_client = None
-
-        LOG.info(f'Running MCP client connecting to {url} and expecting `{transport}` server transport.')
-        try:
-            async with client_explicit:
-                try:
-                    yield client_explicit
-                except Exception as e:
-                    LOG.error(f'Error in client TaskGroup: {e}')
-                    exception_from_client = e  # we need to keep an exception from the client TaskGroup and raise it
-                    # in outside of the context manager otherwise it will inform only about task group error
-        finally:
-            del client_explicit
-            if isinstance(exception_from_client, Exception):
-                raise exception_from_client
-
-    return _run_client
