@@ -47,9 +47,45 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
   this button
   [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
 - **[Claude Desktop](https://claude.ai)**: Add the integration via Settings → Integrations
+- **[Claude Code](https://www.anthropic.com/)**: Install using `claude mcp add --transport http keboola <URL>` (see below for details)
 - **[Windsurf](https://windsurf.ai)**: Configure with the remote server URL
 - **[Make](https://make.com)**: Configure with the remote server URL
 - **Other MCP clients**: Configure with the remote server URL
+
+#### Claude Code Setup
+
+Claude Code is a command-line interface tool that allows you to interact with Claude using your terminal. You can install the Keboola MCP Server integration using a simple command.
+
+**Installation:**
+
+Run the following command in your terminal, replacing `<YOUR_REGION>` with your Keboola region:
+
+```bash
+claude mcp add --transport http keboola https://mcp.<YOUR_REGION>.keboola.com/mcp
+```
+
+**Region-specific commands:**
+
+| Region | Installation Command |
+|--------|----------------------|
+| US Virginia AWS | `claude mcp add --transport http keboola https://mcp.keboola.com/mcp` |
+| US Virginia GCP | `claude mcp add --transport http keboola https://mcp.us-east4.gcp.keboola.com/mcp` |
+| EU Frankfurt AWS | `claude mcp add --transport http keboola https://mcp.eu-central-1.keboola.com/mcp` |
+| EU Ireland Azure | `claude mcp add --transport http keboola https://mcp.north-europe.azure.keboola.com/mcp` |
+| EU Frankfurt GCP | `claude mcp add --transport http keboola https://mcp.europe-west3.gcp.keboola.com/mcp` |
+
+**Usage:**
+
+Once installed, you can use the Keboola MCP Server in Claude Code by typing `/mcp` in your conversation and selecting the Keboola tools you want to use.
+
+**Authentication:**
+
+When you first use the Keboola MCP Server in Claude Code, a browser window will open prompting you to:
+1. Log in with your Keboola account
+2. Select the project you want to connect to
+3. Authorize the connection
+
+After authentication, you can start using Keboola tools directly from Claude Code.
 
 For detailed setup instructions and region-specific URLs, see our [Remote Server Setup documentation](https://help.keboola.com/ai/mcp-server/#remote-server-setup).
 
@@ -188,41 +224,6 @@ Config file locations:
 
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-#### Claude Code Configuration
-
-Claude Code is a command-line interface tool that allows you to interact with Claude using your terminal. You can install the Keboola MCP Server integration using a simple command.
-
-**Installation:**
-
-Run the following command in your terminal, replacing `<YOUR_REGION>` with your Keboola region:
-
-```bash
-claude mcp add --transport http keboola https://mcp.<YOUR_REGION>.keboola.com/mcp
-```
-
-**Region-specific commands:**
-
-| Region | Installation Command |
-|--------|----------------------|
-| US Virginia AWS | `claude mcp add --transport http keboola https://mcp.keboola.com/mcp` |
-| US Virginia GCP | `claude mcp add --transport http keboola https://mcp.us-east4.gcp.keboola.com/mcp` |
-| EU Frankfurt AWS | `claude mcp add --transport http keboola https://mcp.eu-central-1.keboola.com/mcp` |
-| EU Ireland Azure | `claude mcp add --transport http keboola https://mcp.north-europe.azure.keboola.com/mcp` |
-| EU Frankfurt GCP | `claude mcp add --transport http keboola https://mcp.europe-west3.gcp.keboola.com/mcp` |
-
-**Usage:**
-
-Once installed, you can use the Keboola MCP Server in Claude Code by typing `/mcp` in your conversation and selecting the Keboola tools you want to use.
-
-**Authentication:**
-
-When you first use the Keboola MCP Server in Claude Code, a browser window will open prompting you to:
-1. Log in with your Keboola account
-2. Select the project you want to connect to
-3. Authorize the connection
-
-After authentication, you can start using Keboola tools directly from Claude Code.
 
 #### Cursor Configuration
 
