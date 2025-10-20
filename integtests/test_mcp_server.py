@@ -148,11 +148,16 @@ async def test_http_multiple_clients_with_different_headers(
 async def _assert_basic_setup(client: Client):
     tools = await client.list_tools()
     # the create_conditional_flow, create_flow and search tools may not be present based on the testing project
+    exclude = {
+        'create_conditional_flow',
+        'create_flow',
+        'search',
+    }
     expected_tools = {
         'add_config_row',
-        # 'create_conditional_flow',
+        'create_conditional_flow',
         'create_config',
-        # 'create_flow',
+        'create_flow',
         'create_oauth_url',
         'create_sql_transformation',
         'deploy_data_app',
@@ -177,16 +182,23 @@ async def _assert_basic_setup(client: Client):
         'modify_data_app',
         'query_data',
         'run_job',
-        # 'search',
+        'search',
         'update_config',
         'update_config_row',
         'update_descriptions',
         'update_flow',
         'update_sql_transformation',
     }
+    expected_tools = expected_tools - exclude
+
     actual_tools = {tool.name for tool in tools}
+    actual_tools = actual_tools - exclude
+
     missing_tools = expected_tools - actual_tools
     assert not missing_tools, f'Missing tools: {missing_tools}'
+
+    unexpected_tools = actual_tools - expected_tools
+    assert not unexpected_tools, f'Unexpected new tools: {unexpected_tools}'
 
     prompts = await client.list_prompts()
     assert len(prompts) == 6
