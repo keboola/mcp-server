@@ -1880,6 +1880,7 @@ WHEN TO USE:
 - User asks "what tables/configs/flows do I have with X in the name?"
 - You need to discover items before performing operations on them
 - User asks to "list all items with [name] in it"
+- DO NOT use for listing all items of a specific type. Use list_configs, list_tables, list_flows, etc instead.
 
 HOW IT WORKS:
 - Searches by name prefix matching: an item matches if its name or any word in the name starts with the search term
@@ -1921,7 +1922,7 @@ CONSIDERATIONS:
 {
   "properties": {
     "name_prefixes": {
-      "description": "One or more name prefixes to search for. An item matches if its name (or any word in the name) starts with any of these prefixes. Case-insensitive. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"test\"]",
+      "description": "One or more name prefixes to search for. An item matches if its name (or any word in the name) starts with any of these prefixes. Case-insensitive. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"test\"]. Do not use empty strings or empty lists.",
       "items": {
         "type": "string"
       },
