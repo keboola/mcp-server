@@ -1,11 +1,11 @@
-import asyncio
 import json
 import logging
 import os
 import random
 import subprocess
+import time
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Literal
+from typing import AsyncGenerator, Iterable, Literal
 
 import pytest
 from fastmcp import Client
@@ -57,7 +57,7 @@ async def test_stdio_setup(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('transport', ['sse', 'streamable-http'])
+@pytest.mark.parametrize('transport', ['sse', 'streamable-http', 'http-compat'])
 async def test_remote_setup(
     transport: HttpTransportStr,
     configs: list[ConfigDef],
@@ -70,10 +70,10 @@ async def test_remote_setup(
     assert storage_api_url is not None
 
     component_config = configs[0]
-    async with _run_server_remote(storage_api_url, transport) as url:
+    for url in _run_server_remote(storage_api_url, transport):
         # test both cases: with headers and without headers using query params
         headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
-        async with _run_client(transport, url, headers) as client:
+        async with _run_client(url, headers) as client:
             await _assert_basic_setup(client)
             await _assert_get_component_details_tool_call(client, component_config)
 
@@ -87,16 +87,16 @@ async def test_http_multiple_clients(
 ):
     transport: HttpTransportStr = 'streamable-http'
     component_config = configs[0]
-    async with _run_server_remote(storage_api_url, transport) as url:
+    for url in _run_server_remote(storage_api_url, transport):
         headers = {
             'storage_token': storage_api_token,
             'workspace_schema': workspace_schema,
             'storage_api_url': storage_api_url,
         }
         async with (
-            _run_client(transport, url, headers) as client_1,
-            _run_client(transport, url, headers) as client_2,
-            _run_client(transport, url, headers) as client_3,
+            _run_client(url, headers) as client_1,
+            _run_client(url, headers) as client_2,
+            _run_client(url, headers) as client_3,
         ):
             await _assert_basic_setup(client_1)
             await _assert_basic_setup(client_2)
@@ -126,10 +126,10 @@ async def test_http_multiple_clients_with_different_headers(
     }
 
     transport: HttpTransportStr = 'streamable-http'
-    async with _run_server_remote(storage_api_url, transport) as url:
+    for url in _run_server_remote(storage_api_url, transport):
         async with (
-            _run_client(transport, url, headers['client_1']) as client_1,
-            _run_client(transport, url, headers['client_2']) as client_2,
+            _run_client(url, headers['client_1']) as client_1,
+            _run_client(url, headers['client_2']) as client_2,
         ):
             await _assert_basic_setup(client_1)
             await _assert_basic_setup(client_2)
@@ -236,8 +236,7 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     assert component_config.configuration_rows is None
 
 
-@asynccontextmanager
-async def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) -> AsyncGenerator[str, None]:
+def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) -> Iterable[str]:
     """
     Run the server in a subprocess.
     :param storage_api_url: The Storage API URL to use.
@@ -268,16 +267,17 @@ async def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) 
         },
     )
     try:
-        if transport == 'sse':
-            url = f'http://127.0.0.1:{port}/sse'
-        elif transport == 'streamable-http':
-            url = f'http://127.0.0.1:{port}/mcp'
-        else:
+        urls: list[str] = []
+        if transport in ['sse', 'http-compat']:
+            urls.append(f'http://127.0.0.1:{port}/sse')
+        if transport in ['streamable-http', 'http-compat']:
+            urls.append(f'http://127.0.0.1:{port}/mcp')
+        if not urls:
             raise ValueError(f'Unknown transport: {transport}')
 
-        LOG.info(f'Running MCP server in subprocess listening on {url} with {transport} transport.')
-        await asyncio.sleep(5)  # wait for the server to start
-        yield url
+        LOG.info(f'Running MCP server in subprocess with {transport} transport, listening on: {urls}')
+        time.sleep(5)  # wait for the server to start
+        yield from urls
     finally:
         LOG.info('Terminating MCP server subprocess.')
         p.terminate()
@@ -287,26 +287,23 @@ async def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) 
 
 
 @asynccontextmanager
-async def _run_client(
-    transport: HttpTransportStr, url: str, headers: dict[str, str] | None = None
-) -> AsyncGenerator[Client, None]:
+async def _run_client(url: str, headers: dict[str, str] | None = None) -> AsyncGenerator[Client, None]:
     """
     Run the client in an async context manager which will ensure that the client is properly closed after the test.
     The client is created with the given transport and connected to the url of the remote server with which it
     communicates.
-    :param transport: The transport of the server to which the client will be connected.
     :param url: The url of the remote server to which the client will be connected.
     :param headers: The headers to use for the client.
     :return: The Client connected to the remote server.
     """
-    if transport == 'sse':
-        transport_explicit = SSETransport(url=url, headers=headers)
-    elif transport == 'streamable-http':
-        transport_explicit = StreamableHttpTransport(url=url, headers=headers)
+    if url.endswith('/sse'):
+        transport = SSETransport(url=url, headers=headers)
+    elif url.endswith('/mcp'):
+        transport = StreamableHttpTransport(url=url, headers=headers)
     else:
-        raise ValueError(f'Unknown transport: {transport}')
+        raise ValueError(f'Unknown transport: {url}')
 
-    client_explicit = Client(transport_explicit)
+    client_explicit = Client(transport)
     exception_from_client = None
 
     LOG.info(f'Running MCP client connecting to {url} and expecting `{transport}` server transport.')
