@@ -25,6 +25,7 @@ LOG = logging.getLogger(__name__)
 STORAGE_API_URL_ENV_VAR = 'INTEGTEST_STORAGE_API_URL'
 STORAGE_API_TOKEN_ENV_VAR = 'INTEGTEST_STORAGE_TOKEN'
 WORKSPACE_SCHEMA_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMA'
+# The second pair of token/schema for testing simultaneous access to two different projects.
 STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
 WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
 # We reset dev environment variables to integtest values to ensure tests run locally using .env settings.
