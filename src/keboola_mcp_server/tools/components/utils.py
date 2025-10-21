@@ -323,7 +323,7 @@ class TransformationConfiguration(BaseModel):
     storage: Storage = Field(description='The storage configuration for the transformation')
 
 
-def get_transformation_configuration(
+async def get_transformation_configuration(
     codes: Sequence[TransformationConfiguration.Parameters.Block.Code],
     transformation_name: str,
     output_tables: Sequence[str],

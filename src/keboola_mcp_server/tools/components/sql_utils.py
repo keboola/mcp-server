@@ -6,10 +6,9 @@ statements and join them back together, using regex-based parsing similar
 to the Keboola UI's splitQueriesWorker.worker.ts implementation.
 """
 
+import asyncio
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 LOG = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ SQL_SPLIT_REGEX = re.compile(
 )
 
 
-def split_sql_statements(script: str, timeout_seconds: float = 5.0) -> list[str]:
+async def split_sql_statements(script: str, timeout_seconds: float = 1.0) -> list[str]:
     """
     Split a SQL script string into individual statements.
 
@@ -36,7 +35,7 @@ def split_sql_statements(script: str, timeout_seconds: float = 5.0) -> list[str]
 
     :param script: The SQL script string to split
     :param timeout_seconds: Maximum time to allow for regex processing
-        (default: 5.0)
+        (default: 1.0)
     :return: List of individual SQL statements (trimmed, non-empty)
     :raises ValueError: If the script is invalid or regex times out
     """
@@ -44,17 +43,12 @@ def split_sql_statements(script: str, timeout_seconds: float = 5.0) -> list[str]
         return []
 
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_split_with_regex, script)
-            try:
-                statements = future.result(timeout=timeout_seconds)
-            except FuturesTimeoutError:
-                future.cancel()
-                raise ValueError(
-                    f'SQL parsing took too long '
-                    f'(possible catastrophic backtracking). '
-                    f'Timeout: {timeout_seconds}s'
-                )
+        try:
+            statements = await asyncio.wait_for(asyncio.to_thread(_split_with_regex, script), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            raise ValueError(
+                f'SQL parsing took too long ' f'(possible catastrophic backtracking). ' f'Timeout: {timeout_seconds}s'
+            )
 
         if statements is None:
             raise ValueError('SQL script is not valid (no matches found)')
@@ -116,7 +110,7 @@ def join_sql_statements(statements: list[str]) -> str:
     return ''.join(result_parts)
 
 
-def validate_round_trip(original: str) -> bool:
+async def validate_round_trip(original: str) -> bool:
     """
     Validate that split(join(split(x))) == split(x).
 
@@ -127,10 +121,10 @@ def validate_round_trip(original: str) -> bool:
     :return: True if round-trip is valid, False otherwise
     """
     try:
-        split_original = split_sql_statements(original)
+        split_original = await split_sql_statements(original)
 
         joined = join_sql_statements(split_original)
-        split_again = split_sql_statements(joined)
+        split_again = await split_sql_statements(joined)
 
         return split_original == split_again
 

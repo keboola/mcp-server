@@ -65,7 +65,8 @@ def test_expand_component_types(
         ),
     ],
 )
-def test_get_transformation_configuration(
+@pytest.mark.asyncio
+async def test_get_transformation_configuration(
     sql_statements: list[str],
     created_table_names: list[str],
     transformation_name: str,
@@ -75,7 +76,7 @@ def test_get_transformation_configuration(
     given the sql statement created_table_names and transformation_name."""
 
     codes = [TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=sql_statements)]
-    configuration = get_transformation_configuration(
+    configuration = await get_transformation_configuration(
         codes=codes,
         transformation_name=transformation_name,
         output_tables=created_table_names,

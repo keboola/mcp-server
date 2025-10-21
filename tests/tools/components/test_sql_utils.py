@@ -21,91 +21,91 @@ from keboola_mcp_server.tools.components.sql_utils import (
         (
             '\nSELECT 1;\nSelect 2;\nSELECT 3;',
             ['SELECT 1;', 'Select 2;', 'SELECT 3;'],
-            5.0,
+            1.0,
             'simple_queries',
         ),
         # Multi-line comments with /* */ syntax
         (
             '\nSELECT 1;\n/*\n  Select 2;\n*/\nSELECT 3;',
             ['SELECT 1;', '/*\n  Select 2;\n*/\nSELECT 3;'],
-            5.0,
+            1.0,
             'multi_line_comments',
         ),
         # Single line comments with -- syntax
         (
             '\nSELECT 1;\n-- Select 2;\nSELECT 3;',
             ['SELECT 1;', '-- Select 2;\nSELECT 3;'],
-            5.0,
+            1.0,
             'single_line_comment_double_dash',
         ),
         # Single line comments with # syntax
         (
             '\nSELECT 1;\n# Select 2;\nSELECT 3;',
             ['SELECT 1;', '# Select 2;\nSELECT 3;'],
-            5.0,
+            1.0,
             'single_line_comment_hash',
         ),
         # Single line comments with // syntax
         (
             '\nSELECT 1;\n// Select 2;\nSELECT 3;',
             ['SELECT 1;', '// Select 2;\nSELECT 3;'],
-            5.0,
+            1.0,
             'single_line_comment_double_slash',
         ),
         # Dollar-quoted blocks with $$ syntax
         (
             '\nSELECT 1;\nexecute immediate $$\n  SELECT 2;\n  SELECT 3;\n$$;',
             ['SELECT 1;', 'execute immediate $$\n  SELECT 2;\n  SELECT 3;\n$$;'],
-            5.0,
+            1.0,
             'dollar_quoted_blocks',
         ),
         # Empty string
         (
             '',
             [],
-            5.0,
+            1.0,
             'empty_string',
         ),
         # Whitespace only
         (
             '   ',
             [],
-            5.0,
+            1.0,
             'whitespace_only',
         ),
         # Single statement without semicolon
         (
             'SELECT 1',
             ['SELECT 1'],
-            5.0,
+            1.0,
             'single_statement_no_semicolon',
         ),
         # Single statement with semicolon
         (
             'SELECT 1;',
             ['SELECT 1;'],
-            5.0,
+            1.0,
             'single_statement_with_semicolon',
         ),
         # Semicolons in single-quoted strings
         (
             "SELECT 'test;test' AS col1; SELECT 2;",
             ["SELECT 'test;test' AS col1;", 'SELECT 2;'],
-            5.0,
+            1.0,
             'semicolons_in_single_quoted_strings',
         ),
         # Semicolons in double-quoted strings
         (
             'SELECT "test;test" AS col1; SELECT 2;',
             ['SELECT "test;test" AS col1;', 'SELECT 2;'],
-            5.0,
+            1.0,
             'semicolons_in_double_quoted_strings',
         ),
         # Escaped quotes in strings
         (
             "SELECT 'it\\'s a test'; SELECT 2;",
             ["SELECT 'it\\'s a test';", 'SELECT 2;'],
-            5.0,
+            1.0,
             'escaped_quotes',
         ),
         # Complex query with timeout
@@ -121,35 +121,36 @@ from keboola_mcp_server.tools.components.sql_utils import (
                 'SELECT 3;',
                 '-- Another comment\nSELECT "double" as col;',
             ],
-            2.0,
+            1.0,
             'complex_query_with_timeout',
         ),
         # Nested dollar quotes
         (
             'CREATE FUNCTION f() $$ SELECT $$nested$$; $$;',
             ['CREATE FUNCTION f() $$ SELECT $$nested$$; $$;'],
-            5.0,
+            1.0,
             'nested_dollar_quotes',
         ),
         # Mixed single and double quotes
         (
             "SELECT 'single', \"double\"; SELECT 2;",
             ["SELECT 'single', \"double\";", 'SELECT 2;'],
-            5.0,
+            1.0,
             'mixed_quotes',
         ),
         # Windows-style line endings (carriage returns)
         (
             'SELECT 1;\r\nSELECT 2;\r\n',
             ['SELECT 1;', 'SELECT 2;'],
-            5.0,
+            1.0,
             'carriage_returns',
         ),
     ],
 )
-def test_split_sql_statements(input_sql, expected, timeout_seconds, test_id):
+@pytest.mark.asyncio
+async def test_split_sql_statements(input_sql, expected, timeout_seconds, test_id):
     """Test SQL splitting with various inputs and scenarios."""
-    result = split_sql_statements(input_sql, timeout_seconds=timeout_seconds)
+    result = await split_sql_statements(input_sql, timeout_seconds=timeout_seconds)
     assert result == expected
 
 
@@ -247,7 +248,8 @@ def test_join_sql_statements(statements, expected, test_id):
         ),
     ],
 )
-def test_validate_round_trip(original, expected, test_id):
+@pytest.mark.asyncio
+async def test_validate_round_trip(original, expected, test_id):
     """Test round-trip validation with various inputs and scenarios."""
-    result = validate_round_trip(original)
+    result = await validate_round_trip(original)
     assert result is expected

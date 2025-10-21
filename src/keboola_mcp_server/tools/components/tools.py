@@ -285,7 +285,7 @@ async def get_component(
     return Component.from_api_response(api_component)
 
 
-def _normalize_sql_code_blocks(
+async def _normalize_sql_code_blocks(
     sql_code_blocks: Sequence[TransformationConfiguration.Parameters.Block.Code],
 ) -> list[TransformationConfiguration.Parameters.Block.Code]:
     """
@@ -304,7 +304,7 @@ def _normalize_sql_code_blocks(
         script = code_dict.get('script', [])
 
         if isinstance(script, str):
-            code_dict['script'] = split_sql_statements(script)
+            code_dict['script'] = await split_sql_statements(script)
         elif not isinstance(script, list):
             raise ValueError(f'SQL script must be a string or list, got {type(script).__name__}')
 
@@ -479,11 +479,11 @@ async def create_sql_transformation(
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
     # Normalize code blocks: convert string scripts to arrays if needed
-    normalized_code_blocks = _normalize_sql_code_blocks(sql_code_blocks)
+    normalized_code_blocks = await _normalize_sql_code_blocks(sql_code_blocks)
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
-    transformation_configuration_payload = get_transformation_configuration(
+    transformation_configuration_payload = await get_transformation_configuration(
         codes=normalized_code_blocks, transformation_name=name, output_tables=created_table_names
     )
 
@@ -619,7 +619,7 @@ async def update_sql_transformation(
             for code in codes:
                 script = code.get('script', [])
                 if isinstance(script, str):
-                    code['script'] = split_sql_statements(script)
+                    code['script'] = await split_sql_statements(script)
         updated_configuration['parameters'] = params_dict
 
     if storage is not None:
