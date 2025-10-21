@@ -58,8 +58,6 @@ including essential context and base instructions for working with it
 
 ### Search Tools
 - [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
-- [search](#search): Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
-potentially narrowed down by item type, limited and paginated.
 
 ### Storage Tools
 - [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
@@ -1858,72 +1856,6 @@ EXAMPLES:
   },
   "required": [
     "query"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="search"></a>
-## search
-**Annotations**: `read-only`
-
-**Tags**: `search`
-
-**Description**:
-
-Searches for Keboola items in the production branch of the current project whose names match the given prefixes,
-potentially narrowed down by item type, limited and paginated. Results are ordered by relevance, then creation time.
-
-Considerations:
-- The search is purely name-based, and an item is returned when its name or any word in the name starts with any
-  of the "name_prefixes" parameter.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "name_prefixes": {
-      "description": "Name prefixes to match against item names.",
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "item_types": {
-      "default": [],
-      "description": "Optional list of keboola item types to filter by.",
-      "items": {
-        "enum": [
-          "flow",
-          "bucket",
-          "table",
-          "transformation",
-          "configuration",
-          "configuration-row",
-          "workspace",
-          "shared-code",
-          "rows",
-          "state"
-        ],
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "limit": {
-      "default": 50,
-      "description": "Maximum number of items to return (default: 50, max: 100).",
-      "type": "integer"
-    },
-    "offset": {
-      "default": 0,
-      "description": "Number of matching items to skip, pagination.",
-      "type": "integer"
-    }
-  },
-  "required": [
-    "name_prefixes"
   ],
   "type": "object"
 }
