@@ -64,7 +64,6 @@ class TestServer:
             'modify_data_app',
             'query_data',
             'run_job',
-            'search',
             'update_config',
             'update_config_row',
             'update_descriptions',
@@ -331,7 +330,6 @@ async def test_tool_annotations_and_tags():
         # project/doc/search
         ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
         ('docs_query', True, None, None, {DOC_TOOLS_TAG}),
-        ('search', True, None, None, {SEARCH_TOOLS_TAG}),
         ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
         # oauth
         ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
