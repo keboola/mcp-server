@@ -1,5 +1,6 @@
 import json
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import Annotated, Any
 
 import pytest
 from fastmcp import Client, Context, FastMCP
+from fastmcp.client import SSETransport
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
@@ -364,22 +366,48 @@ async def test_tool_annotations_tags_values(
     assert tool.tags == tags, f'{tool_name} tags mismatch'
 
 
-def test_json_logging(mocker):
-    log_config_file = Path(__file__).parent.parent / 'logging-json.conf'
-    assert log_config_file.is_file(), f'No logging config file found at {log_config_file.absolute()}'
+@pytest.mark.asyncio
+async def test_json_logging():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        log_config_file = Path(__file__).parent.parent / 'logging-json.conf'
+        assert log_config_file.is_file(), f'No logging config file found at {log_config_file.absolute()}'
 
-    # start the MCP server process with json logging
-    p = subprocess.Popen(
-        ['python', '-m', 'keboola_mcp_server', '--transport', 'sse', '--log-config', log_config_file.absolute()],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    # give the server time to fully start
-    time.sleep(5)
+        tmp_log_config_file = Path(tmp_dir) / 'logging-json.conf'
+        tmp_log_config_file.write_text(log_config_file.read_text().replace('level=INFO', 'level=DEBUG'))
 
-    # kill the server and capture streams
-    p.terminate()
+        # start the MCP server process with json logging
+        p = subprocess.Popen(
+            [
+                'python',
+                '-m',
+                'keboola_mcp_server',
+                '--transport',
+                'sse',
+                '--api-url',
+                'http://connection.nowhere',
+                '--storage-token',
+                'foo',
+                '--log-config',
+                tmp_log_config_file.absolute(),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            # give the server time to fully start
+            time.sleep(5)
+
+            # connect to the server and list prompts to force 'fastmcp' looger to get used
+            # the listing of the prompts does not require SAPI connection
+            async with Client(SSETransport('http://localhost:8000/sse')) as client:
+                prompts = await client.list_prompts()
+                assert len(prompts) > 1
+
+        finally:
+            # kill the server and capture streams
+            p.terminate()
+
     stdout, stderr = p.communicate()
 
     # there is only one handler (the root one) in logging-json.conf which sends messages to stdout
@@ -387,13 +415,10 @@ def test_json_logging(mocker):
 
     # all messages should be JSON-formatted, including those logged by FastMCP loggers
     top_names: set[str] = set()
-    fastmcp_startup_message: dict[str, Any] | None = None
     for line in stdout.splitlines():
         message = json.loads(line)
         name = message['name']
-        if message['message'].startswith('Starting MCP server') and name.startswith('fastmcp.fastmcp.server.server'):
-            fastmcp_startup_message = message
         top_names.add(name.split('.')[0])
 
-    assert sorted(top_names) == ['fastmcp', 'keboola_mcp_server', 'uvicorn']
-    assert fastmcp_startup_message is not None
+    missing_top_names = {'fastmcp', 'keboola_mcp_server', 'uvicorn'} - top_names
+    assert not missing_top_names, f'Missing logger names: {missing_top_names}'
