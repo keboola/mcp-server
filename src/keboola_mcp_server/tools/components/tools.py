@@ -308,9 +308,7 @@ def _normalize_sql_code_blocks(
         elif not isinstance(script, list):
             raise ValueError(f'SQL script must be a string or list, got {type(script).__name__}')
 
-        normalized_blocks.append(
-            TransformationConfiguration.Parameters.Block.Code.model_validate(code_dict)
-        )
+        normalized_blocks.append(TransformationConfiguration.Parameters.Block.Code.model_validate(code_dict))
 
     return normalized_blocks
 
