@@ -271,6 +271,26 @@ def clean_bucket_name(bucket_name: str) -> str:
     return bucket_name
 
 
+def format_sql_statement(sql: str, dialect: str) -> str:
+    """
+    Format SQL statement using sqlglot for better readability.
+
+    Args:
+        sql: Raw SQL statement string
+        dialect: SQL dialect ('snowflake' or 'bigquery')
+
+    Returns:
+        Formatted SQL string, or original if formatting fails
+    """
+    try:
+        import sqlglot
+
+        formatted = sqlglot.transpile(sql, read=dialect, pretty=True)[0]
+        return formatted
+    except Exception:
+        return sql
+
+
 async def create_transformation_configuration(
     codes: Sequence[SimplifiedTfBlocks.Block.Code],
     transformation_name: str,

@@ -60,6 +60,7 @@ from keboola_mcp_server.tools.components.utils import (
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
+    format_sql_statement,
     get_sql_transformation_id_from_sql_dialect,
     list_configs_by_ids,
     list_configs_by_types,
