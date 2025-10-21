@@ -16,8 +16,7 @@ description, and a list of created table names.
 component IDs.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
-- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
-configuration.
+- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
 
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
@@ -533,7 +532,7 @@ PREREQUISITES:
 
 IMPORTANT CONSIDERATIONS:
 - Parameter updates are PARTIAL - only specify fields you want to change
-- parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+- parameter_updates supports granular operations: set keys, replace strings, remove keys, or append to lists
 - Parameters must conform to the component's root_configuration_schema
 - Validate schemas before calling: use get_component to retrieve root_configuration_schema
 - For row-based components, this updates the ROOT only (use update_config_row for individual rows)
@@ -549,6 +548,29 @@ WORKFLOW:
 ```json
 {
   "$defs": {
+    "ConfigParamListAppend": {
+      "description": "Append a value to a list parameter.",
+      "properties": {
+        "op": {
+          "const": "list_append",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the list parameter",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to append to the list",
+          "title": "Value"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "value"
+      ],
+      "type": "object"
+    },
     "ConfigParamRemove": {
       "description": "Remove a parameter key.",
       "properties": {
@@ -644,10 +666,11 @@ WORKFLOW:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {
+            "list_append": "#/$defs/ConfigParamListAppend",
             "remove": "#/$defs/ConfigParamRemove",
             "set": "#/$defs/ConfigParamSet",
             "str_replace": "#/$defs/ConfigParamReplace"
@@ -663,6 +686,9 @@ WORKFLOW:
           },
           {
             "$ref": "#/$defs/ConfigParamRemove"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamListAppend"
           }
         ]
       },
@@ -731,6 +757,29 @@ WORKFLOW:
 ```json
 {
   "$defs": {
+    "ConfigParamListAppend": {
+      "description": "Append a value to a list parameter.",
+      "properties": {
+        "op": {
+          "const": "list_append",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the list parameter",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to append to the list",
+          "title": "Value"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "value"
+      ],
+      "type": "object"
+    },
     "ConfigParamRemove": {
       "description": "Remove a parameter key.",
       "properties": {
@@ -834,6 +883,7 @@ WORKFLOW:
       "items": {
         "discriminator": {
           "mapping": {
+            "list_append": "#/$defs/ConfigParamListAppend",
             "remove": "#/$defs/ConfigParamRemove",
             "set": "#/$defs/ConfigParamSet",
             "str_replace": "#/$defs/ConfigParamReplace"
@@ -849,6 +899,9 @@ WORKFLOW:
           },
           {
             "$ref": "#/$defs/ConfigParamRemove"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamListAppend"
           }
         ]
       },
@@ -880,126 +933,230 @@ WORKFLOW:
 
 **Description**:
 
-Updates an existing SQL transformation configuration, optionally updating the description and disabling the
-configuration.
+Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
 
-CONSIDERATIONS:
-- The parameters configuration must include blocks with codes of SQL statements. Using one block with many codes of
-  SQL statements is preferred and commonly used unless specified otherwise by the user.
-- Each code contains SQL statements that are semantically related and have a descriptive name.
-- Each SQL statement must be executable and follow the current SQL dialect, which can be retrieved using
-  appropriate tool.
-- The storage configuration must not be empty, and it should include input or output tables with correct mappings
-  for the transformation.
-- When the behavior of the transformation is not changed, the updated_description can be empty string.
-- SCHEMA CHANGES: If the transformation update results in a destructive
-  schema change to the output table (such as removing columns, changing
-  column types, or renaming columns), you MUST inform the user that they
-  need to
-  manually delete the output table completely before running the updated
-  transformation. Otherwise, the transformation will fail with a schema
-  mismatch error. Non-destructive changes (adding new columns) typically do
-  not require table deletion.
+This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
+the operations you want to perform. All other fields will remain unchanged.
+Use this for modifying SQL transformations created with create_sql_transformation.
+
+WHEN TO USE:
+- Modifying SQL queries in transformation (add/edit/remove SQL statements)
+- Updating transformation block or code block names
+- Changing input/output table mappings for the transformation
+- Updating the transformation description
+- Enabling or disabling the transformation
+- Any combination of the above
+
+PREREQUISITES:
+- Transformation must already exist (use create_sql_transformation for new transformations)
+- You must know the configuration_id of the transformation
+- SQL dialect is determined automatically from the workspace
+- For parameter updates: Use get_config to see current transformation structure first
+
+IMPORTANT CONSIDERATIONS:
+- Parameter updates are PARTIAL - only specify the operations you want to perform
+- parameter_updates supports: set (values), str_replace (find/replace), list_append (add), remove (delete)
+- Use JSONPath to target nested values: "blocks[0].codes[0].script[0]" for specific SQL statements
+- Each SQL statement must be executable and follow the current SQL dialect
+- Storage configuration is COMPLETE REPLACEMENT - include all mappings you want to keep
+- When behavior doesn't change, leave updated_description empty to preserve original
+- SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
+  manually deleting the output table before running the updated transformation to avoid schema mismatch errors.
+  Non-destructive changes (adding columns) typically do not require table deletion.
+
+PARAMETER UPDATE OPERATIONS FOR TRANSFORMATIONS:
+- set: Replace/create value
+  Example: {"op": "set", "path": "blocks[0].name", "new_val": "ETL Block"}
+- str_replace: Find and replace in SQL strings
+  Example: {"op": "str_replace", "path": "blocks[0].codes[0].script[0]",
+            "search_for": "old_table", "replace_with": "new_table"}
+- list_append: Add SQL statement to script array
+  Example: {"op": "list_append", "path": "blocks[0].codes[0].script",
+            "value": "SELECT * FROM new_source"}
+- remove: Delete block, code, or SQL statement
+  Example: {"op": "remove", "path": "blocks[0].codes[1]"}
+
+TRANSFORMATION STRUCTURE:
+parameters.blocks[i] - Transformation block (typically one block named "Blocks")
+  └─ blocks[i].name - Block name
+  └─ blocks[i].codes[j] - Code block (groups related SQL statements)
+     └─ codes[j].name - Descriptive name for the code block
+     └─ codes[j].script - Array of SQL statements (executed in order)
+        └─ script[k] - Individual SQL statement string
+
+WORKFLOW:
+1. Retrieve current transformation using get_config to understand structure
+2. Identify what needs to change (SQL code, storage, description)
+3. For SQL changes: Prepare parameter_updates with targeted operations
+4. For storage changes: Build complete storage configuration
+5. Call update_sql_transformation with only the fields to change
 
 EXAMPLES:
-- user_input: `Can you edit this transformation configuration that [USER INTENT]?`
-    - set the transformation configuration_id accordingly and update parameters and storage tool arguments based on
-      the [USER INTENT]
-    - returns the updated transformation configuration if successful.
+- user_input: `Add a WHERE clause to filter active customers`
+  → Use str_replace: {"op": "str_replace", "path": "blocks[0].codes[0].script[0]",
+                       "search_for": "FROM customers", "replace_with": "FROM customers WHERE status = 'active'"}
+
+- user_input: `Add a new SQL statement to join with orders table`
+  → Use list_append: {"op": "list_append", "path": "blocks[0].codes[0].script",
+                       "value": "SELECT * FROM customers c JOIN orders o ON c.id = o.customer_id"}
+
+- user_input: `Change the code block name to 'Customer Analytics'`
+  → Use set: {"op": "set", "path": "blocks[0].codes[0].name", "new_val": "Customer Analytics"}
+
+- user_input: `Update the transformation description`
+  → Set updated_description parameter (no parameter_updates needed)
 
 
 **Input JSON Schema**:
 ```json
 {
   "$defs": {
-    "Block": {
-      "description": "The transformation block.",
+    "ConfigParamListAppend": {
+      "description": "Append a value to a list parameter.",
       "properties": {
-        "name": {
-          "description": "The name of the current block",
+        "op": {
+          "const": "list_append",
           "type": "string"
         },
-        "codes": {
-          "description": "The code scripts",
-          "items": {
-            "$ref": "#/$defs/Code"
-          },
-          "type": "array"
+        "path": {
+          "description": "JSONPath to the list parameter",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to append to the list",
+          "title": "Value"
         }
       },
       "required": [
-        "name",
-        "codes"
+        "op",
+        "path",
+        "value"
       ],
       "type": "object"
     },
-    "Code": {
-      "description": "The code block for the transformation block.",
+    "ConfigParamRemove": {
+      "description": "Remove a parameter key.",
       "properties": {
-        "name": {
-          "description": "The name of the current code block describing the purpose of the block",
+        "op": {
+          "const": "remove",
           "type": "string"
         },
-        "sql_statements": {
-          "description": "The executable SQL query statements written in the current SQL dialect. Each statement must be executable and a separate item in the list.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "path": {
+          "description": "JSONPath to the parameter key to remove",
+          "type": "string"
         }
       },
       "required": [
-        "name",
-        "sql_statements"
+        "op",
+        "path"
       ],
       "type": "object"
     },
-    "Parameters": {
-      "description": "The parameters for the transformation.",
+    "ConfigParamReplace": {
+      "description": "Replace a substring in a string parameter.",
       "properties": {
-        "blocks": {
-          "description": "The blocks for the transformation",
-          "items": {
-            "$ref": "#/$defs/Block"
-          },
-          "type": "array"
+        "op": {
+          "const": "str_replace",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to modify",
+          "type": "string"
+        },
+        "search_for": {
+          "description": "Substring to search for (non-empty)",
+          "type": "string"
+        },
+        "replace_with": {
+          "description": "Replacement string (can be empty for deletion)",
+          "type": "string"
         }
       },
       "required": [
-        "blocks"
+        "op",
+        "path",
+        "search_for",
+        "replace_with"
+      ],
+      "type": "object"
+    },
+    "ConfigParamSet": {
+      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
+      "properties": {
+        "op": {
+          "const": "set",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
+          "type": "string"
+        },
+        "new_val": {
+          "description": "New value to set",
+          "title": "New Val"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "new_val"
       ],
       "type": "object"
     }
   },
   "properties": {
     "configuration_id": {
-      "description": "ID of the transformation configuration to update",
+      "description": "The ID of the transformation configuration to update.",
       "type": "string"
     },
     "change_description": {
-      "description": "Description of the changes made to the transformation configuration.",
+      "description": "A clear, human-readable summary of what changed in this transformation update. Be specific: e.g., \"Added JOIN with customers table\", \"Updated WHERE clause to filter active records\".",
       "type": "string"
     },
-    "parameters": {
-      "$ref": "#/$defs/Parameters",
+    "parameter_updates": {
       "default": null,
-      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
-      "type": "object"
+      "description": "List of granular parameter update operations to apply to transformation parameters (blocks, codes, SQL). Each operation (set, str_replace, remove, list_append) modifies specific parameters using JSONPath. Only provide if updating SQL code or block structure - do not use for description or storage changes. Prefer targeted updates - only change what needs changing. \n\nCommon paths:\n- \"blocks[0].name\" - Block name\n- \"blocks[0].codes[0].name\" - Code block name\n- \"blocks[0].codes[0].script\" - Array of SQL statements\n- \"blocks[0].codes[0].script[0]\" - First SQL statement\n\nOperations:\n- set: Replace/create value (e.g., update block name)\n- str_replace: Find/replace in SQL (e.g., change table name)\n- list_append: Add SQL statement to script array\n- remove: Delete a block, code, or statement",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "list_append": "#/$defs/ConfigParamListAppend",
+            "remove": "#/$defs/ConfigParamRemove",
+            "set": "#/$defs/ConfigParamSet",
+            "str_replace": "#/$defs/ConfigParamReplace"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ConfigParamSet"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamReplace"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamRemove"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamListAppend"
+          }
+        ]
+      },
+      "type": "array"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
+      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
     },
     "updated_description": {
       "default": "",
-      "description": "Updated transformation description reflecting the changes made in the behavior of the transformation. If no behavior changes are made, empty string preserves the original description.",
+      "description": "New detailed description for the transformation. Only provide if changing the description. Should explain what the transformation does, data sources, and business logic. Leave empty to preserve the original description.",
       "type": "string"
     },
     "is_disabled": {
       "default": false,
-      "description": "Whether to disable the transformation configuration. Default is False.",
+      "description": "Whether to disable the transformation. Set to True to disable execution without deleting. Default is False (transformation remains enabled).",
       "type": "boolean"
     }
   },
