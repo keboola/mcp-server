@@ -31,15 +31,17 @@ def add_search_tools(mcp: FastMCP) -> None:
             tags={SEARCH_TOOLS_TAG},
         )
     )
-    LOG.info(f'Adding tool {search.__name__} to the MCP server.')
-    mcp.add_tool(
-        FunctionTool.from_function(
-            search,
-            name=SEARCH_TOOL_NAME,
-            annotations=ToolAnnotations(readOnlyHint=True),
-            tags={SEARCH_TOOLS_TAG},
-        )
-    )
+    # The search tool is disabled for now as the underlying search API is not working as expected.
+    #
+    # LOG.info(f'Adding tool {search.__name__} to the MCP server.')
+    # mcp.add_tool(
+    #     FunctionTool.from_function(
+    #         search,
+    #         name=SEARCH_TOOL_NAME,
+    #         annotations=ToolAnnotations(readOnlyHint=True),
+    #         tags={SEARCH_TOOLS_TAG},
+    #     )
+    # )
 
     LOG.info('Search tools initialized.')
 

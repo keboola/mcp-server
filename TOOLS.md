@@ -58,7 +58,6 @@ including essential context and base instructions for working with it
 
 ### Search Tools
 - [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
-- [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.
 
 ### Storage Tools
 - [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
@@ -1857,110 +1856,6 @@ EXAMPLES:
   },
   "required": [
     "query"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="search"></a>
-## search
-**Annotations**: `read-only`
-
-**Tags**: `search`
-
-**Description**:
-
-Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.) in the current project
-by name. Returns matching items grouped by type with their IDs and metadata.
-
-WHEN TO USE:
-- User asks to "find", "locate", or "search for" something by name
-- User mentions a partial name and you need to find the full item (e.g., "find the customer table")
-- User asks "what tables/configs/flows do I have with X in the name?"
-- You need to discover items before performing operations on them
-- User asks to "list all items with [name] in it"
-- DO NOT use for listing all items of a specific type. Use list_configs, list_tables, list_flows, etc instead.
-
-HOW IT WORKS:
-- Searches by name prefix matching: an item matches if its name or any word in the name starts with the search term
-- Case-insensitive search
-- Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
-- Each result includes the item's ID, name, creation date, and relevant metadata
-
-IMPORTANT:
-- Always use this tool when the user mentions a name but you don't have the exact ID
-- The search returns IDs that you can use with other tools (e.g., get_table, get_config, get_flow)
-- Results are ordered by relevance, then creation time
-
-USAGE EXAMPLES:
-- user_input: "Find all tables with 'customer' in the name"
-  → name_prefixes=["customer"], item_types=["table"]
-  → Returns all tables whose name contains a word starting with "customer"
-
-- user_input: "Search for the sales transformation"
-  → name_prefixes=["sales"], item_types=["transformation"]
-  → Returns transformations with "sales" in the name
-
-- user_input: "Find items named 'daily report' or 'weekly summary'"
-  → name_prefixes=["daily", "report", "weekly", "summary"], item_types=[]
-  → Returns all items matching any of these name parts
-
-- user_input: "Show me all configurations related to Google Analytics"
-  → name_prefixes=["google", "analytics"], item_types=["configuration"]
-  → Returns configurations with "google" or "analytics" in the name
-
-CONSIDERATIONS:
-- Search is purely name-based (does not search descriptions or other metadata)
-- Multiple prefixes work as OR condition - matches items containing ANY of the prefixes
-- For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
-- Use find_component_id and list_configs tools to find configurations related to a specific component
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "name_prefixes": {
-      "description": "One or more name prefixes to search for. An item matches if its name (or any word in the name) starts with any of these prefixes. Case-insensitive. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"test\"]. Do not use empty strings or empty lists.",
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "item_types": {
-      "default": [],
-      "description": "Optional filter for specific Keboola item types. Leave empty to search all types. Common values: \"table\" (data tables), \"bucket\" (table containers), \"transformation\" (SQL/Python transformations), \"configuration\" (extractor/writer configs), \"flow\" (orchestration flows). Use when you know what type of item you're looking for.",
-      "items": {
-        "enum": [
-          "flow",
-          "bucket",
-          "table",
-          "transformation",
-          "configuration",
-          "configuration-row",
-          "workspace",
-          "shared-code",
-          "rows",
-          "state"
-        ],
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "limit": {
-      "default": 50,
-      "description": "Maximum number of items to return (default: 50, max: 100).",
-      "type": "integer"
-    },
-    "offset": {
-      "default": 0,
-      "description": "Number of matching items to skip for pagination (default: 0).",
-      "type": "integer"
-    }
-  },
-  "required": [
-    "name_prefixes"
   ],
   "type": "object"
 }
