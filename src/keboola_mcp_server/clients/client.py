@@ -26,7 +26,12 @@ FLOW_TYPES: Sequence[FlowType] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_CO
 
 
 def get_metadata_property(
-    metadata: list[Mapping[str, Any]], key: str, provider: str | None = None, default: T | None = None
+    metadata: list[Mapping[str, Any]],
+    key: str,
+    *,
+    provider: str | None = None,
+    preferred_providers: list[str] | None = None,
+    default: T | None = None,
 ) -> T | None:
     """
     Gets the value of a metadata property based on the provided key and optional provider. If multiple metadata entries
@@ -35,15 +40,24 @@ def get_metadata_property(
     :param metadata: A list of metadata entries.
     :param key: The metadata property key to search for.
     :param provider: Specifies the metadata provider name to filter by.
+    :param preferred_providers: Specifies a list of preferred metadata providers to order the metadata items by
     :param default: The default value to return if the metadata property is not found.
 
     :return: The value of the most recent matching metadata entry if found, or None otherwise.
     """
+
+    def _sort_key(m: Mapping[str, Any]) -> tuple[Any, ...]:
+        if _p := m.get('provider'):
+            _pidx = preferred_providers.index(_p) if preferred_providers else 0
+        else:
+            _pidx = 0
+        return -1 * _pidx, m.get('timestamp') or ''
+
     filtered = [
         m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
     ]
     # TODO: ideally we should first convert the timestamps to UTC
-    filtered.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+    filtered.sort(key=_sort_key, reverse=True)
     value = filtered[0].get('value') if filtered else None
     return value if value is not None else default
 
