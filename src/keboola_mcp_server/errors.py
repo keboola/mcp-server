@@ -15,7 +15,7 @@ from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_reques
 LOG = logging.getLogger(__name__)
 F = TypeVar('F', bound=Callable[..., Any])
 
-_UA_TO_CID: Mapping[str, str] = {
+_USER_AGENT_TO_COMPONENT_ID: Mapping[str, str] = {
     'read-only-chat': 'keboola.ai-chat',
     'in-platform-chat': 'keboola.kai-assistant',
 }
@@ -107,7 +107,7 @@ async def _trigger_event(
     client = KeboolaClient.from_state(ctx.session.state)
     resp = await client.storage_client.trigger_event(
         message=message,
-        component_id=_UA_TO_CID.get(user_agent.split(sep='/', maxsplit=1)[0]) or 'keboola.mcp-server-tool',
+        component_id=_USER_AGENT_TO_COMPONENT_ID.get(user_agent.split(sep='/')[0]) or 'keboola.mcp-server-tool',
         event_type=event_type,
         params=event_params,
         duration=execution_time,
