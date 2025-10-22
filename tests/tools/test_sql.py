@@ -131,13 +131,20 @@ class TestWorkspaceManagerSnowflake:
         keboola_client: KeboolaClient,
         context: Context,
     ):
-        keboola_client.storage_client.workspace_query.return_value = QueryResult(
-            status='ok',
-            data=SqlSelectData(columns=list(sapi_result.keys()), rows=[sapi_result]),
-        )
+        keboola_client.storage_client.workspace_query.side_effect = [
+            QueryResult(
+                status='ok',
+                data=SqlSelectData(columns=list(sapi_result.keys()), rows=[sapi_result]),
+            ),
+            QueryResult(
+                status='ok',
+                data=SqlSelectData(columns=['COLUMN_NAME', 'DATA_TYPE', 'IS_NULLABLE'], rows=[]),
+            ),
+        ]
         m = WorkspaceManager.from_state(context.session.state)
-        fqn = await m.get_table_fqn(table)
-        assert fqn == expected
+        info = await m.get_table_info(table)
+        assert info is not None
+        assert info.fqn == expected
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -228,10 +235,17 @@ class TestWorkspaceManagerBigQuery:
             ),
         ],
     )
-    async def test_get_table_fqn(self, table: dict[str, Any], expected: TableFqn, context: Context):
+    async def test_get_table_fqn(
+        self, table: dict[str, Any], expected: TableFqn, keboola_client: KeboolaClient, context: Context
+    ):
+        keboola_client.storage_client.workspace_query.return_value = QueryResult(
+            status='ok',
+            data=SqlSelectData(columns=['column_name', 'data_type', 'is_nullable'], rows=[]),
+        )
         m = WorkspaceManager.from_state(context.session.state)
-        fqn = await m.get_table_fqn(table)
-        assert fqn == expected
+        info = await m.get_table_info(table)
+        assert info is not None
+        assert info.fqn == expected
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

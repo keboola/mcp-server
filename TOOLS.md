@@ -61,7 +61,8 @@ including essential context and base instructions for working with it
 
 ### Storage Tools
 - [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
-- [get_table](#get_table): Gets detailed information about a specific table including its DB identifier and column information.
+- [get_table](#get_table): Gets detailed information about a specific Keboola table, including fully qualified database name,
+column definitions, and metadata.
 - [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
 - [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
@@ -1977,7 +1978,30 @@ Gets detailed information about a specific bucket.
 
 **Description**:
 
-Gets detailed information about a specific table including its DB identifier and column information.
+Gets detailed information about a specific Keboola table, including fully qualified database name,
+column definitions, and metadata.
+
+RETURNS:
+- Table metadata: ID, name, description, primary key column names, storage backend details
+- Column information for each column:
+  - name: Column name
+  - database_native_type: Backend-specific type (e.g., VARCHAR(255), TIMESTAMP_NTZ, DECIMAL(20,2))
+  - keboola_base_type: Storage-agnostic type (STRING, INTEGER, NUMERIC, FLOAT, BOOLEAN, DATE, TIMESTAMP)
+  - nullable: Whether the column accepts NULL values
+- Fully qualified database identifier for use in SQL queries
+
+DATA TYPE FIELDS:
+- database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
+  with precision, scale, and other implementation details
+- keboola_base_type: Standardized type indicating the semantic data type. May not always be
+  available. When present, it reveals the actual type of data stored in the column - for example,
+  a column with database_native_type VARCHAR might have keboola_base_type INTEGER, indicating
+  it stores integer values despite being stored as text in the backend.
+
+USE WHEN:
+- You need column names and data types for writing SQL queries
+- You need the fully qualified table name for database operations
+- You want to understand the table schema before creating transformations or components
 
 
 **Input JSON Schema**:
