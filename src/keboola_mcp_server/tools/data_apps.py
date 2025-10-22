@@ -144,7 +144,8 @@ class DataApp(BaseModel):
         description='The storage input/output mapping of the data app.', default_factory=dict
     )
     deployment_info: Optional[DeploymentInfo] = Field(
-        description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.', default=None
+        description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.',
+        default=None,
     )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
