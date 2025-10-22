@@ -6,6 +6,7 @@ from unittest.mock import ANY
 import pytest
 from fastmcp import Context
 from mcp.shared.context import RequestContext
+from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -104,8 +105,17 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error, mcp_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('transport', ['http', 'stdio'])
-async def test_get_session_id(transport: str, mcp_context_client: Context, mocker):
+@pytest.mark.parametrize(
+    ('transport', 'client_info', 'component_id'),
+    [
+        ('http', None, 'keboola.mcp-server-tool'),
+        ('stdio', Implementation(name='read-only-chat', version='1.2.3'), 'keboola.ai-chat'),
+        ('stdio', Implementation(name='in-platform-chat', version='x.y.z'), 'keboola.kai-assistant'),
+    ],
+)
+async def test_get_session_id(
+    transport: str, client_info: Implementation | None, component_id: str, mcp_context_client: Context, mocker
+):
     @tool_errors()
     async def foo(_ctx: Context):
         pass
@@ -125,17 +135,24 @@ async def test_get_session_id(transport: str, mcp_context_client: Context, mocke
     else:
         pytest.fail(f'Unknown transport: {transport}')
 
+    if client_info:
+        mcp_context_client.session.client_params = InitializeRequestParams(
+            protocolVersion='1.0',
+            clientInfo=client_info,
+            capabilities=ClientCapabilities(),
+        )
+
     await foo(mcp_context_client)
     client = KeboolaClient.from_state(mcp_context_client.session.state)
     client.storage_client.trigger_event.assert_called_once_with(
         message='MCP tool "foo" call succeeded.',
-        component_id='keboola.mcp-server-tool',
+        component_id=component_id,
         event_type='success',
         params={
             'mcpServerContext': {
                 'appEnv': 'DEV',
                 'version': distribution('keboola_mcp_server').version,
-                'userAgent': '',
+                'userAgent': f'{client_info.name}/{client_info.version}' if client_info else '',
                 'sessionId': session_id,
                 'serverTransport': transport,
                 'conversationId': 'convo-1234',
