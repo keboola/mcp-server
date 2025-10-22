@@ -8,8 +8,11 @@ the Python implementation matches the production-proven JavaScript logic.
 import pytest
 
 from keboola_mcp_server.tools.components.sql_utils import (
+    blocks_to_string,
     join_sql_statements,
     split_sql_statements,
+    string_to_blocks,
+    validate_blocks_round_trip,
     validate_round_trip,
 )
 
@@ -252,4 +255,457 @@ def test_join_sql_statements(statements, expected, test_id):
 async def test_validate_round_trip(original, expected, test_id):
     """Test round-trip validation with various inputs and scenarios."""
     result = await validate_round_trip(original)
+    assert result is expected
+
+
+@pytest.mark.parametrize(
+    ('blocks', 'expected', 'ignore_delimiters', 'test_id'),
+    [
+        # Single block, single code
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1', 'SELECT 2'],
+                        }
+                    ],
+                }
+            ],
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\nSELECT 2;\n',
+            False,
+            'single_block_single_code',
+        ),
+        # Multiple blocks
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1'],
+                        }
+                    ],
+                },
+                {
+                    'name': 'Block 2',
+                    'codes': [
+                        {
+                            'name': 'Second Code',
+                            'script': ['SELECT 2'],
+                        }
+                    ],
+                },
+            ],
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
+            '/* ===== BLOCK: Block 2 ===== */\n\n/* ===== CODE: Second Code ===== */\n\nSELECT 2;\n',
+            False,
+            'multiple_blocks',
+        ),
+        # Multiple codes in block
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1'],
+                        },
+                        {
+                            'name': 'Second Code',
+                            'script': ['SELECT 2'],
+                        },
+                    ],
+                }
+            ],
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
+            '/* ===== CODE: Second Code ===== */\n\nSELECT 2;\n',
+            False,
+            'multiple_codes_in_block',
+        ),
+        # Script with existing semicolons
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1;', 'SELECT 2;'],
+                        }
+                    ],
+                }
+            ],
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\nSELECT 2;\n',
+            False,
+            'existing_semicolons',
+        ),
+        # Empty blocks list
+        (
+            [],
+            '',
+            False,
+            'empty_blocks',
+        ),
+        # Empty script
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'Empty Code',
+                            'script': [],
+                        }
+                    ],
+                }
+            ],
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: Empty Code ===== */\n',
+            False,
+            'empty_script',
+        ),
+        # Ignore delimiters
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1'],
+                        }
+                    ],
+                }
+            ],
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1\n',
+            True,
+            'ignore_delimiters',
+        ),
+        # Script ending with comment
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1 /* comment */'],
+                        }
+                    ],
+                }
+            ],
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1 /* comment */\n',
+            False,
+            'ending_with_comment',
+        ),
+        # Complex multi-block structure
+        (
+            [
+                {
+                    'name': 'Setup',
+                    'codes': [
+                        {
+                            'name': 'Create Tables',
+                            'script': ['CREATE TABLE users (id INT)', 'CREATE TABLE orders (id INT)'],
+                        }
+                    ],
+                },
+                {
+                    'name': 'Data Load',
+                    'codes': [
+                        {
+                            'name': 'Insert Users',
+                            'script': ['INSERT INTO users VALUES (1)'],
+                        },
+                        {
+                            'name': 'Insert Orders',
+                            'script': ['INSERT INTO orders VALUES (1)'],
+                        },
+                    ],
+                },
+            ],
+            '/* ===== BLOCK: Setup ===== */\n\n/* ===== CODE: Create Tables ===== */\n\nCREATE TABLE users (id INT);'
+            '\n\nCREATE TABLE orders (id INT);\n\n/* ===== BLOCK: Data Load ===== */\n\n'
+            '/* ===== CODE: Insert Users ===== */\n\nINSERT INTO users VALUES (1);\n\n'
+            '/* ===== CODE: Insert Orders ===== */\n\nINSERT INTO orders VALUES (1);\n',
+            False,
+            'complex_multi_block',
+        ),
+    ],
+)
+def test_blocks_to_string(blocks, expected, ignore_delimiters, test_id):
+    """Test converting blocks to formatted SQL string."""
+    result = blocks_to_string(blocks, ignore_delimiters=ignore_delimiters)
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    ('code_string', 'expected', 'test_id'),
+    [
+        # Single block, single code
+        (
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\nSELECT 2;',
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1;', 'SELECT 2;'],
+                        }
+                    ],
+                }
+            ],
+            'single_block_single_code',
+        ),
+        # Multiple blocks
+        (
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
+            '/* ===== BLOCK: Block 2 ===== */\n\n/* ===== CODE: Second Code ===== */\n\nSELECT 2;',
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1;'],
+                        }
+                    ],
+                },
+                {
+                    'name': 'Block 2',
+                    'codes': [
+                        {
+                            'name': 'Second Code',
+                            'script': ['SELECT 2;'],
+                        }
+                    ],
+                },
+            ],
+            'multiple_blocks',
+        ),
+        # Multiple codes in block
+        (
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
+            '/* ===== CODE: Second Code ===== */\n\nSELECT 2;',
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1;'],
+                        },
+                        {
+                            'name': 'Second Code',
+                            'script': ['SELECT 2;'],
+                        },
+                    ],
+                }
+            ],
+            'multiple_codes_in_block',
+        ),
+        # Empty string
+        (
+            '',
+            [],
+            'empty_string',
+        ),
+        # Empty code content
+        (
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: Empty Code ===== */\n\n',
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'Empty Code',
+                            'script': [],
+                        }
+                    ],
+                }
+            ],
+            'empty_code_content',
+        ),
+        # Shared code marker
+        (
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== SHARED CODE: Shared Utils ===== */\n\nSELECT 1;',
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'Shared Utils',
+                            'script': ['SELECT 1;'],
+                        }
+                    ],
+                }
+            ],
+            'shared_code_marker',
+        ),
+        # Complex multi-statement code
+        (
+            '/* ===== BLOCK: Setup ===== */\n\n/* ===== CODE: Create Tables ===== */\n\nCREATE TABLE users (id INT);'
+            '\nCREATE TABLE orders (id INT);',
+            [
+                {
+                    'name': 'Setup',
+                    'codes': [
+                        {
+                            'name': 'Create Tables',
+                            'script': ['CREATE TABLE users (id INT);', 'CREATE TABLE orders (id INT);'],
+                        }
+                    ],
+                }
+            ],
+            'complex_multi_statement',
+        ),
+        # Whitespace variations
+        (
+            '/*=====BLOCK:Block 1=====*/\n\n/*=====CODE:First Code=====*/\n\nSELECT 1;',
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1;'],
+                        }
+                    ],
+                }
+            ],
+            'whitespace_variations',
+        ),
+        # Code with comments
+        (
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;'
+            '\n-- Comment\nSELECT 2;',
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1;', '-- Comment\nSELECT 2;'],
+                        }
+                    ],
+                }
+            ],
+            'code_with_comments',
+        ),
+        # Code with dollar-quoted blocks
+        (
+            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */'
+            '\n\nexecute immediate $$\n  SELECT 1;\n$$;',
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['execute immediate $$\n  SELECT 1;\n$$;'],
+                        }
+                    ],
+                }
+            ],
+            'dollar_quoted_blocks',
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_string_to_blocks(code_string, expected, test_id):
+    """Test parsing formatted SQL string back to blocks."""
+    result = await string_to_blocks(code_string)
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    ('blocks', 'expected', 'test_id'),
+    [
+        # Simple single block
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1', 'SELECT 2'],
+                        }
+                    ],
+                }
+            ],
+            True,
+            'simple_single_block',
+        ),
+        # Multiple blocks
+        (
+            [
+                {
+                    'name': 'Block 1',
+                    'codes': [
+                        {
+                            'name': 'First Code',
+                            'script': ['SELECT 1'],
+                        }
+                    ],
+                },
+                {
+                    'name': 'Block 2',
+                    'codes': [
+                        {
+                            'name': 'Second Code',
+                            'script': ['SELECT 2'],
+                        }
+                    ],
+                },
+            ],
+            True,
+            'multiple_blocks',
+        ),
+        # Empty blocks
+        (
+            [],
+            True,
+            'empty_blocks',
+        ),
+        # Complex structure
+        (
+            [
+                {
+                    'name': 'Setup',
+                    'codes': [
+                        {
+                            'name': 'Create Tables',
+                            'script': ['CREATE TABLE users (id INT)', 'CREATE TABLE orders (id INT)'],
+                        },
+                        {
+                            'name': 'Create Views',
+                            'script': ['CREATE VIEW user_orders AS SELECT * FROM users JOIN orders'],
+                        },
+                    ],
+                },
+                {
+                    'name': 'Data Load',
+                    'codes': [
+                        {
+                            'name': 'Insert Data',
+                            'script': ['INSERT INTO users VALUES (1)', 'INSERT INTO orders VALUES (1)'],
+                        }
+                    ],
+                },
+            ],
+            True,
+            'complex_structure',
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_validate_blocks_round_trip(blocks, expected, test_id):
+    """Test round-trip validation for block conversion."""
+    result = await validate_blocks_round_trip(blocks)
     assert result is expected
