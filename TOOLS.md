@@ -42,8 +42,8 @@ filtering.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
-- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops running data app in the Keboola environment given the action and
-configuration ID.
+- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
+and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 - [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
@@ -1021,12 +1021,13 @@ EXAMPLES:
 
 **Description**:
 
-Deploys/redeploys a data app or stops running data app in the Keboola environment given the action and
-configuration ID.
+Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
+and the configuration ID.
 
 Considerations:
 - Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
 because it needs to restart.
+- After deployment, the deployment info includes the app URL and the latest logs to diagnose in-app errors.
 
 
 **Input JSON Schema**:
@@ -1069,7 +1070,8 @@ providing their configuration IDs.
 Considerations:
 - If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
 - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
-- Data App details contain configurations, deployment info along with logs and links to the data app dashboard.
+- Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
+data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
 
 
 **Input JSON Schema**:
@@ -1112,8 +1114,9 @@ Creates or updates a Streamlit data app.
 
 Considerations:
 - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
-`{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function accepts a string of SQL
-query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
+`{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
+data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
+from the workspace.
 - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
 `query_data` tool to inspect the data in the workspace before using it in the data app.
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`

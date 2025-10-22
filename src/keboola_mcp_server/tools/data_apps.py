@@ -110,7 +110,9 @@ class DeploymentInfo(BaseModel):
     last_start_timestamp: Optional[str] = Field(
         description='The last start timestamp of the data app deployment.', default=None
     )
-    logs: list[str] = Field(description='The latest 100 logs of the data app deployment.', default_factory=list)
+    logs: list[str] = Field(
+        description='The latest 20 log lines reported in the data app deployment.', default_factory=list
+    )
 
 
 class DataApp(BaseModel):
@@ -141,7 +143,10 @@ class DataApp(BaseModel):
     storage: dict[str, Any] = Field(
         description='The storage input/output mapping of the data app.', default_factory=dict
     )
-    deployment_info: Optional[DeploymentInfo] = Field(description='The deployment info of the data app.', default=None)
+    deployment_info: Optional[DeploymentInfo] = Field(
+        description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.',
+        default=None,
+    )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
     @classmethod
@@ -203,10 +208,12 @@ class ModifiedDataAppOutput(BaseModel):
 
 
 class DeploymentDataAppOutput(BaseModel):
-    """Deployment data app output containing the action performed, links and the deployment info of the data app."""
+    """Deployment data app output containing the action performed, links and deployment info."""
 
     state: SafeState = Field(description='The state of the data app deployment.')
-    deployment_info: DeploymentInfo | None = Field(description='The deployment info of the data app.')
+    deployment_info: DeploymentInfo | None = Field(
+        description='Deployment info with a link to the app and logs to diagnose in-app errors.', default=None
+    )
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
@@ -245,8 +252,9 @@ async def modify_data_app(
 
     Considerations:
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
-    `{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function accepts a string of SQL
-    query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
+    `{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
+    data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
+    from the workspace.
     - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
     `query_data` tool to inspect the data in the workspace before using it in the data app.
     - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
@@ -348,7 +356,8 @@ async def get_data_apps(
     Considerations:
     - If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
     - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
-    - Data App details contain configurations, deployment info along with logs and links to the data app dashboard.
+    - Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
+    data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -390,12 +399,13 @@ async def deploy_data_app(
     action: Annotated[Literal['deploy', 'stop'], Field(description='The action to perform.')],
     configuration_id: Annotated[str, Field(description='The ID of the data app configuration.')],
 ) -> DeploymentDataAppOutput:
-    """Deploys/redeploys a data app or stops running data app in the Keboola environment given the action and
-    configuration ID.
+    """Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
+    and the configuration ID.
 
     Considerations:
     - Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
     because it needs to restart.
+    - After deployment, the deployment info includes the app URL and the latest logs to diagnose in-app errors.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
