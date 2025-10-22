@@ -49,9 +49,9 @@ from keboola_mcp_server.tools.components.model import (
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
+    TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
-    TransformationConfiguration,
     expand_component_types,
     fetch_component,
     get_sql_transformation_id_from_sql_dialect,

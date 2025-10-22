@@ -32,7 +32,7 @@ from individual tasks:
 """
 
 from datetime import datetime
-from typing import Annotated, Any, List, Literal, Optional, Union, get_args
+from typing import Annotated, Any, List, Literal, Optional, Sequence, Union, get_args
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -494,6 +494,58 @@ class Configuration(BaseModel):
             component=component,
             links=links or [],
         )
+
+
+class TransformationConfiguration(BaseModel):
+    """
+    Creates the transformation configuration, a schema for the transformation configuration in the API.
+    Currently, the storage configuration uses only input and output tables, excluding files, etc.
+    """
+
+    class Parameters(BaseModel):
+        """The parameters for the transformation."""
+
+        class Block(BaseModel):
+            """The transformation block."""
+
+            class Code(BaseModel):
+                """The code block for the transformation block."""
+
+                name: str = Field(description='The name of the current code block describing the purpose of the block')
+                sql_statements: Sequence[str] = Field(
+                    description=(
+                        'The executable SQL query statements written in the current SQL dialect. '
+                        'Each statement must be executable and a separate item in the list.'
+                    ),
+                    # We use sql_statements for readability but serialize to script due to api expected request
+                    serialization_alias='script',
+                    validation_alias=AliasChoices('sql_statements', 'script'),
+                )
+
+            name: str = Field(description='The name of the current block')
+            codes: list[Code] = Field(description='The code scripts')
+
+        blocks: list[Block] = Field(description='The blocks for the transformation')
+
+    class Storage(BaseModel):
+        """The storage configuration for the transformation. For now it stores only input and output tables."""
+
+        class Destination(BaseModel):
+            """Tables' destinations for the transformation. Either input or output tables."""
+
+            class Table(BaseModel):
+                """The table used in the transformation"""
+
+                destination: Optional[str] = Field(description='The destination table name', default=None)
+                source: Optional[str] = Field(description='The source table name', default=None)
+
+            tables: list[Table] = Field(description='The tables used in the transformation', default_factory=list)
+
+        input: Destination = Field(description='The input tables for the transformation', default_factory=Destination)
+        output: Destination = Field(description='The output tables for the transformation', default_factory=Destination)
+
+    parameters: Parameters = Field(description='The parameters for the transformation')
+    storage: Storage = Field(description='The storage configuration for the transformation')
 
 
 # ============================================================================
