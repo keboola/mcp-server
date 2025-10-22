@@ -11,9 +11,9 @@ from keboola_mcp_server.tools.components.model import (
     ConfigParamReplace,
     ConfigParamSet,
     ConfigParamUpdate,
+    TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
-    TransformationConfiguration,
     _apply_param_update,
     _set_nested_value,
     clean_bucket_name,

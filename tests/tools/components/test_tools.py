@@ -31,8 +31,9 @@ from keboola_mcp_server.tools.components.model import (
     ConfigurationRootSummary,
     ConfigurationSummary,
     ListConfigsOutput,
+    TransformationConfiguration,
 )
-from keboola_mcp_server.tools.components.utils import TransformationConfiguration, clean_bucket_name
+from keboola_mcp_server.tools.components.utils import clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
