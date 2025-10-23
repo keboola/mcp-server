@@ -10,6 +10,10 @@ import asyncio
 import logging
 import re
 
+from keboola_mcp_server.tools.components.model import TransformationConfiguration
+
+TransformationBlocks = TransformationConfiguration.Parameters
+
 LOG = logging.getLogger(__name__)
 
 SQL_SPLIT_REGEX = re.compile(
@@ -114,11 +118,12 @@ def join_sql_statements(statements: list[str]) -> str:
     return ''.join(result_parts)
 
 
-def blocks_to_string(blocks: list[dict], ignore_delimiters: bool = False) -> str:
+def blocks_to_string(blocks: list[dict] | TransformationBlocks, ignore_delimiters: bool = False) -> str:
     """
     Convert structured blocks to a single formatted SQL string with metadata comments.
 
-    :param blocks: List of block dictionaries with structure:
+    :param blocks: Either a list of block dictionaries or TransformationBlocks model with structure:
+        List format:
         [
             {
                 'name': 'Block Name',
@@ -130,6 +135,7 @@ def blocks_to_string(blocks: list[dict], ignore_delimiters: bool = False) -> str
                 ]
             }
         ]
+        Or TransformationBlocks(blocks=[Block(...)])
     :param ignore_delimiters: If True, don't add SQL delimiters (useful for diffs)
     :return: Formatted SQL string with block and code metadata comments
 
@@ -142,7 +148,13 @@ def blocks_to_string(blocks: list[dict], ignore_delimiters: bool = False) -> str
 
         SELECT 2;
     """
-    if not blocks:
+    # Convert TransformationBlocks to list of dicts for backward compatibility
+    if isinstance(blocks, TransformationBlocks):
+        blocks_list: list[dict] = blocks.model_dump(by_alias=True)['blocks']
+    else:
+        blocks_list = blocks
+
+    if not blocks_list:
         return ''
 
     def should_add_delimiter(statement: str) -> bool:
@@ -168,7 +180,7 @@ def blocks_to_string(blocks: list[dict], ignore_delimiters: bool = False) -> str
 
     result_parts = []
 
-    for block in blocks:
+    for block in blocks_list:
         block_name = block.get('name', 'Untitled Block')
         codes = block.get('codes', [])
 
@@ -195,12 +207,12 @@ def blocks_to_string(blocks: list[dict], ignore_delimiters: bool = False) -> str
     return result + '\n' if result else ''
 
 
-async def string_to_blocks(code_string: str) -> list[dict]:
+async def string_to_blocks(code_string: str) -> TransformationBlocks:
     """
     Parse a formatted SQL string back into structured blocks.
 
     :param code_string: Formatted SQL string with block/code metadata comments
-    :return: List of block dictionaries with structure matching blocks_to_string input
+    :return: TransformationBlocks (TransformationConfiguration.Parameters) with structured blocks
 
     Example input:
         /* ===== BLOCK: Block 1 ===== */
@@ -211,20 +223,22 @@ async def string_to_blocks(code_string: str) -> list[dict]:
         SELECT 2;
 
     Example output:
-        [
-            {
-                'name': 'Block 1',
-                'codes': [
-                    {
-                        'name': 'First Code',
-                        'script': ['SELECT 1;', 'SELECT 2;']
-                    }
-                ]
-            }
-        ]
+        TransformationBlocks(
+            blocks=[
+                Block(
+                    name='Block 1',
+                    codes=[
+                        Code(
+                            name='First Code',
+                            sql_statements=['SELECT 1;', 'SELECT 2;']
+                        )
+                    ]
+                )
+            ]
+        )
     """
     if not code_string or not code_string.strip():
-        return []
+        return TransformationBlocks(blocks=[])
 
     blocks = []
 
@@ -249,7 +263,7 @@ async def string_to_blocks(code_string: str) -> list[dict]:
             code_content = code_splits[code_idx + 1].strip()  # Safe due to range step
 
             if not code_content:
-                codes.append({'name': code_name, 'script': []})
+                codes.append(TransformationConfiguration.Parameters.Block.Code(name=code_name, sql_statements=[]))
                 continue
 
             # Split SQL statements
@@ -260,9 +274,9 @@ async def string_to_blocks(code_string: str) -> list[dict]:
                 # Fallback: treat as single statement
                 script_array = [code_content]
 
-            codes.append({'name': code_name, 'script': script_array})
+            codes.append(TransformationConfiguration.Parameters.Block.Code(name=code_name, sql_statements=script_array))
 
         if codes:
-            blocks.append({'name': block_name, 'codes': codes})
+            blocks.append(TransformationConfiguration.Parameters.Block(name=block_name, codes=codes))
 
-    return blocks
+    return TransformationBlocks(blocks=blocks)
