@@ -95,6 +95,8 @@ class TestConfig:
             ('test:foo.bar/v2/storage', 'https://foo.bar'),
             ('https://foo.bar/v2/storage', 'https://foo.bar'),
             ('https://foo.bar', 'https://foo.bar'),
+            ('http://localhost:8000', 'http://localhost:8000'),
+            ('https://localhost:8000/foo/bar', 'https://localhost:8000'),
         ],
     )
     def test_url_field(self, url: str, expected: str) -> None:

@@ -51,8 +51,10 @@ class Config:
             if value:
                 orig_value = value
                 url_value = urlparse(value)
-                if url_value.hostname:
-                    value = urlunparse(('https', url_value.hostname, '', '', '', ''))
+                if url_value.netloc:
+                    if (scheme := url_value.scheme) not in ['http', 'https']:
+                        scheme = 'http' if url_value.netloc.startswith('localhost') else 'https'
+                    value = urlunparse((scheme, url_value.netloc, '', '', '', ''))
                 elif url_value.path:
                     value = urlunparse(('https', url_value.path.split('/', maxsplit=1)[0], '', '', '', ''))
                 else:
