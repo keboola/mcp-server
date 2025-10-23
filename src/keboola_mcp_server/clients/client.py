@@ -47,6 +47,7 @@ def get_metadata_property(
     """
 
     def _sort_key(m: Mapping[str, Any]) -> tuple[Any, ...]:
+        # TODO: ideally we should first convert the timestamps to UTC
         if preferred_providers:
             if (_p := m.get('provider')) and _p in preferred_providers:
                 _pidx = preferred_providers.index(_p)
@@ -59,9 +60,8 @@ def get_metadata_property(
     filtered = [
         m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
     ]
-    # TODO: ideally we should first convert the timestamps to UTC
-    filtered.sort(key=_sort_key, reverse=True)
-    value = filtered[0].get('value') if filtered else None
+    item = max(filtered, key=_sort_key, default=None)
+    value = item.get('value') if item else None
     return value if value is not None else default
 
 
