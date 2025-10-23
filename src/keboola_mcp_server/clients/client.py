@@ -47,11 +47,14 @@ def get_metadata_property(
     """
 
     def _sort_key(m: Mapping[str, Any]) -> tuple[Any, ...]:
-        if _p := m.get('provider'):
-            _pidx = preferred_providers.index(_p) if preferred_providers else 0
+        if preferred_providers:
+            if (_p := m.get('provider')) and _p in preferred_providers:
+                _pidx = preferred_providers.index(_p)
+            else:
+                _pidx = len(preferred_providers)
+            return -1 * _pidx, m.get('timestamp') or ''
         else:
-            _pidx = 0
-        return -1 * _pidx, m.get('timestamp') or ''
+            return (m.get('timestamp') or '',)
 
     filtered = [
         m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))

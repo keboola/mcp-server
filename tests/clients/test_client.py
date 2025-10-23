@@ -412,6 +412,12 @@ class TestKeboolaClient:
                     'provider': 'provider-c',
                     'timestamp': '2024-01-03T00:00:00Z',
                 },
+                {
+                    'key': 'description',
+                    'value': 'Provider X',
+                    'provider': 'provider-X',  # not in the preferred_providers list
+                    'timestamp': '2024-01-03T00:00:00Z',
+                },
             ],
             'description',
             None,
