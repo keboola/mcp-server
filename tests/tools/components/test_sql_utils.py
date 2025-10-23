@@ -7,7 +7,9 @@ the Python implementation matches the production-proven JavaScript logic.
 
 import pytest
 
+from keboola_mcp_server.tools.components.model import TransformationConfiguration
 from keboola_mcp_server.tools.components.sql_utils import (
+    TransformationBlocks,
     blocks_to_string,
     join_sql_statements,
     split_sql_statements,
@@ -454,169 +456,187 @@ def test_blocks_to_string(blocks, expected, ignore_delimiters, test_id):
         # Single block, single code
         (
             '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\nSELECT 2;',
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1;', 'SELECT 2;'],
-                        }
-                    ],
-                }
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 1',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='First Code',
+                                sql_statements=['SELECT 1;', 'SELECT 2;'],
+                            )
+                        ],
+                    )
+                ]
+            ),
             'single_block_single_code',
         ),
         # Multiple blocks
         (
             '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
             '/* ===== BLOCK: Block 2 ===== */\n\n/* ===== CODE: Second Code ===== */\n\nSELECT 2;',
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1;'],
-                        }
-                    ],
-                },
-                {
-                    'name': 'Block 2',
-                    'codes': [
-                        {
-                            'name': 'Second Code',
-                            'script': ['SELECT 2;'],
-                        }
-                    ],
-                },
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 1',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='First Code',
+                                sql_statements=['SELECT 1;'],
+                            )
+                        ],
+                    ),
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 2',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='Second Code',
+                                sql_statements=['SELECT 2;'],
+                            )
+                        ],
+                    ),
+                ]
+            ),
             'multiple_blocks',
         ),
         # Multiple codes in block
         (
             '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
             '/* ===== CODE: Second Code ===== */\n\nSELECT 2;',
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1;'],
-                        },
-                        {
-                            'name': 'Second Code',
-                            'script': ['SELECT 2;'],
-                        },
-                    ],
-                }
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 1',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='First Code',
+                                sql_statements=['SELECT 1;'],
+                            ),
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='Second Code',
+                                sql_statements=['SELECT 2;'],
+                            ),
+                        ],
+                    )
+                ]
+            ),
             'multiple_codes_in_block',
         ),
         # Empty string
         (
             '',
-            [],
+            TransformationBlocks(blocks=[]),
             'empty_string',
         ),
         # Empty code content
         (
             '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: Empty Code ===== */\n\n',
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'Empty Code',
-                            'script': [],
-                        }
-                    ],
-                }
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 1',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='Empty Code',
+                                sql_statements=[],
+                            )
+                        ],
+                    )
+                ]
+            ),
             'empty_code_content',
         ),
         # Shared code marker
         (
             '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== SHARED CODE: Shared Utils ===== */\n\nSELECT 1;',
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'Shared Utils',
-                            'script': ['SELECT 1;'],
-                        }
-                    ],
-                }
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 1',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='Shared Utils',
+                                sql_statements=['SELECT 1;'],
+                            )
+                        ],
+                    )
+                ]
+            ),
             'shared_code_marker',
         ),
         # Complex multi-statement code
         (
             '/* ===== BLOCK: Setup ===== */\n\n/* ===== CODE: Create Tables ===== */\n\nCREATE TABLE users (id INT);'
             '\nCREATE TABLE orders (id INT);',
-            [
-                {
-                    'name': 'Setup',
-                    'codes': [
-                        {
-                            'name': 'Create Tables',
-                            'script': ['CREATE TABLE users (id INT);', 'CREATE TABLE orders (id INT);'],
-                        }
-                    ],
-                }
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Setup',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='Create Tables',
+                                sql_statements=['CREATE TABLE users (id INT);', 'CREATE TABLE orders (id INT);'],
+                            )
+                        ],
+                    )
+                ]
+            ),
             'complex_multi_statement',
         ),
         # Whitespace variations
         (
             '/*=====BLOCK:Block 1=====*/\n\n/*=====CODE:First Code=====*/\n\nSELECT 1;',
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1;'],
-                        }
-                    ],
-                }
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 1',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='First Code',
+                                sql_statements=['SELECT 1;'],
+                            )
+                        ],
+                    )
+                ]
+            ),
             'whitespace_variations',
         ),
         # Code with comments
         (
             '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;'
             '\n-- Comment\nSELECT 2;',
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1;', '-- Comment\nSELECT 2;'],
-                        }
-                    ],
-                }
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 1',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='First Code',
+                                sql_statements=['SELECT 1;', '-- Comment\nSELECT 2;'],
+                            )
+                        ],
+                    )
+                ]
+            ),
             'code_with_comments',
         ),
         # Code with dollar-quoted blocks
         (
             '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */'
             '\n\nexecute immediate $$\n  SELECT 1;\n$$;',
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['execute immediate $$\n  SELECT 1;\n$$;'],
-                        }
-                    ],
-                }
-            ],
+            TransformationBlocks(
+                blocks=[
+                    TransformationConfiguration.Parameters.Block(
+                        name='Block 1',
+                        codes=[
+                            TransformationConfiguration.Parameters.Block.Code(
+                                name='First Code',
+                                sql_statements=['execute immediate $$\n  SELECT 1;\n$$;'],
+                            )
+                        ],
+                    )
+                ]
+            ),
             'dollar_quoted_blocks',
         ),
     ],
@@ -715,6 +735,12 @@ async def test_validate_blocks_round_trip(blocks, test_id):
 
     def normalize_blocks(blocks):
         """Normalize blocks for comparison by stripping whitespace and semicolons."""
+        # Handle both TransformationBlocks and list of dicts
+        if isinstance(blocks, TransformationBlocks):
+            blocks_list = blocks.model_dump(by_alias=True)['blocks']
+        else:
+            blocks_list = blocks
+
         return [
             {
                 'name': b.get('name', '').strip(),
@@ -727,7 +753,7 @@ async def test_validate_blocks_round_trip(blocks, test_id):
                     for c in b.get('codes', [])
                 ],
             }
-            for b in blocks
+            for b in blocks_list
         ]
 
     # Convert blocks to string
