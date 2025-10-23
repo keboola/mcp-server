@@ -38,6 +38,7 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.tools.components.sql_utils import TransformationBlocks
 
 # ============================================================================
 # TYPE DEFINITIONS
@@ -227,6 +228,90 @@ ConfigParamUpdate = Annotated[
     Union[ConfigParamSet, ConfigParamReplace, ConfigParamRemove, ConfigParamListAppend], Field(discriminator='op')
 ]
 
+
+# ============================================================================
+# TRANSFORMATION PARAMETER UPDATE MODELS
+# ============================================================================
+
+TfPosition = Literal['start', 'end']
+
+
+class TfAddBlock(BaseModel):
+    """Add a new block to the transformation."""
+
+    op: Literal['add_block']
+    block: TransformationBlocks.Block = Field(description='The block to add')
+    position: TfPosition = Field(description='The position of the block to add', default='end')
+
+
+class TfRemoveBlock(BaseModel):
+    """Remove an existing block from the transformation."""
+
+    op: Literal['remove_block']
+    block_name: str = Field(description='The name of the block to remove')
+
+
+class TfRenameBlock(BaseModel):
+    """Rename an existing block in the transformation."""
+
+    op: Literal['rename_block']
+    old_block_name: str = Field(description='The name of the block to rename')
+    new_block_name: str = Field(description='The new name of the block')
+
+
+class TfAddCode(BaseModel):
+    """Add a new code to an existing block in the transformation."""
+
+    op: Literal['add_code']
+    block_name: str = Field(description='The name of the block to add the code to')
+    code: TransformationBlocks.Block.Code = Field(description='The code to add')
+    position: TfPosition = Field(description='The position of the code to add', default='end')
+
+
+class TfRemoveCode(BaseModel):
+    """Remove an existing code from an existing block in the transformation."""
+
+    op: Literal['remove_code']
+    block_name: str = Field(description='The name of the block to remove the code from')
+    code_name: str = Field(description='The name of the code to remove')
+
+
+class TfRenameCode(BaseModel):
+    """Rename an existing code in an existing block in the transformation."""
+
+    op: Literal['rename_code']
+    block_name: str = Field(description='The name of the block to rename the code in')
+    old_code_name: str = Field(description='The name of the code to rename')
+    new_code_name: str = Field(description='The new name of the code')
+
+
+class TfSetCode(BaseModel):
+    """Set the SQL statements of an existing code in an existing block in the transformation."""
+
+    op: Literal['set_code']
+    block_name: str = Field(description='The name of the block to set the code in')
+    code_name: str = Field(description='The name of the code to set')
+    code_statements: list[str] = Field(description='The SQL statements of the code to set')
+
+
+class TfAddStatements(BaseModel):
+    """Add SQL statements to an existing code in an existing block in the transformation."""
+
+    op: Literal['add_statements']
+    block_name: str = Field(description='The name of the block to add the statements to')
+    code_name: str = Field(description='The name of the code to add the statements to')
+    statements: list[str] = Field(description='The SQL statements to add')
+    position: TfPosition = Field(description='The position of the statements to add', default='end')
+
+
+class TfStrReplace(BaseModel):
+    """Replace a substring in a SQL statements in an existing code in an existing block in the transformation."""
+
+    op: Literal['str_replace']
+    block_name: Optional[str] = Field(description='The name of the block to replace substrings in', default=None)
+    code_name: Optional[str] = Field(description='The name of the code to replace substrings in', default=None)
+    search_for: str = Field(description='Substring to search for (non-empty)')
+    replace_with: str = Field(description='Replacement string (can be empty for deletion)')
 
 # ============================================================================
 # CONFIGURATION MODELS
