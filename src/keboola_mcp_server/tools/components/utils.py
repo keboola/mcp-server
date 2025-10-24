@@ -41,6 +41,7 @@ from keboola_mcp_server.tools.components.model import (
     ConfigParamUpdate,
     ConfigurationSummary,
     SimplifiedTfBlocks,
+    TfParamUpdate,
     TransformationConfiguration,
 )
 
@@ -481,3 +482,33 @@ def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) 
     for update in updates:
         params = _apply_param_update(params, update)
     return params
+
+
+def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) -> dict[str, Any]:
+    """
+    Applies a single parameter update to the given transformation parameters.
+    Note: This function modifies the input dictionary in place for efficiency.
+    The caller (update_transformation_parameters) is responsible for creating a copy if needed.
+    :param parameters: The transformation parameters
+    :param update: Parameter update operation to apply
+    :return: The updated transformation parameters
+    """
+    pass
+
+
+def update_transformation_parameters(
+    parameters: SimplifiedTfBlocks,
+    updates: Sequence[TfParamUpdate]
+) -> SimplifiedTfBlocks:
+    """
+    Applies a list of parameter updates to the given transformation parameters.
+    The original parameters are not modified.
+
+    :param parameters: The transformation parameters
+    :param updates: Sequence of parameter update operations
+    :return: The updated transformation parameters
+    """
+    parameters_dict = copy.deepcopy(parameters.model_dump())
+    for update in updates:
+        parameters_dict = _apply_tf_param_update(parameters_dict, update)
+    return SimplifiedTfBlocks.model_validate(parameters_dict, extra='ignore')
