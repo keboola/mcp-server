@@ -31,8 +31,9 @@ from keboola_mcp_server.tools.components.model import (
     ConfigurationRootSummary,
     ConfigurationSummary,
     ListConfigsOutput,
-    TransformationConfiguration,
+    SimplifiedTfBlocks,
 )
+from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
 from keboola_mcp_server.tools.components.utils import clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -286,8 +287,8 @@ async def test_create_sql_transformation(
     bucket_name = clean_bucket_name(transformation_name)
     description = mock_configuration['description']
     code_blocks = [
-        TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=['SELECT * FROM test']),
-        TransformationConfiguration.Parameters.Block.Code(name='Code 1', sql_statements=['SELECT * FROM test2']),
+        SimplifiedTfBlocks.Block.Code(name='Code 0', script='SELECT * FROM test'),
+        SimplifiedTfBlocks.Block.Code(name='Code 1', script='SELECT * FROM test2; SELECT * FROM test3;'),
     ]
     created_table_name = 'test_table_1'
 
@@ -315,7 +316,10 @@ async def test_create_sql_transformation(
                 'blocks': [
                     {
                         'name': 'Blocks',
-                        'codes': [{'name': code.name, 'script': code.sql_statements} for code in code_blocks],
+                        'codes': [
+                            {'name': code.name, 'script': await split_sql_statements(code.script)}
+                            for code in code_blocks
+                        ],
                     }
                 ]
             },
@@ -351,9 +355,7 @@ async def test_create_sql_transformation_fail(
             ctx=context,
             name='test_name',
             description='test_description',
-            sql_code_blocks=[
-                TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=['SELECT * FROM test'])
-            ],
+            sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='Code 0', script='SELECT * FROM test')],
         )
 
 
