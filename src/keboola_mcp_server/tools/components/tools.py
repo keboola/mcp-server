@@ -49,13 +49,16 @@ from keboola_mcp_server.tools.components.model import (
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
+    SimplifiedTfBlocks,
     TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
+    BIGQUERY_TRANSFORMATION_ID,
+    SNOWFLAKE_TRANSFORMATION_ID,
+    create_transformation_configuration,
     expand_component_types,
     fetch_component,
     get_sql_transformation_id_from_sql_dialect,
-    get_transformation_configuration,
     list_configs_by_ids,
     list_configs_by_types,
     set_cfg_creation_metadata,
@@ -329,6 +332,13 @@ async def get_config(
         links=links,
     )
 
+    if component_id in (SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID):
+        original_parameters = TransformationConfiguration.Parameters.model_validate(
+            configuration.configuration_root.parameters
+        )
+        simplified_parameters = original_parameters.to_simplified_parameters()
+        configuration.configuration_root.parameters = simplified_parameters.model_dump(by_alias=True)
+
     return configuration
 
 
@@ -356,11 +366,11 @@ async def create_sql_transformation(
         ),
     ],
     sql_code_blocks: Annotated[
-        Sequence[TransformationConfiguration.Parameters.Block.Code],
+        Sequence[SimplifiedTfBlocks.Block.Code],
         Field(
             description=(
-                'The SQL query code blocks, each containing a descriptive name and a sequence of '
-                'semantically related independently executable sql_statements written in the current SQL dialect.'
+                'The SQL query code blocks, each containing a descriptive name and an executable SQL script '
+                'written in the current SQL dialect.'
             ),
         ),
     ],
@@ -412,7 +422,7 @@ async def create_sql_transformation(
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
-    transformation_configuration_payload = get_transformation_configuration(
+    transformation_configuration_payload = await create_transformation_configuration(
         codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names
     )
 

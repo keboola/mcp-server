@@ -7,14 +7,7 @@ the Python implementation matches the production-proven JavaScript logic.
 
 import pytest
 
-from keboola_mcp_server.tools.components.model import TransformationConfiguration
-from keboola_mcp_server.tools.components.sql_utils import (
-    TransformationBlocks,
-    blocks_to_string,
-    join_sql_statements,
-    split_sql_statements,
-    string_to_blocks,
-)
+from keboola_mcp_server.tools.components.sql_utils import join_sql_statements, split_sql_statements
 
 
 @pytest.mark.parametrize(
@@ -214,6 +207,96 @@ async def test_split_sql_statements(input_sql, expected, timeout_seconds, test_i
             'SELECT  \n  1;\n\n',
             'preserve_whitespace',
         ),
+        # Statement with trailing whitespace
+        (
+            ['SELECT 1;   ', 'SELECT 2  '],
+            'SELECT 1;\n\nSELECT 2;\n\n',
+            'trailing_whitespace',
+        ),
+        # Multi-line statement with line comment in middle (not at end)
+        (
+            ['SELECT 1 -- comment\nFROM table'],
+            'SELECT 1 -- comment\nFROM table;\n\n',
+            'multiline_comment_in_middle',
+        ),
+        # Statement ending with hash comment
+        (
+            ['SELECT 1 # hash comment'],
+            'SELECT 1 # hash comment\n\n',
+            'ending_with_hash_comment',
+        ),
+        # Statement ending with double slash comment
+        (
+            ['SELECT 1 // slash comment'],
+            'SELECT 1 // slash comment\n\n',
+            'ending_with_slash_comment',
+        ),
+        # Multi-line with comment not at end
+        (
+            ['SELECT 1\n-- comment\nFROM table\nWHERE id = 1'],
+            'SELECT 1\n-- comment\nFROM table\nWHERE id = 1;\n\n',
+            'multiline_comment_not_at_end',
+        ),
+        # Statement with comment in middle and semicolon at end
+        (
+            ['SELECT 1 -- comment\nFROM table;'],
+            'SELECT 1 -- comment\nFROM table;\n\n',
+            'comment_middle_semicolon_end',
+        ),
+        # Block comment in middle of statement
+        (
+            ['SELECT /* inline comment */ 1'],
+            'SELECT /* inline comment */ 1;\n\n',
+            'block_comment_in_middle',
+        ),
+        # Multiple trailing spaces and tabs
+        (
+            ['SELECT 1  \t  ', '  \t SELECT 2'],
+            'SELECT 1;\n\nSELECT 2;\n\n',
+            'mixed_whitespace',
+        ),
+        # Statement with newline and ending comment
+        (
+            ['SELECT 1\nFROM table -- get data'],
+            'SELECT 1\nFROM table -- get data\n\n',
+            'newline_with_ending_comment',
+        ),
+        # Multiple empty strings (should be filtered)
+        (
+            ['SELECT 1', '', '   ', '\t'],
+            'SELECT 1;\n\n',
+            'with_multiple_empty',
+        ),
+        # Pure comment statement with double dash
+        (
+            ['-- This is just a comment', 'SELECT 1'],
+            '-- This is just a comment\n\nSELECT 1;\n\n',
+            'pure_comment_double_dash',
+        ),
+        # Pure comment statement with hash
+        (
+            ['# This is just a comment', 'SELECT 1'],
+            '# This is just a comment\n\nSELECT 1;\n\n',
+            'pure_comment_hash',
+        ),
+        # Complex multi-line with various comment positions
+        (
+            ['SELECT a -- comment 1\n, b -- comment 2\nFROM table -- comment 3'],
+            'SELECT a -- comment 1\n, b -- comment 2\nFROM table -- comment 3\n\n',
+            'complex_multiline_comments',
+        ),
+        # Statement ending with semicolon and trailing whitespace
+        (
+            ['SELECT 1;  \n  ', 'SELECT 2'],
+            'SELECT 1;\n\nSELECT 2;\n\n',
+            'semicolon_with_trailing_whitespace',
+        ),
+        # Comment in middle followed by more code without comment at end
+        (
+            ['SELECT 1 -- inline\n, 2\nFROM t'],
+            'SELECT 1 -- inline\n, 2\nFROM t;\n\n',
+            'inline_comment_no_end_comment',
+        ),
     ],
 )
 def test_join_sql_statements(statements, expected, test_id):
@@ -263,507 +346,3 @@ async def test_validate_round_trip(original, test_id):
 
     # Verify round-trip consistency
     assert split_original == split_again
-
-
-@pytest.mark.parametrize(
-    ('blocks', 'expected', 'ignore_delimiters', 'test_id'),
-    [
-        # Single block, single code
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1', 'SELECT 2'],
-                        }
-                    ],
-                }
-            ],
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\nSELECT 2;\n',
-            False,
-            'single_block_single_code',
-        ),
-        # Multiple blocks
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1'],
-                        }
-                    ],
-                },
-                {
-                    'name': 'Block 2',
-                    'codes': [
-                        {
-                            'name': 'Second Code',
-                            'script': ['SELECT 2'],
-                        }
-                    ],
-                },
-            ],
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
-            '/* ===== BLOCK: Block 2 ===== */\n\n/* ===== CODE: Second Code ===== */\n\nSELECT 2;\n',
-            False,
-            'multiple_blocks',
-        ),
-        # Multiple codes in block
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1'],
-                        },
-                        {
-                            'name': 'Second Code',
-                            'script': ['SELECT 2'],
-                        },
-                    ],
-                }
-            ],
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
-            '/* ===== CODE: Second Code ===== */\n\nSELECT 2;\n',
-            False,
-            'multiple_codes_in_block',
-        ),
-        # Script with existing semicolons
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1;', 'SELECT 2;'],
-                        }
-                    ],
-                }
-            ],
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\nSELECT 2;\n',
-            False,
-            'existing_semicolons',
-        ),
-        # Empty blocks list
-        (
-            [],
-            '',
-            False,
-            'empty_blocks',
-        ),
-        # Empty script
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'Empty Code',
-                            'script': [],
-                        }
-                    ],
-                }
-            ],
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: Empty Code ===== */\n',
-            False,
-            'empty_script',
-        ),
-        # Ignore delimiters
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1'],
-                        }
-                    ],
-                }
-            ],
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1\n',
-            True,
-            'ignore_delimiters',
-        ),
-        # Script ending with comment
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1 /* comment */'],
-                        }
-                    ],
-                }
-            ],
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1 /* comment */\n',
-            False,
-            'ending_with_comment',
-        ),
-        # Complex multi-block structure
-        (
-            [
-                {
-                    'name': 'Setup',
-                    'codes': [
-                        {
-                            'name': 'Create Tables',
-                            'script': ['CREATE TABLE users (id INT)', 'CREATE TABLE orders (id INT)'],
-                        }
-                    ],
-                },
-                {
-                    'name': 'Data Load',
-                    'codes': [
-                        {
-                            'name': 'Insert Users',
-                            'script': ['INSERT INTO users VALUES (1)'],
-                        },
-                        {
-                            'name': 'Insert Orders',
-                            'script': ['INSERT INTO orders VALUES (1)'],
-                        },
-                    ],
-                },
-            ],
-            '/* ===== BLOCK: Setup ===== */\n\n/* ===== CODE: Create Tables ===== */\n\nCREATE TABLE users (id INT);'
-            '\n\nCREATE TABLE orders (id INT);\n\n/* ===== BLOCK: Data Load ===== */\n\n'
-            '/* ===== CODE: Insert Users ===== */\n\nINSERT INTO users VALUES (1);\n\n'
-            '/* ===== CODE: Insert Orders ===== */\n\nINSERT INTO orders VALUES (1);\n',
-            False,
-            'complex_multi_block',
-        ),
-    ],
-)
-def test_blocks_to_string(blocks, expected, ignore_delimiters, test_id):
-    """Test converting blocks to formatted SQL string."""
-    result = blocks_to_string(blocks, ignore_delimiters=ignore_delimiters)
-    assert result == expected
-
-
-@pytest.mark.parametrize(
-    ('code_string', 'expected', 'test_id'),
-    [
-        # Single block, single code
-        (
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\nSELECT 2;',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 1',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='First Code',
-                                sql_statements=['SELECT 1;', 'SELECT 2;'],
-                            )
-                        ],
-                    )
-                ]
-            ),
-            'single_block_single_code',
-        ),
-        # Multiple blocks
-        (
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
-            '/* ===== BLOCK: Block 2 ===== */\n\n/* ===== CODE: Second Code ===== */\n\nSELECT 2;',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 1',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='First Code',
-                                sql_statements=['SELECT 1;'],
-                            )
-                        ],
-                    ),
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 2',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='Second Code',
-                                sql_statements=['SELECT 2;'],
-                            )
-                        ],
-                    ),
-                ]
-            ),
-            'multiple_blocks',
-        ),
-        # Multiple codes in block
-        (
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;\n\n'
-            '/* ===== CODE: Second Code ===== */\n\nSELECT 2;',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 1',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='First Code',
-                                sql_statements=['SELECT 1;'],
-                            ),
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='Second Code',
-                                sql_statements=['SELECT 2;'],
-                            ),
-                        ],
-                    )
-                ]
-            ),
-            'multiple_codes_in_block',
-        ),
-        # Empty string
-        (
-            '',
-            TransformationBlocks(blocks=[]),
-            'empty_string',
-        ),
-        # Empty code content
-        (
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: Empty Code ===== */\n\n',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 1',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='Empty Code',
-                                sql_statements=[],
-                            )
-                        ],
-                    )
-                ]
-            ),
-            'empty_code_content',
-        ),
-        # Shared code marker
-        (
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== SHARED CODE: Shared Utils ===== */\n\nSELECT 1;',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 1',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='Shared Utils',
-                                sql_statements=['SELECT 1;'],
-                            )
-                        ],
-                    )
-                ]
-            ),
-            'shared_code_marker',
-        ),
-        # Complex multi-statement code
-        (
-            '/* ===== BLOCK: Setup ===== */\n\n/* ===== CODE: Create Tables ===== */\n\nCREATE TABLE users (id INT);'
-            '\nCREATE TABLE orders (id INT);',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Setup',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='Create Tables',
-                                sql_statements=['CREATE TABLE users (id INT);', 'CREATE TABLE orders (id INT);'],
-                            )
-                        ],
-                    )
-                ]
-            ),
-            'complex_multi_statement',
-        ),
-        # Whitespace variations
-        (
-            '/*=====BLOCK:Block 1=====*/\n\n/*=====CODE:First Code=====*/\n\nSELECT 1;',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 1',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='First Code',
-                                sql_statements=['SELECT 1;'],
-                            )
-                        ],
-                    )
-                ]
-            ),
-            'whitespace_variations',
-        ),
-        # Code with comments
-        (
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */\n\nSELECT 1;'
-            '\n-- Comment\nSELECT 2;',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 1',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='First Code',
-                                sql_statements=['SELECT 1;', '-- Comment\nSELECT 2;'],
-                            )
-                        ],
-                    )
-                ]
-            ),
-            'code_with_comments',
-        ),
-        # Code with dollar-quoted blocks
-        (
-            '/* ===== BLOCK: Block 1 ===== */\n\n/* ===== CODE: First Code ===== */'
-            '\n\nexecute immediate $$\n  SELECT 1;\n$$;',
-            TransformationBlocks(
-                blocks=[
-                    TransformationConfiguration.Parameters.Block(
-                        name='Block 1',
-                        codes=[
-                            TransformationConfiguration.Parameters.Block.Code(
-                                name='First Code',
-                                sql_statements=['execute immediate $$\n  SELECT 1;\n$$;'],
-                            )
-                        ],
-                    )
-                ]
-            ),
-            'dollar_quoted_blocks',
-        ),
-    ],
-)
-@pytest.mark.asyncio
-async def test_string_to_blocks(code_string, expected, test_id):
-    """Test parsing formatted SQL string back to blocks."""
-    result = await string_to_blocks(code_string)
-    assert result == expected
-
-
-@pytest.mark.parametrize(
-    ('blocks', 'test_id'),
-    [
-        # Simple single block
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1', 'SELECT 2'],
-                        }
-                    ],
-                }
-            ],
-            'simple_single_block',
-        ),
-        # Multiple blocks
-        (
-            [
-                {
-                    'name': 'Block 1',
-                    'codes': [
-                        {
-                            'name': 'First Code',
-                            'script': ['SELECT 1'],
-                        }
-                    ],
-                },
-                {
-                    'name': 'Block 2',
-                    'codes': [
-                        {
-                            'name': 'Second Code',
-                            'script': ['SELECT 2'],
-                        }
-                    ],
-                },
-            ],
-            'multiple_blocks',
-        ),
-        # Empty blocks
-        (
-            [],
-            'empty_blocks',
-        ),
-        # Complex structure
-        (
-            [
-                {
-                    'name': 'Setup',
-                    'codes': [
-                        {
-                            'name': 'Create Tables',
-                            'script': ['CREATE TABLE users (id INT)', 'CREATE TABLE orders (id INT)'],
-                        },
-                        {
-                            'name': 'Create Views',
-                            'script': ['CREATE VIEW user_orders AS SELECT * FROM users JOIN orders'],
-                        },
-                    ],
-                },
-                {
-                    'name': 'Data Load',
-                    'codes': [
-                        {
-                            'name': 'Insert Data',
-                            'script': ['INSERT INTO users VALUES (1)', 'INSERT INTO orders VALUES (1)'],
-                        }
-                    ],
-                },
-            ],
-            'complex_structure',
-        ),
-    ],
-)
-@pytest.mark.asyncio
-async def test_validate_blocks_round_trip(blocks, test_id):
-    """
-    Test round-trip validation: string_to_blocks(blocks_to_string(blocks)) == blocks.
-
-    This ensures that block conversion logic is consistent.
-    """
-
-    def normalize_blocks(blocks):
-        """Normalize blocks for comparison by stripping whitespace and semicolons."""
-        # Handle both TransformationBlocks and list of dicts
-        if isinstance(blocks, TransformationBlocks):
-            blocks_list = blocks.model_dump(by_alias=True)['blocks']
-        else:
-            blocks_list = blocks
-
-        return [
-            {
-                'name': b.get('name', '').strip(),
-                'codes': [
-                    {
-                        'name': c.get('name', '').strip(),
-                        # Normalize scripts: strip whitespace and trailing semicolons
-                        'script': [s.strip().rstrip(';').strip() for s in c.get('script', []) if s.strip()],
-                    }
-                    for c in b.get('codes', [])
-                ],
-            }
-            for b in blocks_list
-        ]
-
-    # Convert blocks to string
-    code_string = blocks_to_string(blocks)
-
-    # Convert back to blocks
-    result_blocks = await string_to_blocks(code_string)
-
-    # Compare normalized structures
-    normalized_original = normalize_blocks(blocks)
-    normalized_result = normalize_blocks(result_blocks)
-
-    assert normalized_original == normalized_result

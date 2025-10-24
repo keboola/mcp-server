@@ -34,11 +34,11 @@ from individual tasks:
 from datetime import datetime
 from typing import Annotated, Any, List, Literal, Optional, Sequence, Union, get_args
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.sql_utils import TransformationBlocks
+from keboola_mcp_server.tools.components.sql_utils import join_sql_statements, split_sql_statements
 
 # ============================================================================
 # TYPE DEFINITIONS
@@ -178,140 +178,6 @@ class Component(BaseModel):
             configuration_row_schema=api_response.configuration_row_schema,
         )
 
-
-# ============================================================================
-# CONFIGURATION PARAMETER UPDATE MODELS
-# ============================================================================
-
-
-class ConfigParamSet(BaseModel):
-    """
-    Set or create a parameter value at the specified path.
-
-    Use this operation to:
-    - Update an existing parameter value
-    - Create a new parameter key
-    - Replace a nested parameter value
-    """
-
-    op: Literal['set']  # name 'op' inspired by JSON Patch (https://datatracker.ietf.org/doc/html/rfc6902)
-    path: str = Field(description='JSONPath to the parameter key to set (e.g., "api_key", "database.host")')
-    new_val: Any = Field(description='New value to set')
-
-
-class ConfigParamReplace(BaseModel):
-    """Replace a substring in a string parameter."""
-
-    op: Literal['str_replace']
-    path: str = Field(description='JSONPath to the parameter key to modify')
-    search_for: str = Field(description='Substring to search for (non-empty)')
-    replace_with: str = Field(description='Replacement string (can be empty for deletion)')
-
-
-class ConfigParamRemove(BaseModel):
-    """Remove a parameter key."""
-
-    op: Literal['remove']
-    path: str = Field(description='JSONPath to the parameter key to remove')
-
-
-class ConfigParamListAppend(BaseModel):
-    """Append a value to a list parameter."""
-
-    op: Literal['list_append']
-    path: str = Field(description='JSONPath to the list parameter')
-    value: Any = Field(description='Value to append to the list')
-
-
-# Discriminated union of all parameter update operations
-ConfigParamUpdate = Annotated[
-    Union[ConfigParamSet, ConfigParamReplace, ConfigParamRemove, ConfigParamListAppend], Field(discriminator='op')
-]
-
-
-# ============================================================================
-# TRANSFORMATION PARAMETER UPDATE MODELS
-# ============================================================================
-
-TfPosition = Literal['start', 'end']
-
-
-class TfAddBlock(BaseModel):
-    """Add a new block to the transformation."""
-
-    op: Literal['add_block']
-    block: TransformationBlocks.Block = Field(description='The block to add')
-    position: TfPosition = Field(description='The position of the block to add', default='end')
-
-
-class TfRemoveBlock(BaseModel):
-    """Remove an existing block from the transformation."""
-
-    op: Literal['remove_block']
-    block_name: str = Field(description='The name of the block to remove')
-
-
-class TfRenameBlock(BaseModel):
-    """Rename an existing block in the transformation."""
-
-    op: Literal['rename_block']
-    old_block_name: str = Field(description='The name of the block to rename')
-    new_block_name: str = Field(description='The new name of the block')
-
-
-class TfAddCode(BaseModel):
-    """Add a new code to an existing block in the transformation."""
-
-    op: Literal['add_code']
-    block_name: str = Field(description='The name of the block to add the code to')
-    code: TransformationBlocks.Block.Code = Field(description='The code to add')
-    position: TfPosition = Field(description='The position of the code to add', default='end')
-
-
-class TfRemoveCode(BaseModel):
-    """Remove an existing code from an existing block in the transformation."""
-
-    op: Literal['remove_code']
-    block_name: str = Field(description='The name of the block to remove the code from')
-    code_name: str = Field(description='The name of the code to remove')
-
-
-class TfRenameCode(BaseModel):
-    """Rename an existing code in an existing block in the transformation."""
-
-    op: Literal['rename_code']
-    block_name: str = Field(description='The name of the block to rename the code in')
-    old_code_name: str = Field(description='The name of the code to rename')
-    new_code_name: str = Field(description='The new name of the code')
-
-
-class TfSetCode(BaseModel):
-    """Set the SQL statements of an existing code in an existing block in the transformation."""
-
-    op: Literal['set_code']
-    block_name: str = Field(description='The name of the block to set the code in')
-    code_name: str = Field(description='The name of the code to set')
-    code_statements: list[str] = Field(description='The SQL statements of the code to set')
-
-
-class TfAddStatements(BaseModel):
-    """Add SQL statements to an existing code in an existing block in the transformation."""
-
-    op: Literal['add_statements']
-    block_name: str = Field(description='The name of the block to add the statements to')
-    code_name: str = Field(description='The name of the code to add the statements to')
-    statements: list[str] = Field(description='The SQL statements to add')
-    position: TfPosition = Field(description='The position of the statements to add', default='end')
-
-
-class TfStrReplace(BaseModel):
-    """Replace a substring in a SQL statements in an existing code in an existing block in the transformation."""
-
-    op: Literal['str_replace']
-    block_name: Optional[str] = Field(description='The name of the block to replace substrings in', default=None)
-    code_name: Optional[str] = Field(description='The name of the code to replace substrings in', default=None)
-    search_for: str = Field(description='Substring to search for (non-empty)')
-    replace_with: str = Field(description='Replacement string (can be empty for deletion)')
 
 # ============================================================================
 # CONFIGURATION MODELS
@@ -581,6 +447,61 @@ class Configuration(BaseModel):
         )
 
 
+# ============================================================================
+# CONFIGURATION PARAMETER UPDATE MODELS
+# ============================================================================
+
+
+class ConfigParamSet(BaseModel):
+    """
+    Set or create a parameter value at the specified path.
+
+    Use this operation to:
+    - Update an existing parameter value
+    - Create a new parameter key
+    - Replace a nested parameter value
+    """
+
+    op: Literal['set']  # name 'op' inspired by JSON Patch (https://datatracker.ietf.org/doc/html/rfc6902)
+    path: str = Field(description='JSONPath to the parameter key to set (e.g., "api_key", "database.host")')
+    new_val: Any = Field(description='New value to set')
+
+
+class ConfigParamReplace(BaseModel):
+    """Replace a substring in a string parameter."""
+
+    op: Literal['str_replace']
+    path: str = Field(description='JSONPath to the parameter key to modify')
+    search_for: str = Field(description='Substring to search for (non-empty)')
+    replace_with: str = Field(description='Replacement string (can be empty for deletion)')
+
+
+class ConfigParamRemove(BaseModel):
+    """Remove a parameter key."""
+
+    op: Literal['remove']
+    path: str = Field(description='JSONPath to the parameter key to remove')
+
+
+class ConfigParamListAppend(BaseModel):
+    """Append a value to a list parameter."""
+
+    op: Literal['list_append']
+    path: str = Field(description='JSONPath to the list parameter')
+    value: Any = Field(description='Value to append to the list')
+
+
+# Discriminated union of all parameter update operations
+ConfigParamUpdate = Annotated[
+    Union[ConfigParamSet, ConfigParamReplace, ConfigParamRemove, ConfigParamListAppend], Field(discriminator='op')
+]
+
+
+# ============================================================================
+# TRANSFORMATION MODELS
+# ============================================================================
+
+
 class TransformationConfiguration(BaseModel):
     """
     Creates the transformation configuration, a schema for the transformation configuration in the API.
@@ -597,20 +518,32 @@ class TransformationConfiguration(BaseModel):
                 """The code block for the transformation block."""
 
                 name: str = Field(description='The name of the current code block describing the purpose of the block')
-                sql_statements: Sequence[str] = Field(
+                script: Sequence[str] = Field(
                     description=(
                         'The executable SQL query statements written in the current SQL dialect. '
                         'Each statement must be executable and a separate item in the list.'
                     ),
-                    # We use sql_statements for readability but serialize to script due to api expected request
-                    serialization_alias='script',
-                    validation_alias=AliasChoices('sql_statements', 'script'),
                 )
 
             name: str = Field(description='The name of the current block')
             codes: list[Code] = Field(description='The code scripts')
 
         blocks: list[Block] = Field(description='The blocks for the transformation')
+
+        async def to_simplified_parameters(self) -> 'SimplifiedTfBlocks':
+            """Convert the raw parameters to simplified parameters."""
+            return SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name=block.name,
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name=code.name, script=join_sql_statements(code.script))
+                            for code in block.codes
+                        ],
+                    )
+                    for block in self.blocks
+                ]
+            )
 
     class Storage(BaseModel):
         """The storage configuration for the transformation. For now it stores only input and output tables."""
@@ -631,6 +564,165 @@ class TransformationConfiguration(BaseModel):
 
     parameters: Parameters = Field(description='The parameters for the transformation')
     storage: Storage = Field(description='The storage configuration for the transformation')
+
+
+# Type alias for TransformationConfiguration.Parameters for convenience
+TransformationBlocks = TransformationConfiguration.Parameters
+
+
+class SimplifiedTfBlocks(BaseModel):
+    """
+    Transformations parameters blocks simplified for the agent use:
+    `script` is a string instead of a list of statements
+    """
+
+    class Block(BaseModel):
+        """The transformation block."""
+
+        class Code(BaseModel):
+            """The code block for the transformation block."""
+
+            name: str = Field(description='A descriptive name for the code block')
+            script: str = Field(description='The SQL script of the code block')
+
+            async def to_raw_code(self) -> TransformationConfiguration.Parameters.Block.Code:
+                """Convert the simplified code to the raw code."""
+                return TransformationConfiguration.Parameters.Block.Code(
+                    name=self.name, script=await split_sql_statements(self.script)
+                )
+
+        name: str = Field(description='A descriptive name for the code block')
+        codes: list[Code] = Field(description='SQL code sub-blocks')
+
+    blocks: list[Block] = Field(description='SQL code blocks')
+
+    async def to_raw_parameters(self) -> TransformationConfiguration.Parameters:
+        """Convert the simplified transformation parameters to raw (SAPI) parameters."""
+        return TransformationConfiguration.Parameters(
+            blocks=[
+                TransformationConfiguration.Parameters.Block(
+                    name=block.name, codes=[await code.to_raw_code() for code in block.codes]
+                )
+                for block in self.blocks
+            ]
+        )
+
+
+# ============================================================================
+# TRANSFORMATION PARAMETER UPDATE MODELS
+# ============================================================================
+
+
+TfPosition = Literal['start', 'end']
+
+
+class TfAddBlock(BaseModel):
+    """Add a new block to the transformation."""
+
+    op: Literal['add_block']
+    block: SimplifiedTfBlocks.Block = Field(description='The block to add')
+    position: TfPosition = Field(description='The position of the block to add', default='end')
+
+
+class TfRemoveBlock(BaseModel):
+    """Remove an existing block from the transformation."""
+
+    op: Literal['remove_block']
+    block_id: str = Field(description='The ID of the block to remove')
+
+
+class TfRenameBlock(BaseModel):
+    """Rename an existing block in the transformation."""
+
+    op: Literal['rename_block']
+    block_id: str = Field(description='The ID of the block to rename')
+    block_name: str = Field(description='The new name of the block')
+
+
+class TfAddCode(BaseModel):
+    """Add a new code to an existing block in the transformation."""
+
+    op: Literal['add_code']
+    block_id: str = Field(description='The ID of the block to add the code to')
+    code: SimplifiedTfBlocks.Block.Code = Field(description='The code to add')
+    position: TfPosition = Field(description='The position of the code to add', default='end')
+
+
+class TfRemoveCode(BaseModel):
+    """Remove an existing code from an existing block in the transformation."""
+
+    op: Literal['remove_code']
+    block_id: str = Field(description='The ID of the block to remove the code from')
+    code_id: str = Field(description='The ID of the code to remove')
+
+
+class TfRenameCode(BaseModel):
+    """Rename an existing code in an existing block in the transformation."""
+
+    op: Literal['rename_code']
+    block_id: str = Field(description='The ID of the block to rename the code in')
+    code_id: str = Field(description='The ID of the code to rename')
+    code_name: str = Field(description='The new name of the code')
+
+
+class TfSetCode(BaseModel):
+    """Set the SQL script of an existing code in an existing block in the transformation."""
+
+    op: Literal['set_code']
+    block_id: str = Field(description='The ID of the block to set the code in')
+    code_id: str = Field(description='The ID of the code to set')
+    script: str = Field(description='The SQL script of the code to set')
+
+
+class TfAddScript(BaseModel):
+    """Append or prepend SQL script text to an existing code in an existing block in the transformation."""
+
+    op: Literal['add_script']
+    block_id: str = Field(description='The ID of the block to add the script to')
+    code_id: str = Field(description='The ID of the code to add the script to')
+    script: str = Field(description='The SQL script to add')
+    position: TfPosition = Field(description='The position of the script to add', default='end')
+
+
+class TfStrReplace(BaseModel):
+    """Replace a substring in SQL statements in the transformation."""
+
+    op: Literal['str_replace']
+    block_id: Optional[str] = Field(
+        description='The ID of the block to replace substrings in. If not provided, all blocks will be updated.',
+        default=None,
+    )
+    code_id: Optional[str] = Field(
+        description='The ID of the code to replace substrings in. '
+        'If not provided, all codes in the block will be updated.',
+        default=None,
+    )
+    search_for: str = Field(description='Substring to search for (non-empty)')
+    replace_with: str = Field(description='Replacement string (can be empty for deletion)')
+
+    @model_validator(mode='after')
+    def validate_code_id_requires_block_id(self) -> 'TfStrReplace':
+        """Validate that code_name can only be specified if block_name is also specified."""
+        if self.block_id is None and self.code_id is not None:
+            raise ValueError('code_id must be None if block_id is None')
+        return self
+
+
+# Discriminated union of all transformation parameter update operations
+TfParamUpdate = Annotated[
+    Union[
+        TfAddBlock,
+        TfRemoveBlock,
+        TfRenameBlock,
+        TfAddCode,
+        TfRemoveCode,
+        TfRenameCode,
+        TfSetCode,
+        TfAddScript,
+        TfStrReplace,
+    ],
+    Field(discriminator='op'),
+]
 
 
 # ============================================================================
