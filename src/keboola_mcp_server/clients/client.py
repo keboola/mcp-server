@@ -40,11 +40,13 @@ def get_metadata_property(
     :param metadata: A list of metadata entries.
     :param key: The metadata property key to search for.
     :param provider: Specifies the metadata provider name to filter by.
-    :param preferred_providers: Specifies a list of preferred metadata providers to order the metadata items by
+    :param preferred_providers: Specifies a list of preferred metadata providers to order the metadata items by.
     :param default: The default value to return if the metadata property is not found.
 
     :return: The value of the most recent matching metadata entry if found, or None otherwise.
     """
+    if provider and preferred_providers:
+        raise ValueError('Specifying both provider and preferred_providers makes no sense.')
 
     def _sort_key(m: Mapping[str, Any]) -> tuple[Any, ...]:
         # TODO: ideally we should first convert the timestamps to UTC
