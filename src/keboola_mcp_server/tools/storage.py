@@ -193,8 +193,9 @@ class TableColumnInfo(BaseModel):
         validation_alias=AliasChoices('quotedName', 'quoted_name', 'quoted-name'),
         serialization_alias='quotedName',
     )
-    native_type: str = Field(description='The database type of data in the column.')
+    database_native_type: str = Field(description='The native, backend-specific data type.')
     nullable: bool = Field(description='Whether the column can contain null values.')
+    keboola_base_type: str | None = Field(default=None, description='The storage backend agnostic data type.')
     description: str | None = Field(default=None, description='Description of the column.')
 
 
@@ -444,7 +445,32 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
 async def get_table(
     table_id: Annotated[str, Field(description='Unique ID of the table.')], ctx: Context
 ) -> TableDetail:
-    """Gets detailed information about a specific table including its DB identifier and column information."""
+    """
+    Gets detailed information about a specific Keboola table, including fully qualified database name,
+    column definitions, and metadata.
+
+    RETURNS:
+    - Table metadata: ID, name, description, primary key column names, storage backend details
+    - Column information for each column:
+      - name: Column name
+      - database_native_type: Backend-specific type (e.g., VARCHAR(255), TIMESTAMP_NTZ, DECIMAL(20,2))
+      - keboola_base_type: Storage-agnostic type (STRING, INTEGER, NUMERIC, FLOAT, BOOLEAN, DATE, TIMESTAMP)
+      - nullable: Whether the column accepts NULL values
+    - Fully qualified database identifier for use in SQL queries
+
+    DATA TYPE FIELDS:
+    - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
+      with precision, scale, and other implementation details
+    - keboola_base_type: Standardized type indicating the semantic data type. May not always be
+      available. When present, it reveals the actual type of data stored in the column - for example,
+      a column with database_native_type VARCHAR might have keboola_base_type INTEGER, indicating
+      it stores integer values despite being stored as text in the backend.
+
+    USE WHEN:
+    - You need column names and data types for writing SQL queries
+    - You need the fully qualified table name for database operations
+    - You want to understand the table schema before creating transformations or components
+    """
     client = KeboolaClient.from_state(ctx.session.state)
 
     prod_table: JsonDict | None = await _get_table_detail(client.storage_client, table_id)
@@ -468,43 +494,51 @@ async def get_table(
     if not raw_table:
         raise ValueError(f'Table not found: {table_id}')
 
-    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-
     raw_columns = cast(list[str], raw_table.get('columns', []))
     raw_column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))
     raw_primary_key = cast(list[str], raw_table.get('primaryKey', []))
+
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     sql_dialect = await workspace_manager.get_sql_dialect()
+    db_table_info = await workspace_manager.get_table_info(raw_table)
 
     column_info = []
     for col_name in raw_columns:
         col_meta = raw_column_metadata.get(col_name, [])
         description: str | None = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
-        native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
-        if native_type:
-            raw_nullable = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) or ''
-            nullable = raw_nullable.lower() in ['1', 'yes', 'true']
+        base_type: str | None = get_metadata_property(
+            col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
+        )
+        if db_table_info and (db_column_info := db_table_info.columns.get(col_name)):
+            native_type = db_column_info.native_type
+            nullable = db_column_info.nullable
         else:
-            # default values for untyped columns
+            # should not happen
             native_type = 'STRING' if sql_dialect == 'BigQuery' else 'VARCHAR'
             nullable = col_name not in raw_primary_key
+            LOG.warning(
+                f'No column info from the database: '
+                f'col_name={col_name}, sql_dialect={sql_dialect}, db_table_info={db_table_info}'
+            )
 
         column_info.append(
             TableColumnInfo(
                 name=col_name,
                 quoted_name=await workspace_manager.get_quoted_name(col_name),
-                native_type=native_type,
+                database_native_type=native_type,
                 nullable=nullable,
+                keboola_base_type=base_type,
                 description=description,
             )
         )
+
+    links_manager = await ProjectLinksManager.from_client(client)
 
     bucket_info = cast(dict[str, Any], raw_table.get('bucket', {}))
     bucket_id = cast(str, bucket_info.get('id', ''))
     prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
     bucket = await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
 
-    table_fqn = await workspace_manager.get_table_fqn(raw_table)
     table_name = cast(str, raw_table.get('name', ''))
     links = links_manager.get_table_links(bucket_id, bucket.name, table_name)
 
@@ -512,7 +546,7 @@ async def get_table(
         raw_table
         | {
             'columns': column_info,
-            'fully_qualified_name': table_fqn.identifier if table_fqn else None,
+            'fully_qualified_name': db_table_info.fqn.identifier if db_table_info else None,
             'links': links,
         }
     )

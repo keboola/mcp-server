@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from keboola_mcp_server.clients.base import RawKeboolaClient
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import ServerRuntimeInfo
 from keboola_mcp_server.mcp import SessionStateMiddleware
 
@@ -322,3 +322,234 @@ class TestKeboolaClient:
                     ),
                 },
             )
+
+
+@pytest.mark.parametrize(
+    ('metadata', 'key', 'provider', 'preferred_providers', 'default', 'expected'),
+    [
+        # Basic retrieval by key
+        (
+            [{'key': 'description', 'value': 'Test description'}, {'key': 'owner', 'value': 'John Doe'}],
+            'description',
+            None,
+            None,
+            None,
+            'Test description',
+        ),
+        # Key not found returns None
+        (
+            [{'key': 'description', 'value': 'Test description'}],
+            'nonexistent',
+            None,
+            None,
+            None,
+            None,
+        ),
+        # Key not found returns default value
+        (
+            [{'key': 'description', 'value': 'Test description'}],
+            'nonexistent',
+            None,
+            None,
+            'default_value',
+            'default_value',
+        ),
+        # Filter by provider
+        (
+            [
+                {'key': 'description', 'value': 'Provider A description', 'provider': 'provider-a'},
+                {'key': 'description', 'value': 'Provider B description', 'provider': 'provider-b'},
+            ],
+            'description',
+            'provider-b',
+            None,
+            None,
+            'Provider B description',
+        ),
+        # Most recent by timestamp
+        (
+            [
+                {'key': 'description', 'value': 'Old description', 'timestamp': '2024-01-01T00:00:00Z'},
+                {'key': 'description', 'value': 'New description', 'timestamp': '2024-12-01T00:00:00Z'},
+                {'key': 'description', 'value': 'Middle description', 'timestamp': '2024-06-01T00:00:00Z'},
+            ],
+            'description',
+            None,
+            None,
+            None,
+            'New description',
+        ),
+        # Handles missing timestamps
+        (
+            [
+                {'key': 'description', 'value': 'No timestamp'},
+                {'key': 'description', 'value': 'With timestamp', 'timestamp': '2024-01-01T00:00:00Z'},
+            ],
+            'description',
+            None,
+            None,
+            None,
+            'With timestamp',
+        ),
+        # Preferred providers prioritized
+        (
+            [
+                {
+                    'key': 'description',
+                    'value': 'Provider A',
+                    'provider': 'provider-a',
+                    'timestamp': '2024-01-01T00:00:00Z',
+                },
+                {
+                    'key': 'description',
+                    'value': 'Provider B',
+                    'provider': 'provider-b',
+                    'timestamp': '2024-01-02T00:00:00Z',
+                },
+                {
+                    'key': 'description',
+                    'value': 'Provider C',
+                    'provider': 'provider-c',
+                    'timestamp': '2024-01-03T00:00:00Z',
+                },
+                {
+                    'key': 'description',
+                    'value': 'Provider X',
+                    'provider': 'provider-X',  # not in the preferred_providers list
+                    'timestamp': '2024-01-03T00:00:00Z',
+                },
+            ],
+            'description',
+            None,
+            ['provider-b', 'provider-c', 'provider-a'],
+            None,
+            'Provider B',
+        ),
+        # Timestamp used when same provider preference
+        (
+            [
+                {
+                    'key': 'description',
+                    'value': 'Old preferred',
+                    'provider': 'provider-a',
+                    'timestamp': '2024-01-01T00:00:00Z',
+                },
+                {
+                    'key': 'description',
+                    'value': 'New preferred',
+                    'provider': 'provider-a',
+                    'timestamp': '2024-12-01T00:00:00Z',
+                },
+            ],
+            'description',
+            None,
+            ['provider-a'],
+            None,
+            'New preferred',
+        ),
+        # Empty metadata list returns None
+        (
+            [],
+            'description',
+            None,
+            None,
+            None,
+            None,
+        ),
+        # Empty metadata list returns default
+        (
+            [],
+            'description',
+            None,
+            None,
+            'default_value',
+            'default_value',
+        ),
+        # None value returns default
+        (
+            [{'key': 'description', 'value': None}],
+            'description',
+            None,
+            None,
+            'default_value',
+            'default_value',
+        ),
+        # Combined provider and timestamp filtering
+        (
+            [
+                {
+                    'key': 'description',
+                    'value': 'Provider A old',
+                    'provider': 'provider-a',
+                    'timestamp': '2024-01-01T00:00:00Z',
+                },
+                {
+                    'key': 'description',
+                    'value': 'Provider A new',
+                    'provider': 'provider-a',
+                    'timestamp': '2024-12-01T00:00:00Z',
+                },
+                {
+                    'key': 'description',
+                    'value': 'Provider B',
+                    'provider': 'provider-b',
+                    'timestamp': '2024-12-31T00:00:00Z',
+                },
+            ],
+            'description',
+            'provider-a',
+            None,
+            None,
+            'Provider A new',
+        ),
+        # Metadata entries without the provider field
+        (
+            [
+                {'key': 'description', 'value': 'No provider entry', 'timestamp': '2024-01-01T00:00:00Z'},
+                {
+                    'key': 'description',
+                    'value': 'With provider',
+                    'provider': 'provider-a',
+                    'timestamp': '2024-01-02T00:00:00Z',
+                },
+            ],
+            'description',
+            None,
+            ['provider-a'],
+            None,
+            'With provider',
+        ),
+    ],
+    ids=[
+        'basic_retrieval_by_key',
+        'key_not_found_returns_none',
+        'key_not_found_returns_default',
+        'filter_by_provider',
+        'most_recent_by_timestamp',
+        'handles_missing_timestamps',
+        'preferred_providers_prioritized',
+        'timestamp_used_when_same_preference',
+        'empty_metadata_list_returns_none',
+        'empty_metadata_list_returns_default',
+        'none_value_returns_default',
+        'combined_provider_and_timestamp',
+        'no_provider_in_metadata',
+    ],
+)
+def test_get_metadata_property(
+    metadata: list[Mapping[str, Any]],
+    key: str,
+    provider: str | None,
+    preferred_providers: list[str] | None,
+    default: Any,
+    expected: Any,
+):
+    """Test get_metadata_property with various scenarios."""
+    result = get_metadata_property(
+        metadata=metadata,
+        key=key,
+        provider=provider,
+        preferred_providers=preferred_providers,
+        default=default,
+    )
+    assert result == expected

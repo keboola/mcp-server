@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Literal, Mapping, Optional, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 from httpx import HTTPStatusError
 from pydantic import Field, TypeAdapter
@@ -36,6 +36,21 @@ class TableFqn:
 
     def __str__(self) -> str:
         return self.__repr__()
+
+
+@dataclass(frozen=True)
+class DbColumnInfo:
+    name: str
+    quoted_name: str
+    native_type: str
+    nullable: bool
+
+
+@dataclass(frozen=True)
+class DbTableInfo:
+    id: str
+    fqn: TableFqn
+    columns: Mapping[str, DbColumnInfo]
 
 
 QueryStatus = Literal['ok', 'error']
@@ -82,8 +97,7 @@ class _Workspace(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def get_table_fqn(self, table: Mapping[str, Any]) -> TableFqn | None:
-        """Gets the fully qualified name of a Keboola table."""
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         # TODO: use a pydantic class for the 'table' param
         pass
 
@@ -105,7 +119,7 @@ class _SnowflakeWorkspace(_Workspace):
     def get_quoted_name(self, name: str) -> str:
         return f'"{name}"'  # wrap name in double quotes
 
-    async def get_table_fqn(self, table: Mapping[str, Any]) -> TableFqn | None:
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
 
         db_name: str | None = None
@@ -146,10 +160,32 @@ class _SnowflakeWorkspace(_Workspace):
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
         if db_name and schema_name and table_name:
-            fqn = TableFqn(db_name, schema_name, table_name, quote_char='"')
-            return fqn
-        else:
-            return None
+            sql = (
+                f'SELECT "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE" '
+                f'FROM "INFORMATION_SCHEMA"."COLUMNS" '
+                f'WHERE "TABLE_CATALOG" = \'{db_name}\' AND "TABLE_SCHEMA" = \'{schema_name}\' '
+                f'AND "TABLE_NAME" = \'{table_name}\' '
+                f'ORDER BY "ORDINAL_POSITION";'
+            )
+            result = await self.execute_query(sql)
+            if result.is_ok and result.data:
+                return DbTableInfo(
+                    id=table_id,
+                    fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
+                    columns={
+                        row['COLUMN_NAME']: DbColumnInfo(
+                            name=row['COLUMN_NAME'],
+                            quoted_name=self.get_quoted_name(row['COLUMN_NAME']),
+                            native_type=row['DATA_TYPE'],
+                            nullable=row['IS_NULLABLE'] == 'YES',
+                        )
+                        for row in result.data.rows
+                    },
+                )
+            else:
+                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
+
+        return None
 
     async def execute_query(self, sql_query: str) -> QueryResult:
         resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
@@ -171,7 +207,7 @@ class _BigQueryWorkspace(_Workspace):
     def get_quoted_name(self, name: str) -> str:
         return f'`{name}`'  # wrap name in back tick
 
-    async def get_table_fqn(self, table: Mapping[str, Any]) -> TableFqn | None:
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
 
         schema_name: str | None = None
@@ -189,10 +225,31 @@ class _BigQueryWorkspace(_Workspace):
             table_name = table['name']
 
         if schema_name and table_name:
-            fqn = TableFqn(self._project_id, schema_name, table_name, quote_char='`')
-            return fqn
-        else:
-            return None
+            sql = (
+                f'SELECT column_name, data_type, is_nullable '
+                f'FROM `{self._project_id}`.`{schema_name}`.`INFORMATION_SCHEMA`.`COLUMNS` '
+                f"WHERE table_name = '{table_name}' "
+                f'ORDER BY ordinal_position;'
+            )
+            result = await self.execute_query(sql)
+            if result.is_ok and result.data:
+                return DbTableInfo(
+                    id=table_id,
+                    fqn=TableFqn(self._project_id, schema_name, table_name, quote_char='`'),
+                    columns={
+                        row['column_name']: DbColumnInfo(
+                            name=row['column_name'],
+                            quoted_name=self.get_quoted_name(row['column_name']),
+                            native_type=row['data_type'],
+                            nullable=row['is_nullable'] == 'YES',
+                        )
+                        for row in result.data.rows
+                    },
+                )
+            else:
+                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
+
+        return None
 
     async def execute_query(self, sql_query: str) -> QueryResult:
         resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
@@ -229,11 +286,11 @@ class WorkspaceManager:
 
     def __init__(self, client: KeboolaClient, workspace_schema: str | None = None):
         # We use the read-only workspace with access to all project data which lives in the production branch.
-        # Hence we need KeboolaClient bound to the production/default branch.
+        # Hence, we need KeboolaClient bound to the production/default branch.
         self._client = client.with_branch_id(None)
         self._workspace_schema = workspace_schema
         self._workspace: _Workspace | None = None
-        self._table_fqn_cache: dict[str, TableFqn] = {}
+        self._table_info_cache: dict[str, DbTableInfo] = {}
 
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
@@ -405,17 +462,16 @@ class WorkspaceManager:
         workspace = await self._get_workspace()
         return await workspace.execute_query(sql_query)
 
-    async def get_table_fqn(self, table: Mapping[str, Any]) -> Optional[TableFqn]:
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
-        if table_id in self._table_fqn_cache:
-            return self._table_fqn_cache[table_id]
+        if table_id in self._table_info_cache:
+            return self._table_info_cache[table_id]
 
         workspace = await self._get_workspace()
-        fqn = await workspace.get_table_fqn(table)
-        if fqn:
-            self._table_fqn_cache[table_id] = fqn
+        if info := await workspace.get_table_info(table):
+            self._table_info_cache[table_id] = info
 
-        return fqn
+        return info
 
     async def get_quoted_name(self, name: str) -> str:
         workspace = await self._get_workspace()

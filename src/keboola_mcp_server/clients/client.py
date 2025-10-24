@@ -26,7 +26,12 @@ FLOW_TYPES: Sequence[FlowType] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_CO
 
 
 def get_metadata_property(
-    metadata: list[Mapping[str, Any]], key: str, provider: str | None = None, default: T | None = None
+    metadata: list[Mapping[str, Any]],
+    key: str,
+    *,
+    provider: str | None = None,
+    preferred_providers: list[str] | None = None,
+    default: T | None = None,
 ) -> T | None:
     """
     Gets the value of a metadata property based on the provided key and optional provider. If multiple metadata entries
@@ -35,16 +40,30 @@ def get_metadata_property(
     :param metadata: A list of metadata entries.
     :param key: The metadata property key to search for.
     :param provider: Specifies the metadata provider name to filter by.
+    :param preferred_providers: Specifies a list of preferred metadata providers to order the metadata items by.
     :param default: The default value to return if the metadata property is not found.
 
     :return: The value of the most recent matching metadata entry if found, or None otherwise.
     """
+    if provider and preferred_providers:
+        raise ValueError('Specifying both provider and preferred_providers makes no sense.')
+
+    def _sort_key(m: Mapping[str, Any]) -> tuple[Any, ...]:
+        # TODO: ideally we should first convert the timestamps to UTC
+        if preferred_providers:
+            if (_p := m.get('provider')) and _p in preferred_providers:
+                _pidx = preferred_providers.index(_p)
+            else:
+                _pidx = len(preferred_providers)
+            return -1 * _pidx, m.get('timestamp') or ''
+        else:
+            return (m.get('timestamp') or '',)
+
     filtered = [
         m for m in metadata if m['key'] == key and (not provider or ('provider' in m and m['provider'] == provider))
     ]
-    # TODO: ideally we should first convert the timestamps to UTC
-    filtered.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
-    value = filtered[0].get('value') if filtered else None
+    item = max(filtered, key=_sort_key, default=None)
+    value = item.get('value') if item else None
     return value if value is not None else default
 
 

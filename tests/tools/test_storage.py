@@ -11,7 +11,7 @@ from mcp.types import TextContent
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.server import create_server
@@ -30,7 +30,7 @@ from keboola_mcp_server.tools.storage import (
     list_tables,
     update_descriptions,
 )
-from keboola_mcp_server.workspace import TableFqn, WorkspaceManager
+from keboola_mcp_server.workspace import DbColumnInfo, DbTableInfo, TableFqn, WorkspaceManager
 
 
 def parse_iso_timestamp(ts: str) -> datetime:
@@ -707,17 +707,25 @@ async def test_list_buckets(
                 data_size_bytes=10240,
                 columns=[
                     TableColumnInfo(
-                        name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False, description=None
+                        name='user_id',
+                        quoted_name='#user_id#',
+                        database_native_type='INT',
+                        nullable=False,
+                        description=None,
                     ),
                     TableColumnInfo(
                         name='name',
                         quoted_name='#name#',
-                        native_type='VARCHAR',
+                        database_native_type='VARCHAR',
                         nullable=False,
                         description='Name of the user.',
                     ),
                     TableColumnInfo(
-                        name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False, description=None
+                        name='surname',
+                        quoted_name='#surname#',
+                        database_native_type='VARCHAR',
+                        nullable=False,
+                        description=None,
                     ),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#users#',
@@ -748,17 +756,25 @@ async def test_list_buckets(
                 data_size_bytes=10240,
                 columns=[
                     TableColumnInfo(
-                        name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False, description=None
+                        name='user_id',
+                        quoted_name='#user_id#',
+                        database_native_type='INT',
+                        nullable=False,
+                        description=None,
                     ),
                     TableColumnInfo(
                         name='name',
                         quoted_name='#name#',
-                        native_type='VARCHAR',
+                        database_native_type='VARCHAR',
                         nullable=False,
                         description='Name of the user.',
                     ),
                     TableColumnInfo(
-                        name='surname', quoted_name='#surname#', native_type='VARCHAR', nullable=False, description=None
+                        name='surname',
+                        quoted_name='#surname#',
+                        database_native_type='VARCHAR',
+                        nullable=False,
+                        description=None,
                     ),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#users#',
@@ -789,15 +805,19 @@ async def test_list_buckets(
                 rows_count=33,
                 data_size_bytes=332211,
                 columns=[
-                    TableColumnInfo(name='email_id', quoted_name='#email_id#', native_type='INT', nullable=False),
+                    TableColumnInfo(
+                        name='email_id', quoted_name='#email_id#', database_native_type='INT', nullable=False
+                    ),
                     TableColumnInfo(
                         name='address',
                         quoted_name='#address#',
-                        native_type='VARCHAR',
+                        database_native_type='VARCHAR',
                         nullable=False,
                         description='Email address. 1',
                     ),
-                    TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
+                    TableColumnInfo(
+                        name='user_id', quoted_name='#user_id#', database_native_type='INT', nullable=False
+                    ),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-foo#.#emails#',
                 links=[
@@ -826,15 +846,19 @@ async def test_list_buckets(
                 rows_count=22,
                 data_size_bytes=2211,
                 columns=[
-                    TableColumnInfo(name='email_id', quoted_name='#email_id#', native_type='INT', nullable=False),
+                    TableColumnInfo(
+                        name='email_id', quoted_name='#email_id#', database_native_type='INT', nullable=False
+                    ),
                     TableColumnInfo(
                         name='address',
                         quoted_name='#address#',
-                        native_type='VARCHAR',
+                        database_native_type='VARCHAR',
                         nullable=False,
                         description='Email address. 2',
                     ),
-                    TableColumnInfo(name='user_id', quoted_name='#user_id#', native_type='INT', nullable=False),
+                    TableColumnInfo(
+                        name='user_id', quoted_name='#user_id#', database_native_type='INT', nullable=False
+                    ),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-1246948-foo#.#emails#',
                 links=[
@@ -866,9 +890,11 @@ async def test_list_buckets(
                 rows_count=123,
                 data_size_bytes=123456,
                 columns=[
-                    TableColumnInfo(name='asset_id', quoted_name='#asset_id#', native_type='INT', nullable=False),
-                    TableColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=False),
-                    TableColumnInfo(name='value', quoted_name='#value#', native_type='INT', nullable=True),
+                    TableColumnInfo(
+                        name='asset_id', quoted_name='#asset_id#', database_native_type='INT', nullable=False
+                    ),
+                    TableColumnInfo(name='name', quoted_name='#name#', database_native_type='VARCHAR', nullable=False),
+                    TableColumnInfo(name='value', quoted_name='#value#', database_native_type='INT', nullable=True),
                 ],
                 fully_qualified_name='#SAPI_TEST#.#in.c-1246948-foo#.#assets#',
                 links=[
@@ -903,12 +929,24 @@ async def test_get_table(
     keboola_client.storage_client.table_detail = mocker.AsyncMock(side_effect=_table_detail_side_effect)
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
-    workspace_manager.get_table_fqn = mocker.AsyncMock(
-        side_effect=lambda sapi_table: TableFqn(
-            db_name='SAPI_TEST',
-            schema_name=sapi_table['bucket']['id'],
-            table_name=sapi_table['id'].rsplit('.')[-1],
-            quote_char='#',
+    workspace_manager.get_table_info = mocker.AsyncMock(
+        side_effect=lambda sapi_table: DbTableInfo(
+            id=sapi_table['id'],
+            fqn=TableFqn(
+                db_name='SAPI_TEST',
+                schema_name=sapi_table['bucket']['id'],
+                table_name=sapi_table['id'].rsplit('.')[-1],
+                quote_char='#',
+            ),
+            columns={
+                col_name: DbColumnInfo(
+                    name=col_name,
+                    quoted_name=f'#{col_name}#',
+                    native_type=get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE),
+                    nullable=get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) == '1',
+                )
+                for col_name, col_meta in sapi_table['columnMetadata'].items()
+            },
         )
     )
     workspace_manager.get_quoted_name = mocker.AsyncMock(side_effect=lambda name: f'#{name}#')
@@ -919,7 +957,7 @@ async def test_get_table(
         assert isinstance(result, TableDetail)
         assert result == expected_table
         workspace_manager.get_sql_dialect.assert_called_once()
-        workspace_manager.get_table_fqn.assert_called_once()
+        workspace_manager.get_table_info.assert_called_once()
         workspace_manager.get_quoted_name.assert_has_calls([call(col_info.name) for col_info in expected_table.columns])
 
     else:

@@ -16,21 +16,21 @@ from keboola_mcp_server.workspace import WorkspaceManager
 @pytest.fixture
 def keboola_client(mocker) -> KeboolaClient:
     """Creates mocked `KeboolaClient` instance with mocked sub-clients."""
-    client = mocker.MagicMock(KeboolaClient)
+    client = mocker.AsyncMock(KeboolaClient)
     client.storage_api_url = 'https://connection.test.keboola.com'
     client.branch_id = None
     client.with_branch_id.return_value = client
 
     # Mock API clients
-    client.storage_client = mocker.MagicMock(AsyncStorageClient)
+    client.storage_client = mocker.AsyncMock(AsyncStorageClient)
     client.storage_client.project_id.return_value = '69420'
-    client.jobs_queue_client = mocker.MagicMock(JobsQueueClient)
-    client.ai_service_client = mocker.MagicMock(AIServiceClient)
+    client.jobs_queue_client = mocker.AsyncMock(JobsQueueClient)
+    client.ai_service_client = mocker.AsyncMock(AIServiceClient)
 
     # Mock the underlying api_client for async clients if needed for deeper testing
-    client.storage_client.api_client = mocker.MagicMock(RawKeboolaClient)
-    client.jobs_queue_client.api_client = mocker.MagicMock(RawKeboolaClient)
-    client.ai_service_client.api_client = mocker.MagicMock(RawKeboolaClient)
+    client.storage_client.api_client = mocker.AsyncMock(RawKeboolaClient)
+    client.jobs_queue_client.api_client = mocker.AsyncMock(RawKeboolaClient)
+    client.ai_service_client.api_client = mocker.AsyncMock(RawKeboolaClient)
 
     return client
 
