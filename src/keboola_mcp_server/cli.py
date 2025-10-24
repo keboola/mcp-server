@@ -11,6 +11,7 @@ from typing import Optional
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
+from starlette.routing import Route
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ForwardSlashMiddleware
@@ -134,6 +135,16 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                     path='/',
                     transport='sse',
                 )
+
+                log_messages: list[str] = []
+                for route in sse_app.routes:
+                    # make sure that the root path is available for GET requests only
+                    # (i.e. POST requests are not allowed)
+                    if isinstance(route, Route) and route.path == '/' and not route.methods:
+                        route.methods = ['GET', 'HEAD']
+                    log_messages.append(str(route))
+                LOG.info('SSE Routes:\n{}\n'.format('\n'.join(log_messages)))
+
                 mount_paths['/sse'] = sse_app  # serves /sse/ and /messages
                 transports.append('SSE')
 
