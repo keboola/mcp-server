@@ -31,6 +31,7 @@ from individual tasks:
 - ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
 """
 
+import asyncio
 from datetime import datetime
 from typing import Annotated, Any, List, Literal, Optional, Sequence, Union, get_args
 
@@ -601,7 +602,7 @@ class SimplifiedTfBlocks(BaseModel):
         return TransformationConfiguration.Parameters(
             blocks=[
                 TransformationConfiguration.Parameters.Block(
-                    name=block.name, codes=[await code.to_raw_code() for code in block.codes]
+                    name=block.name, codes=await asyncio.gather(*[code.to_raw_code() for code in block.codes])
                 )
                 for block in self.blocks
             ]
