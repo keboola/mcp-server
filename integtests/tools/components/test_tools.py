@@ -31,9 +31,11 @@ from keboola_mcp_server.tools.components.model import (
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
-    TransformationConfiguration,
+    SimplifiedTfBlocks,
 )
+from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
+    clean_bucket_name,
     expand_component_types,
     get_sql_transformation_id_from_sql_dialect,
     update_params,
@@ -636,8 +638,8 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
 
     # Define test SQL code blocks
     test_sql_code_blocks = [
-        TransformationConfiguration.Parameters.Block.Code(
-            name='Main transformation', sql_statements=['SELECT 1 as test_column', 'SELECT 2 as another_column']
+        SimplifiedTfBlocks.Block.Code(
+            name='Main transformation', script='SELECT 1 as test_column; SELECT 2 as another_column;'
         )
     ]
 
@@ -703,30 +705,36 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         assert 'parameters' in configuration_data
         assert 'storage' in configuration_data
 
-        # Verify the parameters structure
-        parameters = configuration_data['parameters']
-        assert 'blocks' in parameters
-        assert len(parameters['blocks']) == 1
+        # Verify the parameters structure matches expected
+        bucket_name = clean_bucket_name(test_name)
+        expected_parameters = {
+            'blocks': [
+                {
+                    'name': 'Blocks',
+                    'codes': [
+                        {
+                            'name': test_sql_code_blocks[0].name,
+                            'script': await split_sql_statements(test_sql_code_blocks[0].script),
+                        }
+                    ],
+                }
+            ]
+        }
+        assert configuration_data['parameters'] == expected_parameters
 
-        block = parameters['blocks'][0]
-        assert 'codes' in block
-        assert len(block['codes']) == len(test_sql_code_blocks)
-
-        code = block['codes'][0]
-        assert code['name'] == test_sql_code_blocks[0].name
-        assert 'script' in code  # API uses 'script' instead of 'sql_statements'
-        assert len(code['script']) == len(test_sql_code_blocks[0].sql_statements)
-        assert code['script'][0] == test_sql_code_blocks[0].sql_statements[0]
-        assert code['script'][1] == test_sql_code_blocks[0].sql_statements[1]
-
-        # Verify the storage structure contains output tables
-        storage = configuration_data['storage']
-        assert 'output' in storage
-        assert 'tables' in storage['output']
-        assert len(storage['output']['tables']) == len(test_created_table_names)
-
-        output_table = storage['output']['tables'][0]
-        assert output_table['source'] == test_created_table_names[0]
+        # Verify the storage structure matches expected
+        expected_storage = {
+            'input': {'tables': []},
+            'output': {
+                'tables': [
+                    {
+                        'source': test_created_table_names[0],
+                        'destination': f'out.c-{bucket_name}.{test_created_table_names[0]}',
+                    }
+                ]
+            },
+        }
+        assert configuration_data['storage'] == expected_storage
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(

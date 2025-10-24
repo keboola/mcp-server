@@ -40,6 +40,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentWithConfigurations,
     ConfigParamUpdate,
     ConfigurationSummary,
+    SimplifiedTfBlocks,
     TransformationConfiguration,
 )
 
@@ -266,30 +267,31 @@ def clean_bucket_name(bucket_name: str) -> str:
     return bucket_name
 
 
-def get_transformation_configuration(
-    codes: Sequence[TransformationConfiguration.Parameters.Block.Code],
+async def create_transformation_configuration(
+    codes: Sequence[SimplifiedTfBlocks.Block.Code],
     transformation_name: str,
     output_tables: Sequence[str],
 ) -> TransformationConfiguration:
     """
-    Sets the transformation configuration from code statements.
-    Creates the expected configuration for the transformation, parameters and storage.
+    Creates transformation configuration from simplified code blocks and output tables.
+    Handles splitting the SQL `script`s into arrays of statements and creating the storage configuration.
 
-    :param codes: The code blocks (sql for now)
+    :param codes: The code blocks
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
     :return: TransformationConfiguration with parameters and storage
     """
     storage = TransformationConfiguration.Storage()
     # build parameters configuration out of code blocks
-    parameters = TransformationConfiguration.Parameters(
+    parameters = SimplifiedTfBlocks(
         blocks=[
-            TransformationConfiguration.Parameters.Block(
+            SimplifiedTfBlocks.Block(
                 name='Blocks',
                 codes=list(codes),
             )
         ]
     )
+    raw_parameters = await parameters.to_raw_parameters()
     if output_tables:
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
@@ -306,7 +308,8 @@ def get_transformation_configuration(
             )
             for out_table in output_tables
         ]
-    return TransformationConfiguration(parameters=parameters, storage=storage)
+
+    return TransformationConfiguration(parameters=raw_parameters, storage=storage)
 
 
 async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
