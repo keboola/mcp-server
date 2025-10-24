@@ -50,6 +50,7 @@ from keboola_mcp_server.tools.components.model import (
     Configuration,
     ListConfigsOutput,
     SimplifiedTfBlocks,
+    TfParamUpdate,
     TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
@@ -479,7 +480,7 @@ async def update_sql_transformation(
         ),
     ],
     parameter_updates: Annotated[
-        list[ConfigParamUpdate],
+        list[TfParamUpdate],
         Field(
             description=(
                 'List of granular parameter update operations to apply to transformation parameters '
@@ -587,12 +588,11 @@ async def update_sql_transformation(
       Example: {"op": "remove", "path": "blocks[0].codes[1]"}
 
     TRANSFORMATION STRUCTURE:
-    parameters.blocks[i] - Transformation block (typically one block named "Blocks")
+    parameters.blocks[i] - Transformation block
       └─ blocks[i].name - Block name
       └─ blocks[i].codes[j] - Code block (groups related SQL statements)
          └─ codes[j].name - Descriptive name for the code block
-         └─ codes[j].script - Array of SQL statements (executed in order)
-            └─ script[k] - Individual SQL statement string
+         └─ codes[j].script - SQL script
 
     WORKFLOW:
     1. Retrieve current transformation using get_config to understand structure
@@ -622,21 +622,25 @@ async def update_sql_transformation(
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    current_config = await client.storage_client.configuration_detail(
+    config_details = await client.storage_client.configuration_detail(
         component_id=sql_transformation_id, configuration_id=configuration_id
     )
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
     transformation = Component.from_api_response(api_component)
 
-    updated_configuration = current_config.get('configuration', {})
+    updated_configuration = config_details.get('configuration', {})
 
     if parameter_updates:
-        current_params = updated_configuration.get('parameters', {})
-        updated_params = update_params(current_params, parameter_updates)
+        current_param_dict = updated_configuration.get('parameters', {})
+        current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
+        simplified_parameters = current_raw_parameters.to_simplified_parameters()
+
+        updated_params = update_transformation_parameters(simplified_parameters, parameter_updates)
+        updated_raw_parameters = await updated_params.to_raw_parameters()
 
         parameters_cfg = validate_root_parameters_configuration(
             component=transformation,
-            parameters=updated_params,
+            parameters=updated_raw_parameters,
             initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
         )
         updated_configuration['parameters'] = parameters_cfg
