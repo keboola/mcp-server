@@ -248,20 +248,17 @@ EXAMPLES:
       "description": "The code block for the transformation block.",
       "properties": {
         "name": {
-          "description": "The name of the current code block describing the purpose of the block",
+          "description": "A descriptive name for the code block",
           "type": "string"
         },
-        "sql_statements": {
-          "description": "The executable SQL query statements written in the current SQL dialect. Each statement must be executable and a separate item in the list.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "script": {
+          "description": "The SQL script of the code block",
+          "type": "string"
         }
       },
       "required": [
         "name",
-        "sql_statements"
+        "script"
       ],
       "type": "object"
     }
@@ -276,7 +273,7 @@ EXAMPLES:
       "type": "string"
     },
     "sql_code_blocks": {
-      "description": "The SQL query code blocks, each containing a descriptive name and a sequence of semantically related independently executable sql_statements written in the current SQL dialect.",
+      "description": "The SQL query code blocks, each containing a descriptive name and an executable SQL script written in the current SQL dialect.",
       "items": {
         "$ref": "#/$defs/Code"
       },
