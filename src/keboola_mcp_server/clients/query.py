@@ -68,9 +68,7 @@ class QueryServiceClient(KeboolaServiceClient):
             payload['transactional'] = transactional
         resp = cast(
             JsonDict,
-            await self.post(
-                endpoint=f'branches/{self._branch_id}/workspaces/{workspace_id}/queries', data=payload
-            ),
+            await self.post(endpoint=f'branches/{self._branch_id}/workspaces/{workspace_id}/queries', data=payload),
         )
         return resp['queryJobId']
 

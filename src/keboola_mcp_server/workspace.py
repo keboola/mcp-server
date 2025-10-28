@@ -209,19 +209,19 @@ class _SnowflakeWorkspace(_Workspace):
                 headers=self._client.headers,
             )
 
+        ts_start = time.perf_counter()
         job_id = await self._qsclient.submit_job(statements=[sql_query], workspace_id=str(self.id))
-        last_status = None
-        last_status_cnt = 0
-        while ((job_status := await self._qsclient.get_job_status(job_id))
-               and job_status['status'] not in ['completed', 'failed']):
-            if last_status != job_status['status']:
-                last_status = job_status['status']
-                last_status_cnt = 0
-            else:
-                last_status_cnt += 1
-                if last_status_cnt > 10:
-                    raise RuntimeError(f'Query execution timeout: {job_id}, status={last_status}')
+        while (job_status := await self._qsclient.get_job_status(job_id)) and job_status['status'] not in [
+            'completed',
+            'failed',
+        ]:
             await asyncio.sleep(1)
+            elapsed_time = time.perf_counter() - ts_start
+            if elapsed_time > 300:  # 5 minutes
+                raise RuntimeError(
+                    f'Query execution timed out after {elapsed_time:.2f} seconds: '
+                    f'job_id={job_id}, status={job_status["status"]}'
+                )
 
         statement_id = cast(list[JsonDict], job_status['statements'])[0]['id']
         results = await self._qsclient.get_job_results(job_id, statement_id)
