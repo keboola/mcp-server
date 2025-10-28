@@ -3,13 +3,16 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, cast
+from urllib.parse import urlunparse
 
 from httpx import HTTPStatusError
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.query import QueryServiceClient
 
 LOG = logging.getLogger(__name__)
 
@@ -112,6 +115,7 @@ class _SnowflakeWorkspace(_Workspace):
         super().__init__(workspace_id)
         self._schema = schema  # default schema created for the workspace
         self._client = client
+        self._qsclient: QueryServiceClient | None = None
 
     def get_sql_dialect(self) -> str:
         return 'Snowflake'
@@ -188,8 +192,59 @@ class _SnowflakeWorkspace(_Workspace):
         return None
 
     async def execute_query(self, sql_query: str) -> QueryResult:
-        resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
-        return TypeAdapter(QueryResult).validate_python(resp)
+        if not self._qsclient:
+            real_branch_id = self._client.branch_id
+            if not real_branch_id:
+                for branch in await self._client.storage_client.branches_list():
+                    if (is_default := branch.get('isDefault')) and isinstance(is_default, bool) and is_default:
+                        real_branch_id = branch['id']
+                        break
+            if not real_branch_id:
+                raise RuntimeError('Cannot determine the default branch ID')
+
+            self._qsclient = QueryServiceClient.create(
+                root_url=urlunparse(('https', f'query.{self._client.hostname_suffix}', '', '', '', '')),
+                branch_id=real_branch_id,
+                token=self._client.token,
+                headers=self._client.headers,
+            )
+
+        job_id = await self._qsclient.submit_job(statements=[sql_query], workspace_id=str(self.id))
+        last_status = None
+        last_status_cnt = 0
+        while ((job_status := await self._qsclient.get_job_status(job_id))
+               and job_status['status'] not in ['completed', 'failed']):
+            if last_status != job_status['status']:
+                last_status = job_status['status']
+                last_status_cnt = 0
+            else:
+                last_status_cnt += 1
+                if last_status_cnt > 10:
+                    raise RuntimeError(f'Query execution timeout: {job_id}, status={last_status}')
+            await asyncio.sleep(1)
+
+        statement_id = cast(list[JsonDict], job_status['statements'])[0]['id']
+        results = await self._qsclient.get_job_results(job_id, statement_id)
+
+        if results['status'] == 'completed':
+            columns = [col['name'] for col in cast(list[JsonDict], results['columns'])]
+            rows = [
+                {col_name: value for col_name, value in zip(columns, row)}
+                for row in cast(list[list[Any]], results['data'])
+            ]
+            query_result = QueryResult(
+                status='ok',
+                data=SqlSelectData(columns=columns, rows=rows) if columns else None,
+                message=results['message'],
+            )
+
+        elif results['status'] == 'failed':
+            query_result = QueryResult(status='error', data=None, message=results['message'])
+
+        else:
+            raise ValueError(f'Unexpected query status: {results["status"]}')
+
+        return query_result
 
 
 class _BigQueryWorkspace(_Workspace):
@@ -209,9 +264,6 @@ class _BigQueryWorkspace(_Workspace):
 
     async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
-
-        schema_name: str | None = None
-        table_name: str | None = None
 
         if '.' in table_id:
             # a table local in a project for which the workspace is open
@@ -297,7 +349,7 @@ class WorkspaceManager:
 
         for sapi_wsp_info in await self._client.storage_client.workspace_list():
             assert isinstance(sapi_wsp_info, dict)
-            wi = _WspInfo.from_sapi_info(sapi_wsp_info)
+            wi = _WspInfo.from_sapi_info(sapi_wsp_info)  # type: ignore[attr-defined]
             if wi.id and wi.backend and wi.schema and wi.schema == schema:
                 return wi
 
@@ -309,7 +361,7 @@ class WorkspaceManager:
         try:
             sapi_wsp_info = await self._client.storage_client.workspace_detail(workspace_id)
             assert isinstance(sapi_wsp_info, dict)
-            wi = _WspInfo.from_sapi_info(sapi_wsp_info)
+            wi = _WspInfo.from_sapi_info(sapi_wsp_info)  # type: ignore[attr-defined]
 
             if wi.id and wi.backend and wi.schema:
                 return wi
@@ -349,7 +401,6 @@ class WorkspaceManager:
         owner_info = token_info.get('owner', {})
         default_backend = owner_info.get('defaultBackend')
 
-        resp = None
         if default_backend == 'snowflake':
             resp = await self._client.storage_client.workspace_create(
                 login_type='snowflake-person-sso',
@@ -383,11 +434,12 @@ class WorkspaceManager:
 
             if job_info['status'] == 'success':
                 assert 'results' in job_info, f'Expected `results` in job info: {job_info}'
-                assert isinstance(job_info['results'], dict)
-                assert 'id' in job_info['results'], f'Expected `id` in `results` in job info: {job_info}'
-                assert isinstance(job_info['results']['id'], int)
+                job_results = job_info['results']
+                assert isinstance(job_results, dict)
+                assert 'id' in job_results, f'Expected `id` in `results` in job info: {job_info}'
+                assert isinstance(job_results['id'], int)
 
-                workspace_id = job_info['results']['id']
+                workspace_id = job_results['id']
                 LOG.info(f'Created workspace: {workspace_id}')
                 return await self._find_ws_by_id(workspace_id)
 
