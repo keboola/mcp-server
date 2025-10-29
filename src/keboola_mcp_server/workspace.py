@@ -193,21 +193,7 @@ class _SnowflakeWorkspace(_Workspace):
 
     async def execute_query(self, sql_query: str) -> QueryResult:
         if not self._qsclient:
-            real_branch_id = self._client.branch_id
-            if not real_branch_id:
-                for branch in await self._client.storage_client.branches_list():
-                    if (is_default := branch.get('isDefault')) and isinstance(is_default, bool) and is_default:
-                        real_branch_id = branch['id']
-                        break
-            if not real_branch_id:
-                raise RuntimeError('Cannot determine the default branch ID')
-
-            self._qsclient = QueryServiceClient.create(
-                root_url=urlunparse(('https', f'query.{self._client.hostname_suffix}', '', '', '', '')),
-                branch_id=real_branch_id,
-                token=self._client.token,
-                headers=self._client.headers,
-            )
+            self._qsclient = await self._create_qs_client()
 
         ts_start = time.perf_counter()
         job_id = await self._qsclient.submit_job(statements=[sql_query], workspace_id=str(self.id))
@@ -245,6 +231,23 @@ class _SnowflakeWorkspace(_Workspace):
             raise ValueError(f'Unexpected query status: {results["status"]}')
 
         return query_result
+
+    async def _create_qs_client(self) -> QueryServiceClient:
+        real_branch_id = self._client.branch_id
+        if not real_branch_id:
+            for branch in await self._client.storage_client.branches_list():
+                if (is_default := branch.get('isDefault')) and isinstance(is_default, bool) and is_default:
+                    real_branch_id = branch['id']
+                    break
+        if not real_branch_id:
+            raise RuntimeError('Cannot determine the default branch ID')
+
+        return QueryServiceClient.create(
+            root_url=urlunparse(('https', f'query.{self._client.hostname_suffix}', '', '', '', '')),
+            branch_id=real_branch_id,
+            token=self._client.token,
+            headers=self._client.headers,
+        )
 
 
 class _BigQueryWorkspace(_Workspace):
