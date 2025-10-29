@@ -975,12 +975,11 @@ PARAMETER UPDATE OPERATIONS FOR TRANSFORMATIONS:
   Example: {"op": "remove", "path": "blocks[0].codes[1]"}
 
 TRANSFORMATION STRUCTURE:
-parameters.blocks[i] - Transformation block (typically one block named "Blocks")
+parameters.blocks[i] - Transformation block
   └─ blocks[i].name - Block name
   └─ blocks[i].codes[j] - Code block (groups related SQL statements)
      └─ codes[j].name - Descriptive name for the code block
-     └─ codes[j].script - Array of SQL statements (executed in order)
-        └─ script[k] - Individual SQL statement string
+     └─ codes[j].script - SQL script
 
 WORKFLOW:
 1. Retrieve current transformation using get_config to understand structure
@@ -1009,57 +1008,291 @@ EXAMPLES:
 ```json
 {
   "$defs": {
-    "ConfigParamListAppend": {
-      "description": "Append a value to a list parameter.",
+    "Block": {
+      "description": "The transformation block.",
+      "properties": {
+        "name": {
+          "description": "A descriptive name for the code block",
+          "type": "string"
+        },
+        "codes": {
+          "description": "SQL code sub-blocks",
+          "items": {
+            "$ref": "#/$defs/Code"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "codes"
+      ],
+      "type": "object"
+    },
+    "Code": {
+      "description": "The code block for the transformation block.",
+      "properties": {
+        "name": {
+          "description": "A descriptive name for the code block",
+          "type": "string"
+        },
+        "script": {
+          "description": "The SQL script of the code block",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "script"
+      ],
+      "type": "object"
+    },
+    "TfAddBlock": {
+      "description": "Add a new block to the transformation.",
       "properties": {
         "op": {
-          "const": "list_append",
+          "const": "add_block",
           "type": "string"
         },
-        "path": {
-          "description": "JSONPath to the list parameter",
-          "type": "string"
+        "block": {
+          "$ref": "#/$defs/Block",
+          "description": "The block to add"
         },
-        "value": {
-          "description": "Value to append to the list",
-          "title": "Value"
+        "position": {
+          "default": "end",
+          "description": "The position of the block to add",
+          "enum": [
+            "start",
+            "end"
+          ],
+          "type": "string"
         }
       },
       "required": [
         "op",
-        "path",
-        "value"
+        "block"
       ],
       "type": "object"
     },
-    "ConfigParamRemove": {
-      "description": "Remove a parameter key.",
+    "TfAddCode": {
+      "description": "Add a new code to an existing block in the transformation.",
       "properties": {
         "op": {
-          "const": "remove",
+          "const": "add_code",
           "type": "string"
         },
-        "path": {
-          "description": "JSONPath to the parameter key to remove",
+        "block_id": {
+          "description": "The ID of the block to add the code to",
+          "type": "string"
+        },
+        "code": {
+          "$ref": "#/$defs/Code",
+          "description": "The code to add"
+        },
+        "position": {
+          "default": "end",
+          "description": "The position of the code to add",
+          "enum": [
+            "start",
+            "end"
+          ],
           "type": "string"
         }
       },
       "required": [
         "op",
-        "path"
+        "block_id",
+        "code"
       ],
       "type": "object"
     },
-    "ConfigParamReplace": {
-      "description": "Replace a substring in a string parameter.",
+    "TfAddScript": {
+      "description": "Append or prepend SQL script text to an existing code in an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "add_script",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to add the script to",
+          "type": "string"
+        },
+        "code_id": {
+          "description": "The ID of the code to add the script to",
+          "type": "string"
+        },
+        "script": {
+          "description": "The SQL script to add",
+          "type": "string"
+        },
+        "position": {
+          "default": "end",
+          "description": "The position of the script to add",
+          "enum": [
+            "start",
+            "end"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code_id",
+        "script"
+      ],
+      "type": "object"
+    },
+    "TfRemoveBlock": {
+      "description": "Remove an existing block from the transformation.",
+      "properties": {
+        "op": {
+          "const": "remove_block",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to remove",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id"
+      ],
+      "type": "object"
+    },
+    "TfRemoveCode": {
+      "description": "Remove an existing code from an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "remove_code",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to remove the code from",
+          "type": "string"
+        },
+        "code_id": {
+          "description": "The ID of the code to remove",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code_id"
+      ],
+      "type": "object"
+    },
+    "TfRenameBlock": {
+      "description": "Rename an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "rename_block",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to rename",
+          "type": "string"
+        },
+        "block_name": {
+          "description": "The new name of the block",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "block_name"
+      ],
+      "type": "object"
+    },
+    "TfRenameCode": {
+      "description": "Rename an existing code in an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "rename_code",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to rename the code in",
+          "type": "string"
+        },
+        "code_id": {
+          "description": "The ID of the code to rename",
+          "type": "string"
+        },
+        "code_name": {
+          "description": "The new name of the code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code_id",
+        "code_name"
+      ],
+      "type": "object"
+    },
+    "TfSetCode": {
+      "description": "Set the SQL script of an existing code in an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "set_code",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to set the code in",
+          "type": "string"
+        },
+        "code_id": {
+          "description": "The ID of the code to set",
+          "type": "string"
+        },
+        "script": {
+          "description": "The SQL script of the code to set",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code_id",
+        "script"
+      ],
+      "type": "object"
+    },
+    "TfStrReplace": {
+      "description": "Replace a substring in SQL statements in the transformation.",
       "properties": {
         "op": {
           "const": "str_replace",
           "type": "string"
         },
-        "path": {
-          "description": "JSONPath to the parameter key to modify",
-          "type": "string"
+        "block_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The ID of the block to replace substrings in. If not provided, all blocks will be updated."
+        },
+        "code_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The ID of the code to replace substrings in. If not provided, all codes in the block will be updated."
         },
         "search_for": {
           "description": "Substring to search for (non-empty)",
@@ -1072,32 +1305,8 @@ EXAMPLES:
       },
       "required": [
         "op",
-        "path",
         "search_for",
         "replace_with"
-      ],
-      "type": "object"
-    },
-    "ConfigParamSet": {
-      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
-      "properties": {
-        "op": {
-          "const": "set",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
-          "type": "string"
-        },
-        "new_val": {
-          "description": "New value to set",
-          "title": "New Val"
-        }
-      },
-      "required": [
-        "op",
-        "path",
-        "new_val"
       ],
       "type": "object"
     }
@@ -1117,25 +1326,45 @@ EXAMPLES:
       "items": {
         "discriminator": {
           "mapping": {
-            "list_append": "#/$defs/ConfigParamListAppend",
-            "remove": "#/$defs/ConfigParamRemove",
-            "set": "#/$defs/ConfigParamSet",
-            "str_replace": "#/$defs/ConfigParamReplace"
+            "add_block": "#/$defs/TfAddBlock",
+            "add_code": "#/$defs/TfAddCode",
+            "add_script": "#/$defs/TfAddScript",
+            "remove_block": "#/$defs/TfRemoveBlock",
+            "remove_code": "#/$defs/TfRemoveCode",
+            "rename_block": "#/$defs/TfRenameBlock",
+            "rename_code": "#/$defs/TfRenameCode",
+            "set_code": "#/$defs/TfSetCode",
+            "str_replace": "#/$defs/TfStrReplace"
           },
           "propertyName": "op"
         },
         "oneOf": [
           {
-            "$ref": "#/$defs/ConfigParamSet"
+            "$ref": "#/$defs/TfAddBlock"
           },
           {
-            "$ref": "#/$defs/ConfigParamReplace"
+            "$ref": "#/$defs/TfRemoveBlock"
           },
           {
-            "$ref": "#/$defs/ConfigParamRemove"
+            "$ref": "#/$defs/TfRenameBlock"
           },
           {
-            "$ref": "#/$defs/ConfigParamListAppend"
+            "$ref": "#/$defs/TfAddCode"
+          },
+          {
+            "$ref": "#/$defs/TfRemoveCode"
+          },
+          {
+            "$ref": "#/$defs/TfRenameCode"
+          },
+          {
+            "$ref": "#/$defs/TfSetCode"
+          },
+          {
+            "$ref": "#/$defs/TfAddScript"
+          },
+          {
+            "$ref": "#/$defs/TfStrReplace"
           }
         ]
       },
