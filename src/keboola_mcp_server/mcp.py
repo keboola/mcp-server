@@ -232,15 +232,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tools = await call_next(context)
         features = await self.get_project_features(context.fastmcp_context)
 
-        from keboola_mcp_server.tools import search
-
-        if 'global-search' not in features:
-            tools = [t for t in tools if t.name != search.SEARCH_TOOL_NAME]
-
-        # TODO: uncomment and adjust when WAII tools are implemented
-        # if 'waii-integration' not in features:
-        #     tools = [t for t in tools if t.name != 'text_to_sql']
-
         if 'hide-conditional-flows' in features:
             tools = [t for t in tools if t.name != 'create_conditional_flow']
         else:
@@ -256,30 +247,20 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
         features = await self.get_project_features(context.fastmcp_context)
 
-        if 'global-search' not in features:
-            if tool.name == 'search':
+        if 'hide-conditional-flows' in features:
+            if tool.name == 'create_conditional_flow':
                 raise ToolError(
-                    'The "search" tool is not available in this project. '
-                    'Please ask Keboola support to enable "Global Search" feature.'
+                    'The "create_conditional_flow" tool is not available in this project. '
+                    'Please ask Keboola support to enable "Conditional Flows" feature '
+                    'or use "create_flow" tool instead.'
                 )
-
-        # TODO: uncomment and adjust when WAII tools are implemented
-        # if 'waii-integration' not in features:
-        #     if tool.name == 'text_to_sql':
-        #         raise ToolError('The "text_to_sql" tool is not available in this project. '
-        #                         'Please ask Keboola support to enable "WAII Integration" feature.')
-
-        # TODO: uncomment and adjust when the conditional flows support is added
-        # if 'conditional-flows-disabled' in features:
-        #     if tool.name == 'create_conditional_flow':
-        #         raise ToolError('The "create_conditional_flow" tool is not available in this project. '
-        #                         'Please ask Keboola support to enable "Conditional Flows" feature '
-        #                         'or use "create_flow" tool instead.')
-        # else:
-        #     if tool.name == 'create_flow':
-        #         raise ToolError('The "create_flow" tool is not available in this project. '
-        #                         'This project uses "Conditional Flows", '
-        #                         'please use"create_conditional_flow" tool instead.')
+        else:
+            if tool.name == 'create_flow':
+                raise ToolError(
+                    'The "create_flow" tool is not available in this project. '
+                    'This project uses "Conditional Flows", '
+                    'please use"create_conditional_flow" tool instead.'
+                )
 
         return await call_next(context)
 
