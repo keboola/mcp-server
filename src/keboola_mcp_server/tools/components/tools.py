@@ -65,6 +65,7 @@ from keboola_mcp_server.tools.components.utils import (
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
     update_params,
+    update_transformation_parameters,
 )
 from keboola_mcp_server.tools.validation import (
     validate_root_parameters_configuration,
@@ -633,7 +634,7 @@ async def update_sql_transformation(
     if parameter_updates:
         current_param_dict = updated_configuration.get('parameters', {})
         current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
-        simplified_parameters = current_raw_parameters.to_simplified_parameters()
+        simplified_parameters = await current_raw_parameters.to_simplified_parameters()
 
         updated_params = update_transformation_parameters(simplified_parameters, parameter_updates)
         updated_raw_parameters = await updated_params.to_raw_parameters()
