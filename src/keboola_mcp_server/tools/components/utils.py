@@ -496,9 +496,21 @@ def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) ->
     pass
 
 
+def add_ids(parameters: dict[str, Any]) -> dict[str, Any]:
+    """
+    Adds IDs to the parameters dictionary.
+    Blocks are numbered sequentially from 0.
+    Codes are numbered sequentially from 0 within each block and prefixed with the block ID.
+    """
+    for bidx, block in enumerate(parameters['blocks']):
+        block['id'] = f'b{bidx}'
+        for cidx, code in enumerate(block['codes']):
+            code['id'] = f'b{bidx}.c{cidx}'
+    return parameters
+
+
 def update_transformation_parameters(
-    parameters: SimplifiedTfBlocks,
-    updates: Sequence[TfParamUpdate]
+    parameters: SimplifiedTfBlocks, updates: Sequence[TfParamUpdate]
 ) -> SimplifiedTfBlocks:
     """
     Applies a list of parameter updates to the given transformation parameters.
@@ -508,7 +520,7 @@ def update_transformation_parameters(
     :param updates: Sequence of parameter update operations
     :return: The updated transformation parameters
     """
-    parameters_dict = copy.deepcopy(parameters.model_dump())
+    parameters_dict = add_ids(parameters.model_dump())
     for update in updates:
         parameters_dict = _apply_tf_param_update(parameters_dict, update)
     return SimplifiedTfBlocks.model_validate(parameters_dict, extra='ignore')
