@@ -200,6 +200,7 @@ class _SnowflakeWorkspace(_Workspace):
         while (job_status := await self._qsclient.get_job_status(job_id)) and job_status['status'] not in [
             'completed',
             'failed',
+            'canceled',
         ]:
             await asyncio.sleep(1)
             elapsed_time = time.perf_counter() - ts_start
@@ -224,7 +225,7 @@ class _SnowflakeWorkspace(_Workspace):
                 message=results['message'],
             )
 
-        elif results['status'] == 'failed':
+        elif results['status'] in ['failed', 'canceled']:
             query_result = QueryResult(status='error', data=None, message=results['message'])
 
         else:
