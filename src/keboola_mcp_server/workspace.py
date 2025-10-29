@@ -84,6 +84,8 @@ class QueryResult:
 
 
 class _Workspace(abc.ABC):
+    _QUERY_TIMEOUT = 300.0  # 5 minutes
+
     def __init__(self, workspace_id: int) -> None:
         self._workspace_id = workspace_id
 
@@ -204,7 +206,7 @@ class _SnowflakeWorkspace(_Workspace):
         ]:
             await asyncio.sleep(1)
             elapsed_time = time.perf_counter() - ts_start
-            if elapsed_time > 300:  # 5 minutes
+            if elapsed_time > self._QUERY_TIMEOUT:
                 raise RuntimeError(
                     f'Query execution timed out after {elapsed_time:.2f} seconds: '
                     f'job_id={job_id}, status={job_status["status"]}'
