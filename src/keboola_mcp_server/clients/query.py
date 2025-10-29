@@ -8,7 +8,7 @@ class QueryServiceClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str) -> None:
         """
-        Creates a QueryServiceClient from a RawKeboolaClient and a branch id and a workspace id.
+        Creates a QueryServiceClient from a RawKeboolaClient and a branch id.
 
         :param raw_client: The raw client to use
         :param branch_id: The id of the Keboola project branch to work on
@@ -57,8 +57,8 @@ class QueryServiceClient(KeboolaServiceClient):
 
         :param statements: The SQL statements to be executed.
         :param workspace_id: The id of the Keboola project workspace to work on.
-        :param actor_type:
-        :param transactional:
+        :param actor_type: The type of actor to use -- 'user' or 'system'.
+        :param transactional: Whether the job should be executed in a transaction.
         :return: The unique identifier of the submitted job.
         """
         payload: JsonDict = {'statements': statements}
