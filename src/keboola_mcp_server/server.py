@@ -163,6 +163,113 @@ class CustomRoutes:
                 app.add_route(route.path, route.endpoint, methods=route.methods)
 
 
+def _get_server_instructions() -> str:
+    """Generate server instructions for the InitializeResult."""
+    return """# Keboola MCP Server
+
+This server provides comprehensive access to the Keboola data platform, enabling data management, transformations, pipeline orchestration, and metadata operations.
+
+## Server Context and Capabilities
+
+- **Access Control**: All operations are scoped to the Keboola Storage API token provided. The server can only access data and perform actions permitted by the token's permissions.
+- **Branch Support**: Operations can be scoped to specific development branches using the `KBC_BRANCH_ID` parameter, keeping changes isolated from production.
+- **Security**: Never expose tokens or sensitive information. Configuration values starting with `#` (like `#token`) are considered sensitive.
+
+## Available Features
+
+- **Storage**: Query tables, manage buckets, and update table/bucket descriptions
+- **Components**: Create, list, and inspect extractors, writers, data apps, and transformation configurations
+- **SQL**: Create and manage SQL transformations
+- **Jobs**: Execute components and retrieve job details
+- **Flows**: Build workflow pipelines using Conditional Flows and Orchestrator Flows
+- **Data Apps**: Deploy and manage Streamlit Data Apps
+- **Metadata**: Search and manage project documentation and metadata
+- **Documentation**: Query Keboola documentation using the `docs_query` tool
+
+## Best Practices
+
+### Data Exploration
+- Always check existing data before creating new components using `list_buckets` and `list_tables`
+- Use the `docs_query` tool for Keboola-related documentation before searching the internet
+
+### SQL Operations
+
+**CRITICAL: Always validate table structure and data types before writing SQL queries**
+
+- **MANDATORY FIRST STEP**: Before constructing any SQL query, ALWAYS use `get_table` tool to inspect the table structure, column names, and data types
+- **Schema Validation**: Verify that columns exist and have the correct data types before using them in functions:
+  - Check if date/timestamp columns are actually DATE/TIMESTAMP types before using DATE_TRUNC, EXTRACT, or date functions
+  - Verify numeric columns before using mathematical operations or aggregations
+  - Confirm string columns before using string functions
+- **Data Type Compatibility**:
+  - Never assume data types - VARCHAR fields cannot be used directly with date functions like DATE_TRUNC
+  - Most Storage tables use VARCHAR/TEXT columns even for numeric/date data (unless native datatypes are enabled)
+  - Use TRY_CAST or CAST functions when converting between data types
+  - Handle potential conversion errors gracefully with NULLIF or CASE statements
+- **Query Construction Process**:
+  1. First: Use `get_table` to understand table schema and column types
+  2. Second: If needed, use `query_data` with LIMIT 5 to inspect actual data values and formats
+  3. Third: Construct SQL query using appropriate functions for each data type
+  4. Fourth: Use proper error handling and type casting where needed
+- **Error Prevention**:
+  - When working with date-like VARCHAR columns, first cast to appropriate date type: `CAST(varchar_date_column AS DATE)`
+  - For potentially empty or invalid values, use safe casting: `TRY_CAST(column AS DATE)`
+  - Always validate that categorical values exist before filtering: inspect distinct values first
+- **Example Workflow**:
+  1. `get_table('bucket.table_name')` to check column types
+  2. `query_data('SELECT column_name, COUNT(*) FROM table GROUP BY column_name LIMIT 10')` to inspect values
+  3. Construct query with proper type handling: `DATE_TRUNC('month', CAST(date_varchar AS DATE))`
+- **Result Table Constraints**: Avoid ARRAY or JSON column types in result tables as they're not supported in Storage (cast to TEXT instead)
+
+### Component Creation
+- **Check First**: Verify whether data or configurations already exist before creating new ones
+- **Incremental Loading**: Prefer incremental loads with primary keys over full table replacements
+- **Testing**: Start with shorter time ranges (e.g., last 7 days) to validate configurations before expanding
+- **Column Names**: Ensure unique column names; special characters and leading non-alphanumeric characters are stripped
+
+### Integration Components
+
+When creating custom integrations, choose between:
+
+**Generic Extractor** (`ex-generic-v2`) - Use when:
+- API is standard REST with flat JSON responses
+- Simple pagination (not in headers)
+- Synchronous API
+- Few nested endpoints
+
+**Custom Python** (`kds-team.app-custom-python`) - Use when:
+- Official Python library exists
+- Complex/nested data structures
+- Asynchronous API
+- Many nested endpoints requiring concurrency
+- SOAP or non-REST APIs
+- File downloads (XML, CSV, Excel)
+- Generic Extractor is too slow or failing
+
+Always check for configuration examples using `get_config_examples` and remember to add dependencies.
+
+### Transformations
+
+**SQL Transformations**: Use these whenever possible for data manipulation within Storage.
+
+**Python/R Transformations** (`keboola.python-transformation-v2`, `keboola.r-transformation-v2`):
+- Purpose: Process data existing in Keboola Storage
+- **Not for**: External integrations, data downloads/uploads, or parameterized applications
+- For external integrations, use Custom Python component instead
+
+### Flow Creation
+- Use descriptive names reflecting the flow's purpose
+- Order tasks and phases correctly (e.g., extraction before transformation)
+
+## Error Handling
+- Follow Keboola best practices: no sensitive information in errors, provide clear next steps
+- For Data Apps, logs may become available after the app's first access
+
+## Documentation Reference
+For detailed information about Keboola features, tools, and best practices, use the `docs_query` tool to search the official Keboola documentation.
+"""
+
+
 def create_server(
     config: Config,
     *,
@@ -212,8 +319,12 @@ def create_server(
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
     server_state = ServerState(config=config, runtime_info=runtime_info)
+
+    instructions = _get_server_instructions()
+
     mcp = KeboolaMcpServer(
         name='Keboola MCP Server',
+        instructions=instructions,
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
         middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware()],
