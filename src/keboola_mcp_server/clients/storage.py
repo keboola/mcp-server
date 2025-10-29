@@ -314,6 +314,12 @@ class AsyncStorageClient(KeboolaServiceClient):
             branch_id=branch_id,
         )
 
+    async def branches_list(self) -> list[JsonDict]:
+        """
+        Gets the list of branches in a project.
+        """
+        return cast(list[JsonDict], await self.get(endpoint='dev-branches'))
+
     async def branch_metadata_get(self) -> list[JsonDict]:
         """
         Retrieves metadata for the current branch.
@@ -890,6 +896,10 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'branch/{self._branch_id}/workspaces/{workspace_id}'))
 
+    # TODO: The /v2/storage/branch/{self._branch_id}/workspaces/{workspace_id}/query endpoint is deprecated
+    #  and replaced by QueryService.
+    #  Unfortunately the QueryService supports only Snowflake backends. We use it in _SnowflakeWorkspace implementation,
+    #  but not in _BigQueryWorkspace implementation, which still uses this function.
     async def workspace_query(self, workspace_id: int, query: str) -> JsonDict:
         """
         Executes a query in a given workspace.

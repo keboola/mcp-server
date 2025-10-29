@@ -6,6 +6,7 @@ from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.workspace import (
     QueryResult,
@@ -22,7 +23,7 @@ from keboola_mcp_server.workspace import (
         (
             'select 1;',
             'Simple Count Query',
-            QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}])),
+            QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None),
             'a\r\n1\r\n',  # CSV
         ),
         (
@@ -37,13 +38,14 @@ from keboola_mcp_server.workspace import (
                         {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},
                     ],
                 ),
+                message=None,
             ),
             'id,name,email\r\n1,John,john@foo.com\r\n2,Joe,joe@bar.com\r\n',  # CSV
         ),
         (
             'create table foo (id integer, name varchar);',
             'Create Table Operation',
-            QueryResult(status='ok', message='1 table created'),
+            QueryResult(status='ok', data=None, message='1 table created'),
             'message\r\n1 table created\r\n',  # CSV
         ),
     ],
@@ -51,9 +53,9 @@ from keboola_mcp_server.workspace import (
 async def test_query_data(
     query: str, query_name: str, result: QueryResult, expected_csv: str, mcp_context_client: Context, mocker
 ):
-    workspace_manager = mocker.AsyncMock(WorkspaceManager)
-    workspace_manager.execute_query.return_value = result
-    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = workspace_manager
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.return_value = result
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
 
     result = await query_data(query, query_name, mcp_context_client)
     assert isinstance(result, QueryDataOutput)
@@ -130,21 +132,41 @@ class TestWorkspaceManagerSnowflake:
         expected: TableFqn,
         keboola_client: KeboolaClient,
         context: Context,
+        mocker,
     ):
-        keboola_client.storage_client.workspace_query.side_effect = [
-            QueryResult(
-                status='ok',
-                data=SqlSelectData(columns=list(sapi_result.keys()), rows=[sapi_result]),
-            ),
-            QueryResult(
-                status='ok',
-                data=SqlSelectData(columns=['COLUMN_NAME', 'DATA_TYPE', 'IS_NULLABLE'], rows=[]),
-            ),
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-1234'
+        qsclient.get_job_status.return_value = {
+            'status': 'completed',
+            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
+        }
+        qsclient.get_job_results.side_effect = [
+            {
+                'status': 'completed',
+                'data': [[value for value in sapi_result.values()]],
+                'columns': [{'name': key} for key in sapi_result.keys()],
+                'message': '',
+            },
+            {
+                'status': 'completed',
+                'data': [],
+                'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
+                'message': '',
+            },
         ]
+        mocker.patch('keboola_mcp_server.workspace.QueryServiceClient.create', return_value=qsclient)
+
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
         assert info is not None
         assert info.fqn == expected
+
+        keboola_client.storage_client.branches_list.assert_called_once()
+        qsclient.submit_job.assert_called()
+        qsclient.get_job_status.assert_called()
+        qsclient.get_job_results.assert_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -161,6 +183,7 @@ class TestWorkspaceManagerSnowflake:
                             {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},
                         ],
                     ),
+                    message=None,
                 ),
             ),
             (
@@ -169,17 +192,37 @@ class TestWorkspaceManagerSnowflake:
             ),
             (
                 'bla bla bla',
-                QueryResult(status='error', message='Invalid SQL...'),
+                QueryResult(status='error', data=None, message='Invalid SQL...'),
             ),
         ],
     )
     async def test_execute_query(
-        self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context
+        self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context, mocker
     ):
-        keboola_client.storage_client.workspace_query.return_value = TypeAdapter(QueryResult).dump_python(expected)
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-1234'
+        qsclient.get_job_status.return_value = {
+            'status': 'completed',
+            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
+        }
+        qsclient.get_job_results.return_value = {
+            'status': 'completed' if expected.is_ok else 'failed',
+            'data': [list(row.values()) for row in expected.data.rows] if expected.data else [],
+            'columns': [{'name': col_name} for col_name in expected.data.columns] if expected.data else [],
+            'message': expected.message,
+        }
+        mocker.patch('keboola_mcp_server.workspace.QueryServiceClient.create', return_value=qsclient)
+
         m = WorkspaceManager.from_state(context.session.state)
         result = await m.execute_query(query)
         assert result == expected
+
+        keboola_client.storage_client.branches_list.assert_called_once()
+        qsclient.submit_job.assert_called_once()
+        qsclient.get_job_status.assert_called_once_with('qs-job-1234')
+        qsclient.get_job_results.assert_called_once_with('qs-job-1234', 'qs-job-statement-1234')
 
 
 class TestWorkspaceManagerBigQuery:

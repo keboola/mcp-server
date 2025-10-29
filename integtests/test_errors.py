@@ -64,7 +64,7 @@ class TestHttpErrors:
     @pytest.mark.asyncio
     async def test_sql_api_invalid_query_error(self, mcp_context: Context):
         match = re.compile(
-            r'Failed to run SQL query, error: An exception occurred while executing a query: SQL compilation error:\n'
+            r'Failed to run SQL query, error: SQL compilation error:\n'
             r"syntax error line 1 at position 0 unexpected 'INVALID'\.",
             re.IGNORECASE,
         )
