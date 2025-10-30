@@ -15,7 +15,7 @@ from keboola_mcp_server.tools.data_apps import (
     _get_secrets,
     _inject_query_to_source_code,
     _update_existing_data_app_config,
-    _uses_basic_authorization,
+    _uses_basic_authentication,
     deploy_data_app,
 )
 
@@ -32,7 +32,6 @@ def data_app() -> DataApp:
         config_version='test',
         type='test',
         auto_suspend_after_seconds=3600,
-        uses_basic_authorization=True,
         parameters={},
         authorization={},
         state='test',
@@ -84,8 +83,8 @@ def test_get_authorization_mapping():
 
 
 def test_is_authorized_behavior():
-    assert _uses_basic_authorization(_get_authorization(True)) is True
-    assert _uses_basic_authorization(_get_authorization(False)) is False
+    assert _uses_basic_authentication(_get_authorization(True)) is True
+    assert _uses_basic_authentication(_get_authorization(False)) is False
 
 
 def test_inject_query_to_source_code_when_already_included():
@@ -131,7 +130,7 @@ def test_build_data_app_config_merges_defaults_and_secrets():
     pkgs = ['pandas']
     secrets = {'FOO': 'bar'}
 
-    config = _build_data_app_config(name, src, pkgs, True, secrets)
+    config = _build_data_app_config(name, src, pkgs, 'basic-auth', secrets)
 
     params = config['parameters']
     assert params['dataApp']['slug'] == 'my-app'
@@ -141,7 +140,7 @@ def test_build_data_app_config_merges_defaults_and_secrets():
     assert 'httpx' in params['packages']
     # Secrets carried over
     assert params['dataApp']['secrets'] == secrets
-    # Authorization reflects flag
+    # Authentication reflects flag
     assert config['authorization'] == _get_authorization(True)
 
 
@@ -163,7 +162,7 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
         name='New Name',
         source_code='new-code',
         packages=['pandas'],
-        authorization_required=False,
+        authentication_type='no-auth',
         secrets={'FOO': 'new', 'NEW': 'y'},
     )
 
@@ -180,7 +179,7 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
     assert new['authorization'] == _get_authorization(False)
 
 
-def test_update_existing_data_app_config_keeps_authorization_when_flag_is_none():
+def test_update_existing_data_app_config_keeps_authentication_when_flag_is_default():
     existing_authorization = {
         'app_proxy': {
             'auth_providers': [{'id': 'oidc', 'type': 'oidc', 'issuer_url': 'https://issuer'}],
@@ -204,7 +203,7 @@ def test_update_existing_data_app_config_keeps_authorization_when_flag_is_none()
         name='New Name',
         source_code='new-code',
         packages=['pandas'],
-        authorization_required=None,
+        authentication_type='default',
         secrets={'NEW': 'value'},
     )
 
