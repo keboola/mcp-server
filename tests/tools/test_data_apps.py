@@ -14,8 +14,8 @@ from keboola_mcp_server.tools.data_apps import (
     _get_data_app_slug,
     _get_secrets,
     _inject_query_to_source_code,
-    _is_authorized,
     _update_existing_data_app_config,
+    _uses_basic_authorization,
     deploy_data_app,
 )
 
@@ -32,7 +32,7 @@ def data_app() -> DataApp:
         config_version='test',
         type='test',
         auto_suspend_after_seconds=3600,
-        is_authorized=True,
+        uses_basic_authorization=True,
         parameters={},
         authorization={},
         state='test',
@@ -84,8 +84,8 @@ def test_get_authorization_mapping():
 
 
 def test_is_authorized_behavior():
-    assert _is_authorized(_get_authorization(True)) is True
-    assert _is_authorized(_get_authorization(False)) is False
+    assert _uses_basic_authorization(_get_authorization(True)) is True
+    assert _uses_basic_authorization(_get_authorization(False)) is False
 
 
 def test_inject_query_to_source_code_when_already_included():
@@ -135,7 +135,7 @@ def test_build_data_app_config_merges_defaults_and_secrets():
 
     params = config['parameters']
     assert params['dataApp']['slug'] == 'my-app'
-    assert params['script'] == [src]
+    assert params['script'] == [_inject_query_to_source_code(src)]
     # Default packages are included and deduplicated
     assert 'pandas' in params['packages']
     assert 'httpx' in params['packages']
@@ -163,12 +163,12 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
         name='New Name',
         source_code='new-code',
         packages=['pandas'],
-        authorize_with_password=False,
+        authorization_required=False,
         secrets={'FOO': 'new', 'NEW': 'y'},
     )
 
     assert new['parameters']['dataApp']['slug'] == 'new-name'
-    assert new['parameters']['script'] == ['new-code']
+    assert new['parameters']['script'] == [_inject_query_to_source_code('new-code')]
     # Removed previous packages
     assert 'numpy' not in new['parameters']['packages']
     # Packages combined with defaults
@@ -178,6 +178,43 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
     assert new['parameters']['dataApp']['secrets']['NEW'] == 'y'
     assert new['parameters']['dataApp']['secrets']['KEEP'] == 'x'
     assert new['authorization'] == _get_authorization(False)
+
+
+def test_update_existing_data_app_config_keeps_authorization_when_flag_is_none():
+    existing_authorization = {
+        'app_proxy': {
+            'auth_providers': [{'id': 'oidc', 'type': 'oidc', 'issuer_url': 'https://issuer'}],
+            'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc']}],
+        }
+    }
+    existing = {
+        'parameters': {
+            'dataApp': {
+                'slug': 'old-slug',
+                'secrets': {'KEEP': 'secret'},
+            },
+            'script': ['old'],
+            'packages': ['numpy'],
+        },
+        'authorization': existing_authorization,
+    }
+
+    new = _update_existing_data_app_config(
+        existing_config=existing,
+        name='New Name',
+        source_code='new-code',
+        packages=['pandas'],
+        authorization_required=None,
+        secrets={'NEW': 'value'},
+    )
+
+    assert new['authorization'] is existing_authorization
+    # verify the rest of the config is still updated
+    assert new['parameters']['dataApp']['slug'] == 'new-name'
+    assert 'pandas' in new['parameters']['packages']
+    assert 'httpx' in new['parameters']['packages']
+    assert new['parameters']['dataApp']['secrets']['NEW'] == 'value'
+    assert new['parameters']['dataApp']['secrets']['KEEP'] == 'secret'
 
 
 def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
