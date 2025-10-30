@@ -338,7 +338,7 @@ async def get_config(
         original_parameters = TransformationConfiguration.Parameters.model_validate(
             configuration.configuration_root.parameters
         )
-        simplified_parameters = original_parameters.to_simplified_parameters()
+        simplified_parameters: SimplifiedTfBlocks = await original_parameters.to_simplified_parameters()
         configuration.configuration_root.parameters = simplified_parameters.model_dump(by_alias=True)
 
     return configuration
