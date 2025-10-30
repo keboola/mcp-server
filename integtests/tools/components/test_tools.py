@@ -24,14 +24,18 @@ from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentType,
     ComponentWithConfigurations,
-    ConfigParamListAppend,
-    ConfigParamReplace,
-    ConfigParamSet,
     ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
     SimplifiedTfBlocks,
+    TfAddScript,
+    TfParamUpdate,
+    TfRenameBlock,
+    TfRenameCode,
+    TfSetCode,
+    TfStrReplace,
+    TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
@@ -39,6 +43,7 @@ from keboola_mcp_server.tools.components.utils import (
     expand_component_types,
     get_sql_transformation_id_from_sql_dialect,
     update_params,
+    update_transformation_parameters,
 )
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -766,7 +771,7 @@ async def initial_sqltrfm(
         arguments={
             'name': 'Initial Test SQL Transformation',
             'description': 'Initial SQL transformation for update test',
-            'sql_code_blocks': [{'name': 'Initial transformation', 'sql_statements': ['SELECT 1 as initial_column']}],
+            'sql_code_blocks': [{'name': 'Initial transformation', 'script': 'SELECT 1 as initial_column;'}],
             'created_table_names': ['initial_output_table'],
         },
     )
@@ -788,16 +793,16 @@ async def initial_sqltrfm(
         {
             'updated_description': 'Updated SQL transformation description',
             'parameter_updates': [
-                ConfigParamSet(op='set', path='blocks[0].name', new_val='Updated block'),
-                ConfigParamSet(op='set', path='blocks[0].codes[0].name', new_val='Updated transformation'),
-                ConfigParamSet(
-                    op='set',
-                    path='blocks[0].codes[0].script',
-                    new_val=[
-                        'SELECT 1 as updated_column',
-                        'SELECT 2 as additional_column',
-                        'SELECT 3 as third_column',
-                    ],
+                TfRenameBlock(op='rename_block', block_id='b0', block_name='Updated block'),
+                TfRenameCode(op='rename_code', block_id='b0', code_id='b0.c0', code_name='Updated code'),
+                TfSetCode(
+                    op='set_code',
+                    block_id='b0',
+                    code_id='b0.c0',
+                    script=(
+                        'SELECT 1 as updated_column;\n\nSELECT 2 as additional_column;\n\n'
+                        'SELECT 3 as third_column;\n\n'
+                    ),
                 ),
             ],
             'storage': {
@@ -814,14 +819,19 @@ async def initial_sqltrfm(
         {'updated_description': 'Updated SQL transformation description'},
         {
             'parameter_updates': [
-                ConfigParamReplace(
+                TfStrReplace(
                     op='str_replace',
-                    path='blocks[0].codes[0].script[0]',
+                    block_id='b0',
+                    code_id='b0.c0',
                     search_for='SELECT 1 as initial_column',
                     replace_with='SELECT * FROM updated_table',
                 ),
-                ConfigParamListAppend(
-                    op='list_append', path='blocks[0].codes[0].script', value='SELECT 2 as additional_column'
+                TfAddScript(
+                    op='add_script',
+                    block_id='b0',
+                    code_id='b0.c0',
+                    script='SELECT 2 as additional_column',
+                    position='end',
                 ),
             ]
         },
@@ -857,23 +867,35 @@ async def test_update_sql_transformation(
         orig_config = await keboola_client.storage_client.configuration_detail(
             component_id=component_id, configuration_id=configuration_id
         )
-        orig_parameters = cast(dict, orig_config.get('configuration', {}).get('parameters', {}))
+        orig_parameters_dict = cast(dict, orig_config.get('configuration', {}).get('parameters', {}))
 
-        # Convert the parameter update objects to ConfigParamUpdate if needed
-        param_updates: list[ConfigParamUpdate] = []
+        # Convert the parameter update objects to TfParamUpdate if needed
+        param_updates: list[TfParamUpdate] = []
         for update_obj in param_update_objects:
             if isinstance(update_obj, dict):
-                update = TypeAdapter(ConfigParamUpdate).validate_python(update_obj)
+                update = TypeAdapter(TfParamUpdate).validate_python(update_obj)
             else:
                 update = update_obj
             param_updates.append(update)
+
+    # Convert parameter update objects to dict format for tool call if needed
+    updates_dict = updates.copy()
+    if param_update_objects is not None:
+        param_updates_list = []
+        for update_obj in param_update_objects:
+            if isinstance(update_obj, dict):
+                param_updates_list.append(update_obj)
+            else:
+                # Convert Pydantic model to dict
+                param_updates_list.append(update_obj.model_dump())
+        updates_dict['parameter_updates'] = param_updates_list
 
     tool_result = await mcp_client.call_tool(
         name='update_sql_transformation',
         arguments={
             'change_description': 'Integration test update',
             'configuration_id': configuration_id,
-            **updates,
+            **updates_dict,
         },
     )
 
@@ -920,7 +942,14 @@ async def test_update_sql_transformation(
     assert isinstance(actual_parameters, dict), f'Expecting dict, got: {type(actual_parameters)}'
 
     if param_update_objects is not None:
-        expected_parameters = update_params(orig_parameters, param_updates)
+        # Convert original parameters to SimplifiedTfBlocks, apply updates, then convert back
+        orig_raw_parameters = TransformationConfiguration.Parameters.model_validate(orig_parameters_dict)
+        orig_simplified_parameters = await orig_raw_parameters.to_simplified_parameters()
+
+        updated_params = update_transformation_parameters(orig_simplified_parameters, param_updates)
+        updated_raw_parameters = await updated_params.to_raw_parameters()
+
+        expected_parameters = updated_raw_parameters.model_dump(exclude_none=True)
         assert actual_parameters == expected_parameters
 
     actual_storage = trfm_data.get('storage')
