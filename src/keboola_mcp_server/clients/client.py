@@ -97,7 +97,7 @@ class KeboolaClient:
         storage_api_token: str,
         bearer_token: str | None = None,
         branch_id: str | None = None,
-        headers: dict[str, Any] | None = None,
+        headers: Mapping[str, Any] | None = None,
     ) -> None:
         """
         Initialize the client.
@@ -111,18 +111,18 @@ class KeboolaClient:
         self._token = storage_api_token
         self._bearer_token = bearer_token
         self._branch_id = branch_id
-        self._headers = headers
+        self._headers = dict(headers) if headers else None
 
         sapi_url_parsed = urlparse(storage_api_url)
         if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
             raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
 
-        hostname_suffix = sapi_url_parsed.hostname.split('connection.')[1]
-        self._storage_api_url = urlunparse(('https', f'connection.{hostname_suffix}', '', '', '', ''))
-        queue_api_url = urlunparse(('https', f'queue.{hostname_suffix}', '', '', '', ''))
-        ai_service_api_url = urlunparse(('https', f'ai.{hostname_suffix}', '', '', '', ''))
-        data_science_api_url = urlunparse(('https', f'data-science.{hostname_suffix}', '', '', '', ''))
-        encryption_api_url = urlunparse(('https', f'encryption.{hostname_suffix}', '', '', '', ''))
+        self._hostname_suffix = sapi_url_parsed.hostname.split('connection.')[1]
+        self._storage_api_url = urlunparse(('https', f'connection.{self._hostname_suffix}', '', '', '', ''))
+        queue_api_url = urlunparse(('https', f'queue.{self._hostname_suffix}', '', '', '', ''))
+        ai_service_api_url = urlunparse(('https', f'ai.{self._hostname_suffix}', '', '', '', ''))
+        data_science_api_url = urlunparse(('https', f'data-science.{self._hostname_suffix}', '', '', '', ''))
+        encryption_api_url = urlunparse(('https', f'encryption.{self._hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
@@ -144,6 +144,10 @@ class KeboolaClient:
         )
 
     @property
+    def hostname_suffix(self) -> str:
+        return self._hostname_suffix
+
+    @property
     def storage_api_url(self) -> str:
         return self._storage_api_url
 
@@ -158,6 +162,10 @@ class KeboolaClient:
         to the main/production branch.
         """
         return self._branch_id
+
+    @property
+    def headers(self) -> dict[str, Any] | None:
+        return dict(self._headers) if self._headers else None
 
     @property
     def storage_client(self) -> 'AsyncStorageClient':
