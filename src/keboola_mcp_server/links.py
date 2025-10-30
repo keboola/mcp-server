@@ -105,11 +105,11 @@ class ProjectLinksManager:
 
     # --- Data Apps ---
     def get_data_app_config_link(
-        self, configuration_id: str, configuration_name: str, uses_basic_authorization: bool
+        self, configuration_id: str, configuration_name: str, uses_basic_authentication: bool
     ) -> Link:
         title = (
             f'Data App Configuration (To see password, click on "OPEN DATA APP"): {configuration_name}'
-            if uses_basic_authorization
+            if uses_basic_authentication
             else f'Data App Configuration: {configuration_name}'
         )
         return Link.detail(title=title, url=self._url(f'data-apps/{configuration_id}'))
@@ -125,13 +125,13 @@ class ProjectLinksManager:
         configuration_id: str,
         configuration_name: str,
         deployment_link: str | None = None,
-        uses_basic_authorization: bool = False,
+        uses_basic_authentication: bool = False,
     ) -> list[Link]:
         links = [
             self.get_data_app_config_link(
                 configuration_id=configuration_id,
                 configuration_name=configuration_name,
-                uses_basic_authorization=uses_basic_authorization,
+                uses_basic_authentication=uses_basic_authentication,
             ),
             self.get_data_app_dashboard_link(),
         ]
