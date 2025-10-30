@@ -62,28 +62,27 @@ class SearchHit(BaseModel):
     description: str | None = Field(default=None, description='Description of the item.')
 
     @model_validator(mode='after')
-    @classmethod
-    def check_id_fields(cls, model: 'SearchHit') -> 'SearchHit':
+    def check_id_fields(self) -> 'SearchHit':
         id_fields = [
-            model.bucket_id,
-            model.table_id,
-            model.component_id,
-            model.configuration_id,
-            model.configuration_row_id,
+            self.bucket_id,
+            self.table_id,
+            self.component_id,
+            self.configuration_id,
+            self.configuration_row_id,
         ]
 
         if not any(field for field in id_fields if field):
             raise ValueError('At least one ID field must be filled.')
 
-        if model.configuration_row_id and not all([model.component_id, model.configuration_id]):
+        if self.configuration_row_id and not all([self.component_id, self.configuration_id]):
             raise ValueError(
                 'If configuration_row_id is filled, ' 'both component_id and configuration_id must be filled.'
             )
 
-        if model.configuration_id and not model.component_id:
+        if self.configuration_id and not self.component_id:
             raise ValueError('If configuration_id is filled, component_id must be filled.')
 
-        return model
+        return self
 
 
 def _matches_pattern(text: str | None, patterns: list[re.Pattern]) -> bool:

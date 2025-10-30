@@ -37,15 +37,15 @@ async def test_search_end_to_end(
 
     # Create sets of expected IDs for verification
     expected_bucket_ids = {bucket.bucket_id for bucket in buckets}
-    actual_bucket_ids ={hit.bucket_id for hit in result if hit.item_type == 'bucket'}
+    actual_bucket_ids = {hit.bucket_id for hit in result if hit.item_type == 'bucket'}
     assert actual_bucket_ids == expected_bucket_ids, 'Should find all test buckets'
 
     expected_table_ids = {table.table_id for table in tables}
-    actual_table_ids ={hit.table_id for hit in result if hit.item_type == 'table'}
+    actual_table_ids = {hit.table_id for hit in result if hit.item_type == 'table'}
     assert actual_table_ids == expected_table_ids, 'Should find all test tables'
 
     expected_config_ids = {config.configuration_id for config in configs}
-    actual_config_ids ={hit.configuration_id for hit in result if hit.item_type in ['configuration', 'transformation']}
+    actual_config_ids = {hit.configuration_id for hit in result if hit.item_type in ['configuration', 'transformation']}
     assert actual_config_ids == expected_config_ids, 'Should find all test configurations'
 
 
