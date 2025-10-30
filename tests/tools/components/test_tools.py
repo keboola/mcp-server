@@ -21,7 +21,6 @@ from keboola_mcp_server.tools.components.model import (
     ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
-    ConfigParamListAppend,
     ConfigParamRemove,
     ConfigParamReplace,
     ConfigParamSet,
@@ -32,6 +31,10 @@ from keboola_mcp_server.tools.components.model import (
     ConfigurationSummary,
     ListConfigsOutput,
     SimplifiedTfBlocks,
+    TfParamUpdate,
+    TfRenameBlock,
+    TfSetCode,
+    TfStrReplace,
 )
 from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
 from keboola_mcp_server.tools.components.utils import clean_bucket_name
@@ -366,9 +369,12 @@ async def test_create_sql_transformation_fail(
             'Snowflake',
             'keboola.snowflake-transformation',
             [
-                ConfigParamSet(op='set', path='blocks[0].name', new_val='Updated Blocks'),
-                ConfigParamListAppend(
-                    op='list_append', path='blocks[0].codes[0].script', value='SELECT * FROM new_table'
+                TfRenameBlock(op='rename_block', block_id='b0', block_name='Updated Blocks'),
+                TfSetCode(
+                    op='set_code',
+                    block_id='b0',
+                    code_id='b0.c0',
+                    script='SELECT 1;\n\nSELECT * FROM new_table;\n\n',
                 ),
             ],
             {'output': {'tables': []}},
@@ -377,22 +383,23 @@ async def test_create_sql_transformation_fail(
                     'blocks': [
                         {
                             'name': 'Updated Blocks',
-                            'codes': [{'name': 'Existing Code', 'script': ['SELECT 1', 'SELECT * FROM new_table']}],
+                            'codes': [{'name': 'Existing Code', 'script': ['SELECT 1;', 'SELECT * FROM new_table;']}],
                         }
                     ]
                 },
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
             },
-            id='snowflake_with_list_append_and_set',
+            id='snowflake_rename_block_and_set_code',
         ),
         pytest.param(
             'BigQuery',
             'keboola.google-bigquery-transformation',
             [
-                ConfigParamReplace(
+                TfStrReplace(
                     op='str_replace',
-                    path='blocks[0].codes[0].script[0]',
+                    block_id='b0',
+                    code_id='b0.c0',
                     search_for='SELECT 1',
                     replace_with='SELECT 2',
                 ),
@@ -400,12 +407,12 @@ async def test_create_sql_transformation_fail(
             None,
             {
                 'parameters': {
-                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 2']}]}]
+                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 2;']}]}]
                 },
                 'storage': {'input': {'tables': ['existing_table']}},
                 'other_field': 'should_be_preserved',
             },
-            id='bigquery_with_str_replace',
+            id='bigquery_str_replace',
         ),
         pytest.param(
             'Snowflake',
@@ -431,11 +438,13 @@ async def test_update_sql_transformation(
     mock_configuration: dict[str, Any],
     sql_dialect: str,
     expected_component_id: str,
-    parameter_updates: list[ConfigParamUpdate] | None,
+    parameter_updates: list[TfParamUpdate] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
-    """Test update_sql_transformation tool with parameter_updates."""
+    """
+    Test update_sql_transformation tool with transformation-specific parameter_updates.
+    """
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     # Mock the WorkspaceManager
