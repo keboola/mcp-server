@@ -111,6 +111,10 @@ class _Workspace(abc.ABC):
         """Runs a SQL SELECT query."""
         pass
 
+    @abc.abstractmethod
+    async def get_branch_id(self) -> str:
+        """Returns the branch ID."""
+        pass
 
 class _SnowflakeWorkspace(_Workspace):
     def __init__(self, workspace_id: int, schema: str, client: KeboolaClient):
@@ -234,6 +238,11 @@ class _SnowflakeWorkspace(_Workspace):
             raise ValueError(f'Unexpected query status: {results["status"]}')
 
         return query_result
+    
+    async def get_branch_id(self) -> str:
+        if not self._qsclient:
+            self._qsclient = await self._create_qs_client()
+        return self._qsclient.branch_id
 
     async def _create_qs_client(self) -> QueryServiceClient:
         real_branch_id = self._client.branch_id
@@ -312,6 +321,9 @@ class _BigQueryWorkspace(_Workspace):
     async def execute_query(self, sql_query: str) -> QueryResult:
         resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
         return TypeAdapter(QueryResult).validate_python(resp)
+
+    async def get_branch_id(self) -> str:
+        return self._client.branch_id or 'default'
 
 
 @dataclass(frozen=True)
@@ -542,3 +554,7 @@ class WorkspaceManager:
     async def get_workspace_id(self) -> int:
         workspace = await self._get_workspace()
         return workspace.id
+
+    async def get_branch_id(self) -> str:
+        workspace = await self._get_workspace()
+        return await workspace.get_branch_id()
