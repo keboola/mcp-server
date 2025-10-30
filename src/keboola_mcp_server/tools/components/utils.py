@@ -33,6 +33,7 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.tools.components import tf_update
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentSummary,
@@ -493,7 +494,9 @@ def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) ->
     :param update: Parameter update operation to apply
     :return: The updated transformation parameters
     """
-    pass
+    operation = update.op
+    tf_update_func = getattr(tf_update, operation)
+    return tf_update_func(parameters, update)
 
 
 def add_ids(parameters: dict[str, Any]) -> dict[str, Any]:

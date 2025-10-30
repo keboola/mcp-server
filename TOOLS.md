@@ -948,59 +948,171 @@ PREREQUISITES:
 - Transformation must already exist (use create_sql_transformation for new transformations)
 - You must know the configuration_id of the transformation
 - SQL dialect is determined automatically from the workspace
-- For parameter updates: Use get_config to see current transformation structure first
+- CRITICAL: Use get_config first to see the current transformation structure and get block_id/code_id values
+
+TRANSFORMATION STRUCTURE:
+A transformation has this hierarchy:
+  transformation
+  └─ blocks[] - List of transformation blocks (each has a unique block_id)
+     └─ block.name - Descriptive name for the block
+     └─ block.codes[] - List of code blocks within the block (each has a unique code_id)
+        └─ code.name - Descriptive name for the code block
+        └─ code.script - SQL script (string with SQL statements)
+
+Example structure from get_config:
+{
+  "blocks": [
+    {
+      "id": "b0",  ← block_id needed for operations (format: b{index})
+      "name": "Data Preparation",
+      "codes": [
+        {
+          "id": "b0.c0",  ← code_id needed for operations (format: b{block_index}.c{code_index})
+          "name": "Load customers",
+          "script": "SELECT * FROM customers WHERE status = 'active';"
+        }
+      ]
+    }
+  ]
+}
+
+PARAMETER UPDATE OPERATIONS:
+All operations use block_id and code_id to identify elements (get these from get_config first).
+
+ID Format:
+- block_id: "b0", "b1", "b2", etc. (format: b{index})
+- code_id: "b0.c0", "b0.c1", "b1.c0", etc. (format: b{block_index}.c{code_index})
+
+1. BLOCK OPERATIONS:
+   - add_block: Create a new block in the transformation
+     {"op": "add_block", "block": {"name": "New Block", "codes": []}, "position": "end"}
+
+   - remove_block: Delete an entire block
+     {"op": "remove_block", "block_id": "b0"}
+
+   - rename_block: Change a block's name
+     {"op": "rename_block", "block_id": "b2", "block_name": "Updated Name"}
+
+2. CODE BLOCK OPERATIONS:
+   - add_code: Create a new code block within an existing block
+     {"op": "add_code", "block_id": "b1", "code": {"name": "New Code", "script": "SELECT 1;"}, "position": "end"}
+
+   - remove_code: Delete a code block
+     {"op": "remove_code", "block_id": "b0", "code_id": "b0.c0"}
+
+   - rename_code: Change a code block's name
+     {"op": "rename_code", "block_id": "b1", "code_id": "b1.c2", "code_name": "Updated Name"}
+
+3. SQL SCRIPT OPERATIONS:
+   - set_code: Replace the entire SQL script (overwrites existing)
+     {"op": "set_code", "block_id": "b0", "code_id": "b0.c0", "script": "SELECT * FROM new_table;"}
+
+   - add_script: Append or prepend SQL to existing script (preserves existing)
+     {"op": "add_script", "block_id": "b2", "code_id": "b2.c1", "script": "WHERE date > '2024-01-01'",
+      "position": "end"}
+
+   - str_replace: Find and replace text in SQL scripts
+     {"op": "str_replace", "search_for": "old_table", "replace_with": "new_table", "block_id": "b0",'
+      "code_id": "b0.c0"}
+     - Omit code_id to replace in all codes of a block
+     - Omit both block_id and code_id to replace everywhere
 
 IMPORTANT CONSIDERATIONS:
-- Parameter updates are PARTIAL - only specify the operations you want to perform
-- parameter_updates supports: set (values), str_replace (find/replace), list_append (add), remove (delete)
-- Use JSONPath to target nested values: "blocks[0].codes[0].script[0]" for specific SQL statements
-- Each SQL statement must be executable and follow the current SQL dialect
-- Storage configuration is COMPLETE REPLACEMENT - include all mappings you want to keep
-- When behavior doesn't change, leave updated_description empty to preserve original
+- Parameter updates are PARTIAL - only the operations you specify are applied
+- All other parts of the transformation remain unchanged
+- Each SQL script must be executable and follow the current SQL dialect
+- Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
+- Leave updated_description empty to preserve the original description
 - SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
   manually deleting the output table before running the updated transformation to avoid schema mismatch errors.
   Non-destructive changes (adding columns) typically do not require table deletion.
 
-PARAMETER UPDATE OPERATIONS FOR TRANSFORMATIONS:
-- set: Replace/create value
-  Example: {"op": "set", "path": "blocks[0].name", "new_val": "ETL Block"}
-- str_replace: Find and replace in SQL strings
-  Example: {"op": "str_replace", "path": "blocks[0].codes[0].script[0]",
-            "search_for": "old_table", "replace_with": "new_table"}
-- list_append: Add SQL statement to script array
-  Example: {"op": "list_append", "path": "blocks[0].codes[0].script",
-            "value": "SELECT * FROM new_source"}
-- remove: Delete block, code, or SQL statement
-  Example: {"op": "remove", "path": "blocks[0].codes[1]"}
-
-TRANSFORMATION STRUCTURE:
-parameters.blocks[i] - Transformation block
-  └─ blocks[i].name - Block name
-  └─ blocks[i].codes[j] - Code block (groups related SQL statements)
-     └─ codes[j].name - Descriptive name for the code block
-     └─ codes[j].script - SQL script
-
 WORKFLOW:
-1. Retrieve current transformation using get_config to understand structure
+1. Call get_config to retrieve current transformation structure and identify block_id/code_id values
 2. Identify what needs to change (SQL code, storage, description)
-3. For SQL changes: Prepare parameter_updates with targeted operations
-4. For storage changes: Build complete storage configuration
-5. Call update_sql_transformation with only the fields to change
+3. For SQL changes: Prepare parameter_updates list with targeted operations
+4. For storage changes: Build complete storage configuration (include all mappings)
+5. Call update_sql_transformation with change_description and only the fields to change
 
-EXAMPLES:
-- user_input: `Add a WHERE clause to filter active customers`
-  → Use str_replace: {"op": "str_replace", "path": "blocks[0].codes[0].script[0]",
-                       "search_for": "FROM customers", "replace_with": "FROM customers WHERE status = 'active'"}
+EXAMPLE WORKFLOWS:
 
-- user_input: `Add a new SQL statement to join with orders table`
-  → Use list_append: {"op": "list_append", "path": "blocks[0].codes[0].script",
-                       "value": "SELECT * FROM customers c JOIN orders o ON c.id = o.customer_id"}
+Example 1 - Update SQL script in existing code block:
+Step 1: Get current config
+  result = get_config(component_id="keboola.snowflake-transformation", configuration_id="12345")
+  # Note the block_id (e.g., "b0") and code_id (e.g., "b0.c1") from result
 
-- user_input: `Change the code block name to 'Customer Analytics'`
-  → Use set: {"op": "set", "path": "blocks[0].codes[0].name", "new_val": "Customer Analytics"}
+Step 2: Update the SQL
+  update_sql_transformation(
+    configuration_id="12345",
+    change_description="Updated WHERE clause to filter active customers only",
+    parameter_updates=[
+      {
+        "op": "set_code",
+        "block_id": "b0",      # from step 1
+        "code_id": "b0.c0",    # from step 1
+        "script": "SELECT * FROM customers WHERE status = 'active' AND region = 'US';"
+      }
+    ]
+  )
 
-- user_input: `Update the transformation description`
-  → Set updated_description parameter (no parameter_updates needed)
+Example 2 - Add a new code block to existing transformation:
+  update_sql_transformation(
+    configuration_id="12345",
+    change_description="Added aggregation step",
+    parameter_updates=[
+      {
+        "op": "add_code",
+        "block_id": "b1",  # second block
+        "code": {
+          "name": "Aggregate Sales",
+          "script": "SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;"
+        },
+        "position": "end"
+      }
+    ]
+  )
+
+Example 3 - Replace table name across all SQL scripts:
+  update_sql_transformation(
+    configuration_id="12345",
+    change_description="Renamed source table from old_customers to customers",
+    parameter_updates=[
+      {
+        "op": "str_replace",
+        "search_for": "old_customers",
+        "replace_with": "customers"
+        # No block_id or code_id = applies to all scripts
+      }
+    ]
+  )
+
+Example 4 - Update storage mappings:
+  update_sql_transformation(
+    configuration_id="12345",
+    change_description="Added new input table",
+    storage={
+      "input": {
+        "tables": [
+          {
+            "source": "in.c-main.customers",
+            "destination": "customers"
+          },
+          {
+            "source": "in.c-main.orders",
+            "destination": "orders"
+          }
+        ]
+      },
+      "output": {
+        "tables": [
+          {
+            "source": "result",
+            "destination": "out.c-main.customer_summary"
+          }
+        ]
+      }
+    }
+  )
 
 
 **Input JSON Schema**:
@@ -1321,7 +1433,7 @@ EXAMPLES:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply to transformation parameters (blocks, codes, SQL). Each operation (set, str_replace, remove, list_append) modifies specific parameters using JSONPath. Only provide if updating SQL code or block structure - do not use for description or storage changes. Prefer targeted updates - only change what needs changing. \n\nCommon paths:\n- \"blocks[0].name\" - Block name\n- \"blocks[0].codes[0].name\" - Code block name\n- \"blocks[0].codes[0].script\" - Array of SQL statements\n- \"blocks[0].codes[0].script[0]\" - First SQL statement\n\nOperations:\n- set: Replace/create value (e.g., update block name)\n- str_replace: Find/replace in SQL (e.g., change table name)\n- list_append: Add SQL statement to script array\n- remove: Delete a block, code, or statement",
+      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_config first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
       "items": {
         "discriminator": {
           "mapping": {
