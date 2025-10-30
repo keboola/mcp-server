@@ -60,6 +60,9 @@ Type = Literal['streamlit']
 # LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
 
+# Type of the authentication used in the data app
+AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
+
 
 class DataAppSummary(BaseModel):
     """A summary of a data app used for sync operations."""
@@ -137,8 +140,8 @@ class DataApp(BaseModel):
     auto_suspend_after_seconds: int = Field(
         description='The number of seconds after which the running data app is automatically suspended.'
     )
-    parameters: dict[str, Any] = Field(description='The parameters of the data app.')
-    authorization: dict[str, Any] = Field(description='The authorization of the data app.')
+    parameters: dict[str, Any] = Field(description='The parameters settings of the data app.')
+    authorization: dict[str, Any] = Field(description='The authorization settings of the data app.')
     storage: dict[str, Any] = Field(
         description='The storage input/output mapping of the data app.', default_factory=dict
     )
@@ -235,13 +238,13 @@ async def modify_data_app(
             'into the environment before the code runs. For example: ["pandas", "requests~=2.32"].'
         ),
     ],
-    authorization_required: Annotated[
-        bool,
+    authentication_type: Annotated[
+        AuthenticationType,
         Field(
             description=(
-                'Optional basic authorization toggle. True sets the data app to be secured using basic authorization,'
-                'False removes authorization completely, and None sets the basic authorization when creating or keeps '
-                'the existing authorization when updating.'
+                'Optional authentication type. "no-auth" removes authentication completely, "basic-auth" sets the data '
+                'app to be secured using basic authentication, and "default" keeps the existing authentication type '
+                'when updating.'
             )
         ),
     ] = None,
@@ -266,9 +269,9 @@ async def modify_data_app(
     parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
     appropriately based on the parameter type.
     - If the data app is updated while running, it must be redeployed for the changes to take effect.
-    - New apps use basic authorization by default for security unless explicitly specified otherwise; when updating,
-    omit `authorization_required` to keep the existing authorization configuration (including OIDC setups) unless
-    explicitly specified otherwise.
+    - New apps use basic authentication by default for security unless explicitly specified otherwise; when updating,
+    set `authentication_type` to `default` to keep the existing authentication type configuration (including OIDC setups)
+    unless explicitly specified otherwise.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
@@ -286,7 +289,7 @@ async def modify_data_app(
             'storage': data_app.storage,
         }
         updated_config = _update_existing_data_app_config(
-            existing_config, name, source_code, packages, authorization_required, secrets
+            existing_config, name, source_code, packages, authentication_type, secrets
         )
         updated_config = cast(
             dict[str, Any],
@@ -313,7 +316,7 @@ async def modify_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authorization=_uses_basic_authorization(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
         )
         response = (
             'updated (redeploy required to apply changes in the running app)'
@@ -325,7 +328,7 @@ async def modify_data_app(
         )
     else:
         # Create new data app
-        config = _build_data_app_config(name, source_code, packages, authorization_required, secrets)
+        config = _build_data_app_config(name, source_code, packages, authentication_type, secrets)
         config = await client.encryption_client.encrypt(
             config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
         )
@@ -342,7 +345,7 @@ async def modify_data_app(
             configuration_id=data_app_resp.config_id,
             configuration_name=name,
             deployment_link=data_app_resp.url,
-            uses_basic_authorization=_uses_basic_authorization(validated_config.authorization),
+            uses_basic_authentication=_uses_basic_authentication(validated_config.authorization),
         )
         return ModifiedDataAppOutput(
             response='created', data_app=DataAppSummary.from_api_response(data_app_resp), links=links
@@ -429,7 +432,7 @@ async def deploy_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authorization=_uses_basic_authorization(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
         )
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
@@ -442,7 +445,7 @@ async def deploy_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=None,
-            uses_basic_authorization=_uses_basic_authorization(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
         )
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=None)
     else:
@@ -461,7 +464,7 @@ def _build_data_app_config(
     name: str,
     source_code: str,
     packages: list[str],
-    authorization_required: Optional[bool],
+    authentication_type: AuthenticationType,
     secrets: dict[str, Any],
 ) -> dict[str, Any]:
     packages = sorted(list(set(packages + _DEFAULT_PACKAGES)))
@@ -480,7 +483,7 @@ def _build_data_app_config(
         'packages': packages,
     }
     # By default secure with basic authorization
-    authorization = _get_authorization(authorization_required is None or authorization_required)
+    authorization = _get_authorization(authentication_type in ['basic-auth', 'default'])
     return {'parameters': parameters, 'authorization': authorization}
 
 
@@ -489,7 +492,7 @@ def _update_existing_data_app_config(
     name: str,
     source_code: str,
     packages: list[str],
-    authorization_required: Optional[bool],
+    authentication_type: AuthenticationType,
     secrets: dict[str, Any],
 ) -> dict[str, Any]:
     new_config = existing_config.copy()
@@ -509,8 +512,8 @@ def _update_existing_data_app_config(
     )
     new_config['authorization'] = (
         existing_config['authorization']
-        if authorization_required is None
-        else _get_authorization(authorization_required)
+        if authentication_type == 'default'
+        else _get_authorization(authentication_type == 'basic-auth')
     )
     return new_config
 
@@ -569,7 +572,7 @@ async def _fetch_data_app_details_task(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authorization=_uses_basic_authorization(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
         )
         logs = await _fetch_logs(client, data_app.data_app_id)
         return data_app.with_links(links).with_deployment_info(logs)
@@ -588,8 +591,8 @@ async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:
         return []
 
 
-def _get_authorization(auth_required: bool) -> dict[str, Any]:
-    if auth_required:
+def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
+    if auth_with_password:
         return {
             'app_proxy': {
                 'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}],
@@ -609,7 +612,7 @@ def _get_data_app_slug(name: str) -> str:
     return re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-'))
 
 
-def _uses_basic_authorization(authorization: dict[str, Any]) -> bool:
+def _uses_basic_authentication(authorization: dict[str, Any]) -> bool:
     try:
         return any(
             auth_rule['auth_required'] and 'simpleAuth' in auth_rule.get('auth', [])
