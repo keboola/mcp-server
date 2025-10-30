@@ -1121,10 +1121,12 @@ from the workspace.
 - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
 `query_data` tool to inspect the data in the workspace before using it in the data app.
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
-parameter.
+parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
+appropriately based on the parameter type.
 - If the data app is updated while running, it must be redeployed for the changes to take effect.
-- The Data App requires basic authorization by default for security reasons, unless explicitly specified otherwise
-by the user.
+- New apps use basic authorization by default for security unless explicitly specified otherwise; when updating,
+omit `authorization_required` to keep the existing authorization configuration (including OIDC setups) unless
+explicitly specified otherwise.
 
 
 **Input JSON Schema**:
@@ -1151,8 +1153,8 @@ by the user.
       "type": "array"
     },
     "authorization_required": {
-      "default": true,
-      "description": "Whether the data app is authorized using simple password or not.",
+      "default": null,
+      "description": "Optional basic authorization toggle. True sets the data app to be secured using basic authorization,False removes authorization completely, and None sets the basic authorization when creating or keeps the existing authorization when updating.",
       "type": "boolean"
     },
     "configuration_id": {
