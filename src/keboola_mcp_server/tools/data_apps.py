@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast
 import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
+import importlib.resources as resources
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
@@ -59,6 +60,19 @@ Type = Literal['streamlit']
 # Accepts known types or any string preventing from validation errors when receiving unknown types from the API
 # LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
+
+_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = (
+    resources.files("keboola_mcp_server.resources.data_app").joinpath("qsapi_query_data_code.py").read_text()
+)
+_STORAGE_QUERY_DATA_FUNCTION_CODE = (
+    resources.files("keboola_mcp_server.resources.data_app").joinpath("sapi_query_data_code.py").read_text()
+)
+
+_DEFAULT_STREAMLIT_THEME = (
+    '[theme]\nfont = "sans serif"\ntextColor = "#222529"\nbackgroundColor = "#FFFFFF"\nsecondaryBackgroundColor = '
+    '"#E6F2FF"\nprimaryColor = "#1F8FFF"'
+)
+_DEFAULT_PACKAGES = ['pandas', 'httpx']
 
 
 class DataAppSummary(BaseModel):
@@ -276,7 +290,8 @@ async def modify_data_app(
 
     secrets = _get_secrets(
         workspace_id=str(workspace_id),
-        branch_id=str(branch_id)
+        branch_id=str(branch_id),
+        token=str(client.token),
     )
 
     if configuration_id:
@@ -451,14 +466,6 @@ async def deploy_data_app(
         raise ValueError(f'Invalid action: {action}')
 
 
-_DEFAULT_STREAMLIT_THEME = (
-    '[theme]\nfont = "sans serif"\ntextColor = "#222529"\nbackgroundColor = "#FFFFFF"\nsecondaryBackgroundColor = '
-    '"#E6F2FF"\nprimaryColor = "#1F8FFF"'
-)
-
-_DEFAULT_PACKAGES = ['pandas', 'httpx']
-
-
 def _build_data_app_config(
     name: str,
     source_code: str,
@@ -606,128 +613,9 @@ def _is_authorized(authorization: dict[str, Any]) -> bool:
         return False
 
 
-_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = """
-#### INJECTED_CODE ####
-#### QUERY DATA FUNCTION ####
-import os
-import time
-
-import httpx
-import pandas as pd
-
-
-def query_data(query: str) -> pd.DataFrame:
-    branch_id = os.environ.get('BRANCH_ID')
-    workspace_id = os.environ.get('WORKSPACE_ID')
-    token = os.environ.get('KBC_TOKEN')
-    kbc_url = os.environ.get('KBC_URL')
-
-    if not branch_id or not workspace_id or not token or not kbc_url:
-        raise RuntimeError('Missing required environment variables: BRANCH_ID, WORKSPACE_ID, KBC_TOKEN, KBC_URL.')
-
-    query_service_url = kbc_url.replace('connection.', 'query.', 1).rstrip('/') + '/api/v1'
-
-    timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
-    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-
-    with httpx.Client(timeout=timeout, limits=limits) as client:
-        response = client.post(
-            f'{query_service_url}/branches/{branch_id}/workspaces/{workspace_id}/queries',
-            json={'statements': [query]},
-            headers={
-                'X-StorageAPI-Token': token,
-                'Accept': 'application/json',
-            },
-        )
-        response.raise_for_status()
-        submission = response.json()
-        job_id = submission.get('queryJobId')
-        if not job_id:
-            raise RuntimeError('Query Service did not return a job identifier.')
-
-        start_ts = time.monotonic()
-        while True:
-            status_response = client.get(
-                f'{query_service_url}/queries/{job_id}',
-                headers={'X-StorageAPI-Token': token},
-            )
-            status_response.raise_for_status()
-            job_info = status_response.json()
-            status = job_info.get('status')
-            if status in {'completed', 'failed', 'canceled'}:
-                break
-            if time.monotonic() - start_ts > 120:
-                raise TimeoutError(f'Timed out waiting for query "{job_id}" to finish.')
-            time.sleep(1)
-
-        statements = job_info.get('statements') or []
-        if not statements:
-            raise RuntimeError('Query Service returned no statements for the executed query.')
-        statement_id = statements[0]['id']
-
-        results_response = client.get(
-            f'{query_service_url}/queries/{job_id}/{statement_id}/results',
-            headers={'X-StorageAPI-Token': token},
-        )
-        results_response.raise_for_status()
-        results = results_response.json()
-
-        if results.get('status') != 'completed':
-            raise ValueError(f'Error when executing query "{query}": {results.get("message")}.')
-
-        columns = [col['name'] for col in results.get('columns', [])]
-        data_rows = [
-            {col_name: value for col_name, value in zip(columns, row)}
-            for row in results.get('data', [])
-        ]
-        return pd.DataFrame(data_rows)
-
-#### END_OF_INJECTED_CODE ####
-"""
-
-
-_STORAGE_QUERY_DATA_FUNCTION_CODE = """
-#### INJECTED_CODE ####
-#### QUERY DATA FUNCTION ####
-import httpx
-import os
-import pandas as pd
-
-
-def query_data(query: str) -> pd.DataFrame:
-    branch_id = os.environ.get('BRANCH_ID')
-    workspace_id = os.environ.get('WORKSPACE_ID')
-    kbc_url = os.environ.get('KBC_URL')
-    token = os.environ.get('KBC_TOKEN')
-
-    if not branch_id or not workspace_id or not kbc_url or not token:
-        raise RuntimeError('Missing required environment variables: BRANCH_ID, WORKSPACE_ID, KBC_URL, KBC_TOKEN.')
-
-    timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
-    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-
-    with httpx.Client(timeout=timeout, limits=limits) as client:
-        response = client.post(
-            f'{kbc_url}/v2/storage/branch/{branch_id}/workspaces/{workspace_id}/query',
-            json={'query': query},
-            headers={
-                'X-StorageAPI-Token': token,
-                'Accept': 'application/json',
-            },
-        )
-        response.raise_for_status()
-        response_json = response.json()
-        if response_json.get('status') == 'error':
-            raise ValueError(f'Error when executing query "{query}": {response_json.get("message")}.')
-        return pd.DataFrame(response_json['data']['rows'])
-
-#### END_OF_INJECTED_CODE ####
-"""
-
-
 def _get_query_function_code(sql_dialect: str) -> str:
     """
-    Selects the appropriate query function code snippet for the given SQL dialect.
+    Selects the appropriate query function code for the given SQL dialect.
     """
     sql_dialect = sql_dialect.lower()
     if sql_dialect == 'snowflake':
@@ -738,20 +626,28 @@ def _get_query_function_code(sql_dialect: str) -> str:
         raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
 
 
-def _strip_known_query_function_snippets(source_code: str) -> str:
+def _strip_injected_query_code(source_code: str) -> str:
     """
-    Removes known query_data implementations to keep the generated source consistent when reinjecting the code.
+    Removes injected query_data function code to keep the generated source consistent when reinjecting the code.
+
+    :param source_code: The source code of the data app
+    :return: The source code with the injected query_data function code removed
     """
     for snippet in (_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE, _STORAGE_QUERY_DATA_FUNCTION_CODE):
-        while snippet in source_code:
-            source_code = source_code.replace(snippet, '')
+        source_code = source_code.replace(snippet, '')
     return source_code
 
 
 def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
     """
-    Injects the query_data function into the source code. Existing injected snippets are replaced to keep the code in
-    sync with the current workspace backend.
+    Injects the query_data function into the source code.
+    - Removes existing injected code (for both SQL dialects) to keep the generated source consistent when reinjecting
+    the code.
+    - Injects query code based on the SQL dialect:
+    - if {QUERY_DATA_FUNCTION} exists, Injects the query_data function into the source code for placeholder .
+    - else if ### INJECTED_CODE ### and ### END_OF_INJECTED_CODE ### exist, inject the query_data function for this.
+    - else inject the query_data function at the beginning of the source code.
+
     :param source_code: The source code of the data app
     :param sql_dialect: The SQL dialect of the workspace
     :return: The source code with the query_data function injected
@@ -761,26 +657,26 @@ def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
     query_function_code = _get_query_function_code(sql_dialect)
     if query_function_code in source_code:
         return source_code
-    # remove existing injected snippets to keep the code in sync with the current SQL dialect
-    source_code = _strip_known_query_function_snippets(source_code)
+    # remove existing injected code to keep the code in sync with the current SQL dialect
+    source_code = _strip_injected_query_code(source_code)
     if '{QUERY_DATA_FUNCTION}' in source_code:
         return source_code.replace('{QUERY_DATA_FUNCTION}', query_function_code)
-    elif '### INJECTED_CODE ###' in source_code and '### END_OF_INJECTED_CODE ###' in source_code:
+    elif '# ### INJECTED_CODE ###' in source_code and '# ### END_OF_INJECTED_CODE ###' in source_code:
         # get the first and the last part before and after generated code and inject the query_data function
-        imports = source_code.split('### INJECTED_CODE ###')[0]
-        remainder = source_code.split('### INJECTED_CODE ###')[1].split('### END_OF_INJECTED_CODE ###')[1]
+        imports = source_code.split('# ### INJECTED_CODE ###')[0]
+        remainder = source_code.split('# ### INJECTED_CODE ###')[1].split('# ### END_OF_INJECTED_CODE ###')[1]
         return imports.strip() + '\n\n' + query_function_code + '\n\n' + remainder.strip()
     else:
         return query_function_code + '\n\n' + source_code.strip()
 
 
-def _get_secrets(workspace_id: str, branch_id: str) -> dict[str, Any]:
+def _get_secrets(workspace_id: str, branch_id: str, token: str) -> dict[str, Any]:
     """
-    Generates secrets for the data app for querying the tables in the given wokrspace using the query_data endpoint.
+    Generates secrets for the data app for querying the tables in the given workspace using the query_data endpoint.
     """
-    print(f'workspace_id: {workspace_id}, branch_id: {branch_id}')
     secrets: dict[str, Any] = {
         'WORKSPACE_ID': workspace_id,
         'BRANCH_ID': branch_id,
+        '#KBC_MCP_TOKEN': token,
     }
     return secrets
