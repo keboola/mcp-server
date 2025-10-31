@@ -60,9 +60,11 @@ from keboola_mcp_server.tools.components.utils import (
     list_configs_by_types,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
+    set_nested_value,
     update_params,
 )
 from keboola_mcp_server.tools.validation import (
+    validate_processors_configuration,
     validate_root_parameters_configuration,
     validate_root_storage_configuration,
     validate_row_parameters_configuration,
@@ -620,6 +622,14 @@ async def create_config(
             ),
         ),
     ] = None,
+    processors_before: Annotated[
+        list[dict[str, Any]],
+        Field(description='The list of processors that will run before the configured component runs.'),
+    ] = None,
+    processors_after: Annotated[
+        list[dict[str, Any]],
+        Field(description='The list of processors that will run after the configured component runs.'),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -658,6 +668,22 @@ async def create_config(
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+
+    if processors_before:
+        processors_before = validate_processors_configuration(
+            client=client,
+            processors=processors_before,
+            initial_message='The "processors_before" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.before', processors_before)
+
+    if processors_after:
+        processors_after = validate_processors_configuration(
+            client=client,
+            processors=processors_after,
+            initial_message='The "processors_after" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.after', processors_after)
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -727,6 +753,14 @@ async def add_config_row(
             ),
         ),
     ] = None,
+    processors_before: Annotated[
+        list[dict[str, Any]],
+        Field(description='The list of processors that will run before the configured component row runs.'),
+    ] = None,
+    processors_after: Annotated[
+        list[dict[str, Any]],
+        Field(description='The list of processors that will run after the configured component row runs.'),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -769,6 +803,22 @@ async def add_config_row(
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+
+    if processors_before:
+        processors_before = validate_processors_configuration(
+            client=client,
+            processors=processors_before,
+            initial_message='The "processors_before" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.before', processors_before)
+
+    if processors_after:
+        processors_after = validate_processors_configuration(
+            client=client,
+            processors=processors_after,
+            initial_message='The "processors_after" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.after', processors_after)
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -847,11 +897,11 @@ async def update_config(
             description=(
                 'List of granular parameter update operations to apply. '
                 'Each operation (set, str_replace, remove) modifies a specific '
-                'parameter using JSONPath notation. Only provide if updating parameters -'
-                ' do not use for changing description or storage. '
+                'value using JSONPath notation. Only provide if updating parameters -'
+                ' do not use for changing description, storage or processors. '
                 'Prefer simple dot-delimited JSONPaths '
                 'and make the smallest possible updates - only change what needs changing. '
-                'In case you need to replace the whole parameters, you can use the `set` operation '
+                'In case you need to replace the whole parameters section, you can use the `set` operation '
                 'with `$` as path.'
             ),
         ),
@@ -876,6 +926,14 @@ async def update_config(
                 '- Leave unfilled to preserve existing storage configuration'
             )
         ),
+    ] = None,
+    processors_before: Annotated[
+        list[dict[str, Any]],
+        Field(description='The list of processors that will run before the configured component row runs.'),
+    ] = None,
+    processors_after: Annotated[
+        list[dict[str, Any]],
+        Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
 ) -> ConfigToolOutput:
     """
@@ -921,7 +979,7 @@ async def update_config(
     api_component = await fetch_component(client=client, component_id=component_id)
     component = Component.from_api_response(api_component)
 
-    configuration_payload = current_config.get('configuration', {}).copy()
+    configuration_payload = cast(JsonDict, current_config.get('configuration', {})).copy()
 
     if storage is not None:
         storage_cfg = validate_root_storage_configuration(
@@ -930,6 +988,22 @@ async def update_config(
             initial_message='The "storage" field is not valid.',
         )
         configuration_payload['storage'] = storage_cfg
+
+    if processors_before is not None:
+        processors_before = validate_processors_configuration(
+            client=client,
+            processors=processors_before,
+            initial_message='The "processors_before" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.before', processors_before)
+
+    if processors_after is not None:
+        processors_after = validate_processors_configuration(
+            client=client,
+            processors=processors_after,
+            initial_message='The "processors_after" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.after', processors_after)
 
     if parameter_updates:
         current_params = configuration_payload.get('parameters', {})
@@ -1044,6 +1118,14 @@ async def update_config_row(
             )
         ),
     ] = None,
+    processors_before: Annotated[
+        list[dict[str, Any]],
+        Field(description='The list of processors that will run before the configured component row runs.'),
+    ] = None,
+    processors_after: Annotated[
+        list[dict[str, Any]],
+        Field(description='The list of processors that will run after the configured component row runs.'),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
@@ -1093,7 +1175,7 @@ async def update_config_row(
     api_component = await fetch_component(client=client, component_id=component_id)
     component = Component.from_api_response(api_component)
 
-    configuration_payload = current_row.get('configuration', {}).copy()
+    configuration_payload = cast(JsonDict, current_row.get('configuration', {})).copy()
 
     if storage is not None:
         storage_cfg = validate_row_storage_configuration(
@@ -1102,6 +1184,22 @@ async def update_config_row(
             initial_message='The "storage" field is not valid.',
         )
         configuration_payload['storage'] = storage_cfg
+
+    if processors_before is not None:
+        processors_before = validate_processors_configuration(
+            client=client,
+            processors=processors_before,
+            initial_message='The "processors_before" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.before', processors_before)
+
+    if processors_after is not None:
+        processors_after = validate_processors_configuration(
+            client=client,
+            processors=processors_after,
+            initial_message='The "processors_after" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.after', processors_after)
 
     if parameter_updates:
         current_params = configuration_payload.get('parameters', {})

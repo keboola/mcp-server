@@ -126,6 +126,24 @@ EXAMPLES:
       "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
       "type": "object"
+    },
+    "processors_before": {
+      "default": null,
+      "description": "The list of processors that will run before the configured component row runs.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "processors_after": {
+      "default": null,
+      "description": "The list of processors that will run after the configured component row runs.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
     }
   },
   "required": [
@@ -191,6 +209,24 @@ EXAMPLES:
       "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
       "type": "object"
+    },
+    "processors_before": {
+      "default": null,
+      "description": "The list of processors that will run before the configured component runs.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "processors_after": {
+      "default": null,
+      "description": "The list of processors that will run after the configured component runs.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
     }
   },
   "required": [
@@ -644,7 +680,7 @@ WORKFLOW:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -673,6 +709,24 @@ WORKFLOW:
       "default": null,
       "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
+    },
+    "processors_before": {
+      "default": null,
+      "description": "The list of processors that will run before the configured component row runs.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "processors_after": {
+      "default": null,
+      "description": "The list of processors that will run after the configured component row runs.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
     }
   },
   "required": [
@@ -859,6 +913,24 @@ WORKFLOW:
       "default": null,
       "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_config first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
+    },
+    "processors_before": {
+      "default": null,
+      "description": "The list of processors that will run before the configured component row runs.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "processors_after": {
+      "default": null,
+      "description": "The list of processors that will run after the configured component row runs.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
     }
   },
   "required": [

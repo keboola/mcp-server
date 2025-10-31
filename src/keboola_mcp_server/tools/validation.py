@@ -16,9 +16,13 @@ from keboola_mcp_server.clients.base import (
     JsonPrimitive,
     JsonStruct,
 )
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
+from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType, KeboolaClient
 from keboola_mcp_server.tools.components.model import Component
-from keboola_mcp_server.tools.components.utils import BIGQUERY_TRANSFORMATION_ID, SNOWFLAKE_TRANSFORMATION_ID
+from keboola_mcp_server.tools.components.utils import (
+    BIGQUERY_TRANSFORMATION_ID,
+    SNOWFLAKE_TRANSFORMATION_ID,
+    fetch_component,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -407,6 +411,42 @@ def validate_row_parameters_configuration(
     return _validate_parameters_configuration(
         parameters, component.configuration_row_schema, component.component_id, initial_message
     )
+
+
+async def validate_processors_configuration(
+    client: KeboolaClient,
+    processors: list[JsonDict],
+    initial_message: Optional[str] = None,
+) -> list[JsonDict]:
+    """
+    Validates the configuration of a list of processors against their respective configuration
+    schemas.
+    Skips validation for processors without a configuration schema or those using
+    a configuration schema from the template.
+
+    :param client: An instance of KeboolaClient used to fetch processor information.
+    :param processors: A list of processor definitions containing their parameters and other details.
+    :param initial_message: An optional string providing an initial context for validation messages.
+    :return: The list of processors after validation.
+    """
+    for processor in processors:
+        processor_id = cast(JsonDict, processor['definition'])['component']
+        processor_info = await fetch_component(client, processor_id)
+
+        # the vast majority of processors do not have a configuration schema, so we skip them
+        if not processor_info.configuration_schema:
+            continue
+        # some processors use configuration schema from the template, so we skip them
+        if 'print_hello' in processor_info.configuration_schema.get('required', []):
+            continue
+
+        _validate_json_against_schema(
+            json_data=processor['parameters'],
+            schema=processor_info.configuration_schema,
+            initial_message=f'{initial_message}\nThe configuration of "{processor_id}" processor is not valid.',
+        )
+
+    return processors
 
 
 def _validate_parameters_configuration(
