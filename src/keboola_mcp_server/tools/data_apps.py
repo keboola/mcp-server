@@ -243,7 +243,7 @@ async def modify_data_app(
         Field(
             description=(
                 'Optional authentication type. "no-auth" removes authentication completely, "basic-auth" sets the data '
-                'app to be secured using basic authentication, and "default" keeps the existing authentication type '
+                'app to be secured using the HTTP basic authentication, and "default" keeps the existing authentication type '
                 'when updating.'
             )
         ),
