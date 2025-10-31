@@ -1125,8 +1125,8 @@ parameter. To keep existing data app values during an update, leave them as empt
 appropriately based on the parameter type.
 - If the data app is updated while running, it must be redeployed for the changes to take effect.
 - New apps use basic authentication by default for security unless explicitly specified otherwise; when updating,
-set `authentication_type` to `default` to keep the existing authentication type configuration (including OIDC setups)
-unless explicitly specified otherwise.
+set `authentication_type` to `default` to keep the existing authentication type configuration (including OIDC 
+setups) unless explicitly specified otherwise.
 
 
 **Input JSON Schema**:
