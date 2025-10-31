@@ -141,6 +141,375 @@ from keboola_mcp_server.tools.components.sql_utils import join_sql_statements, s
             1.0,
             'carriage_returns',
         ),
+        # Complex SQL with division operators and table names containing dashes
+        (
+            (
+                'CREATE TABLE `top_20_products_revenue` AS\n'
+                'SELECT\n'
+                '/* comment */\n'
+                'ROW_NUMBER() OVER (ORDER BY SUM(CAST(`line_items_quantity` AS INT64) *'
+                ' CAST(`line_items_price` AS FLOAT64)) DESC) as revenue_rank,\n'
+                '`line_items_product_id` as product_id,\n'
+                '`line_items_title` as product_title,\n'
+                'COUNT(DISTINCT `line_items_variant_id`) as variant_count,\n'
+                'SUM(CAST(`line_items_quantity` AS INT64)) as total_quantity_sold,\n'
+                'ROUND(SUM(CAST(`line_items_quantity` AS INT64) * CAST(`line_items_price` AS FLOAT64)), 2)'
+                ' as total_revenue,\n'
+                'ROUND(AVG(CAST(`line_items_price` AS FLOAT64)), 2) as avg_unit_price,\n'
+                'COUNT(*) as total_orders,\n'
+                'ROUND(SUM(CAST(`line_items_quantity` AS INT64) * CAST(`line_items_price` AS FLOAT64)) /'
+                ' SUM(CAST(`line_items_quantity` AS INT64)), 2) as revenue_per_unit,\n'
+                'MIN(`created_at`) as first_sale_date,\n'
+                'MAX(`updated_at`) as last_sale_date,\n'
+                'CURRENT_TIMESTAMP() as report_generated_at\n'
+                'FROM `in.c-kds-team-ex-shopify-01k368x27c4gpd4k5v0nwmcn98.orders`\n'
+                '-- comment\n'
+                "WHERE `financial_status` IN ('paid', 'partially_paid')\n"
+                'AND `line_items_product_id` IS NOT NULL\n'
+                'GROUP BY `line_items_product_id`, `line_items_title`\n'
+                'QUALIFY revenue_rank <= 20\n'
+                'ORDER BY revenue_rank'
+            ),
+            [
+                (
+                    'CREATE TABLE `top_20_products_revenue` AS\n'
+                    'SELECT\n'
+                    '/* comment */\n'
+                    'ROW_NUMBER() OVER (ORDER BY SUM(CAST(`line_items_quantity` AS INT64)'
+                    ' * CAST(`line_items_price` AS FLOAT64)) DESC) as revenue_rank,\n'
+                    '`line_items_product_id` as product_id,\n'
+                    '`line_items_title` as product_title,\n'
+                    'COUNT(DISTINCT `line_items_variant_id`) as variant_count,\n'
+                    'SUM(CAST(`line_items_quantity` AS INT64)) as total_quantity_sold,\n'
+                    'ROUND(SUM(CAST(`line_items_quantity` AS INT64) * CAST(`line_items_price` AS FLOAT64)), 2)'
+                    ' as total_revenue,\n'
+                    'ROUND(AVG(CAST(`line_items_price` AS FLOAT64)), 2) as avg_unit_price,\n'
+                    'COUNT(*) as total_orders,\n'
+                    'ROUND(SUM(CAST(`line_items_quantity` AS INT64) * CAST(`line_items_price` AS FLOAT64)) /'
+                    ' SUM(CAST(`line_items_quantity` AS INT64)), 2) as revenue_per_unit,\n'
+                    'MIN(`created_at`) as first_sale_date,\n'
+                    'MAX(`updated_at`) as last_sale_date,\n'
+                    'CURRENT_TIMESTAMP() as report_generated_at\n'
+                    'FROM `in.c-kds-team-ex-shopify-01k368x27c4gpd4k5v0nwmcn98.orders`\n'
+                    '-- comment\n'
+                    "WHERE `financial_status` IN ('paid', 'partially_paid')\n"
+                    'AND `line_items_product_id` IS NOT NULL\n'
+                    'GROUP BY `line_items_product_id`, `line_items_title`\n'
+                    'QUALIFY revenue_rank <= 20\n'
+                    'ORDER BY revenue_rank'
+                )
+            ],
+            1.0,
+            'complex_create_table_with_division_and_dashes',
+        ),
+        # Empty strings (single and double quotes)
+        (
+            "SELECT '' AS empty1, \"\" AS empty2; SELECT 2;",
+            ["SELECT '' AS empty1, \"\" AS empty2;", 'SELECT 2;'],
+            1.0,
+            'empty_quoted_strings',
+        ),
+        # Strings with escaped backslashes
+        (
+            "SELECT 'C:\\\\path\\\\to\\\\file' AS path; SELECT 2;",
+            ["SELECT 'C:\\\\path\\\\to\\\\file' AS path;", 'SELECT 2;'],
+            1.0,
+            'strings_with_escaped_backslashes',
+        ),
+        # Double-quoted strings with escaped quotes
+        (
+            'SELECT "test\\"quoted\\"value" AS col; SELECT 2;',
+            ['SELECT "test\\"quoted\\"value" AS col;', 'SELECT 2;'],
+            1.0,
+            'double_quoted_with_escaped_quotes',
+        ),
+        # Strings containing newlines
+        (
+            "SELECT 'line1\nline2\nline3' AS multiline; SELECT 2;",
+            ["SELECT 'line1\nline2\nline3' AS multiline;", 'SELECT 2;'],
+            1.0,
+            'strings_with_newlines',
+        ),
+        # Multiple consecutive escaped quotes
+        (
+            "SELECT 'test\\'\\'\\'value' AS col; SELECT 2;",
+            ["SELECT 'test\\'\\'\\'value' AS col;", 'SELECT 2;'],
+            1.0,
+            'multiple_escaped_quotes',
+        ),
+        # Multi-line comment with only asterisks
+        (
+            'SELECT 1; /* **** */ SELECT 2;',
+            ['SELECT 1;', '/* **** */ SELECT 2;'],
+            1.0,
+            'block_comment_all_asterisks',
+        ),
+        # Empty multi-line comment
+        (
+            'SELECT 1; /**/ SELECT 2;',
+            ['SELECT 1;', '/**/ SELECT 2;'],
+            1.0,
+            'empty_block_comment',
+        ),
+        # Multi-line comment with asterisks in middle
+        (
+            'SELECT 1; /* comment with *** asterisks */ SELECT 2;',
+            ['SELECT 1;', '/* comment with *** asterisks */ SELECT 2;'],
+            1.0,
+            'block_comment_with_asterisks',
+        ),
+        # Comments that look like they might be nested (but aren't)
+        (
+            'SELECT 1; /* comment /* not nested */ */ SELECT 2;',
+            ['SELECT 1;', '/* comment /* not nested */ */ SELECT 2;'],
+            1.0,
+            'block_comment_pseudo_nested',
+        ),
+        # Dollar-quoted block with special characters
+        (
+            'SELECT 1; $$ SELECT "test"; -- comment; $$; SELECT 2;',
+            ['SELECT 1;', '$$ SELECT "test"; -- comment; $$;', 'SELECT 2;'],
+            1.0,
+            'dollar_quoted_with_special_chars',
+        ),
+        # Dollar-quoted block at start
+        (
+            '$$ SELECT 1; $$; SELECT 2;',
+            ['$$ SELECT 1; $$;', 'SELECT 2;'],
+            1.0,
+            'dollar_quoted_at_start',
+        ),
+        # Multiple dollar signs in a row (not dollar quotes)
+        (
+            'SELECT $1, $2, $3; SELECT 2;',
+            ['SELECT $1, $2, $3;', 'SELECT 2;'],
+            1.0,
+            'multiple_dollar_signs',
+        ),
+        # Division operator in arithmetic
+        (
+            'SELECT 10 / 2 AS result; SELECT 20 / 4;',
+            ['SELECT 10 / 2 AS result;', 'SELECT 20 / 4;'],
+            1.0,
+            'division_operators',
+        ),
+        # Negative numbers
+        (
+            'SELECT -1, -2.5, -10 / 2; SELECT 2;',
+            ['SELECT -1, -2.5, -10 / 2;', 'SELECT 2;'],
+            1.0,
+            'negative_numbers',
+        ),
+        # Table name with dash (not a comment)
+        (
+            'SELECT * FROM table-name; SELECT 2;',
+            ['SELECT * FROM table-name;', 'SELECT 2;'],
+            1.0,
+            'table_name_with_dash',
+        ),
+        # Comment at start of statement
+        (
+            '-- Leading comment\nSELECT 1; SELECT 2;',
+            ['-- Leading comment\nSELECT 1;', 'SELECT 2;'],
+            1.0,
+            'comment_at_start',
+        ),
+        # Comment at end of statement
+        (
+            'SELECT 1; -- Trailing comment\nSELECT 2;',
+            ['SELECT 1;', '-- Trailing comment\nSELECT 2;'],
+            1.0,
+            'comment_at_end',
+        ),
+        # Hash comment at start
+        (
+            '# Leading hash comment\nSELECT 1; SELECT 2;',
+            ['# Leading hash comment\nSELECT 1;', 'SELECT 2;'],
+            1.0,
+            'hash_comment_at_start',
+        ),
+        # C-style comment at start
+        (
+            '// Leading slash comment\nSELECT 1; SELECT 2;',
+            ['// Leading slash comment\nSELECT 1;', 'SELECT 2;'],
+            1.0,
+            'slash_comment_at_start',
+        ),
+        # Multiple consecutive statements with comments
+        (
+            'SELECT 1; /* comment */ SELECT 2; -- comment\nSELECT 3;',
+            ['SELECT 1;', '/* comment */ SELECT 2;', '-- comment\nSELECT 3;'],
+            1.0,
+            'multiple_statements_with_comments',
+        ),
+        # String containing comment-like text
+        (
+            "SELECT '-- not a comment' AS col; SELECT 2;",
+            ["SELECT '-- not a comment' AS col;", 'SELECT 2;'],
+            1.0,
+            'string_with_comment_like_text',
+        ),
+        # String containing hash
+        (
+            "SELECT 'price #123' AS col; SELECT 2;",
+            ["SELECT 'price #123' AS col;", 'SELECT 2;'],
+            1.0,
+            'string_with_hash',
+        ),
+        # String containing slashes
+        (
+            "SELECT 'path/to/file' AS col; SELECT 2;",
+            ["SELECT 'path/to/file' AS col;", 'SELECT 2;'],
+            1.0,
+            'string_with_slashes',
+        ),
+        # String containing dollar signs
+        (
+            "SELECT 'cost $100' AS col; SELECT 2;",
+            ["SELECT 'cost $100' AS col;", 'SELECT 2;'],
+            1.0,
+            'string_with_dollar_signs',
+        ),
+        # Mixed quotes and comments
+        (
+            "SELECT 'single' AS s, \"double\" AS d; -- comment\nSELECT 2;",
+            ["SELECT 'single' AS s, \"double\" AS d;", '-- comment\nSELECT 2;'],
+            1.0,
+            'mixed_quotes_and_comments',
+        ),
+        # Statement with only whitespace before semicolon
+        (
+            'SELECT 1   ;   SELECT 2;',
+            ['SELECT 1   ;', 'SELECT 2;'],
+            1.0,
+            'whitespace_before_semicolon',
+        ),
+        # Statement with tabs and spaces
+        (
+            '\tSELECT 1;\tSELECT 2;\nSELECT 3;',
+            ['SELECT 1;', 'SELECT 2;', 'SELECT 3;'],
+            1.0,
+            'tabs_and_spaces',
+        ),
+        # Multiple semicolons (should split)
+        (
+            'SELECT 1;; SELECT 2;',
+            ['SELECT 1;', 'SELECT 2;'],
+            1.0,
+            'multiple_semicolons',
+        ),
+        # Unicode characters in strings
+        (
+            "SELECT 'café' AS name, '🚀' AS emoji; SELECT 2;",
+            ["SELECT 'café' AS name, '🚀' AS emoji;", 'SELECT 2;'],
+            1.0,
+            'unicode_in_strings',
+        ),
+        # Unicode characters in SQL
+        (
+            'SELECT 1; SELECT 2; -- café comment',
+            ['SELECT 1;', 'SELECT 2;', '-- café comment'],
+            1.0,
+            'unicode_in_comments',
+        ),
+        # Very long statement (tests performance)
+        (
+            'SELECT ' + 'x' * 1000 + '; SELECT 2;',
+            ['SELECT ' + 'x' * 1000 + ';', 'SELECT 2;'],
+            1.0,
+            'very_long_statement',
+        ),
+        # Statement with only a comment
+        (
+            '-- Only comment\nSELECT 1;',
+            ['-- Only comment\nSELECT 1;'],
+            1.0,
+            'comment_only_statement',
+        ),
+        # Block comment only statement
+        (
+            '/* Only comment */\nSELECT 1;',
+            ['/* Only comment */\nSELECT 1;'],
+            1.0,
+            'block_comment_only_statement',
+        ),
+        # Multiple block comments
+        (
+            'SELECT 1; /* comment1 */ SELECT 2; /* comment2 */ SELECT 3;',
+            ['SELECT 1;', '/* comment1 */ SELECT 2;', '/* comment2 */ SELECT 3;'],
+            1.0,
+            'multiple_block_comments',
+        ),
+        # Dollar-quoted with nested dollar signs
+        (
+            'SELECT 1; $$ SELECT $variable; $$; SELECT 2;',
+            ['SELECT 1;', '$$ SELECT $variable; $$;', 'SELECT 2;'],
+            1.0,
+            'dollar_quoted_with_nested_dollar',
+        ),
+        # Complex arithmetic with division and subtraction
+        (
+            'SELECT (100 - 20) / 2 AS result; SELECT 2;',
+            ['SELECT (100 - 20) / 2 AS result;', 'SELECT 2;'],
+            1.0,
+            'complex_arithmetic',
+        ),
+        # Mixed line endings
+        (
+            'SELECT 1;\rSELECT 2;\nSELECT 3;\r\nSELECT 4;',
+            ['SELECT 1;', 'SELECT 2;', 'SELECT 3;', 'SELECT 4;'],
+            1.0,
+            'mixed_line_endings',
+        ),
+        # Comment with Windows line ending
+        (
+            'SELECT 1; -- comment\r\nSELECT 2;',
+            ['SELECT 1;', '-- comment\r\nSELECT 2;'],
+            1.0,
+            'comment_with_crlf',
+        ),
+        # Hash comment with Windows line ending
+        (
+            'SELECT 1; # comment\r\nSELECT 2;',
+            ['SELECT 1;', '# comment\r\nSELECT 2;'],
+            1.0,
+            'hash_comment_with_crlf',
+        ),
+        # Multiple statements without semicolons
+        (
+            'SELECT 1\nSELECT 2\nSELECT 3',
+            ['SELECT 1\nSELECT 2\nSELECT 3'],
+            1.0,
+            'multiple_statements_no_semicolons',
+        ),
+        # Statement with comment and no semicolon
+        (
+            'SELECT 1 -- comment\nSELECT 2',
+            ['SELECT 1 -- comment\nSELECT 2'],
+            1.0,
+            'statement_with_comment_no_semicolon',
+        ),
+        # Empty string between statements
+        (
+            'SELECT 1;\n\n\nSELECT 2;',
+            ['SELECT 1;', 'SELECT 2;'],
+            1.0,
+            'empty_lines_between_statements',
+        ),
+        # Statement starting with whitespace
+        (
+            '   SELECT 1;   SELECT 2;',
+            ['SELECT 1;', 'SELECT 2;'],
+            1.0,
+            'leading_whitespace',
+        ),
+        # Block comment spanning multiple lines with complex content
+        (
+            'SELECT 1; /*\n * Multi-line\n * comment\n * with stars\n */ SELECT 2;',
+            ['SELECT 1;', '/*\n * Multi-line\n * comment\n * with stars\n */ SELECT 2;'],
+            1.0,
+            'multi_line_block_comment_with_stars',
+        ),
     ],
 )
 @pytest.mark.asyncio

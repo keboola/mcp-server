@@ -15,14 +15,21 @@ LOG = logging.getLogger(__name__)
 
 SQL_SPLIT_REGEX = re.compile(
     r'\s*('
-    r"(?:'[^'\\]*(?:\\.[^'\\]*)*'|"  # Single-quoted strings
+    r'(?:'  # Start non-capturing group for alternatives
+    r"'[^'\\]*(?:\\.[^'\\]*)*'|"  # Single-quoted strings
     r'"[^"\\]*(?:\\.[^"\\]*)*"|'  # Double-quoted strings
-    r'\$\$(?:(?!\$\$)(?:.|\n|\r))*\$\$|'  # Multi-line blocks $$...$$
+    r'\$\$(?:(?!\$\$)[\s\S])*\$\$|'  # Multi-line blocks $$...$$ (using [\s\S] for any char)
     r'/\*[^*]*\*+(?:[^*/][^*]*\*+)*/|'  # Multi-line comments /* ... */
     r'#[^\n\r]*|'  # Hash comments
     r'--[^\n\r]*|'  # SQL comments
     r'//[^\n\r]*|'  # C-style comments
-    r'[^"\';#/$-])+(?:;|$))',  # Everything else until semicolon or end
+    r'/(?![*/])|'  # Division operator: / not followed by * or /
+    r'-(?!-)|'  # Dash/minus: - not followed by another -
+    r'\$(?!\$)|'  # Dollar sign: $ not followed by another $
+    r'[^"\';#/$-]+'  # Everything else except special chars (greedy match for performance)
+    r')+'  # End non-capturing group, one or more times
+    r'(?:;|$)'  # Statement terminator: semicolon or end
+    r')',  # End capturing group
     re.MULTILINE,
 )
 
