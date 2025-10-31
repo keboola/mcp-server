@@ -1124,9 +1124,9 @@ from the workspace.
 parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
 appropriately based on the parameter type.
 - If the data app is updated while running, it must be redeployed for the changes to take effect.
-- New apps use basic authentication by default for security unless explicitly specified otherwise; when updating,
-set `authentication_type` to `default` to keep the existing authentication type configuration (including OIDC
-setups) unless explicitly specified otherwise.
+- New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when '
+'updating, set `authentication_type` to `default` to keep the existing authentication type configuration '
+(including OIDC setups) unless explicitly specified otherwise.
 
 
 **Input JSON Schema**:
@@ -1154,7 +1154,7 @@ setups) unless explicitly specified otherwise.
     },
     "authentication_type": {
       "default": null,
-      "description": "Optional authentication type. \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using basic authentication, and \"default\" keeps the existing authentication type when updating.",
+      "description": "Optional authentication type. \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, and \"default\" keeps the existing authentication type when updating.",
       "enum": [
         "no-auth",
         "basic-auth",
