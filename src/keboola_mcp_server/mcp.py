@@ -5,6 +5,7 @@ It also provides a decorator that MCP tool functions can use to inject session s
 """
 
 import dataclasses
+import json
 import logging
 import textwrap
 from dataclasses import dataclass
@@ -284,5 +285,35 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         return await call_next(context)
 
 
-def _exclude_none_serializer(data: BaseModel) -> str:
-    return data.model_dump_json(exclude_none=True, by_alias=False)
+def _exclude_none_serializer(data: Any) -> str:
+    if (cleaned := _to_python(data)) is not None:
+        return json.dumps(cleaned, ensure_ascii=False, separators=(',', ':'))
+    else:
+        return ''
+
+
+def _to_python(data: Any) -> Any | None:
+    if isinstance(data, BaseModel):
+        return data.model_dump(exclude_none=True, by_alias=False)
+    elif isinstance(data, (list, tuple)):
+        # Handle sequences of BaseModels
+        cleaned = []
+        for item in data:
+            if isinstance(item, BaseModel):
+                cleaned.append(item.model_dump(exclude_none=True, by_alias=False))
+            elif item is not None:
+                cleaned.append(_to_python(item))
+        return cleaned
+    elif isinstance(data, dict):
+        # Handle dictionaries that might contain BaseModels
+        cleaned = {}
+        for key, value in data.items():
+            if isinstance(value, BaseModel):
+                cleaned[key] = value.model_dump(exclude_none=True, by_alias=False)
+            elif value is not None:
+                cleaned[key] = _to_python(value)
+        return cleaned
+    elif data is not None:
+        return data
+    else:
+        return None
