@@ -251,6 +251,51 @@ async def test_get_config(
     )
 
 
+@pytest.mark.asyncio
+async def test_get_config_transformation(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_tf_configuration: dict[str, Any],
+    mock_tf_component: dict[str, Any],
+    mock_metadata: list[dict[str, Any]],
+):
+    """
+    Test get_config tool for transformations.
+    We test that the transformation parameters are correctly simplified and IDs are added.
+    """
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    mock_ai_service = mocker.MagicMock()
+    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_tf_component)
+
+    keboola_client.ai_service_client = mock_ai_service
+    # mock the configuration_detail method to return the mock_configuration
+    # simulate the response from the API
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={**mock_tf_configuration, 'component': mock_tf_component, 'configurationMetadata': mock_metadata}
+    )
+
+    result = await get_config(
+        component_id=mock_tf_component['componentId'],
+        configuration_id=mock_tf_configuration['id'],
+        ctx=context,
+    )
+
+    assert isinstance(result, Configuration)
+    assert result.configuration_root.parameters == {
+        'blocks': [
+            {
+                'id': 'b0',
+                'name': 'Blocks',
+                'codes': [
+                    {'id': 'b0.c0', 'name': 'Code 1', 'script': 'SELECT * FROM customers;\n\nSELECT * FROM orders;\n\n'}
+                ],
+            }
+        ],
+    }
+
+
 @pytest.mark.parametrize(
     ('sql_dialect', 'expected_component_id', 'expected_configuration_id'),
     [
