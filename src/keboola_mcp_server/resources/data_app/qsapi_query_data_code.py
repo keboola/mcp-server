@@ -14,7 +14,7 @@ def query_data(query: str) -> pd.DataFrame:
     kbc_url = os.environ.get('KBC_URL')
 
     if not branch_id or not workspace_id or not token or not kbc_url:
-        raise RuntimeError('Missing required environment variables: BRANCH_ID, WORKSPACE_ID, KBC_TOKEN, KBC_URL.')
+        raise RuntimeError('Missing required environment variables: BRANCH_ID, WORKSPACE_ID, KBC_MCP_TOKEN, KBC_URL.')
 
     query_service_url = kbc_url.replace('connection.', 'query.', 1).rstrip('/') + '/api/v1'
     headers = {

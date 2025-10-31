@@ -1,4 +1,5 @@
 import asyncio
+import importlib.resources as resources
 import logging
 import re
 from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast
@@ -6,7 +7,6 @@ from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast
 import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
-import importlib.resources as resources
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
@@ -62,10 +62,10 @@ Type = Literal['streamlit']
 SafeType = Union[Type, str]
 
 _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = (
-    resources.files("keboola_mcp_server.resources.data_app").joinpath("qsapi_query_data_code.py").read_text()
+    resources.files('keboola_mcp_server.resources.data_app').joinpath('qsapi_query_data_code.py').read_text()
 )
 _STORAGE_QUERY_DATA_FUNCTION_CODE = (
-    resources.files("keboola_mcp_server.resources.data_app").joinpath("sapi_query_data_code.py").read_text()
+    resources.files('keboola_mcp_server.resources.data_app').joinpath('sapi_query_data_code.py').read_text()
 )
 
 _DEFAULT_STREAMLIT_THEME = (
@@ -661,13 +661,13 @@ def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
     source_code = _strip_injected_query_code(source_code)
     if '{QUERY_DATA_FUNCTION}' in source_code:
         return source_code.replace('{QUERY_DATA_FUNCTION}', query_function_code)
-    elif '# ### INJECTED_CODE ###' in source_code and '# ### END_OF_INJECTED_CODE ###' in source_code:
+    elif '# ### INJECTED_CODE ####' in source_code and '# ### END_OF_INJECTED_CODE ####' in source_code:
         # get the first and the last part before and after generated code and inject the query_data function
-        imports = source_code.split('# ### INJECTED_CODE ###')[0]
-        remainder = source_code.split('# ### INJECTED_CODE ###')[1].split('# ### END_OF_INJECTED_CODE ###')[1]
-        return imports.strip() + '\n\n' + query_function_code + '\n\n' + remainder.strip()
+        imports = source_code.split('# ### INJECTED_CODE ####')[0]
+        remainder = source_code.split('# ### INJECTED_CODE ####')[1].split('# ### END_OF_INJECTED_CODE ####')[1]
+        return imports.rstrip() + '\n\n' + query_function_code + '\n\n' + remainder.lstrip()
     else:
-        return query_function_code + '\n\n' + source_code.strip()
+        return query_function_code + '\n\n' + source_code.lstrip()
 
 
 def _get_secrets(workspace_id: str, branch_id: str, token: str) -> dict[str, Any]:
@@ -677,6 +677,6 @@ def _get_secrets(workspace_id: str, branch_id: str, token: str) -> dict[str, Any
     secrets: dict[str, Any] = {
         'WORKSPACE_ID': workspace_id,
         'BRANCH_ID': branch_id,
-        '#KBC_MCP_TOKEN': token, # Starting with "#" we encrypt the value.
+        '#KBC_MCP_TOKEN': token,  # Starting with "#" we encrypt the value.
     }
     return secrets
