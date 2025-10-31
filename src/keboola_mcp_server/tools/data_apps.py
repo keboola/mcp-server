@@ -247,7 +247,7 @@ async def modify_data_app(
                 'authentication type when updating.'
             )
         ),
-    ] = None,
+    ],
     configuration_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
     ] = '',
