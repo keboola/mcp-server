@@ -11,12 +11,13 @@ from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.data_apps import (
     _DEFAULT_PACKAGES,
-    _QUERY_DATA_FUNCTION_CODE,
     DataApp,
     DataAppSummary,
     GetDataAppsOutput,
     ModifiedDataAppOutput,
+    _get_query_function_code,
 )
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ async def test_get_data_apps_listing(mcp_client: Client, initial_data_app: Modif
 async def test_data_app_lifecycle(
     mcp_client: Client,
     keboola_client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
     app_name: str,
     app_description: str,
     initial_data_app: ModifiedDataAppOutput,
@@ -168,7 +170,8 @@ async def test_data_app_lifecycle(
     # Check code and code injection
     assert streamlit_app_imports in data_app_details.parameters['script'][0]
     assert streamlit_app_entrypoint in data_app_details.parameters['script'][0]
-    assert _QUERY_DATA_FUNCTION_CODE in data_app_details.parameters['script'][0]
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    assert _get_query_function_code(sql_dialect) in data_app_details.parameters['script'][0]
     # Check packages
     assert set(data_app_details.parameters['packages']) == set(['numpy', 'streamlit'] + _DEFAULT_PACKAGES)
 
@@ -232,7 +235,7 @@ async def test_data_app_lifecycle(
     assert fetched.data_apps[0].name == updated_name
     assert fetched.data_apps[0].description == updated_description
     # Check that the source code is updated
-    assert _QUERY_DATA_FUNCTION_CODE in fetched.data_apps[0].parameters['script'][0]
+    assert _get_query_function_code(sql_dialect) in fetched.data_apps[0].parameters['script'][0]
     assert updated_source_code in fetched.data_apps[0].parameters['script'][0]
     assert streamlit_app_imports not in fetched.data_apps[0].parameters['script'][0]
     assert streamlit_app_entrypoint not in fetched.data_apps[0].parameters['script'][0]
