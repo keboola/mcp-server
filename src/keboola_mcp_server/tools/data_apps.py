@@ -672,11 +672,11 @@ def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
 
 def _get_secrets(workspace_id: str, branch_id: str, token: str) -> dict[str, Any]:
     """
-    Generates secrets for the data app for querying the tables in the given workspace using the query_data endpoint.
+    Generates secrets for the data app for querying the tables in the given workspace QS or SAPI.
     """
     secrets: dict[str, Any] = {
         'WORKSPACE_ID': workspace_id,
         'BRANCH_ID': branch_id,
-        '#KBC_MCP_TOKEN': token,
+        '#KBC_MCP_TOKEN': token, # Starting with "#" we encrypt the value.
     }
     return secrets
