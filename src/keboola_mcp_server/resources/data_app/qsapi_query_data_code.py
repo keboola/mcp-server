@@ -24,9 +24,6 @@ def query_data(query: str) -> pd.DataFrame:
 
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-    print(f'query_service_url: {query_service_url}, headers: {headers}')
-    print(f'query: {query}')
-    print(f'branch_id: {branch_id}, workspace_id: {workspace_id}')
     with httpx.Client(timeout=timeout, limits=limits) as client:
         response = client.post(
             f'{query_service_url}/branches/{branch_id}/workspaces/{workspace_id}/queries',
