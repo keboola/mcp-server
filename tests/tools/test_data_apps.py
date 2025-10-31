@@ -199,6 +199,24 @@ def test_get_query_function_code_selects_snippets():
     assert _get_query_function_code('bigquery') == _STORAGE_QUERY_DATA_FUNCTION_CODE
     with pytest.raises(ValueError):
         _get_query_function_code('unknown')
+    workspace_id = 'wid-1234'
+
+    secrets = _get_secrets(
+        workspace_id=workspace_id,
+        branch_id='123',
+    )
+
+    assert secrets == {
+        'WORKSPACE_ID': 'wid-1234',
+        'BRANCH_ID': '123',
+    }
+
+
+def test_get_query_function_code_selects_snippets():
+    assert _get_query_function_code('snowflake') == _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE
+    assert _get_query_function_code('bigquery') == _STORAGE_QUERY_DATA_FUNCTION_CODE
+    # Unknown backends fall back to Storage API implementation
+    assert _get_query_function_code('unknown') == _STORAGE_QUERY_DATA_FUNCTION_CODE
 
 
 @pytest.mark.parametrize(
