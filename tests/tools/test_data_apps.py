@@ -4,14 +4,15 @@ import pytest
 from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.data_apps import (
-    _QUERY_DATA_FUNCTION_CODE,
+    _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
+    _STORAGE_QUERY_DATA_FUNCTION_CODE,
     DataApp,
     DataAppSummary,
     _build_data_app_config,
     _get_authorization,
     _get_data_app_slug,
+    _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
     _is_authorized,
@@ -89,8 +90,9 @@ def test_is_authorized_behavior():
 
 
 def test_inject_query_to_source_code_when_already_included():
-    source_code = f"""prelude{_QUERY_DATA_FUNCTION_CODE}postlude"""
-    result = _inject_query_to_source_code(source_code)
+    query_code = _STORAGE_QUERY_DATA_FUNCTION_CODE
+    source_code = f"""prelude{query_code}postlude"""
+    result = _inject_query_to_source_code(source_code, 'bigquery')
     assert result == source_code
 
 
@@ -102,26 +104,29 @@ def test_inject_query_to_source_code_with_markers():
         '### END_OF_INJECTED_CODE ###\n\n'
         "print('hello')\n"
     )
-    result = _inject_query_to_source_code(src)
+    query_code = _STORAGE_QUERY_DATA_FUNCTION_CODE
+    result = _inject_query_to_source_code(src, 'bigquery')
 
     assert result.startswith('import pandas as pd')
-    assert _QUERY_DATA_FUNCTION_CODE in result
+    assert query_code in result
     assert result.endswith("print('hello')\n")
 
 
 def test_inject_query_to_source_code_with_placeholder():
     src = 'header\n{QUERY_DATA_FUNCTION}\nfooter\n'
-    result = _inject_query_to_source_code(src)
+    query_code = _STORAGE_QUERY_DATA_FUNCTION_CODE
+    result = _inject_query_to_source_code(src, 'bigquery')
 
     # Injected once via format(), original source (with placeholder) appended afterwards
-    assert _QUERY_DATA_FUNCTION_CODE in result
+    assert query_code in result
     assert '{QUERY_DATA_FUNCTION}' not in result
 
 
 def test_inject_query_to_source_code_default_path():
     src = "print('x')\n"
-    result = _inject_query_to_source_code(src)
-    assert result.startswith(_QUERY_DATA_FUNCTION_CODE)
+    query_code = _STORAGE_QUERY_DATA_FUNCTION_CODE
+    result = _inject_query_to_source_code(src, 'bigquery')
+    assert result.startswith(query_code)
     assert result.endswith(src)
 
 
@@ -180,22 +185,20 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
     assert new['authorization'] == _get_authorization(False)
 
 
-def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
+def test_get_secrets_encrypts_token_and_sets_metadata():
+    secrets = _get_secrets(workspace_id='wid-1234', branch_id='123')
 
-    keboola_client = mocker.Mock(KeboolaClient)
-    keboola_client.token = 'TOKEN123'
-    keboola_client.branch_id = 'bid123'
-
-    workspace_id = 'wid-1234'
-
-    secrets = _get_secrets(keboola_client, workspace_id)
-
-    assert set(secrets.keys()) == {
-        'BRANCH_ID',
-        'WORKSPACE_ID',
+    assert secrets == {
+        'WORKSPACE_ID': 'wid-1234',
+        'BRANCH_ID': '123',
     }
-    assert secrets['BRANCH_ID'] == 'bid123'
-    assert secrets['WORKSPACE_ID'] == 'wid-1234'
+
+
+def test_get_query_function_code_selects_snippets():
+    assert _get_query_function_code('snowflake') == _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE
+    assert _get_query_function_code('bigquery') == _STORAGE_QUERY_DATA_FUNCTION_CODE
+    with pytest.raises(ValueError):
+        _get_query_function_code('unknown')
 
 
 @pytest.mark.parametrize(
