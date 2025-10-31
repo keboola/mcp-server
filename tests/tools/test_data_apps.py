@@ -200,7 +200,6 @@ def test_get_query_function_code_selects_snippets():
     assert _get_query_function_code('bigquery') == _STORAGE_QUERY_DATA_FUNCTION_CODE
     with pytest.raises(ValueError, match='Unsupported SQL dialect'):
         _get_query_function_code('UNKNOWN')
-    workspace_id = 'wid-1234'
 
 
 @pytest.mark.parametrize(
