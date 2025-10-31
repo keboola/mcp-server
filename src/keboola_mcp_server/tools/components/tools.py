@@ -56,6 +56,7 @@ from keboola_mcp_server.tools.components.model import (
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     SNOWFLAKE_TRANSFORMATION_ID,
+    add_ids,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
@@ -339,7 +340,7 @@ async def get_config(
             configuration.configuration_root.parameters
         )
         simplified_parameters: SimplifiedTfBlocks = await original_parameters.to_simplified_parameters()
-        configuration.configuration_root.parameters = simplified_parameters.model_dump(by_alias=True)
+        configuration.configuration_root.parameters = add_ids(simplified_parameters.model_dump())
 
     return configuration
 
