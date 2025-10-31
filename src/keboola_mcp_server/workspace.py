@@ -116,6 +116,7 @@ class _Workspace(abc.ABC):
         """Returns the branch ID."""
         pass
 
+
 class _SnowflakeWorkspace(_Workspace):
     def __init__(self, workspace_id: int, schema: str, client: KeboolaClient):
         super().__init__(workspace_id)
@@ -238,7 +239,7 @@ class _SnowflakeWorkspace(_Workspace):
             raise ValueError(f'Unexpected query status: {results["status"]}')
 
         return query_result
-    
+
     async def get_branch_id(self) -> str:
         if not self._qsclient:
             self._qsclient = await self._create_qs_client()
