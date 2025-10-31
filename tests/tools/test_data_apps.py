@@ -99,9 +99,9 @@ def test_inject_query_to_source_code_when_already_included():
 def test_inject_query_to_source_code_with_markers():
     src = (
         'import pandas as pd\n\n'
-        '### INJECTED_CODE ###\n'
+        '# ### INJECTED_CODE ####\n'
         '# will be replaced\n'
-        '### END_OF_INJECTED_CODE ###\n\n'
+        '# ### END_OF_INJECTED_CODE ####\n\n'
         "print('hello')\n"
     )
     query_code = _STORAGE_QUERY_DATA_FUNCTION_CODE
@@ -185,38 +185,22 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
     assert new['authorization'] == _get_authorization(False)
 
 
-def test_get_secrets_encrypts_token_and_sets_metadata():
-    secrets = _get_secrets(workspace_id='wid-1234', branch_id='123')
+def test_get_secrets():
+    secrets = _get_secrets(workspace_id='wid-1234', branch_id='123', token='token-1234')
 
     assert secrets == {
         'WORKSPACE_ID': 'wid-1234',
         'BRANCH_ID': '123',
+        '#KBC_MCP_TOKEN': 'token-1234',
     }
 
 
 def test_get_query_function_code_selects_snippets():
     assert _get_query_function_code('snowflake') == _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE
     assert _get_query_function_code('bigquery') == _STORAGE_QUERY_DATA_FUNCTION_CODE
-    with pytest.raises(ValueError):
-        _get_query_function_code('unknown')
+    with pytest.raises(ValueError, match='Unsupported SQL dialect'):
+        _get_query_function_code('UNKNOWN')
     workspace_id = 'wid-1234'
-
-    secrets = _get_secrets(
-        workspace_id=workspace_id,
-        branch_id='123',
-    )
-
-    assert secrets == {
-        'WORKSPACE_ID': 'wid-1234',
-        'BRANCH_ID': '123',
-    }
-
-
-def test_get_query_function_code_selects_snippets():
-    assert _get_query_function_code('snowflake') == _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE
-    assert _get_query_function_code('bigquery') == _STORAGE_QUERY_DATA_FUNCTION_CODE
-    # Unknown backends fall back to Storage API implementation
-    assert _get_query_function_code('unknown') == _STORAGE_QUERY_DATA_FUNCTION_CODE
 
 
 @pytest.mark.parametrize(
