@@ -1055,7 +1055,7 @@ Step 2: Update the SQL
     ]
   )
 
-Example 2 - Add a new code block to existing transformation:
+Example 2 - Append a new code block to the second block of an existing transformation:
   update_sql_transformation(
     configuration_id="12345",
     change_description="Added aggregation step",
