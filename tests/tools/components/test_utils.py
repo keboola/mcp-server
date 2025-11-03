@@ -191,7 +191,7 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
         # Test 'set' operation with different value types - None
         (
             {'config': {}},
-            ConfigParamSet(op='set', path='config.value', new_val=None),
+            ConfigParamSet(op='set', path='config.value', value=None),
             {'config': {'value': None}},
         ),
         # Test 'set' operation with different value types - number

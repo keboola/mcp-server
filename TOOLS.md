@@ -603,6 +603,22 @@ EXAMPLES:
     },
     "ConfigParamSet": {
       "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
+      "oneOf": [
+        {
+          "required": [
+            "op",
+            "path",
+            "value"
+          ]
+        },
+        {
+          "required": [
+            "op",
+            "path",
+            "new_val"
+          ]
+        }
+      ],
       "properties": {
         "op": {
           "const": "set",
@@ -613,14 +629,29 @@ EXAMPLES:
           "type": "string"
         },
         "value": {
-          "description": "Value to set (accepts both \"value\" and \"new_val\" for backward compatibility)",
-          "title": "Value"
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value to set (RFC 6902 compliant field name)"
+        },
+        "new_val": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value to set (legacy field name, use \"value\" instead)"
         }
       },
       "required": [
         "op",
-        "path",
-        "value"
+        "path"
       ],
       "type": "object"
     }
@@ -791,6 +822,22 @@ EXAMPLES:
     },
     "ConfigParamSet": {
       "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
+      "oneOf": [
+        {
+          "required": [
+            "op",
+            "path",
+            "value"
+          ]
+        },
+        {
+          "required": [
+            "op",
+            "path",
+            "new_val"
+          ]
+        }
+      ],
       "properties": {
         "op": {
           "const": "set",
@@ -801,14 +848,29 @@ EXAMPLES:
           "type": "string"
         },
         "value": {
-          "description": "Value to set (accepts both \"value\" and \"new_val\" for backward compatibility)",
-          "title": "Value"
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value to set (RFC 6902 compliant field name)"
+        },
+        "new_val": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value to set (legacy field name, use \"value\" instead)"
         }
       },
       "required": [
         "op",
-        "path",
-        "value"
+        "path"
       ],
       "type": "object"
     }

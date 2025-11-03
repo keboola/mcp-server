@@ -34,7 +34,7 @@ from individual tasks:
 from datetime import datetime
 from typing import Annotated, Any, List, Literal, Optional, Union, get_args
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
@@ -193,12 +193,50 @@ class ConfigParamSet(BaseModel):
     - Replace a nested parameter value
     """
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            'oneOf': [
+                {'required': ['op', 'path', 'value']},
+                {'required': ['op', 'path', 'new_val']}
+            ]
+        }
+    )
+
     op: Literal['set']  # name 'op' inspired by JSON Patch (https://datatracker.ietf.org/doc/html/rfc6902)
     path: str = Field(description='JSONPath to the parameter key to set (e.g., "api_key", "database.host")')
-    value: Any = Field(
-        description='Value to set (accepts both "value" and "new_val" for backward compatibility)',
-        validation_alias=AliasChoices('value', 'new_val'),
+    value: Any | None = Field(
+        default=None,
+        description='Value to set (RFC 6902 compliant field name)',
     )
+    new_val: Any | None = Field(
+        default=None,
+        description='Value to set (legacy field name, use "value" instead)',
+    )
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_value_keys(cls, data):
+        """Ensure exactly one of value or new_val is provided, normalize to value."""
+        if not isinstance(data, dict):
+            return data
+        has_value = 'value' in data
+        has_new_val = 'new_val' in data
+
+        if has_value and has_new_val:
+            raise ValueError('Only one of "value" or "new_val" can be provided')
+        if not has_value and not has_new_val:
+            raise ValueError('Either "value" or "new_val" must be provided')
+
+        if has_new_val and not has_value:
+            data = dict(data)
+            data['value'] = data.pop('new_val')
+        return data
+
+    @model_validator(mode='after')
+    def clear_new_val(self) -> 'ConfigParamSet':
+        """Ensure runtime model doesn't keep both fields populated."""
+        self.new_val = None
+        return self
 
 
 class ConfigParamReplace(BaseModel):
