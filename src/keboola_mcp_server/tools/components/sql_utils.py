@@ -114,9 +114,10 @@ def join_sql_statements(statements: Iterable[str]) -> str:
         # Check if ends with block comment or line comment at the end of the string
         ends_with_comment = trimmed_stmt.endswith('*/') or bool(re.search(r'(--|//|#)[^\n]*$', trimmed_stmt))
 
-        if ends_with_semicolon or ends_with_comment:
-            result_parts.append(f'{trimmed_stmt}\n\n')
-        else:
-            result_parts.append(f'{trimmed_stmt};\n\n')
+        result_parts.append(trimmed_stmt)
+        if not ends_with_semicolon and not ends_with_comment:
+            result_parts.append(';')
+
+        result_parts.append('\n\n')
 
     return ''.join(result_parts)
