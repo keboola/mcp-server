@@ -544,6 +544,13 @@ WORKFLOW:
 3. Prepare parameter_updates list with targeted operations
 4. Call update_config with only the fields to change
 
+EXAMPLES:
+- Set array: parameter_updates=[{"op": "set", "path": "packages", "value": ["pandas", "numpy"]}]
+- String replace: parameter_updates=[{"op": "str_replace", "path": "url",
+  "search_for": "http", "replace_with": "https"}]
+- Remove field: parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
+NOTE: "value" field accepts both "value" and "new_val" for backward compatibility.
+
 
 **Input JSON Schema**:
 ```json
@@ -606,15 +613,15 @@ WORKFLOW:
           "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
           "type": "string"
         },
-        "new_val": {
-          "description": "New value to set",
-          "title": "New Val"
+        "value": {
+          "description": "Value to set (accepts both \"value\" and \"new_val\" for backward compatibility)",
+          "title": "Value"
         }
       },
       "required": [
         "op",
         "path",
-        "new_val"
+        "value"
       ],
       "type": "object"
     }
@@ -726,6 +733,13 @@ WORKFLOW:
 3. Prepare parameter_updates list with targeted operations for this row
 4. Call update_config_row with only the fields to change
 
+EXAMPLES:
+- Set array: parameter_updates=[{"op": "set", "path": "columns", "value": ["id", "name", "email"]}]
+- String replace: parameter_updates=[{"op": "str_replace", "path": "query",
+  "search_for": "old_table", "replace_with": "new_table"}]
+- Remove field: parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
+NOTE: "value" field accepts both "value" and "new_val" for backward compatibility.
+
 
 **Input JSON Schema**:
 ```json
@@ -788,15 +802,15 @@ WORKFLOW:
           "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
           "type": "string"
         },
-        "new_val": {
-          "description": "New value to set",
-          "title": "New Val"
+        "value": {
+          "description": "Value to set (accepts both \"value\" and \"new_val\" for backward compatibility)",
+          "title": "Value"
         }
       },
       "required": [
         "op",
         "path",
-        "new_val"
+        "value"
       ],
       "type": "object"
     }
