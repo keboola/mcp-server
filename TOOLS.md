@@ -549,7 +549,6 @@ EXAMPLES:
 - String replace: parameter_updates=[{"op": "str_replace", "path": "url",
   "search_for": "http", "replace_with": "https"}]
 - Remove field: parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
-NOTE: "value" field accepts both "value" and "new_val" for backward compatibility.
 
 
 **Input JSON Schema**:
@@ -738,7 +737,6 @@ EXAMPLES:
 - String replace: parameter_updates=[{"op": "str_replace", "path": "query",
   "search_for": "old_table", "replace_with": "new_table"}]
 - Remove field: parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
-NOTE: "value" field accepts both "value" and "new_val" for backward compatibility.
 
 
 **Input JSON Schema**:

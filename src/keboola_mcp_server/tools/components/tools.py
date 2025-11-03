@@ -915,7 +915,6 @@ async def update_config(
     - String replace: parameter_updates=[{"op": "str_replace", "path": "url",
       "search_for": "http", "replace_with": "https"}]
     - Remove field: parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
-    NOTE: "value" field accepts both "value" and "new_val" for backward compatibility.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1091,7 +1090,6 @@ async def update_config_row(
     - String replace: parameter_updates=[{"op": "str_replace", "path": "query",
       "search_for": "old_table", "replace_with": "new_table"}]
     - Remove field: parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
-    NOTE: "value" field accepts both "value" and "new_val" for backward compatibility.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
