@@ -461,9 +461,9 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
             matches = jsonpath_expr.find(params)
             if not matches:
                 # path doesn't exist, create it manually
-                _set_nested_value(params, update.path, update.new_val)
+                _set_nested_value(params, update.path, update.value)
             else:
-                params = jsonpath_expr.update(params, update.new_val)
+                params = jsonpath_expr.update(params, update.value)
         except Exception as e:
             raise ValueError(f'Failed to set nested value at path "{update.path}": {e}')
         return params
