@@ -291,7 +291,6 @@ async def modify_data_app(
     secrets = _get_secrets(
         workspace_id=str(workspace_id),
         branch_id=str(branch_id),
-        token=str(client.token),
     )
 
     if configuration_id:
@@ -677,6 +676,5 @@ def _get_secrets(workspace_id: str, branch_id: str, token: str) -> dict[str, Any
     secrets: dict[str, Any] = {
         'WORKSPACE_ID': workspace_id,
         'BRANCH_ID': branch_id,
-        '#KBC_MCP_TOKEN': token,  # Starting with "#" we encrypt the value.
     }
     return secrets

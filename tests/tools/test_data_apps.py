@@ -186,12 +186,11 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
 
 
 def test_get_secrets():
-    secrets = _get_secrets(workspace_id='wid-1234', branch_id='123', token='token-1234')
+    secrets = _get_secrets(workspace_id='wid-1234', branch_id='123')
 
     assert secrets == {
         'WORKSPACE_ID': 'wid-1234',
         'BRANCH_ID': '123',
-        '#KBC_MCP_TOKEN': 'token-1234',
     }
 
 

@@ -10,10 +10,10 @@ def query_data(query: str) -> pd.DataFrame:
     branch_id = os.environ.get('BRANCH_ID')
     workspace_id = os.environ.get('WORKSPACE_ID')
     kbc_url = os.environ.get('KBC_URL')
-    token = os.environ.get('KBC_MCP_TOKEN')
+    token = os.environ.get('KBC_TOKEN')
 
     if not branch_id or not workspace_id or not kbc_url or not token:
-        raise RuntimeError('Missing required environment variables: BRANCH_ID, WORKSPACE_ID, KBC_URL, KBC_MCP_TOKEN.')
+        raise RuntimeError('Missing required environment variables: BRANCH_ID, WORKSPACE_ID, KBC_URL, KBC_TOKEN.')
 
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
