@@ -911,32 +911,11 @@ async def update_config(
     4. Call update_config with only the fields to change
 
     EXAMPLES:
-    - Update a single parameter:
-      parameter_updates=[{"op": "set", "path": "api_key", "value": "new-key-123"}]
-
-    - Update an array parameter (e.g., adding packages):
-      parameter_updates=[{"op": "set", "path": "packages", "value": ["pandas", "numpy", "requests"]}]
-
-    - Update a nested parameter:
-      parameter_updates=[{"op": "set", "path": "database.host", "value": "new-host.example.com"}]
-
-    - Replace entire parameters object:
-      parameter_updates=[{"op": "set", "path": "$", "value": {...}}]
-
-    - String replacement in a parameter:
-      parameter_updates=[{"op": "str_replace", "path": "database.host", "search_for": "old", "replace_with": "new"}]
-
-    - Remove a parameter:
-      parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
-
-    - Multiple operations at once:
-      parameter_updates=[
-        {"op": "set", "path": "api_key", "value": "new-key"},
-        {"op": "remove", "path": "old_field"}
-      ]
-
-    NOTE: The "value" field accepts both "value" and "new_val" for backward compatibility,
-    but "value" is the preferred field name (aligns with RFC 6902 JSON Patch standard).
+    - Set array: parameter_updates=[{"op": "set", "path": "packages", "value": ["pandas", "numpy"]}]
+    - String replace: parameter_updates=[{"op": "str_replace", "path": "url",
+      "search_for": "http", "replace_with": "https"}]
+    - Remove field: parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
+    NOTE: "value" field accepts both "value" and "new_val" for backward compatibility.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1108,26 +1087,11 @@ async def update_config_row(
     4. Call update_config_row with only the fields to change
 
     EXAMPLES:
-    - Update a single row parameter:
-      parameter_updates=[{"op": "set", "path": "table_name", "value": "customers"}]
-
-    - Update an array parameter in a row:
-      parameter_updates=[{"op": "set", "path": "columns", "value": ["id", "name", "email"]}]
-
-    - Update a nested parameter in a row:
-      parameter_updates=[{"op": "set", "path": "filter.status", "value": "active"}]
-
-    - Replace entire row parameters:
-      parameter_updates=[{"op": "set", "path": "$", "value": {...}}]
-
-    - String replacement in a row parameter:
-      parameter_updates=[{"op": "str_replace", "path": "query", "search_for": "old_table", "replace_with": "new_table"}]
-
-    - Remove a row parameter:
-      parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
-
-    NOTE: The "value" field accepts both "value" and "new_val" for backward compatibility,
-    but "value" is the preferred field name (aligns with RFC 6902 JSON Patch standard).
+    - Set array: parameter_updates=[{"op": "set", "path": "columns", "value": ["id", "name", "email"]}]
+    - String replace: parameter_updates=[{"op": "str_replace", "path": "query",
+      "search_for": "old_table", "replace_with": "new_table"}]
+    - Remove field: parameter_updates=[{"op": "remove", "path": "deprecated_field"}]
+    NOTE: "value" field accepts both "value" and "new_val" for backward compatibility.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
