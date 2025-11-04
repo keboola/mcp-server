@@ -670,7 +670,7 @@ async def create_config(
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     if processors_before:
-        processors_before = validate_processors_configuration(
+        processors_before = await validate_processors_configuration(
             client=client,
             processors=processors_before,
             initial_message='The "processors_before" field is not valid.',
@@ -678,7 +678,7 @@ async def create_config(
         set_nested_value(configuration_payload, 'processors.before', processors_before)
 
     if processors_after:
-        processors_after = validate_processors_configuration(
+        processors_after = await validate_processors_configuration(
             client=client,
             processors=processors_after,
             initial_message='The "processors_after" field is not valid.',
@@ -805,7 +805,7 @@ async def add_config_row(
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     if processors_before:
-        processors_before = validate_processors_configuration(
+        processors_before = await validate_processors_configuration(
             client=client,
             processors=processors_before,
             initial_message='The "processors_before" field is not valid.',
@@ -813,7 +813,7 @@ async def add_config_row(
         set_nested_value(configuration_payload, 'processors.before', processors_before)
 
     if processors_after:
-        processors_after = validate_processors_configuration(
+        processors_after = await validate_processors_configuration(
             client=client,
             processors=processors_after,
             initial_message='The "processors_after" field is not valid.',
@@ -990,7 +990,7 @@ async def update_config(
         configuration_payload['storage'] = storage_cfg
 
     if processors_before is not None:
-        processors_before = validate_processors_configuration(
+        processors_before = await validate_processors_configuration(
             client=client,
             processors=processors_before,
             initial_message='The "processors_before" field is not valid.',
@@ -998,7 +998,7 @@ async def update_config(
         set_nested_value(configuration_payload, 'processors.before', processors_before)
 
     if processors_after is not None:
-        processors_after = validate_processors_configuration(
+        processors_after = await validate_processors_configuration(
             client=client,
             processors=processors_after,
             initial_message='The "processors_after" field is not valid.',
@@ -1186,7 +1186,7 @@ async def update_config_row(
         configuration_payload['storage'] = storage_cfg
 
     if processors_before is not None:
-        processors_before = validate_processors_configuration(
+        processors_before = await validate_processors_configuration(
             client=client,
             processors=processors_before,
             initial_message='The "processors_before" field is not valid.',
@@ -1194,7 +1194,7 @@ async def update_config_row(
         set_nested_value(configuration_payload, 'processors.before', processors_before)
 
     if processors_after is not None:
-        processors_after = validate_processors_configuration(
+        processors_after = await validate_processors_configuration(
             client=client,
             processors=processors_after,
             initial_message='The "processors_after" field is not valid.',
