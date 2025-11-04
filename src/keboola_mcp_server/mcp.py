@@ -5,7 +5,6 @@ It also provides a decorator that MCP tool functions can use to inject session s
 """
 
 import dataclasses
-import json
 import logging
 import textwrap
 from dataclasses import dataclass
@@ -21,6 +20,7 @@ from fastmcp.tools import Tool
 from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel
+from pydantic_core import to_json
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -287,7 +287,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
 def _exclude_none_serializer(data: Any) -> str:
     if (cleaned := _to_python(data)) is not None:
-        return json.dumps(cleaned, ensure_ascii=False, separators=(',', ':'))
+        return to_json(cleaned, fallback=str).decode('utf-8')
     else:
         return ''
 

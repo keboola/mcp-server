@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -7,6 +9,7 @@ from keboola_mcp_server.mcp import _exclude_none_serializer
 class TestModel(BaseModel):
     field1: str | None = None
     field2: int | None = Field(default=None, serialization_alias='field2_alias')
+    field3: datetime | None = None
 
 
 @pytest.mark.parametrize(
@@ -28,6 +31,16 @@ class TestModel(BaseModel):
         (
             {'key1': [TestModel(field1='value1'), None], 'key2': {'nested_key': TestModel(field2=789)}},
             '{"key1":[{"field1":"value1"}],"key2":{"nested_key":{"field2":789}}}',
+        ),
+        (
+            {
+                'key1': [TestModel(field3=datetime(2025, 2, 3, 10, 11, 12, tzinfo=timezone(timedelta(hours=2)))), None],
+                'key2': {'nested_key': TestModel(field2=789)},
+                'key3': datetime(2025, 1, 1, 1, 2, 3),
+            },
+            '{"key1":[{"field3":"2025-02-03T10:11:12+02:00"}],'
+            '"key2":{"nested_key":{"field2":789}},'
+            '"key3":"2025-01-01T01:02:03"}',
         ),
     ],
 )
