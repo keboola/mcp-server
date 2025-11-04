@@ -61,12 +61,11 @@ Type = Literal['streamlit']
 # LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
 
-_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = resources.read_text(
-    'keboola_mcp_server.resources.data_app', 'qsapi_query_data_code.py'
+_DATA_APP_RESOURCES = resources.files('keboola_mcp_server.resources.data_app')
+_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = _DATA_APP_RESOURCES.joinpath('qsapi_query_data_code.py').read_text(
+    encoding='utf-8'
 )
-_STORAGE_QUERY_DATA_FUNCTION_CODE = (
-    resources.files('keboola_mcp_server.resources.data_app').joinpath('sapi_query_data_code.py').read_text()
-)
+_STORAGE_QUERY_DATA_FUNCTION_CODE = _DATA_APP_RESOURCES.joinpath('sapi_query_data_code.py').read_text(encoding='utf-8')
 
 _DEFAULT_STREAMLIT_THEME = (
     '[theme]\nfont = "sans serif"\ntextColor = "#222529"\nbackgroundColor = "#FFFFFF"\nsecondaryBackgroundColor = '
