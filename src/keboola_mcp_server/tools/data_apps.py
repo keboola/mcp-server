@@ -62,7 +62,7 @@ Type = Literal['streamlit']
 SafeType = Union[Type, str]
 
 _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = (
-    resources.files('keboola_mcp_server.resources.data_app').joinpath('qsapi_query_data_code.py').read_text()
+    resources.read_text('keboola_mcp_server.resources.data_app', 'qsapi_query_data_code.py')
 )
 _STORAGE_QUERY_DATA_FUNCTION_CODE = (
     resources.files('keboola_mcp_server.resources.data_app').joinpath('sapi_query_data_code.py').read_text()
