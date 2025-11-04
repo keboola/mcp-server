@@ -24,7 +24,7 @@ import copy
 import logging
 import re
 import unicodedata
-from typing import Any, Optional, Sequence, cast
+from typing import Any, Mapping, Optional, Sequence, TypeVar, cast
 
 import jsonpath_ng
 from httpx import HTTPStatusError
@@ -44,6 +44,8 @@ from keboola_mcp_server.tools.components.model import (
 )
 
 LOG = logging.getLogger(__name__)
+T = TypeVar('T')
+
 
 # ============================================================================
 # CONSTANTS
@@ -414,6 +416,18 @@ async def set_cfg_update_metadata(
 # ============================================================================
 # PARAMETER UPDATE UTILITIES
 # ============================================================================
+
+
+def get_nested(obj: Mapping[str, Any] | None, key: str, *, default: T = None) -> T | None:
+    """
+    Gets a value from a nested mapping associated with the key.
+    """
+    d = obj
+    for k in key.split('.'):
+        d = d.get(k) if isinstance(d, Mapping) else None
+        if d is None:
+            return default
+    return d
 
 
 def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:

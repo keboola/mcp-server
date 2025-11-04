@@ -1,8 +1,7 @@
 import asyncio
 import logging
 import re
-from datetime import datetime
-from typing import Annotated, Sequence
+from typing import Annotated, Any, Sequence
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -10,10 +9,12 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, model_validator
 
 from keboola_mcp_server.clients.ai_service import SuggestedComponent
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.tools.components.utils import get_nested
 
 LOG = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class SearchHit(BaseModel):
     configuration_row_id: str | None = Field(default=None, description='The ID of the configuration row.')
 
     item_type: ItemType = Field(description='The type of the item (e.g. table, bucket, configuration, etc.).')
-    created: str = Field(description='The date and time the item was created in ISO 8601 format.')
+    updated: str = Field(description='The date and time the item was created in ISO 8601 format.')
 
     name: str | None = Field(default=None, description='Name of the item.')
     display_name: str | None = Field(default=None, description='Display name of the item.')
@@ -90,6 +91,13 @@ def _matches_pattern(text: str | None, patterns: list[re.Pattern]) -> bool:
     return text and any(pattern.search(text) for pattern in patterns)
 
 
+def _get_field_value(item: JsonDict, fields: Sequence[str]) -> Any | None:
+    for field in fields:
+        if value := get_nested(item, field):
+            return value
+    return None
+
+
 async def _fetch_buckets(client: KeboolaClient, patterns: list[re.Pattern]) -> list[SearchHit]:
     """Fetches and filters buckets."""
     hits = []
@@ -111,7 +119,7 @@ async def _fetch_buckets(client: KeboolaClient, patterns: list[re.Pattern]) -> l
                 SearchHit(
                     bucket_id=bucket_id,
                     item_type='bucket',
-                    created=bucket.get('created', datetime.now().isoformat()),
+                    updated=_get_field_value(bucket, ['lastChangeDate', 'updated', 'created']) or '',
                     name=bucket_name,
                     display_name=bucket_display_name,
                     description=bucket_description,
@@ -146,7 +154,7 @@ async def _fetch_tables(client: KeboolaClient, patterns: list[re.Pattern]) -> li
                     SearchHit(
                         table_id=table_id,
                         item_type='table',
-                        created=table.get('created', datetime.now().isoformat()),
+                        updated=_get_field_value(table, ['lastChangeDate', 'created']) or '',
                         name=table_name,
                         display_name=table_display_name,
                         description=table_description,
@@ -182,6 +190,7 @@ async def _fetch_configurations(client: KeboolaClient, patterns: list[re.Pattern
 
                 config_name = config.get('name')
                 config_description = config.get('description')
+                config_updated = _get_field_value(config, ['currentVersion.created', 'created']) or ''
 
                 if (
                     _matches_pattern(config_id, patterns)
@@ -193,7 +202,7 @@ async def _fetch_configurations(client: KeboolaClient, patterns: list[re.Pattern
                             component_id=component_id,
                             configuration_id=config_id,
                             item_type=item_type,
-                            created=config.get('created', datetime.now().isoformat()),
+                            updated=config_updated,
                             name=config_name,
                             description=config_description,
                         )
@@ -217,7 +226,7 @@ async def _fetch_configurations(client: KeboolaClient, patterns: list[re.Pattern
                                 configuration_id=config_id,
                                 configuration_row_id=row_id,
                                 item_type='configuration-row',
-                                created=row.get('created', datetime.now().isoformat()),
+                                updated=config_updated or _get_field_value(row, ['created']),
                                 name=row_name,
                                 description=row_description,
                             )
@@ -352,7 +361,10 @@ async def search(
 
     # TODO: Should we sort by the item type too?
     all_hits.sort(
-        key=lambda x: (x.created, x.bucket_id, x.table_id, x.component_id, x.configuration_id, x.configuration_row_id),
+        key=lambda x: (
+            x.updated,
+            x.bucket_id or x.table_id or x.component_id or x.configuration_id or x.configuration_row_id,
+        ),
         reverse=True,
     )
     paginated_hits = all_hits[offset : offset + limit]
