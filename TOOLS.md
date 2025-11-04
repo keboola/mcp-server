@@ -1193,10 +1193,12 @@ from the workspace.
 - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
 `query_data` tool to inspect the data in the workspace before using it in the data app.
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
-parameter.
+parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
+appropriately based on the parameter type.
 - If the data app is updated while running, it must be redeployed for the changes to take effect.
-- The Data App requires basic authorization by default for security reasons, unless explicitly specified otherwise
-by the user.
+- New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
+updating, set `authentication_type` to `default` to keep the existing authentication type configuration
+(including OIDC setups) unless explicitly specified otherwise.
 
 
 **Input JSON Schema**:
@@ -1222,10 +1224,14 @@ by the user.
       },
       "type": "array"
     },
-    "authorization_required": {
-      "default": true,
-      "description": "Whether the data app is authorized using simple password or not.",
-      "type": "boolean"
+    "authentication_type": {
+      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, and \"default\" keeps the existing authentication type when updating.",
+      "enum": [
+        "no-auth",
+        "basic-auth",
+        "default"
+      ],
+      "type": "string"
     },
     "configuration_id": {
       "default": "",
@@ -1242,7 +1248,8 @@ by the user.
     "name",
     "description",
     "source_code",
-    "packages"
+    "packages",
+    "authentication_type"
   ],
   "type": "object"
 }
