@@ -33,7 +33,7 @@ async def test_search_end_to_end(
     )
 
     # filter out data apps that seem to often be left behind in the testing project
-    result = [hit for hit in result if hit.item_type != 'configuration' or hit.configuration_id != 'keboola.data-apps']
+    result = [hit for hit in result if hit.item_type != 'configuration' or hit.component_id != 'keboola.data-apps']
 
     # Verify the result structure
     assert isinstance(result, list)
