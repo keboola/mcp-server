@@ -51,16 +51,20 @@ async def test_search_end_to_end(
 
     if not item_type:
         expected_config_ids = {config.configuration_id for config in configs}
-        actual_config_ids = {hit.configuration_id for hit in result if hit.item_type in ['configuration', 'transformation']}
+        actual_config_ids = {
+            hit.configuration_id for hit in result if hit.item_type in ['configuration', 'transformation']
+        }
         assert actual_config_ids == expected_config_ids, f'Should find all test configurations. Found: {result}'
 
-    elif item_type  == 'configuration':
-        expected_config_ids = {config.configuration_id for config in configs if config.component_id == 'ex-generic-v2' }
+    elif item_type == 'configuration':
+        expected_config_ids = {config.configuration_id for config in configs if config.component_id == 'ex-generic-v2'}
         actual_config_ids = {hit.configuration_id for hit in result if hit.item_type == 'configuration'}
         assert actual_config_ids == expected_config_ids, f'Should find all test configurations. Found: {result}'
 
-    elif item_type  == 'transformation':
-        expected_config_ids = {config.configuration_id for config in configs if config.component_id == 'keboola.snowflake-transformation' }
+    elif item_type == 'transformation':
+        expected_config_ids = {
+            config.configuration_id for config in configs if config.component_id == 'keboola.snowflake-transformation'
+        }
         actual_config_ids = {hit.configuration_id for hit in result if hit.item_type == 'transformation'}
         assert actual_config_ids == expected_config_ids, f'Should find all test transformations. Found: {result}'
 
