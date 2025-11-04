@@ -22,7 +22,7 @@ class QueryServiceClient(KeboolaServiceClient):
 
     @property
     def branch_id(self) -> str:
-        """Returns the branch ID."""
+        """Returns the real branch ID (no symbolic names such as 'default' or 'main')."""
         return self._branch_id
 
     @classmethod
