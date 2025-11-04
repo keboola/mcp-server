@@ -360,5 +360,5 @@ class TestSearchTool:
                 call('in.c-test-bucket-c'),
             ]
         )
-        keboola_client.storage_client.component_list.called_once_with(None, include=['configuration', 'rows'])
+        keboola_client.storage_client.component_list.assert_called_once_with(None, include=['configuration', 'rows'])
         keboola_client.storage_client.workspace_list.assert_not_called()
