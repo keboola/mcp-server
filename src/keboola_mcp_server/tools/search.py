@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import re
-from typing import Annotated, Any, Sequence
+from typing import Annotated, Any, AsyncGenerator, Iterable, Mapping, Sequence
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -22,6 +22,14 @@ SEARCH_TOOL_NAME = 'search'
 MAX_GLOBAL_SEARCH_LIMIT = 100
 DEFAULT_GLOBAL_SEARCH_LIMIT = 50
 SEARCH_TOOLS_TAG = 'search'
+
+ITEM_TYPE_TO_COMPONENT_TYPES: Mapping[ItemType, Sequence[str]] = {
+    'flow': ['other'],
+    'transformation': ['transformation'],
+    'configuration': ['extractor', 'writer'],
+    'configuration-row': ['extractor', 'writer'],
+    'workspace': ['other'],
+}
 
 
 def add_search_tools(mcp: FastMCP) -> None:
@@ -163,76 +171,90 @@ async def _fetch_tables(client: KeboolaClient, patterns: list[re.Pattern]) -> li
     return hits
 
 
-async def _fetch_configurations(client: KeboolaClient, patterns: list[re.Pattern]) -> list[SearchHit]:
+async def _fetch_configurations(
+    client: KeboolaClient, patterns: list[re.Pattern], item_types: Iterable[ItemType] | None = None
+) -> list[SearchHit]:
     """Fetches and filters configurations and configuration rows from all component types."""
     hits = []
-    # Fetch all component types
-    component_types = ['extractor', 'writer', 'application', 'transformation', 'orchestration']
-    for component_type in component_types:
-        components = await client.storage_client.component_list(component_type, include=['configuration', 'rows'])
-        for component in components:
-            if not (component_id := component.get('id')):
-                continue
 
-            item_type: ItemType
-            if component_id in ['keboola.orchestrator', 'keboola.flow']:
-                item_type = 'flow'
-            elif component_type == 'transformation':
-                item_type = 'transformation'
-            elif component_type == 'keboola.sandboxes':
-                item_type = 'workspace'
-            else:
-                item_type = 'configuration'
+    component_types: set[str] = set()
+    for item_type in item_types or []:
+        if ctypes := ITEM_TYPE_TO_COMPONENT_TYPES.get(item_type):
+            component_types.update(ctypes)
 
-            for config in component.get('configurations', []):
-                if not (config_id := config.get('id')):
-                    continue
+    if component_types:
+        for component_type in component_types:
+            async for hit in _fetch_configs(client, patterns, component_type=component_type):
+                hits.append(hit)
 
-                config_name = config.get('name')
-                config_description = config.get('description')
-                config_updated = _get_field_value(config, ['currentVersion.created', 'created']) or ''
-
-                if (
-                    _matches_pattern(config_id, patterns)
-                    or _matches_pattern(config_name, patterns)
-                    or _matches_pattern(config_description, patterns)
-                ):
-                    hits.append(
-                        SearchHit(
-                            component_id=component_id,
-                            configuration_id=config_id,
-                            item_type=item_type,
-                            updated=config_updated,
-                            name=config_name,
-                            description=config_description,
-                        )
-                    )
-
-                for row in config.get('rows', []):
-                    if not (row_id := row.get('id')):
-                        continue
-
-                    row_name = row.get('name')
-                    row_description = row.get('description')
-
-                    if (
-                        _matches_pattern(row_id, patterns)
-                        or _matches_pattern(row_name, patterns)
-                        or _matches_pattern(row_description, patterns)
-                    ):
-                        hits.append(
-                            SearchHit(
-                                component_id=component_id,
-                                configuration_id=config_id,
-                                configuration_row_id=row_id,
-                                item_type='configuration-row',
-                                updated=config_updated or _get_field_value(row, ['created']),
-                                name=row_name,
-                                description=row_description,
-                            )
-                        )
+    else:
+        async for hit in _fetch_configs(client, patterns, component_type=None):
+            hits.append(hit)
 
     return hits
+
+
+async def _fetch_configs(
+    client: KeboolaClient, patterns: list[re.Pattern], component_type: str | None = None
+) -> AsyncGenerator[SearchHit, None]:
+    components = await client.storage_client.component_list(component_type, include=['configuration', 'rows'])
+    for component in components:
+        if not (component_id := component.get('id')):
+            continue
+
+        item_type: ItemType
+        if component_id in ['keboola.orchestrator', 'keboola.flow']:
+            item_type = 'flow'
+        elif component_type == 'transformation':
+            item_type = 'transformation'
+        elif component_id == 'keboola.sandboxes':
+            item_type = 'workspace'
+        else:
+            item_type = 'configuration'
+
+        for config in component.get('configurations', []):
+            if not (config_id := config.get('id')):
+                continue
+
+            config_name = config.get('name')
+            config_description = config.get('description')
+            config_updated = _get_field_value(config, ['currentVersion.created', 'created']) or ''
+
+            if (
+                _matches_pattern(config_id, patterns)
+                or _matches_pattern(config_name, patterns)
+                or _matches_pattern(config_description, patterns)
+            ):
+                yield SearchHit(
+                    component_id=component_id,
+                    configuration_id=config_id,
+                    item_type=item_type,
+                    updated=config_updated,
+                    name=config_name,
+                    description=config_description,
+                )
+
+            for row in config.get('rows', []):
+                if not (row_id := row.get('id')):
+                    continue
+
+                row_name = row.get('name')
+                row_description = row.get('description')
+
+                if (
+                    _matches_pattern(row_id, patterns)
+                    or _matches_pattern(row_name, patterns)
+                    or _matches_pattern(row_description, patterns)
+                ):
+                    yield SearchHit(
+                        component_id=component_id,
+                        configuration_id=config_id,
+                        configuration_row_id=row_id,
+                        item_type='configuration-row',
+                        updated=config_updated or _get_field_value(row, ['created']),
+                        name=row_name,
+                        description=row_description,
+                    )
 
 
 @tool_errors()
@@ -338,10 +360,16 @@ async def search(
     if not types_to_fetch or 'table' in types_to_fetch:
         tasks.append(_fetch_tables(client, compiled_patterns))
 
-    if not types_to_fetch or any(
-        t in types_to_fetch for t in ['configuration', 'transformation', 'flow', 'configuration-row', 'workspace']
-    ):
+    if not types_to_fetch:
         tasks.append(_fetch_configurations(client, compiled_patterns))
+    elif config_types_to_fetch := types_to_fetch & {
+        'configuration',
+        'transformation',
+        'flow',
+        'configuration-row',
+        'workspace',
+    }:
+        tasks.append(_fetch_configurations(client, compiled_patterns, item_types=config_types_to_fetch))
 
     # Gather all results
     results = await asyncio.gather(*tasks, return_exceptions=True)

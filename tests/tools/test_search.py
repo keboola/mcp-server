@@ -1,4 +1,5 @@
 from typing import Any, cast
+from unittest.mock import call
 
 import pytest
 from fastmcp import Context
@@ -268,8 +269,10 @@ class TestSearchTool:
 
         keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(side_effect=_bucket_table_list_side_effect)
 
-        def _component_list_side_effect(component_type: str, include: Any = None) -> list[JsonDict]:
-            if component_type == 'extractor':
+        def _component_list_side_effect(
+            component_type: str | None = None, include: Any | None = None
+        ) -> list[JsonDict]:
+            if not component_type:
                 return [
                     {
                         'id': 'keboola.ex-db-mysql',
@@ -348,3 +351,14 @@ class TestSearchTool:
                 name='test-bucket-c',
             ),
         ]
+
+        keboola_client.storage_client.bucket_list.assert_has_calls([call(), call()])
+        keboola_client.storage_client.bucket_table_list.assert_has_calls(
+            [
+                call('in.c-test-bucket-a'),
+                call('in.c-test-bucket-b'),
+                call('in.c-test-bucket-c'),
+            ]
+        )
+        keboola_client.storage_client.component_list.called_once_with(None, include=['configuration', 'rows'])
+        keboola_client.storage_client.workspace_list.assert_not_called()
