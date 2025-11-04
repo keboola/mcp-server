@@ -90,7 +90,7 @@ async def initial_data_app(
                 'description': app_description,
                 'source_code': sample_streamlit_app,
                 'packages': ['numpy', 'streamlit'],
-                'authorization_required': False,
+                'authentication_type': 'no-auth',
             },
         )
         assert created_result.structured_content is not None
@@ -201,7 +201,7 @@ async def test_data_app_lifecycle(
             'description': updated_description,
             'source_code': updated_source_code,
             'packages': ['streamlit'],
-            'authorization_required': False,
+            'authentication_type': 'no-auth',
             'configuration_id': configuration_id,
             'change_description': 'Update Code',
         },
