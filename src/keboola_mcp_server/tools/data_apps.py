@@ -61,8 +61,8 @@ Type = Literal['streamlit']
 # LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
 
-_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = (
-    resources.read_text('keboola_mcp_server.resources.data_app', 'qsapi_query_data_code.py')
+_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = resources.read_text(
+    'keboola_mcp_server.resources.data_app', 'qsapi_query_data_code.py'
 )
 _STORAGE_QUERY_DATA_FUNCTION_CODE = (
     resources.files('keboola_mcp_server.resources.data_app').joinpath('sapi_query_data_code.py').read_text()
@@ -73,6 +73,11 @@ _DEFAULT_STREAMLIT_THEME = (
     '"#E6F2FF"\nprimaryColor = "#1F8FFF"'
 )
 _DEFAULT_PACKAGES = ['pandas', 'httpx']
+
+INJECTED_BLOCK_RE = re.compile(
+    r'(?P<before>.*?)#\s###\sINJECTED_CODE\s####.*?#\s###\sEND_OF_INJECTED_CODE\s####(?P<after>.*)',
+    re.DOTALL,
+)
 
 
 class DataAppSummary(BaseModel):
@@ -615,6 +620,8 @@ def _is_authorized(authorization: dict[str, Any]) -> bool:
 def _get_query_function_code(sql_dialect: str) -> str:
     """
     Selects the appropriate query function code for the given SQL dialect.
+    - Snowflake: uses Query Service API
+    - BigQuery: uses Storage API (Query Service API is not supported for BigQuery yet)
     """
     sql_dialect = sql_dialect.lower()
     if sql_dialect == 'snowflake':
@@ -639,13 +646,8 @@ def _strip_injected_query_code(source_code: str) -> str:
 
 def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
     """
-    Injects the query_data function into the source code.
-    - Removes existing injected code (for both SQL dialects) to keep the generated source consistent when reinjecting
-    the code.
-    - Injects query code based on the SQL dialect:
-    - if {QUERY_DATA_FUNCTION} exists, Injects the query_data function into the source code for placeholder .
-    - else if ### INJECTED_CODE ### and ### END_OF_INJECTED_CODE ### exist, inject the query_data function for this.
-    - else inject the query_data function at the beginning of the source code.
+    Injects the query_data function into the source code based on the SQL dialect, while removing the
+    existing injected code for consistency.
 
     :param source_code: The source code of the data app
     :param sql_dialect: The SQL dialect of the workspace
@@ -653,20 +655,24 @@ def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
     """
     if not source_code:
         return ''
+
     query_function_code = _get_query_function_code(sql_dialect)
     if query_function_code in source_code:
         return source_code
+
     # remove existing injected code to keep the code in sync with the current SQL dialect
     source_code = _strip_injected_query_code(source_code)
+
     if '{QUERY_DATA_FUNCTION}' in source_code:
         return source_code.replace('{QUERY_DATA_FUNCTION}', query_function_code)
-    elif '# ### INJECTED_CODE ####' in source_code and '# ### END_OF_INJECTED_CODE ####' in source_code:
-        # get the first and the last part before and after generated code and inject the query_data function
-        imports = source_code.split('# ### INJECTED_CODE ####')[0]
-        remainder = source_code.split('# ### INJECTED_CODE ####')[1].split('# ### END_OF_INJECTED_CODE ####')[1]
-        return imports.rstrip() + '\n\n' + query_function_code + '\n\n' + remainder.lstrip()
+
+    match = INJECTED_BLOCK_RE.match(source_code)
+    if match:
+        before = match.group('before').rstrip()
+        after = match.group('after').lstrip()
+        return f'{before}\n\n{query_function_code}\n\n{after}'
     else:
-        return query_function_code + '\n\n' + source_code.lstrip()
+        return f'{query_function_code}\n\n{source_code.lstrip()}'
 
 
 def _get_secrets(workspace_id: str, branch_id: str, token: str) -> dict[str, Any]:

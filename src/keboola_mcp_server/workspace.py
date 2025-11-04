@@ -245,9 +245,6 @@ class _SnowflakeWorkspace(_Workspace):
             self._qsclient = await self._create_qs_client()
         return self._qsclient.branch_id
 
-    def get_backend(self) -> str:
-        return 'snowflake'
-
     async def _create_qs_client(self) -> QueryServiceClient:
         real_branch_id = self._client.branch_id
         if not real_branch_id:
