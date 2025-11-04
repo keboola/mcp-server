@@ -756,12 +756,14 @@ async def update_sql_transformation(
 
     updated_configuration = config_details.get('configuration', {})
 
+    msg = ''
+
     if parameter_updates:
         current_param_dict = updated_configuration.get('parameters', {})
         current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
         simplified_parameters = await current_raw_parameters.to_simplified_parameters()
 
-        updated_params = update_transformation_parameters(simplified_parameters, parameter_updates)
+        updated_params, msg = update_transformation_parameters(simplified_parameters, parameter_updates)
         updated_raw_parameters = await updated_params.to_raw_parameters()
 
         parameters_cfg = validate_root_parameters_configuration(
@@ -816,6 +818,7 @@ async def update_sql_transformation(
         success=True,
         links=links,
         version=updated_raw_configuration['version'],
+        change_summary=msg,
     )
 
 

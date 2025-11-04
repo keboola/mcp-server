@@ -485,14 +485,14 @@ def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) 
     return params
 
 
-def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) -> dict[str, Any]:
+def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) -> tuple[dict[str, Any], str]:
     """
     Applies a single parameter update to the given transformation parameters.
     Note: This function modifies the input dictionary in place for efficiency.
     The caller (update_transformation_parameters) is responsible for creating a copy if needed.
     :param parameters: The transformation parameters
     :param update: Parameter update operation to apply
-    :return: The updated transformation parameters
+    :return: Tuple of (updated transformation parameters, change summary message)
     """
     operation = update.op
     tf_update_func = getattr(tf_update, operation)
@@ -512,18 +512,86 @@ def add_ids(parameters: dict[str, Any]) -> dict[str, Any]:
     return parameters
 
 
+def structure_summary(parameters: dict[str, Any]) -> str:
+    """
+    Generate a markdown summary of transformation structure showing block IDs, code IDs, and SQL snippets.
+
+    :param parameters: Transformation parameters dictionary with blocks containing IDs
+    :return: Markdown formatted summary of the transformation structure
+    """
+    lines = ['## Updated Transformation Structure', '']
+
+    blocks = parameters.get('blocks', [])
+
+    if not blocks:
+        return '## Updated Transformation Structure\n\nNo blocks found in transformation.'
+
+    for block in blocks:
+        block_id = block['id']
+        block_name = block.get('name', '')
+
+        lines.append(f'### Block id: `{block_id}`, name: `{block_name}`')
+        lines.append('')
+
+        codes = block.get('codes', [])
+
+        if not codes:
+            lines.append('*No code blocks*')
+            lines.append('')
+            continue
+
+        for code in codes:
+            code_id = code['id']
+            code_name = code.get('name', '')
+            script = code.get('script', '')
+
+            lines.append(f'- **Code id: `{code_id}`, name: `{code_name}`** SQL snippet:')
+            lines.append('')
+
+            # SQL snippet (first 150 characters)
+            if script:
+                snippet = script.strip()
+                if len(snippet) > 150:
+                    truncated_chars = len(snippet) - 150
+                    snippet = snippet[:150] + f'... ({truncated_chars} chars truncated)'
+                lines.append('  ```sql')
+                lines.append(f'  {snippet}')
+                lines.append('  ```')
+            else:
+                lines.append('  *Empty script*')
+
+            lines.append('')
+
+    # Add a final empty line to create the trailing blank line in the output
+    lines.append('')
+
+    return '\n'.join(lines)
+
+
 def update_transformation_parameters(
     parameters: SimplifiedTfBlocks, updates: Sequence[TfParamUpdate]
-) -> SimplifiedTfBlocks:
+) -> tuple[SimplifiedTfBlocks, str]:
     """
     Applies a list of parameter updates to the given transformation parameters.
     The original parameters are not modified.
 
     :param parameters: The transformation parameters
     :param updates: Sequence of parameter update operations
-    :return: The updated transformation parameters
+    :return: The updated transformation parameters and a summary of the changes.
     """
+    is_structure_change = any(update.op in tf_update.STRUCTURAL_OPS for update in updates)
     parameters_dict = add_ids(parameters.model_dump())
+    messages = []
     for update in updates:
-        parameters_dict = _apply_tf_param_update(parameters_dict, update)
-    return SimplifiedTfBlocks.model_validate(parameters_dict, extra='ignore')
+        parameters_dict, message = _apply_tf_param_update(parameters_dict, update)
+
+        if message:
+            messages.append(message)
+
+    if is_structure_change:
+        # re-assign IDs to reflect changes in the structure
+        parameters_dict = add_ids(parameters_dict)
+        messages.append(structure_summary(parameters_dict))
+
+    change_summary = '\n'.join(messages)
+    return SimplifiedTfBlocks.model_validate(parameters_dict, extra='ignore'), change_summary
