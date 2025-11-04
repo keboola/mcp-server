@@ -741,6 +741,10 @@ class ConfigToolOutput(BaseModel):
     timestamp: datetime = Field(description='The timestamp of the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the configuration.')
+    change_summary: Optional[str] = Field(
+        description="Optional summary of the change to update the agent's context.",
+        default=None,
+    )
 
 
 class ComponentWithConfigurations(BaseModel):

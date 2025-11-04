@@ -12,6 +12,14 @@ from keboola_mcp_server.tools.components.model import (
     ConfigParamSet,
     ConfigParamUpdate,
     SimplifiedTfBlocks,
+    TfAddBlock,
+    TfAddCode,
+    TfParamUpdate,
+    TfRemoveCode,
+    TfRenameBlock,
+    TfRenameCode,
+    TfSetCode,
+    TfStrReplace,
     TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
@@ -20,7 +28,9 @@ from keboola_mcp_server.tools.components.utils import (
     clean_bucket_name,
     create_transformation_configuration,
     expand_component_types,
+    structure_summary,
     update_params,
+    update_transformation_parameters,
 )
 
 
@@ -652,3 +662,634 @@ def test_set_nested_value_through_non_dict_errors(
     """Test _set_nested_value raises error when encountering non-dict in path."""
     with pytest.raises(ValueError, match=re.escape(expected_error)):
         _set_nested_value(data, path, value)
+
+
+@pytest.mark.parametrize(
+    ('parameters', 'expected_markdown'),
+    [
+        # Test with single block and single code
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Main Block',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Select Data',
+                                'script': "SELECT * FROM customers WHERE status = 'active';",
+                            }
+                        ],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Main Block`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Select Data`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                "  SELECT * FROM customers WHERE status = 'active';\n"
+                '  ```\n'
+                '\n'
+            ),
+        ),
+        # Test with multiple blocks and codes
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Data Extraction',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Extract Customers',
+                                'script': 'SELECT id, name, email FROM customers;',
+                            },
+                            {
+                                'id': 'b0.c1',
+                                'name': 'Extract Orders',
+                                'script': 'SELECT order_id, customer_id, amount FROM orders;',
+                            },
+                        ],
+                    },
+                    {
+                        'id': 'b1',
+                        'name': 'Data Transformation',
+                        'codes': [
+                            {
+                                'id': 'b1.c0',
+                                'name': 'Aggregate Data',
+                                'script': 'SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;',
+                            }
+                        ],
+                    },
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Data Extraction`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Extract Customers`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT id, name, email FROM customers;\n'
+                '  ```\n'
+                '\n'
+                '- **Code id: `b0.c1`, name: `Extract Orders`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT order_id, customer_id, amount FROM orders;\n'
+                '  ```\n'
+                '\n'
+                '### Block id: `b1`, name: `Data Transformation`\n'
+                '\n'
+                '- **Code id: `b1.c0`, name: `Aggregate Data`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;\n'
+                '  ```\n'
+                '\n'
+            ),
+        ),
+        # Test with multiline SQL script
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Complex Query',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Multi-line Select',
+                                'script': (
+                                    'SELECT\n'
+                                    '  customer_id,\n'
+                                    '  SUM(amount) as total,\n'
+                                    '  COUNT(*) as order_count\n'
+                                    'FROM orders\n'
+                                    "WHERE status = 'completed'\n"
+                                    'GROUP BY customer_id;'
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Complex Query`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Multi-line Select`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT\n  customer_id,\n  SUM(amount) as total,\n  COUNT(*) as order_count\n'
+                "FROM orders\nWHERE status = 'completed'\nGROUP BY customer_id;\n"
+                '  ```\n'
+                '\n'
+            ),
+        ),
+        # Test with empty script
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Empty Block',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Empty Code',
+                                'script': '',
+                            }
+                        ],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Empty Block`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Empty Code`** SQL snippet:\n'
+                '\n'
+                '  *Empty script*\n'
+                '\n'
+            ),
+        ),
+        # Test with block containing no codes
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Block Without Codes',
+                        'codes': [],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Block Without Codes`\n'
+                '\n'
+                '*No code blocks*\n'
+                '\n'
+            ),
+        ),
+        # Test with empty blocks list
+        (
+            {'blocks': []},
+            '## Updated Transformation Structure\n\nNo blocks found in transformation.',
+        ),
+        # Test with very long script (truncation)
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Long Script Block',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Very Long Query',
+                                'script': (
+                                    'SELECT column1, column2, column3, column4, column5, column6, '
+                                    'column7, column8, column9, column10, column11, column12, '
+                                    'column13, column14, column15, column16 FROM very_large_table '
+                                    'WHERE condition1 = true;'
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Long Script Block`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Very Long Query`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT column1, column2, column3, column4, column5, column6, column7, '
+                'column8, column9, column10, column11, column12, column13, column14, column15, '
+                'co... (53 chars truncated)\n'
+                '  ```\n'
+                '\n'
+            ),
+        ),
+    ],
+)
+def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
+    """Test structure_summary function generates correct markdown output."""
+    result = structure_summary(parameters)
+    assert result == expected_markdown
+
+
+@pytest.mark.parametrize(
+    ('initial_params', 'updates', 'expected_params', 'expected_msg_pattern'),
+    [
+        # String replacement without structure change - should only report replacement
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM table2'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfStrReplace(op='str_replace', block_id=None, code_id=None, search_for='FROM', replace_with='IN'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * IN table2'),
+                        ],
+                    ),
+                ]
+            ),
+            'Replaced 2 occurrences of "FROM" in the transformation',
+        ),
+        # Structural change without string replacement - should only report structure
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfAddBlock(
+                    op='add_block',
+                    block=SimplifiedTfBlocks.Block(name='New Block', codes=[]),
+                    position='end',
+                ),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                    SimplifiedTfBlocks.Block(name='New Block', codes=[]),
+                ]
+            ),
+            '## Updated Transformation Structure',
+        ),
+        # Non-structural operations - should return empty message
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed Block'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Renamed Block',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfRenameCode(op='rename_code', block_id='b0', code_id='b0.c0', code_name='Renamed Code'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Renamed Code', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfSetCode(op='set_code', block_id='b0', code_id='b0.c0', script='SELECT * FROM new_table'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+        # Multiple non-structural operations - should return empty message
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed Block'),
+                TfSetCode(op='set_code', block_id='b0', code_id='b0.c0', script='SELECT * FROM new_table'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Renamed Block',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+        # Structural change + string replacement - should report both
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfAddBlock(
+                    op='add_block',
+                    block=SimplifiedTfBlocks.Block(
+                        name='New Block',
+                        codes=[SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * FROM table2')],
+                    ),
+                    position='end',
+                ),
+                TfStrReplace(op='str_replace', block_id=None, code_id=None, search_for='FROM', replace_with='IN'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
+                        ],
+                    ),
+                    SimplifiedTfBlocks.Block(
+                        name='New Block',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
+                        ],
+                    ),
+                ]
+            ),
+            'Replaced 2 occurrences of "FROM" in the transformation\n## Updated Transformation Structure',
+        ),
+        # Multiple string replacements - should report all
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM table2'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfStrReplace(
+                    op='str_replace', block_id='b0', code_id='b0.c0', search_for='table1', replace_with='new_table1'
+                ),
+                TfStrReplace(
+                    op='str_replace', block_id='b0', code_id='b0.c1', search_for='table2', replace_with='new_table2'
+                ),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM new_table2'),
+                        ],
+                    ),
+                ]
+            ),
+            (
+                'Replaced 1 occurrence of "table1" in code "b0.c0", block "b0"\n'
+                'Replaced 1 occurrence of "table2" in code "b0.c1", block "b0"'
+            ),
+        ),
+        # Add code (structural) + string replacement - should report both
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfAddCode(
+                    op='add_code',
+                    block_id='b0',
+                    code=SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * FROM table2'),
+                    position='end',
+                ),
+                TfStrReplace(op='str_replace', block_id=None, code_id=None, search_for='FROM', replace_with='IN'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
+                        ],
+                    ),
+                ]
+            ),
+            'Replaced 2 occurrences of "FROM" in the transformation\n## Updated Transformation Structure',
+        ),
+        # Remove code (structural) - should report structure
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM table2'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfRemoveCode(op='remove_code', block_id='b0', code_id='b0.c0'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM table2'),
+                        ],
+                    ),
+                ]
+            ),
+            '## Updated Transformation Structure',
+        ),
+        # Multiple structural changes - should report structure once
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfAddBlock(
+                    op='add_block',
+                    block=SimplifiedTfBlocks.Block(name='New Block', codes=[]),
+                    position='end',
+                ),
+                TfAddCode(
+                    op='add_code',
+                    block_id='b0',
+                    code=SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT 1'),
+                    position='end',
+                ),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT 1'),
+                        ],
+                    ),
+                    SimplifiedTfBlocks.Block(name='New Block', codes=[]),
+                ]
+            ),
+            '## Updated Transformation Structure',
+        ),
+        # Empty updates list - should return empty message
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+    ],
+)
+def test_update_transformation_parameters(
+    initial_params: SimplifiedTfBlocks,
+    updates: Sequence[TfParamUpdate],
+    expected_params: SimplifiedTfBlocks,
+    expected_msg_pattern: str,
+):
+    result_params, result_msg = update_transformation_parameters(initial_params, updates)
+
+    # Verify the parameters are correctly updated
+    assert result_params == expected_params
+
+    # Verify the messages
+    if expected_msg_pattern:
+        if '\\n' in expected_msg_pattern or '##' in expected_msg_pattern:
+            # For multi-line messages, check pattern matches
+            assert re.search(expected_msg_pattern, result_msg, re.MULTILINE | re.DOTALL) is not None
+        else:
+            # For simple patterns, check exact match or regex match
+            assert re.search(expected_msg_pattern, result_msg) is not None
+    else:
+        # Empty message expected
+        assert result_msg == ''
