@@ -140,8 +140,9 @@ def empty_params():
 def test_add_block(initial_params, operation, expected_params):
     """Test adding blocks to transformation parameters."""
     params = copy.deepcopy(initial_params)
-    result = add_block(params, operation)
-    assert result == expected_params
+    result_params, result_msg = add_block(params, operation)
+    assert result_params == expected_params
+    assert result_msg == ''
 
 
 @pytest.mark.parametrize(
@@ -245,8 +246,9 @@ def test_add_block_error(initial_params, block_name, error_match):
 def test_remove_block_success(initial_params, operation, expected_params):
     """Test successfully removing blocks from transformation parameters."""
     params = copy.deepcopy(initial_params)
-    result = remove_block(params, operation)
-    assert result == expected_params
+    result_params, result_msg = remove_block(params, operation)
+    assert result_params == expected_params
+    assert result_msg == ''
 
 
 @pytest.mark.parametrize(
@@ -340,8 +342,9 @@ def test_remove_block_error(initial_params, block_id_to_remove):
 def test_rename_block_success(initial_params, operation, expected_params):
     """Test successfully renaming blocks."""
     params = copy.deepcopy(initial_params)
-    result = rename_block(params, operation)
-    assert result == expected_params
+    result_params, result_msg = rename_block(params, operation)
+    assert result_params == expected_params
+    assert result_msg == ''
 
 
 @pytest.mark.parametrize(
@@ -446,8 +449,9 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
 def test_add_code_success(initial_params, operation, expected_params):
     """Test successfully adding code to blocks."""
     params = copy.deepcopy(initial_params)
-    result = add_code(params, operation)
-    assert result == expected_params
+    result_params, result_msg = add_code(params, operation)
+    assert result_params == expected_params
+    assert result_msg == ''
 
 
 @pytest.mark.parametrize(
@@ -542,8 +546,9 @@ def test_add_code_error(sample_params, block_id, code_name, error_match):
 def test_remove_code_success(initial_params, operation, expected_params):
     """Test successfully removing code from blocks."""
     params = copy.deepcopy(initial_params)
-    result = remove_code(params, operation)
-    assert result == expected_params
+    result_params, result_msg = remove_code(params, operation)
+    assert result_params == expected_params
+    assert result_msg == ''
 
 
 @pytest.mark.parametrize(
@@ -646,8 +651,9 @@ def test_remove_code_error(sample_params, block_id, code_id):
 def test_rename_code_success(initial_params, operation, expected_params):
     """Test successfully renaming code in blocks."""
     params = copy.deepcopy(initial_params)
-    result = rename_code(params, operation)
-    assert result == expected_params
+    result_params, result_msg = rename_code(params, operation)
+    assert result_params == expected_params
+    assert result_msg == ''
 
 
 @pytest.mark.parametrize(
@@ -739,8 +745,9 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
 def test_set_code_success(initial_params, operation, expected_params):
     """Test successfully setting code script."""
     params = copy.deepcopy(initial_params)
-    result = set_code(params, operation)
-    assert result == expected_params
+    result_params, result_msg = set_code(params, operation)
+    assert result_params == expected_params
+    assert result_msg == ''
 
 
 @pytest.mark.parametrize(
@@ -854,8 +861,9 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
 def test_add_script_success(initial_params, operation, expected_params):
     """Test successfully adding script to code."""
     params = copy.deepcopy(initial_params)
-    result = add_script(params, operation)
-    assert result == expected_params
+    result_params, result_msg = add_script(params, operation)
+    assert result_params == expected_params
+    assert result_msg == ''
 
 
 @pytest.mark.parametrize(
@@ -893,7 +901,7 @@ def test_add_script_error(sample_params, block_id, code_id, script, error_match)
 
 
 @pytest.mark.parametrize(
-    ('initial_params', 'operation', 'expected_params'),
+    ('initial_params', 'operation', 'expected_params', 'expected_msg'),
     [
         # Replace in all blocks and codes
         (
@@ -936,6 +944,7 @@ def test_add_script_error(sample_params, block_id, code_id, script, error_match)
                     },
                 ]
             },
+            'Replaced 3 occurrences of "FROM" in the transformation',
         ),
         # Replace in specific block
         (
@@ -978,6 +987,7 @@ def test_add_script_error(sample_params, block_id, code_id, script, error_match)
                     },
                 ]
             },
+            'Replaced 2 occurrences of "FROM" in block "b0"',
         ),
         # Replace in specific code
         (
@@ -1008,6 +1018,7 @@ def test_add_script_error(sample_params, block_id, code_id, script, error_match)
                     },
                 ]
             },
+            'Replaced 1 occurrence of "table1" in code "b0.c0", block "b0"',
         ),
         # Replace with empty string
         (
@@ -1034,14 +1045,16 @@ def test_add_script_error(sample_params, block_id, code_id, script, error_match)
                     },
                 ]
             },
+            'Replaced 1 occurrence of "SELECT * " in code "b0.c0", block "b0"',
         ),
     ],
 )
-def test_str_replace_success(initial_params, operation, expected_params):
+def test_str_replace_success(initial_params, operation, expected_params, expected_msg):
     """Test successfully replacing strings in scripts."""
     params = copy.deepcopy(initial_params)
-    result = str_replace(params, operation)
-    assert result == expected_params
+    result_params, result_msg = str_replace(params, operation)
+    assert result_params == expected_params
+    assert result_msg == expected_msg
 
 
 @pytest.mark.parametrize(
@@ -1084,7 +1097,7 @@ def test_multiple_operations_sequence(sample_params):
     params = copy.deepcopy(sample_params)
 
     # 1. Add a new block
-    params = add_block(
+    params, _ = add_block(
         params,
         TfAddBlock(
             op='add_block',
@@ -1098,11 +1111,11 @@ def test_multiple_operations_sequence(sample_params):
     assert len(params['blocks']) == 3
 
     # 2. Rename an existing block
-    params = rename_block(params, TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed Block A'))
+    params, _ = rename_block(params, TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed Block A'))
     assert params['blocks'][0]['name'] == 'Renamed Block A'
 
     # 3. Add code to existing block
-    params = add_code(
+    params, _ = add_code(
         params,
         TfAddCode(
             op='add_code',
@@ -1113,7 +1126,7 @@ def test_multiple_operations_sequence(sample_params):
     )
 
     # 4. Replace string in all scripts
-    params = str_replace(
+    params, _ = str_replace(
         params,
         TfStrReplace(op='str_replace', block_id=None, code_id=None, search_for='FROM', replace_with='IN'),
     )
@@ -1133,7 +1146,7 @@ def test_operations_preserve_unaffected_data(sample_params):
     original_second_block = copy.deepcopy(params['blocks'][1])
 
     # Modify first block
-    params = rename_block(params, TfRenameBlock(op='rename_block', block_id='b0', block_name='Modified Block'))
+    params, _ = rename_block(params, TfRenameBlock(op='rename_block', block_id='b0', block_name='Modified Block'))
 
     # Verify second block unchanged
     assert params['blocks'][1] == original_second_block
