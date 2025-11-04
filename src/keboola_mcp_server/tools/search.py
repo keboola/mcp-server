@@ -302,13 +302,16 @@ async def search(
     HOW IT WORKS:
     - Searches by regex pattern matching against id, name, displayName, and description fields
     - Case-insensitive search
+    - Multiple patterns work as OR condition - matches items containing ANY of the patterns
     - Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
     - Each result includes the item's ID, name, creation date, and relevant metadata
 
     IMPORTANT:
     - Always use this tool when the user mentions a name but you don't have the exact ID
     - The search returns IDs that you can use with other tools (e.g., get_table, get_config, get_flow)
-    - Results are ordered by creation time
+    - Results are ordered by update time. The most recently updated items are returned first.
+    - For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
+    - Use find_component_id and list_configs tools to find configurations related to a specific component
 
     USAGE EXAMPLES:
     - user_input: "Find all tables with 'customer' in the name"
@@ -326,12 +329,6 @@ async def search(
     - user_input: "Show me all configurations related to Google Analytics"
       → name_prefixes=["google.*analytics"], item_types=["configuration"]
       → Returns configurations with matching patterns
-
-    CONSIDERATIONS:
-    - Searches across id, name, displayName, and description fields
-    - Multiple patterns work as OR condition - matches items containing ANY of the patterns
-    - For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
-    - Use find_component_id and list_configs tools to find configurations related to a specific component
     """
 
     client = KeboolaClient.from_state(ctx.session.state)
