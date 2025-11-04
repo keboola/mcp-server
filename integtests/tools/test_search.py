@@ -32,6 +32,9 @@ async def test_search_end_to_end(
         ctx=mcp_context, patterns=['test'], item_types=item_types, limit=50, offset=0  # Search all types
     )
 
+    # filter out data apps that seem to often be left behind in the testing project
+    result = [hit for hit in result if hit.item_type != 'configuration' or hit.configuration_id != 'keboola.data-apps']
+
     # Verify the result structure
     assert isinstance(result, list)
 
