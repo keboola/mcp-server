@@ -20,6 +20,11 @@ class QueryServiceClient(KeboolaServiceClient):
         if self._branch_id in ['default', 'main']:
             raise ValueError(f'The real branch id is required, got: "{self._branch_id}"')
 
+    @property
+    def branch_id(self) -> str:
+        """Returns the real branch ID (no symbolic names such as 'default' or 'main')."""
+        return self._branch_id
+
     @classmethod
     def create(
         cls,
