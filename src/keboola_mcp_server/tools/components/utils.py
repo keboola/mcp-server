@@ -538,7 +538,7 @@ def structure_summary(parameters: dict[str, Any]) -> str:
     blocks = parameters.get('blocks', [])
 
     if not blocks:
-        return '## Updated Transformation Structure\n\nNo blocks found in transformation.'
+        return '## Updated Transformation Structure\n\nNo blocks found in transformation.\n'
 
     for block in blocks:
         block_id = block['id']
@@ -575,9 +575,6 @@ def structure_summary(parameters: dict[str, Any]) -> str:
                 lines.append('  *Empty script*')
 
             lines.append('')
-
-    # Add a final empty line to create the trailing blank line in the output
-    lines.append('')
 
     return '\n'.join(lines)
 

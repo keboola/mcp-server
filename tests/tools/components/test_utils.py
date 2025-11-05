@@ -694,7 +694,6 @@ def test_set_nested_value_through_non_dict_errors(
                 '  ```sql\n'
                 "  SELECT * FROM customers WHERE status = 'active';\n"
                 '  ```\n'
-                '\n'
             ),
         ),
         # Test with multiple blocks and codes
@@ -754,7 +753,6 @@ def test_set_nested_value_through_non_dict_errors(
                 '  ```sql\n'
                 '  SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;\n'
                 '  ```\n'
-                '\n'
             ),
         ),
         # Test with multiline SQL script
@@ -793,7 +791,6 @@ def test_set_nested_value_through_non_dict_errors(
                 '  SELECT\n  customer_id,\n  SUM(amount) as total,\n  COUNT(*) as order_count\n'
                 "FROM orders\nWHERE status = 'completed'\nGROUP BY customer_id;\n"
                 '  ```\n'
-                '\n'
             ),
         ),
         # Test with empty script
@@ -821,7 +818,6 @@ def test_set_nested_value_through_non_dict_errors(
                 '- **Code id: `b0.c0`, name: `Empty Code`** SQL snippet:\n'
                 '\n'
                 '  *Empty script*\n'
-                '\n'
             ),
         ),
         # Test with block containing no codes
@@ -841,13 +837,12 @@ def test_set_nested_value_through_non_dict_errors(
                 '### Block id: `b0`, name: `Block Without Codes`\n'
                 '\n'
                 '*No code blocks*\n'
-                '\n'
             ),
         ),
         # Test with empty blocks list
         (
             {'blocks': []},
-            '## Updated Transformation Structure\n\nNo blocks found in transformation.',
+            '## Updated Transformation Structure\n\nNo blocks found in transformation.\n',
         ),
         # Test with very long script (truncation)
         (
@@ -883,7 +878,6 @@ def test_set_nested_value_through_non_dict_errors(
                 'column8, column9, column10, column11, column12, column13, column14, column15, '
                 'co... (53 chars truncated)\n'
                 '  ```\n'
-                '\n'
             ),
         ),
     ],
@@ -895,7 +889,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
 
 
 @pytest.mark.parametrize(
-    ('initial_params', 'updates', 'expected_params', 'expected_msg_pattern'),
+    ('initial_params', 'updates', 'expected_params', 'expected_msg'),
     [
         # String replacement without structure change - should only report replacement
         (
@@ -1275,21 +1269,15 @@ def test_update_transformation_parameters(
     initial_params: SimplifiedTfBlocks,
     updates: Sequence[TfParamUpdate],
     expected_params: SimplifiedTfBlocks,
-    expected_msg_pattern: str,
+    expected_msg: str,
 ):
     result_params, result_msg = update_transformation_parameters(initial_params, updates)
 
-    # Verify the parameters are correctly updated
     assert result_params == expected_params
 
-    # Verify the messages
-    if expected_msg_pattern:
-        if '\\n' in expected_msg_pattern or '##' in expected_msg_pattern:
-            # For multi-line messages, check pattern matches
-            assert re.search(expected_msg_pattern, result_msg, re.MULTILINE | re.DOTALL) is not None
-        else:
-            # For simple patterns, check exact match or regex match
-            assert re.search(expected_msg_pattern, result_msg) is not None
+    if '##' in expected_msg:
+        # For multi-line messages, check message prefix
+        assert result_msg.startswith(expected_msg)
     else:
-        # Empty message expected
-        assert result_msg == ''
+        # For simple patterns, check exact match
+        assert result_msg == expected_msg
