@@ -946,7 +946,7 @@ async def test_update_sql_transformation(
         orig_raw_parameters = TransformationConfiguration.Parameters.model_validate(orig_parameters_dict)
         orig_simplified_parameters = await orig_raw_parameters.to_simplified_parameters()
 
-        updated_params = update_transformation_parameters(orig_simplified_parameters, param_updates)
+        updated_params, _ = update_transformation_parameters(orig_simplified_parameters, param_updates)
         updated_raw_parameters = await updated_params.to_raw_parameters()
 
         expected_parameters = updated_raw_parameters.model_dump(exclude_none=True)
