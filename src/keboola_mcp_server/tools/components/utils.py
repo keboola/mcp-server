@@ -27,6 +27,7 @@ import unicodedata
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
 import jsonpath_ng
+import sqlglot
 from httpx import HTTPStatusError
 
 from keboola_mcp_server.clients.base import JsonDict
@@ -283,12 +284,73 @@ def format_sql_statement(sql: str, dialect: str) -> str:
         Formatted SQL string, or original if formatting fails
     """
     try:
-        import sqlglot
-
         formatted = sqlglot.transpile(sql, read=dialect, pretty=True)[0]
         return formatted
     except Exception:
         return sql
+
+
+def format_code_blocks(
+        code_blocks: Sequence['TransformationConfiguration.Parameters.Block.Code'],
+        dialect: str,
+        conditional: bool = False,
+) -> list['TransformationConfiguration.Parameters.Block.Code']:
+    """
+    Format SQL statements in code blocks using sqlglot for better readability.
+
+    Args:
+        code_blocks: Sequence of code blocks containing SQL statements
+        dialect: SQL dialect ('snowflake' or 'bigquery')
+        conditional: If True, only format statements without newlines (default: False)
+
+    Returns:
+        List of formatted code blocks
+    """
+    formatted_blocks = []
+    for block in code_blocks:
+        formatted_statements = []
+        for stmt in block.sql_statements:
+            if conditional and '\n' in stmt:
+                formatted_statements.append(stmt)
+            else:
+                formatted_stmt = format_sql_statement(stmt, dialect)
+                formatted_statements.append(formatted_stmt)
+
+        formatted_block = TransformationConfiguration.Parameters.Block.Code(
+            name=block.name,
+            sql_statements=formatted_statements,
+        )
+        formatted_blocks.append(formatted_block)
+
+    return formatted_blocks
+
+
+def format_transformation_parameters(
+        parameters: 'TransformationConfiguration.Parameters',
+        dialect: str,
+        conditional: bool = False,
+) -> 'TransformationConfiguration.Parameters':
+    """
+    Format SQL statements in transformation parameters using sqlglot for better readability.
+
+    Args:
+        parameters: Transformation parameters containing blocks with code
+        dialect: SQL dialect ('snowflake' or 'bigquery')
+        conditional: If True, only format statements without newlines (default: False)
+
+    Returns:
+        Formatted transformation parameters
+    """
+    formatted_blocks = []
+    for block in parameters.blocks:
+        formatted_codes = format_code_blocks(block.codes, dialect, conditional)
+        formatted_block = TransformationConfiguration.Parameters.Block(
+            name=block.name,
+            codes=formatted_codes,
+        )
+        formatted_blocks.append(formatted_block)
+
+    return TransformationConfiguration.Parameters(blocks=formatted_blocks)
 
 
 async def create_transformation_configuration(
