@@ -1,4 +1,5 @@
 import asyncio
+import importlib.resources as resources
 import logging
 import re
 from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast
@@ -59,6 +60,23 @@ Type = Literal['streamlit']
 # Accepts known types or any string preventing from validation errors when receiving unknown types from the API
 # LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
+
+_DATA_APP_RESOURCES = resources.files('keboola_mcp_server.resources.data_app')
+_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = _DATA_APP_RESOURCES.joinpath('qsapi_query_data_code.py').read_text(
+    encoding='utf-8'
+)
+_STORAGE_QUERY_DATA_FUNCTION_CODE = _DATA_APP_RESOURCES.joinpath('sapi_query_data_code.py').read_text(encoding='utf-8')
+
+_DEFAULT_STREAMLIT_THEME = (
+    '[theme]\nfont = "sans serif"\ntextColor = "#222529"\nbackgroundColor = "#FFFFFF"\nsecondaryBackgroundColor = '
+    '"#E6F2FF"\nprimaryColor = "#1F8FFF"'
+)
+_DEFAULT_PACKAGES = ['pandas', 'httpx']
+
+INJECTED_BLOCK_RE = re.compile(
+    r'(?P<before>.*?)#\s###\sINJECTED_CODE\s####.*?#\s###\sEND_OF_INJECTED_CODE\s####(?P<after>.*)',
+    re.DOTALL,
+)
 
 # Type of the authentication used in the data app
 AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
@@ -278,7 +296,14 @@ async def modify_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
 
     project_id = await client.storage_client.project_id()
-    secrets = _get_secrets(client, str(await workspace_manager.get_workspace_id()))
+    workspace_id = await workspace_manager.get_workspace_id()
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    branch_id = await workspace_manager.get_branch_id()
+
+    secrets = _get_secrets(
+        workspace_id=str(workspace_id),
+        branch_id=str(branch_id),
+    )
 
     if configuration_id:
         # Update existing data app
@@ -289,7 +314,7 @@ async def modify_data_app(
             'storage': data_app.storage,
         }
         updated_config = _update_existing_data_app_config(
-            existing_config, name, source_code, packages, authentication_type, secrets
+            existing_config, name, source_code, packages, authentication_type, secrets, sql_dialect
         )
         updated_config = cast(
             dict[str, Any],
@@ -328,7 +353,7 @@ async def modify_data_app(
         )
     else:
         # Create new data app
-        config = _build_data_app_config(name, source_code, packages, authentication_type, secrets)
+        config = _build_data_app_config(name, source_code, packages, authentication_type, secrets, sql_dialect)
         config = await client.encryption_client.encrypt(
             config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
         )
@@ -452,20 +477,13 @@ async def deploy_data_app(
         raise ValueError(f'Invalid action: {action}')
 
 
-_DEFAULT_STREAMLIT_THEME = (
-    '[theme]\nfont = "sans serif"\ntextColor = "#222529"\nbackgroundColor = "#FFFFFF"\nsecondaryBackgroundColor = '
-    '"#E6F2FF"\nprimaryColor = "#1F8FFF"'
-)
-
-_DEFAULT_PACKAGES = ['pandas', 'httpx']
-
-
 def _build_data_app_config(
     name: str,
     source_code: str,
     packages: list[str],
     authentication_type: AuthenticationType,
     secrets: dict[str, Any],
+    sql_dialect: str,
 ) -> dict[str, Any]:
     packages = sorted(list(set(packages + _DEFAULT_PACKAGES)))
     slug = _get_data_app_slug(name) or 'Data-App'
@@ -479,7 +497,7 @@ def _build_data_app_config(
             },
             'secrets': secrets,
         },
-        'script': [_inject_query_to_source_code(source_code)],
+        'script': [_inject_query_to_source_code(source_code, sql_dialect)],
         'packages': packages,
     }
     # By default secure with basic authorization
@@ -494,13 +512,16 @@ def _update_existing_data_app_config(
     packages: list[str],
     authentication_type: AuthenticationType,
     secrets: dict[str, Any],
+    sql_dialect: str,
 ) -> dict[str, Any]:
     new_config = existing_config.copy()
     new_config['parameters']['dataApp']['slug'] = (
         _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
     )
     new_config['parameters']['script'] = (
-        [_inject_query_to_source_code(source_code)] if source_code else existing_config['parameters']['script']
+        [_inject_query_to_source_code(source_code, sql_dialect)]
+        if source_code
+        else existing_config['parameters']['script']
     )
     new_config['parameters']['packages'] = (
         sorted(list[str](set[str](packages + _DEFAULT_PACKAGES)))
@@ -622,65 +643,70 @@ def _uses_basic_authentication(authorization: dict[str, Any]) -> bool:
         return False
 
 
-_QUERY_DATA_FUNCTION_CODE = """
-#### INJECTED_CODE ####
-#### QUERY DATA FUNCTION ####
-import httpx
-import os
-import pandas as pd
-
-
-def query_data(query: str) -> pd.DataFrame:
-    bid = os.environ.get('BRANCH_ID')
-    wid = os.environ.get('WORKSPACE_ID')
-    kbc_url = os.environ.get('KBC_URL')
-    kbc_token = os.environ.get('KBC_TOKEN')
-
-    timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
-    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-
-    with httpx.Client(timeout=timeout, limits=limits) as client:
-        response = client.post(
-            f'{kbc_url}/v2/storage/branch/{bid}/workspaces/{wid}/query',
-            json={'query': query},
-            headers={'X-StorageAPI-Token': kbc_token},
-        )
-        response.raise_for_status()
-        response_json = response.json()
-        if response_json.get('status') == 'error':
-            raise ValueError(f'Error when executing query "{query}": {response_json.get("message")}.')
-        return pd.DataFrame(response_json['data']['rows'])
-
-#### END_OF_INJECTED_CODE ####
-"""
-
-
-def _inject_query_to_source_code(source_code: str) -> str:
+def _get_query_function_code(sql_dialect: str) -> str:
     """
-    Injects the query_data function into the source code if it is not already present.
+    Selects the appropriate query function code for the given SQL dialect.
+    - Snowflake: uses Query Service API
+    - BigQuery: uses Storage API (Query Service API is not supported for BigQuery yet)
     """
-    if _QUERY_DATA_FUNCTION_CODE in source_code:
-        return source_code
-    if '### INJECTED_CODE ###' in source_code and '### END_OF_INJECTED_CODE ###' in source_code:
-        # get the first and the last part before and after generated code and inject the query_data function
-        imports = source_code.split('### INJECTED_CODE ###')[0]
-        source_code = source_code.split('### INJECTED_CODE ###')[1].split('### END_OF_INJECTED_CODE ###')[1]
-        return imports + '\n\n' + _QUERY_DATA_FUNCTION_CODE + '\n\n' + source_code
-    elif '{QUERY_DATA_FUNCTION}' in source_code:
-        return source_code.replace('{QUERY_DATA_FUNCTION}', _QUERY_DATA_FUNCTION_CODE)
+    sql_dialect = sql_dialect.lower()
+    if sql_dialect == 'snowflake':
+        return _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE
+    elif sql_dialect == 'bigquery':
+        return _STORAGE_QUERY_DATA_FUNCTION_CODE
     else:
-        return _QUERY_DATA_FUNCTION_CODE + '\n\n' + source_code
+        raise ValueError(f'Unsupported SQL dialect: {sql_dialect}')
 
 
-def _get_secrets(client: KeboolaClient, workspace_id: str) -> dict[str, Any]:
+def _strip_injected_query_code(source_code: str) -> str:
     """
-    Generates secrets for the data app for querying the tables in the given wokrspace using the query_data endpoint.
+    Removes injected query_data function code to keep the generated source consistent when reinjecting the code.
 
-    :param client: The Keboola client
-    :param workspace_id: The ID of the workspace
-    :return: The secrets
+    :param source_code: The source code of the data app
+    :return: The source code with the injected query_data function code removed
     """
-    return {
+    for snippet in (_QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE, _STORAGE_QUERY_DATA_FUNCTION_CODE):
+        source_code = source_code.replace(snippet, '')
+    return source_code
+
+
+def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
+    """
+    Injects the query_data function into the source code based on the SQL dialect, while removing the
+    existing injected code for consistency.
+
+    :param source_code: The source code of the data app
+    :param sql_dialect: The SQL dialect of the workspace
+    :return: The source code with the query_data function injected
+    """
+    if not source_code:
+        return ''
+
+    query_function_code = _get_query_function_code(sql_dialect)
+    if query_function_code in source_code:
+        return source_code
+
+    # remove existing injected code to keep the code in sync with the current SQL dialect
+    source_code = _strip_injected_query_code(source_code)
+
+    if '{QUERY_DATA_FUNCTION}' in source_code:
+        return source_code.replace('{QUERY_DATA_FUNCTION}', query_function_code)
+
+    match = INJECTED_BLOCK_RE.match(source_code)
+    if match:
+        before = match.group('before').rstrip()
+        after = match.group('after').lstrip()
+        return f'{before}\n\n{query_function_code}\n\n{after}'
+    else:
+        return f'{query_function_code}\n\n{source_code.lstrip()}'
+
+
+def _get_secrets(workspace_id: str, branch_id: str) -> dict[str, Any]:
+    """
+    Generates secrets for the data app for querying the tables in the given workspace QS or SAPI.
+    """
+    secrets: dict[str, Any] = {
         'WORKSPACE_ID': workspace_id,
-        'BRANCH_ID': client.branch_id or 'default',
+        'BRANCH_ID': branch_id,
     }
+    return secrets
