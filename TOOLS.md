@@ -1235,7 +1235,8 @@ REQUIREMENTS:
 - All phase and task IDs must be unique strings
 - The `phases` list cannot be empty
 - The `phases` and `tasks` parameters must match the keboola.flow JSON schema structure
-- Only include conditions/retry logic if the user explicitly requests them
+- Phase/task failures automatically end the flow - do NOT create failure conditions
+- Only add conditions/retry logic when user explicitly requests branching or error handling
 - All phases must be connected: no dangling phases are allowed
 - The flow must have exactly one entry point (one phase with no incoming transitions)
 - Every phase must either transition to another phase or end the flow
