@@ -125,6 +125,9 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://make.com'), True),
             (AnyUrl('https://foo.make.com/bar'), True),
             (AnyUrl('https://www.make.com/oauth/cb/mcp'), True),
+            (AnyUrl('https://cloud.onyx.app'), True),
+            (AnyUrl('https://cloud.onyx.app/mcp/oauth/callback'), True),
+            (AnyUrl('https://foo.cloud.onyx.app/bar'), False),  # no subdomains allowed
             (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
             (None, False),
             (AnyUrl('https://foo.bar.com/callback'), False),

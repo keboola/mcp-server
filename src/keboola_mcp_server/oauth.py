@@ -33,6 +33,7 @@ _WELL_KNOWN_DOMAINS = [
     re.compile(r'^librechat\.glami-ml\.com$', re.IGNORECASE),  # no subdomains allowed
     re.compile(r'^.*make\.com$', re.IGNORECASE),
     re.compile(r'^api\.devin\.ai$', re.IGNORECASE),  # devin.ai API domain
+    re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback
 ]
 _FORBIDDEN_SCHEMES = [
     # # Web/HTTP
