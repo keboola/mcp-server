@@ -6,19 +6,31 @@ import pytest
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentType,
+    ConfigParamListAppend,
     ConfigParamRemove,
     ConfigParamReplace,
     ConfigParamSet,
     ConfigParamUpdate,
+    SimplifiedTfBlocks,
+    TfAddBlock,
+    TfAddCode,
+    TfParamUpdate,
+    TfRemoveCode,
+    TfRenameBlock,
+    TfRenameCode,
+    TfSetCode,
+    TfStrReplace,
+    TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
-    TransformationConfiguration,
     _apply_param_update,
     _set_nested_value,
     clean_bucket_name,
+    create_transformation_configuration,
     expand_component_types,
-    get_transformation_configuration,
+    structure_summary,
     update_params,
+    update_transformation_parameters,
 )
 
 
@@ -40,67 +52,138 @@ def test_expand_component_types(
 
 
 @pytest.mark.parametrize(
-    ('sql_statements', 'created_table_names', 'transformation_name', 'expected_bucket_id'),
+    ('codes', 'transformation_name', 'output_tables', 'expected'),
     [
         # testing with multiple sql statements and no output table mappings
         # it should not create any output tables
-        (['SELECT * FROM test', 'SELECT * FROM test2'], [], 'test name', 'out.c-test-name'),
+        (
+            [SimplifiedTfBlocks.Block.Code(name='Code 0', script='SELECT * FROM test;\nSELECT * FROM test2;')],
+            'test name',
+            [],
+            TransformationConfiguration(
+                parameters=TransformationConfiguration.Parameters(
+                    blocks=[
+                        TransformationConfiguration.Parameters.Block(
+                            name='Blocks',
+                            codes=[
+                                TransformationConfiguration.Parameters.Block.Code(
+                                    name='Code 0',
+                                    script=['SELECT * FROM test;', 'SELECT * FROM test2;'],
+                                )
+                            ],
+                        )
+                    ]
+                ),
+                storage=TransformationConfiguration.Storage(
+                    input=TransformationConfiguration.Storage.Destination(tables=[]),
+                    output=TransformationConfiguration.Storage.Destination(tables=[]),
+                ),
+            ),
+        ),
         # testing with multiple sql statements and output table mappings
         # it should create output tables according to the mappings
         (
             [
-                'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
-                'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+                SimplifiedTfBlocks.Block.Code(
+                    name='Code 0',
+                    script=(
+                        'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";\n'
+                        'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";'
+                    ),
+                )
             ],
-            ['test_table_1', 'test_table_2'],
             'test name two',
-            'out.c-test-name-two',
+            ['test_table_1', 'test_table_2'],
+            TransformationConfiguration(
+                parameters=TransformationConfiguration.Parameters(
+                    blocks=[
+                        TransformationConfiguration.Parameters.Block(
+                            name='Blocks',
+                            codes=[
+                                TransformationConfiguration.Parameters.Block.Code(
+                                    name='Code 0',
+                                    script=[
+                                        'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
+                                        'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+                                    ],
+                                )
+                            ],
+                        )
+                    ]
+                ),
+                storage=TransformationConfiguration.Storage(
+                    input=TransformationConfiguration.Storage.Destination(tables=[]),
+                    output=TransformationConfiguration.Storage.Destination(
+                        tables=[
+                            TransformationConfiguration.Storage.Destination.Table(
+                                source='test_table_1',
+                                destination='out.c-test-name-two.test_table_1',
+                            ),
+                            TransformationConfiguration.Storage.Destination.Table(
+                                source='test_table_2',
+                                destination='out.c-test-name-two.test_table_2',
+                            ),
+                        ]
+                    ),
+                ),
+            ),
         ),
         # testing with single sql statement and output table mappings
         (
-            ['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
-            ['test_table_1'],
+            [
+                SimplifiedTfBlocks.Block.Code(
+                    name='Code 0',
+                    script='CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
+                )
+            ],
             'test name',
-            'out.c-test-name',
+            ['test_table_1'],
+            TransformationConfiguration(
+                parameters=TransformationConfiguration.Parameters(
+                    blocks=[
+                        TransformationConfiguration.Parameters.Block(
+                            name='Blocks',
+                            codes=[
+                                TransformationConfiguration.Parameters.Block.Code(
+                                    name='Code 0',
+                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
+                                )
+                            ],
+                        )
+                    ]
+                ),
+                storage=TransformationConfiguration.Storage(
+                    input=TransformationConfiguration.Storage.Destination(tables=[]),
+                    output=TransformationConfiguration.Storage.Destination(
+                        tables=[
+                            TransformationConfiguration.Storage.Destination.Table(
+                                source='test_table_1',
+                                destination='out.c-test-name.test_table_1',
+                            ),
+                        ]
+                    ),
+                ),
+            ),
         ),
     ],
 )
-def test_get_transformation_configuration(
-    sql_statements: list[str],
-    created_table_names: list[str],
+@pytest.mark.asyncio
+async def test_create_transformation_configuration(
+    codes: list[SimplifiedTfBlocks.Block.Code],
     transformation_name: str,
-    expected_bucket_id: str,
+    output_tables: list[str],
+    expected: TransformationConfiguration,
 ):
-    """Test get_transformation_configuration tool which should return the correct transformation configuration
-    given the sql statement created_table_names and transformation_name."""
+    """Test create_transformation_configuration function which should return the correct transformation configuration
+    given the codes, transformation_name and output_tables."""
 
-    codes = [TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=sql_statements)]
-    configuration = get_transformation_configuration(
+    configuration = await create_transformation_configuration(
         codes=codes,
         transformation_name=transformation_name,
-        output_tables=created_table_names,
+        output_tables=output_tables,
     )
 
-    assert configuration is not None
-    assert isinstance(configuration, TransformationConfiguration)
-    # we expect only one block and one code for the given sql statements
-    assert configuration.parameters is not None
-    assert len(configuration.parameters.blocks) == 1
-    assert len(configuration.parameters.blocks[0].codes) == 1
-    assert configuration.parameters.blocks[0].codes[0].name == 'Code 0'
-    assert configuration.parameters.blocks[0].codes[0].sql_statements == sql_statements
-    # given output_table_mappings, assert following tables are created
-    assert configuration.storage is not None
-    assert configuration.storage.input is not None
-    assert configuration.storage.output is not None
-    assert configuration.storage.input.tables == []
-    if not created_table_names:
-        assert configuration.storage.output.tables == []
-    else:
-        assert len(configuration.storage.output.tables) == len(created_table_names)
-        for created_table, expected_table_name in zip(configuration.storage.output.tables, created_table_names):
-            assert created_table.source == expected_table_name
-            assert created_table.destination == f'{expected_bucket_id}.{expected_table_name}'
+    assert configuration == expected
 
 
 @pytest.mark.parametrize(
@@ -120,33 +203,6 @@ def test_get_transformation_configuration(
 def test_clean_bucket_name(input_str: str, expected_str: str):
     """Test clean_bucket_name function."""
     assert clean_bucket_name(input_str) == expected_str
-
-
-@pytest.mark.parametrize(
-    'input_sql_statements_name',
-    [
-        'sql_statements',
-        'script',
-    ],
-)
-def test_transformation_configuration_serialization(input_sql_statements_name: str):
-    """Test transformation configuration serialization."""
-    transformation_params_cfg = {
-        'parameters': {
-            'blocks': [
-                {'name': 'Block 0', 'codes': [{'name': 'Code 0', input_sql_statements_name: ['SELECT * FROM test']}]}
-            ]
-        },
-        'storage': {},
-    }
-    configuration = TransformationConfiguration.model_validate(transformation_params_cfg)
-    assert configuration.parameters.blocks[0].codes[0].name == 'Code 0'
-    assert configuration.parameters.blocks[0].codes[0].sql_statements == ['SELECT * FROM test']
-    returned_params_cfg = configuration.model_dump(by_alias=True)
-    assert returned_params_cfg['parameters']['blocks'][0]['codes'][0]['name'] == 'Code 0'
-    # for both sql_statements and script, we expect the same result script for api request
-
-    assert returned_params_cfg['parameters']['blocks'][0]['codes'][0]['script'] == ['SELECT * FROM test']
 
 
 @pytest.mark.parametrize(
@@ -272,6 +328,36 @@ def test_transformation_configuration_serialization(input_sql_statements_name: s
             ConfigParamRemove(op='remove', path='$'),
             {'messages': [{'text': 'old1'}, {'text': 'old2 old3'}]},
         ),
+        # Test 'list_append' operation on simple list
+        (
+            {'items': [1, 2, 3]},
+            ConfigParamListAppend(op='list_append', path='items', value=4),
+            {'items': [1, 2, 3, 4]},
+        ),
+        # Test 'list_append' operation on nested list
+        (
+            {'config': {'values': ['a', 'b']}},
+            ConfigParamListAppend(op='list_append', path='config.values', value='c'),
+            {'config': {'values': ['a', 'b', 'c']}},
+        ),
+        # Test 'list_append' operation on deeply nested list (like SQL transformation structure)
+        (
+            {'blocks': [{'codes': [{'script': ['SELECT 1']}]}]},
+            ConfigParamListAppend(op='list_append', path='blocks[0].codes[0].script', value='SELECT 2'),
+            {'blocks': [{'codes': [{'script': ['SELECT 1', 'SELECT 2']}]}]},
+        ),
+        # Test 'list_append' operation with multiple JSONPath matches
+        (
+            {'messages': [{'items': [1]}, {'items': [2]}]},
+            ConfigParamListAppend(op='list_append', path='messages[*].items', value=99),
+            {'messages': [{'items': [1, 99]}, {'items': [2, 99]}]},
+        ),
+        # Test 'list_append' operation with different value types - dict
+        (
+            {'config': {'entries': [{'id': 1}]}},
+            ConfigParamListAppend(op='list_append', path='config.entries', value={'id': 2}),
+            {'config': {'entries': [{'id': 1}, {'id': 2}]}},
+        ),
     ],
 )
 def test_apply_param_update(
@@ -364,6 +450,36 @@ def test_apply_param_update(
             {'flag': True},
             ConfigParamSet(op='set', path='flag.nested', new_val='new_value'),
             'Cannot set nested value at path "flag.nested"',
+        ),
+        # Test 'list_append' operation on non-existent path
+        (
+            {'items': [1, 2, 3]},
+            ConfigParamListAppend(op='list_append', path='nonexistent_list', value=4),
+            'Path "nonexistent_list" does not exist',
+        ),
+        # Test 'list_append' operation on non-existent nested path
+        (
+            {'config': {'values': [1, 2]}},
+            ConfigParamListAppend(op='list_append', path='config.nonexistent', value=3),
+            'Path "config.nonexistent" does not exist',
+        ),
+        # Test 'list_append' operation on non-list value (string)
+        (
+            {'api_key': 'my_value'},
+            ConfigParamListAppend(op='list_append', path='api_key', value='extra'),
+            'Path "api_key" is not a list',
+        ),
+        # Test 'list_append' operation on non-list value (dict)
+        (
+            {'config': {'host': 'localhost'}},
+            ConfigParamListAppend(op='list_append', path='config', value='item'),
+            'Path "config" is not a list',
+        ),
+        # Test 'list_append' operation on non-list value (number)
+        (
+            {'count': 42},
+            ConfigParamListAppend(op='list_append', path='count', value=1),
+            'Path "count" is not a list',
         ),
     ],
 )
@@ -546,3 +662,622 @@ def test_set_nested_value_through_non_dict_errors(
     """Test _set_nested_value raises error when encountering non-dict in path."""
     with pytest.raises(ValueError, match=re.escape(expected_error)):
         _set_nested_value(data, path, value)
+
+
+@pytest.mark.parametrize(
+    ('parameters', 'expected_markdown'),
+    [
+        # Test with single block and single code
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Main Block',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Select Data',
+                                'script': "SELECT * FROM customers WHERE status = 'active';",
+                            }
+                        ],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Main Block`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Select Data`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                "  SELECT * FROM customers WHERE status = 'active';\n"
+                '  ```\n'
+            ),
+        ),
+        # Test with multiple blocks and codes
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Data Extraction',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Extract Customers',
+                                'script': 'SELECT id, name, email FROM customers;',
+                            },
+                            {
+                                'id': 'b0.c1',
+                                'name': 'Extract Orders',
+                                'script': 'SELECT order_id, customer_id, amount FROM orders;',
+                            },
+                        ],
+                    },
+                    {
+                        'id': 'b1',
+                        'name': 'Data Transformation',
+                        'codes': [
+                            {
+                                'id': 'b1.c0',
+                                'name': 'Aggregate Data',
+                                'script': 'SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;',
+                            }
+                        ],
+                    },
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Data Extraction`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Extract Customers`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT id, name, email FROM customers;\n'
+                '  ```\n'
+                '\n'
+                '- **Code id: `b0.c1`, name: `Extract Orders`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT order_id, customer_id, amount FROM orders;\n'
+                '  ```\n'
+                '\n'
+                '### Block id: `b1`, name: `Data Transformation`\n'
+                '\n'
+                '- **Code id: `b1.c0`, name: `Aggregate Data`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;\n'
+                '  ```\n'
+            ),
+        ),
+        # Test with multiline SQL script
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Complex Query',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Multi-line Select',
+                                'script': (
+                                    'SELECT\n'
+                                    '  customer_id,\n'
+                                    '  SUM(amount) as total,\n'
+                                    '  COUNT(*) as order_count\n'
+                                    'FROM orders\n'
+                                    "WHERE status = 'completed'\n"
+                                    'GROUP BY customer_id;'
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Complex Query`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Multi-line Select`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT\n  customer_id,\n  SUM(amount) as total,\n  COUNT(*) as order_count\n'
+                "FROM orders\nWHERE status = 'completed'\nGROUP BY customer_id;\n"
+                '  ```\n'
+            ),
+        ),
+        # Test with empty script
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Empty Block',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Empty Code',
+                                'script': '',
+                            }
+                        ],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Empty Block`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Empty Code`** SQL snippet:\n'
+                '\n'
+                '  *Empty script*\n'
+            ),
+        ),
+        # Test with block containing no codes
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Block Without Codes',
+                        'codes': [],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Block Without Codes`\n'
+                '\n'
+                '*No code blocks*\n'
+            ),
+        ),
+        # Test with empty blocks list
+        (
+            {'blocks': []},
+            '## Updated Transformation Structure\n\nNo blocks found in transformation.\n',
+        ),
+        # Test with very long script (truncation)
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Long Script Block',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Very Long Query',
+                                'script': (
+                                    'SELECT column1, column2, column3, column4, column5, column6, '
+                                    'column7, column8, column9, column10, column11, column12, '
+                                    'column13, column14, column15, column16 FROM very_large_table '
+                                    'WHERE condition1 = true;'
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            },
+            (
+                '## Updated Transformation Structure\n'
+                '\n'
+                '### Block id: `b0`, name: `Long Script Block`\n'
+                '\n'
+                '- **Code id: `b0.c0`, name: `Very Long Query`** SQL snippet:\n'
+                '\n'
+                '  ```sql\n'
+                '  SELECT column1, column2, column3, column4, column5, column6, column7, '
+                'column8, column9, column10, column11, column12, column13, column14, column15, '
+                'co... (53 chars truncated)\n'
+                '  ```\n'
+            ),
+        ),
+    ],
+)
+def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
+    """Test structure_summary function generates correct markdown output."""
+    result = structure_summary(parameters)
+    assert result == expected_markdown
+
+
+@pytest.mark.parametrize(
+    ('initial_params', 'updates', 'expected_params', 'expected_msg'),
+    [
+        # String replacement without structure change - should only report replacement
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM table2'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfStrReplace(op='str_replace', block_id=None, code_id=None, search_for='FROM', replace_with='IN'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * IN table2'),
+                        ],
+                    ),
+                ]
+            ),
+            'Replaced 2 occurrences of "FROM" in the transformation',
+        ),
+        # Structural change without string replacement - should only report structure
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfAddBlock(
+                    op='add_block',
+                    block=SimplifiedTfBlocks.Block(name='New Block', codes=[]),
+                    position='end',
+                ),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                    SimplifiedTfBlocks.Block(name='New Block', codes=[]),
+                ]
+            ),
+            '## Updated Transformation Structure',
+        ),
+        # Non-structural operations - should return empty message
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed Block'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Renamed Block',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfRenameCode(op='rename_code', block_id='b0', code_id='b0.c0', code_name='Renamed Code'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Renamed Code', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfSetCode(op='set_code', block_id='b0', code_id='b0.c0', script='SELECT * FROM new_table'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+        # Multiple non-structural operations - should return empty message
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed Block'),
+                TfSetCode(op='set_code', block_id='b0', code_id='b0.c0', script='SELECT * FROM new_table'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Renamed Block',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+        # Structural change + string replacement - should report both
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfAddBlock(
+                    op='add_block',
+                    block=SimplifiedTfBlocks.Block(
+                        name='New Block',
+                        codes=[SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * FROM table2')],
+                    ),
+                    position='end',
+                ),
+                TfStrReplace(op='str_replace', block_id=None, code_id=None, search_for='FROM', replace_with='IN'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
+                        ],
+                    ),
+                    SimplifiedTfBlocks.Block(
+                        name='New Block',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
+                        ],
+                    ),
+                ]
+            ),
+            'Replaced 2 occurrences of "FROM" in the transformation\n## Updated Transformation Structure',
+        ),
+        # Multiple string replacements - should report all
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM table2'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfStrReplace(
+                    op='str_replace', block_id='b0', code_id='b0.c0', search_for='table1', replace_with='new_table1'
+                ),
+                TfStrReplace(
+                    op='str_replace', block_id='b0', code_id='b0.c1', search_for='table2', replace_with='new_table2'
+                ),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM new_table2'),
+                        ],
+                    ),
+                ]
+            ),
+            (
+                'Replaced 1 occurrence of "table1" in code "b0.c0", block "b0"\n'
+                'Replaced 1 occurrence of "table2" in code "b0.c1", block "b0"'
+            ),
+        ),
+        # Add code (structural) + string replacement - should report both
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfAddCode(
+                    op='add_code',
+                    block_id='b0',
+                    code=SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * FROM table2'),
+                    position='end',
+                ),
+                TfStrReplace(op='str_replace', block_id=None, code_id=None, search_for='FROM', replace_with='IN'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
+                        ],
+                    ),
+                ]
+            ),
+            'Replaced 2 occurrences of "FROM" in the transformation\n## Updated Transformation Structure',
+        ),
+        # Remove code (structural) - should report structure
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM table2'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfRemoveCode(op='remove_code', block_id='b0', code_id='b0.c0'),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code Y', script='SELECT * FROM table2'),
+                        ],
+                    ),
+                ]
+            ),
+            '## Updated Transformation Structure',
+        ),
+        # Multiple structural changes - should report structure once
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [
+                TfAddBlock(
+                    op='add_block',
+                    block=SimplifiedTfBlocks.Block(name='New Block', codes=[]),
+                    position='end',
+                ),
+                TfAddCode(
+                    op='add_code',
+                    block_id='b0',
+                    code=SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT 1'),
+                    position='end',
+                ),
+            ],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT 1'),
+                        ],
+                    ),
+                    SimplifiedTfBlocks.Block(name='New Block', codes=[]),
+                ]
+            ),
+            '## Updated Transformation Structure',
+        ),
+        # Empty updates list - should return empty message
+        (
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            [],
+            SimplifiedTfBlocks(
+                blocks=[
+                    SimplifiedTfBlocks.Block(
+                        name='Block A',
+                        codes=[
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
+                        ],
+                    ),
+                ]
+            ),
+            '',
+        ),
+    ],
+)
+def test_update_transformation_parameters(
+    initial_params: SimplifiedTfBlocks,
+    updates: Sequence[TfParamUpdate],
+    expected_params: SimplifiedTfBlocks,
+    expected_msg: str,
+):
+    result_params, result_msg = update_transformation_parameters(initial_params, updates)
+
+    assert result_params == expected_params
+
+    if '##' in expected_msg:
+        # For multi-line messages, check message prefix
+        assert result_msg.startswith(expected_msg)
+    else:
+        # For simple patterns, check exact match
+        assert result_msg == expected_msg
