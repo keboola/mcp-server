@@ -418,7 +418,7 @@ async def set_cfg_update_metadata(
 # ============================================================================
 
 
-def get_nested(obj: Mapping[str, Any] | None, key: str, *, default: T = None) -> T | None:
+def get_nested(obj: Mapping[str, Any] | None, key: str, *, default: T | None = None) -> T | None:
     """
     Gets a value from a nested mapping associated with the key.
     """
