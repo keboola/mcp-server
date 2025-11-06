@@ -4,14 +4,15 @@ import pytest
 from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.data_apps import (
-    _QUERY_DATA_FUNCTION_CODE,
+    _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
+    _STORAGE_QUERY_DATA_FUNCTION_CODE,
     DataApp,
     DataAppSummary,
     _build_data_app_config,
     _get_authorization,
     _get_data_app_slug,
+    _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
     _update_existing_data_app_config,
@@ -88,39 +89,49 @@ def test_is_authorized_behavior():
 
 
 def test_inject_query_to_source_code_when_already_included():
-    source_code = f"""prelude{_QUERY_DATA_FUNCTION_CODE}postlude"""
-    result = _inject_query_to_source_code(source_code)
+    query_code = _STORAGE_QUERY_DATA_FUNCTION_CODE
+    backend = 'bigquery'
+    source_code = f"""prelude{query_code}postlude"""
+    result = _inject_query_to_source_code(source_code, backend)
     assert result == source_code
 
 
 def test_inject_query_to_source_code_with_markers():
     src = (
         'import pandas as pd\n\n'
-        '### INJECTED_CODE ###\n'
+        '# ### INJECTED_CODE ####\n'
         '# will be replaced\n'
-        '### END_OF_INJECTED_CODE ###\n\n'
+        '# ### END_OF_INJECTED_CODE ####\n\n'
         "print('hello')\n"
     )
-    result = _inject_query_to_source_code(src)
+    backend = 'bigquery'
+    query_code = _STORAGE_QUERY_DATA_FUNCTION_CODE
+    result = _inject_query_to_source_code(src, backend)
 
     assert result.startswith('import pandas as pd')
-    assert _QUERY_DATA_FUNCTION_CODE in result
+    assert query_code in result
     assert result.endswith("print('hello')\n")
 
 
 def test_inject_query_to_source_code_with_placeholder():
     src = 'header\n{QUERY_DATA_FUNCTION}\nfooter\n'
-    result = _inject_query_to_source_code(src)
+    query_code = _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE
+    backend = 'snowflake'
+    result = _inject_query_to_source_code(src, backend)
 
     # Injected once via format(), original source (with placeholder) appended afterwards
-    assert _QUERY_DATA_FUNCTION_CODE in result
+    assert query_code in result
     assert '{QUERY_DATA_FUNCTION}' not in result
+    assert result.startswith('header')
+    assert result.strip().endswith('footer')
 
 
 def test_inject_query_to_source_code_default_path():
     src = "print('x')\n"
-    result = _inject_query_to_source_code(src)
-    assert result.startswith(_QUERY_DATA_FUNCTION_CODE)
+    query_code = _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE
+    backend = 'snowflake'
+    result = _inject_query_to_source_code(src, backend)
+    assert result.startswith(query_code)
     assert result.endswith(src)
 
 
@@ -129,12 +140,13 @@ def test_build_data_app_config_merges_defaults_and_secrets():
     src = "print('hello')"
     pkgs = ['pandas']
     secrets = {'FOO': 'bar'}
+    backend = 'snowflake'
 
-    config = _build_data_app_config(name, src, pkgs, 'basic-auth', secrets)
+    config = _build_data_app_config(name, src, pkgs, 'basic-auth', secrets, backend)
 
     params = config['parameters']
     assert params['dataApp']['slug'] == 'my-app'
-    assert params['script'] == [_inject_query_to_source_code(src)]
+    assert params['script'] == [_inject_query_to_source_code(src, backend)]
     # Default packages are included and deduplicated
     assert 'pandas' in params['packages']
     assert 'httpx' in params['packages']
@@ -144,7 +156,7 @@ def test_build_data_app_config_merges_defaults_and_secrets():
     assert config['authorization'] == _get_authorization(True)
 
 
-def test_update_existing_data_app_config_merges_and_preserves_existing_on_conflict():
+def test_update_existing_data_app_config():
     existing = {
         'parameters': {
             'dataApp': {
@@ -162,24 +174,35 @@ def test_update_existing_data_app_config_merges_and_preserves_existing_on_confli
         name='New Name',
         source_code='new-code',
         packages=['pandas'],
-        authentication_type='no-auth',
+        authentication_type='basic-auth',
         secrets={'FOO': 'new', 'NEW': 'y'},
+        sql_dialect='snowflake',
     )
 
     assert new['parameters']['dataApp']['slug'] == 'new-name'
-    assert new['parameters']['script'] == [_inject_query_to_source_code('new-code')]
+    assert new['parameters']['script'] == [_inject_query_to_source_code('new-code', 'snowflake')]
     # Removed previous packages
     assert 'numpy' not in new['parameters']['packages']
     # Packages combined with defaults
     assert 'pandas' in new['parameters']['packages']
     assert 'httpx' in new['parameters']['packages']
+    # Secrets merged
     assert new['parameters']['dataApp']['secrets']['FOO'] == 'new'
     assert new['parameters']['dataApp']['secrets']['NEW'] == 'y'
     assert new['parameters']['dataApp']['secrets']['KEEP'] == 'x'
-    assert new['authorization'] == _get_authorization(False)
+    # Authentication updated
+    assert new['authorization'] == _get_authorization(True)
 
 
-def test_update_existing_data_app_config_keeps_authentication_when_flag_is_default():
+def test_get_secrets():
+    secrets = _get_secrets(workspace_id='wid-1234', branch_id='123')
+    assert secrets == {
+        'WORKSPACE_ID': 'wid-1234',
+        'BRANCH_ID': '123',
+    }
+
+
+def test_update_existing_data_app_config_keeps_previous_properties_when_undefined():
     existing_authorization = {
         'app_proxy': {
             'auth_providers': [{'id': 'oidc', 'type': 'oidc', 'issuer_url': 'https://issuer'}],
@@ -200,38 +223,28 @@ def test_update_existing_data_app_config_keeps_authentication_when_flag_is_defau
 
     new = _update_existing_data_app_config(
         existing_config=existing,
-        name='New Name',
-        source_code='new-code',
-        packages=['pandas'],
+        name='',
+        source_code='',
+        packages=[],
         authentication_type='default',
-        secrets={'NEW': 'value'},
+        secrets={},
+        sql_dialect='snowflake',
     )
 
     assert new['authorization'] is existing_authorization
+    assert new['parameters']['script'] == ['old']
     # verify the rest of the config is still updated
-    assert new['parameters']['dataApp']['slug'] == 'new-name'
-    assert 'pandas' in new['parameters']['packages']
+    assert new['parameters']['dataApp']['slug'] == 'old-slug'
+    assert 'numpy' in new['parameters']['packages']
     assert 'httpx' in new['parameters']['packages']
-    assert new['parameters']['dataApp']['secrets']['NEW'] == 'value'
     assert new['parameters']['dataApp']['secrets']['KEEP'] == 'secret'
 
 
-def test_get_secrets_encrypts_token_and_sets_metadata(mocker):
-
-    keboola_client = mocker.Mock(KeboolaClient)
-    keboola_client.token = 'TOKEN123'
-    keboola_client.branch_id = 'bid123'
-
-    workspace_id = 'wid-1234'
-
-    secrets = _get_secrets(keboola_client, workspace_id)
-
-    assert set(secrets.keys()) == {
-        'BRANCH_ID',
-        'WORKSPACE_ID',
-    }
-    assert secrets['BRANCH_ID'] == 'bid123'
-    assert secrets['WORKSPACE_ID'] == 'wid-1234'
+def test_get_query_function_code_selects_snippets():
+    assert _get_query_function_code('snowflake') == _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE
+    assert _get_query_function_code('bigquery') == _STORAGE_QUERY_DATA_FUNCTION_CODE
+    with pytest.raises(ValueError, match='Unsupported SQL dialect'):
+        _get_query_function_code('UNKNOWN')
 
 
 @pytest.mark.parametrize(

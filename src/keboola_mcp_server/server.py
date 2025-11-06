@@ -63,6 +63,10 @@ class ServiceInfoApiResp(BaseModel):
         serialization_alias='serverTransport',
         default=None,
     )
+    server_id: str = Field(
+        validation_alias=AliasChoices('serverId', 'server_id', 'server-id'),
+        serialization_alias='serverId',
+    )
 
 
 def create_keboola_lifespan(
@@ -112,6 +116,7 @@ class CustomRoutes:
             mcp_library_version=self.server_state.runtime_info.mcp_library_version,
             fastmcp_library_version=self.server_state.runtime_info.fastmcp_library_version,
             server_transport=self.server_state.runtime_info.transport,
+            server_id=self.server_state.runtime_info.server_id,
         )
         return JSONResponse(resp.model_dump(by_alias=True))
 
