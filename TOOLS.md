@@ -1911,19 +1911,19 @@ IMPORTANT:
 
 USAGE EXAMPLES:
 - user_input: "Find all tables with 'customer' in the name"
-  → name_prefixes=["customer"], item_types=["table"]
+  → patterns=["customer"], item_types=["table"]
   → Returns all tables whose id, name, displayName, or description contains "customer"
 
 - user_input: "Search for the sales transformation"
-  → name_prefixes=["sales"], item_types=["transformation"]
+  → patterns=["sales"], item_types=["transformation"]
   → Returns transformations with "sales" in any searchable field
 
 - user_input: "Find items named 'daily report' or 'weekly summary'"
-  → name_prefixes=["daily.*report", "weekly.*summary"], item_types=[]
+  → patterns=["daily.*report", "weekly.*summary"], item_types=[]
   → Returns all items matching any of these patterns
 
 - user_input: "Show me all configurations related to Google Analytics"
-  → name_prefixes=["google.*analytics"], item_types=["configuration"]
+  → patterns=["google.*analytics"], item_types=["configuration"]
   → Returns configurations with matching patterns
 
 
