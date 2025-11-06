@@ -58,6 +58,7 @@ including essential context and base instructions for working with it
 
 ### Search Tools
 - [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
+- [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.
 
 ### Storage Tools
 - [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
@@ -1868,6 +1869,108 @@ EXAMPLES:
   },
   "required": [
     "query"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="search"></a>
+## search
+**Annotations**: `read-only`
+
+**Tags**: `search`
+
+**Description**:
+
+Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.) in the current project
+by matching patterns against item ID, name, display name, or description. Returns matching items grouped by type
+with their IDs and metadata.
+
+WHEN TO USE:
+- User asks to "find", "locate", or "search for" something by name
+- User mentions a partial name and you need to find the full item (e.g., "find the customer table")
+- User asks "what tables/configs/flows do I have with X in the name?"
+- You need to discover items before performing operations on them
+- User asks to "list all items with [name] in it"
+- DO NOT use for listing all items of a specific type. Use list_configs, list_tables, list_flows, etc instead.
+
+HOW IT WORKS:
+- Searches by regex pattern matching against id, name, displayName, and description fields
+- Case-insensitive search
+- Multiple patterns work as OR condition - matches items containing ANY of the patterns
+- Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
+- Each result includes the item's ID, name, creation date, and relevant metadata
+
+IMPORTANT:
+- Always use this tool when the user mentions a name but you don't have the exact ID
+- The search returns IDs that you can use with other tools (e.g., get_table, get_config, get_flow)
+- Results are ordered by update time. The most recently updated items are returned first.
+- For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
+- Use find_component_id and list_configs tools to find configurations related to a specific component
+
+USAGE EXAMPLES:
+- user_input: "Find all tables with 'customer' in the name"
+  → patterns=["customer"], item_types=["table"]
+  → Returns all tables whose id, name, displayName, or description contains "customer"
+
+- user_input: "Search for the sales transformation"
+  → patterns=["sales"], item_types=["transformation"]
+  → Returns transformations with "sales" in any searchable field
+
+- user_input: "Find items named 'daily report' or 'weekly summary'"
+  → patterns=["daily.*report", "weekly.*summary"], item_types=[]
+  → Returns all items matching any of these patterns
+
+- user_input: "Show me all configurations related to Google Analytics"
+  → patterns=["google.*analytics"], item_types=["configuration"]
+  → Returns configurations with matching patterns
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "patterns": {
+      "description": "One or more search patterns to match against item ID, name, display name, or description. Supports regex patterns. Case-insensitive. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"test.*table\"]. Do not use empty strings or empty lists.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "item_types": {
+      "default": [],
+      "description": "Optional filter for specific Keboola item types. Leave empty to search all types. Common values: \"table\" (data tables), \"bucket\" (table containers), \"transformation\" (SQL/Python transformations), \"configuration\" (extractor/writer configs), \"flow\" (orchestration flows). Use when you know what type of item you're looking for.",
+      "items": {
+        "enum": [
+          "flow",
+          "bucket",
+          "table",
+          "transformation",
+          "configuration",
+          "configuration-row",
+          "workspace",
+          "shared-code",
+          "rows",
+          "state"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "limit": {
+      "default": 50,
+      "description": "Maximum number of items to return (default: 50, max: 100).",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "Number of matching items to skip for pagination (default: 0).",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "patterns"
   ],
   "type": "object"
 }
