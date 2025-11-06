@@ -330,8 +330,9 @@ async def search(
       → name_prefixes=["google.*analytics"], item_types=["configuration"]
       → Returns configurations with matching patterns
     """
-
-    client = KeboolaClient.from_state(ctx.session.state)
+    patterns = list(filter(None, map(str.strip, filter(None, patterns))))
+    if not patterns:
+        raise ValueError('At least one search pattern must be provided.')
 
     offset = max(0, offset)
     if not 0 < limit <= MAX_GLOBAL_SEARCH_LIMIT:
@@ -350,6 +351,7 @@ async def search(
     # Fetch items concurrently based on requested types
     tasks = []
     all_hits: list[SearchHit] = []
+    client = KeboolaClient.from_state(ctx.session.state)
 
     if not types_to_fetch or 'bucket' in types_to_fetch:
         tasks.append(_fetch_buckets(client, compiled_patterns))

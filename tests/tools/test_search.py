@@ -16,6 +16,14 @@ class TestSearchTool:
     """Test cases for the search tool function."""
 
     @pytest.mark.asyncio
+    async def test_search_no_patterns(self, mcp_context_client: Context):
+        with pytest.raises(ValueError, match='At least one search pattern must be provided.'):
+            await search(ctx=mcp_context_client, patterns=[])
+
+        with pytest.raises(ValueError, match='At least one search pattern must be provided.'):
+            await search(ctx=mcp_context_client, patterns=[''])
+
+    @pytest.mark.asyncio
     async def test_search_success(self, mocker: MockerFixture, mcp_context_client: Context):
         """Test successful search with regex patterns."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
