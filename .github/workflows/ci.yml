@@ -7,7 +7,7 @@ name: CI
 # - For pull requests from branches in this repository, the workflow is skipped to avoid running it twice (once for the
 #   push and once for the PR).
 # - The full workflow (including jobs requiring secrets) runs only on pushes events to branches in this repository
-on: [ push, pull_request, workflow_dispatch ]
+on: [ push, pull_request ]
 concurrency: ci-${{ github.ref }}
 
 permissions:
@@ -172,11 +172,11 @@ jobs:
 
   register-with-anthropic:
     name: Register with Anthropic
-#    needs:
-#      - build
+    needs:
+      - build
 #      - deploy_to_pypi
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+#    if: github.event_name == 'workflow_dispatch'
 #    if: |
 #      startsWith(github.ref, 'refs/tags/') &&
 #      needs.build.outputs.is_semantic_tag == 'true' &&
