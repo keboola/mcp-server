@@ -1,11 +1,31 @@
+from typing import Any
+
 import pytest
 
+from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.flow.utils import (
     _check_legacy_circular_dependencies,
     ensure_legacy_phase_ids,
     ensure_legacy_task_ids,
-    validate_legacy_flow_structure,
+    get_flow_configuration,
+    validate_flow_structure,
 )
+
+
+def _notification_task(task_id: str, phase_id: str) -> dict[str, Any]:
+    """Create a minimal notification task for conditional flow tests."""
+    return {
+        'id': task_id,
+        'name': f'Task {task_id}',
+        'phase': phase_id,
+        'task': {
+            'type': 'notification',
+            'title': 'Notify',
+            'message': 'Done',
+            'recipients': [{'channel': 'email', 'address': 'ops@example.com'}],
+        },
+    }
+
 
 # --- Test Helper Functions ---
 
@@ -78,28 +98,28 @@ class TestFlowHelpers:
 
     def test_validate_flow_structure_success(self, sample_phases, sample_tasks):
         """Test successful flow structure validation."""
-        phases = ensure_legacy_phase_ids(sample_phases)
-        tasks = ensure_legacy_task_ids(sample_tasks)
-
-        validate_legacy_flow_structure(phases, tasks)
+        flow_configuration = get_flow_configuration(sample_phases, sample_tasks, ORCHESTRATOR_COMPONENT_ID)
+        validate_flow_structure(flow_configuration, flow_type=ORCHESTRATOR_COMPONENT_ID)
 
     def test_validate_flow_structure_invalid_phase_dependency(self):
         """Test validation failure for invalid phase dependencies."""
-        phases = ensure_legacy_phase_ids([{'id': 1, 'name': 'Phase 1', 'dependsOn': [999]}])  # Non-existent phase
-        tasks = []
+        flow_configuration = get_flow_configuration(
+            phases=[{'id': 1, 'name': 'Phase 1', 'dependsOn': [999]}], tasks=[], flow_type=ORCHESTRATOR_COMPONENT_ID
+        )
 
         with pytest.raises(ValueError, match='depends on non-existent phase 999'):
-            validate_legacy_flow_structure(phases, tasks)
+            validate_flow_structure(flow_configuration, flow_type=ORCHESTRATOR_COMPONENT_ID)
 
     def test_validate_flow_structure_invalid_task_phase(self):
         """Test validation failure for task referencing non-existent phase."""
-        phases = ensure_legacy_phase_ids([{'id': 1, 'name': 'Phase 1'}])
-        tasks = ensure_legacy_task_ids(
-            [{'name': 'Bad Task', 'phase': 999, 'task': {'componentId': 'comp1'}}]  # Non-existent phase
+        flow_configuration = get_flow_configuration(
+            phases=[{'id': 1, 'name': 'Phase 1'}],
+            tasks=[{'name': 'Bad Task', 'phase': 999, 'task': {'componentId': 'comp1'}}],
+            flow_type=ORCHESTRATOR_COMPONENT_ID,
         )
 
         with pytest.raises(ValueError, match='references non-existent phase 999'):
-            validate_legacy_flow_structure(phases, tasks)
+            validate_flow_structure(flow_configuration, flow_type=ORCHESTRATOR_COMPONENT_ID)
 
 
 # --- Test Circular Dependency Detection ---
@@ -187,7 +207,146 @@ class TestFlowEdgeCases:
 
     def test_empty_flow_validation(self):
         """Test validation of completely empty flow."""
-        phases = ensure_legacy_phase_ids([])
-        tasks = ensure_legacy_task_ids([])
+        flow_configuration = get_flow_configuration([], [], ORCHESTRATOR_COMPONENT_ID)
+        validate_flow_structure(flow_configuration, flow_type=ORCHESTRATOR_COMPONENT_ID)
 
-        validate_legacy_flow_structure(phases, tasks)
+
+class TestFlowConfigurationBuilder:
+    """Test flow configuration builder helper."""
+
+    def test_get_flow_configuration_legacy_generates_ids_and_aliases(self):
+        """Legacy builder should sanitize IDs and serialize aliases."""
+        flow_configuration = get_flow_configuration(
+            phases=[{'name': 'Generated Phase', 'depends_on': []}],
+            tasks=[{'name': 'Legacy Task', 'phase': 1, 'task': {'componentId': 'keboola.component'}}],
+            flow_type=ORCHESTRATOR_COMPONENT_ID,
+        )
+
+        phase = flow_configuration['phases'][0]
+        task = flow_configuration['tasks'][0]
+
+        assert phase['id'] == 1
+        assert 'dependsOn' in phase
+        assert 'depends_on' not in phase
+        assert task['id'] == 20001
+        assert task['task']['mode'] == 'run'
+        assert 'continueOnFailure' in task
+
+    def test_get_flow_configuration_conditional_excludes_unset_fields(self):
+        """Conditional builder should drop unset optional fields but goto=null remains."""
+        flow_configuration = get_flow_configuration(
+            phases=[
+                {
+                    'id': 'phase1',
+                    'name': 'Start',
+                    'next': [{'id': 'transition1', 'goto': None}],
+                }
+            ],
+            tasks=[_notification_task('task1', 'phase1')],
+            flow_type=CONDITIONAL_FLOW_COMPONENT_ID,
+        )
+
+        phase = flow_configuration['phases'][0]
+        task = flow_configuration['tasks'][0]
+
+        assert 'description' not in phase
+        assert phase['next'][0]['id'] == 'transition1'
+        assert phase['next'][0]['goto'] is None
+        assert 'enabled' not in task
+
+
+class TestConditionalFlowValidation:
+    """Test validation logic for conditional flows."""
+
+    def test_validate_conditional_flow_success(self):
+        phases = [
+            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+            {'id': 'phase2', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
+
+        validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_duplicate_phase_ids(self):
+        phases = [
+            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+            {'id': 'phase1', 'name': 'Duplicate', 'next': [{'id': 't2', 'goto': None}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase1')]
+
+        with pytest.raises(ValueError, match='duplicate phase IDs'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_duplicate_task_ids(self):
+        phases = [
+            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': None}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1'), _notification_task('task1', 'phase1')]
+
+        with pytest.raises(ValueError, match='duplicate task IDs'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_task_references_missing_phase(self):
+        phases = [
+            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': None}]},
+        ]
+        tasks = [_notification_task('task1', 'missing-phase')]
+
+        with pytest.raises(ValueError, match='references non-existent phase'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_transition_references_missing_phase(self):
+        phases = [
+            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'ghost-phase'}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1')]
+
+        with pytest.raises(ValueError, match='references non-existent phase'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_requires_ending_phase(self):
+        phases = [
+            {'id': 'phase0', 'name': 'Start', 'next': [{'id': 't0', 'goto': 'phase1'}]},
+            {'id': 'phase1', 'name': 'Loop', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+            {'id': 'phase2', 'name': 'Loop Again', 'next': [{'id': 't2', 'goto': 'phase1'}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
+
+        with pytest.raises(ValueError, match='has no ending phases'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_requires_entry_phase(self):
+        phases = [
+            {'id': 'phase1', 'name': 'One', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+            {'id': 'phase2', 'name': 'Two', 'next': [{'id': 't2', 'goto': 'phase1'}, {'id': 't3', 'goto': None}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
+
+        with pytest.raises(ValueError, match='has no entry phase'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_single_entry_required(self):
+        phases = [
+            {'id': 'phase1', 'name': 'Entry A', 'next': [{'id': 't1', 'goto': None}]},
+            {'id': 'phase2', 'name': 'Entry B', 'next': [{'id': 't2', 'goto': None}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
+
+        with pytest.raises(ValueError, match='multiple entry phases'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_all_phases_reachable(self):
+        phases = [
+            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+            {'id': 'phase2', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
+            {'id': 'phase3', 'name': 'Isolated', 'next': [{'id': 't3', 'goto': 'phase4'}]},
+            {'id': 'phase4', 'name': 'Isolated', 'next': [{'id': 't4', 'goto': 'phase3'}]},
+        ]
+        tasks = [
+            _notification_task('task1', 'phase1'),
+            _notification_task('task2', 'phase2'),
+            _notification_task('task3', 'phase3'),
+        ]
+
+        with pytest.raises(ValueError, match='not reachable'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
