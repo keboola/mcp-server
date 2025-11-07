@@ -211,61 +211,61 @@ def test_clean_bucket_name(input_str: str, expected_str: str):
         # Test 'set' operation on simple key
         (
             {'api_key': 'old_key', 'count': 42},
-            ConfigParamSet(op='set', path='api_key', new_val='new_key'),
+            ConfigParamSet(op='set', path='api_key', value='new_key'),
             {'api_key': 'new_key', 'count': 42},
         ),
         # Test 'set' operation on nested key
         (
             {'database': {'host': 'localhost', 'port': 5432}},
-            ConfigParamSet(op='set', path='database.host', new_val='remotehost'),
+            ConfigParamSet(op='set', path='database.host', value='remotehost'),
             {'database': {'host': 'remotehost', 'port': 5432}},
         ),
         # Test 'set' operation on new key
         (
             {'api_key': 'old_key'},
-            ConfigParamSet(op='set', path='new_key', new_val='new_value'),
+            ConfigParamSet(op='set', path='new_key', value='new_value'),
             {'api_key': 'old_key', 'new_key': 'new_value'},
         ),
         # Test 'set' operation creating deeply nested path
         (
             {'api_key': 'value'},
-            ConfigParamSet(op='set', path='config.database.connection.host', new_val='localhost'),
+            ConfigParamSet(op='set', path='config.database.connection.host', value='localhost'),
             {'api_key': 'value', 'config': {'database': {'connection': {'host': 'localhost'}}}},
         ),
         # Test 'set' operation with different value types - list
         (
             {'config': {}},
-            ConfigParamSet(op='set', path='config.items', new_val=[1, 2, 3]),
+            ConfigParamSet(op='set', path='config.items', value=[1, 2, 3]),
             {'config': {'items': [1, 2, 3]}},
         ),
         # Test 'set' operation with different value types - boolean
         (
             {'config': {}},
-            ConfigParamSet(op='set', path='config.enabled', new_val=True),
+            ConfigParamSet(op='set', path='config.enabled', value=True),
             {'config': {'enabled': True}},
         ),
         # Test 'set' operation with different value types - None
         (
             {'config': {}},
-            ConfigParamSet(op='set', path='config.value', new_val=None),
+            ConfigParamSet(op='set', path='config.value', value=None),
             {'config': {'value': None}},
         ),
         # Test 'set' operation with different value types - number
         (
             {'config': {}},
-            ConfigParamSet(op='set', path='config.timeout', new_val=300),
+            ConfigParamSet(op='set', path='config.timeout', value=300),
             {'config': {'timeout': 300}},
         ),
         # Test 'set' operation with multiple JSONPath matches
         (
             {'messages': [{'text': 'old1'}, {'text': 'old2 old3'}]},
-            ConfigParamSet(op='set', path='messages[*].text', new_val='new'),
+            ConfigParamSet(op='set', path='messages[*].text', value='new'),
             {'messages': [{'text': 'new'}, {'text': 'new'}]},
         ),
         # Test 'set' operation with '$' (root) JSONPath
         (
             {'messages': [{'text': 'old1'}, {'text': 'old2 old3'}]},
-            ConfigParamSet(op='set', path='$', new_val={'object': 'new'}),
+            ConfigParamSet(op='set', path='$', value={'object': 'new'}),
             {'object': 'new'},
         ),
         # Test 'str_replace' operation on existing string
@@ -424,31 +424,31 @@ def test_apply_param_update(
         # Test 'set' operation on nested value through string
         (
             {'api_key': 'string_value'},
-            ConfigParamSet(op='set', path='api_key.nested', new_val='new_value'),
+            ConfigParamSet(op='set', path='api_key.nested', value='new_value'),
             'Cannot set nested value at path "api_key.nested"',
         ),
         # Test 'set' operation on deeply nested value through string
         (
             {'database': {'config': 'string_value'}},
-            ConfigParamSet(op='set', path='database.config.host', new_val='localhost'),
+            ConfigParamSet(op='set', path='database.config.host', value='localhost'),
             'Cannot set nested value at path "database.config.host"',
         ),
         # Test 'set' operation on nested value through number
         (
             {'count': 42},
-            ConfigParamSet(op='set', path='count.nested', new_val='new_value'),
+            ConfigParamSet(op='set', path='count.nested', value='new_value'),
             'Cannot set nested value at path "count.nested"',
         ),
         # Test 'set' operation on nested value through list
         (
             {'items': [1, 2, 3]},
-            ConfigParamSet(op='set', path='items.nested', new_val='new_value'),
+            ConfigParamSet(op='set', path='items.nested', value='new_value'),
             'Cannot set nested value at path "items.nested"',
         ),
         # Test 'set' operation on nested value through boolean
         (
             {'flag': True},
-            ConfigParamSet(op='set', path='flag.nested', new_val='new_value'),
+            ConfigParamSet(op='set', path='flag.nested', value='new_value'),
             'Cannot set nested value at path "flag.nested"',
         ),
         # Test 'list_append' operation on non-existent path
@@ -504,7 +504,7 @@ def test_apply_param_update_errors(
                 'deprecated_field': 'old_value',
             },
             [
-                ConfigParamSet(op='set', path='api_key', new_val='new_key'),
+                ConfigParamSet(op='set', path='api_key', value='new_key'),
                 ConfigParamReplace(
                     op='str_replace', path='database.host', search_for='localhost', replace_with='remotehost'
                 ),
@@ -518,7 +518,7 @@ def test_apply_param_update_errors(
         # Test with single update
         (
             {'api_key': 'old_key'},
-            [ConfigParamSet(op='set', path='api_key', new_val='new_key')],
+            [ConfigParamSet(op='set', path='api_key', value='new_key')],
             {'api_key': 'new_key'},
         ),
         # Test with empty updates list
@@ -531,7 +531,7 @@ def test_apply_param_update_errors(
         (
             {'config': {}},
             [
-                ConfigParamSet(op='set', path='config.url', new_val='http://old.example.com'),
+                ConfigParamSet(op='set', path='config.url', value='http://old.example.com'),
                 ConfigParamReplace(op='str_replace', path='config.url', search_for='old', replace_with='new'),
             ],
             {'config': {'url': 'http://new.example.com'}},
@@ -540,9 +540,9 @@ def test_apply_param_update_errors(
         (
             {},
             [
-                ConfigParamSet(op='set', path='database.host', new_val='localhost'),
-                ConfigParamSet(op='set', path='database.port', new_val=5432),
-                ConfigParamSet(op='set', path='database.ssl', new_val=True),
+                ConfigParamSet(op='set', path='database.host', value='localhost'),
+                ConfigParamSet(op='set', path='database.port', value=5432),
+                ConfigParamSet(op='set', path='database.ssl', value=True),
             ],
             {'database': {'host': 'localhost', 'port': 5432, 'ssl': True}},
         ),
@@ -551,7 +551,7 @@ def test_apply_param_update_errors(
             {'value': 'initial'},
             [
                 ConfigParamReplace(op='str_replace', path='value', search_for='initial', replace_with='modified'),
-                ConfigParamSet(op='set', path='value', new_val='final'),
+                ConfigParamSet(op='set', path='value', value='final'),
             ],
             {'value': 'final'},
         ),
@@ -571,8 +571,8 @@ def test_update_params_does_not_mutate_original_dict():
     """Test that update_params does NOT mutate the original params dict."""
     params = {'api_key': 'old_key', 'count': 42}
     updates = [
-        ConfigParamSet(op='set', path='api_key', new_val='new_key'),
-        ConfigParamSet(op='set', path='count', new_val=100),
+        ConfigParamSet(op='set', path='api_key', value='new_key'),
+        ConfigParamSet(op='set', path='count', value=100),
     ]
 
     result = update_params(params, updates)
@@ -590,9 +590,9 @@ def test_update_params_with_error_in_middle():
     params = {'api_key': 'value', 'count': 42}
     original_params = params.copy()
     updates = [
-        ConfigParamSet(op='set', path='api_key', new_val='new_key'),
+        ConfigParamSet(op='set', path='api_key', value='new_key'),
         ConfigParamRemove(op='remove', path='nonexistent_field'),  # This will fail
-        ConfigParamSet(op='set', path='count', new_val=100),  # This won't be reached
+        ConfigParamSet(op='set', path='count', value=100),  # This won't be reached
     ]
 
     with pytest.raises(ValueError, match='Path "nonexistent_field" does not exist'):

@@ -699,7 +699,7 @@ async def test_add_config_row(
     [
         pytest.param(
             [
-                ConfigParamSet(op='set', path='api_key', new_val='new_api_key'),
+                ConfigParamSet(op='set', path='api_key', value='new_api_key'),
                 ConfigParamReplace(op='str_replace', path='database.host', search_for='old', replace_with='new'),
                 ConfigParamRemove(op='remove', path='deprecated_field'),
             ],
@@ -719,7 +719,7 @@ async def test_add_config_row(
         pytest.param(
             [
                 ConfigParamRemove(op='remove', path='existing_param'),
-                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+                ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             None,
             {
@@ -738,7 +738,7 @@ async def test_add_config_row(
         pytest.param(
             [
                 ConfigParamRemove(op='remove', path='existing_param'),
-                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+                ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             {'output': {'tables': []}},
             {
@@ -859,7 +859,7 @@ async def test_update_config(
         pytest.param(
             [
                 ConfigParamRemove(op='remove', path='existing_param'),
-                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+                ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             {'output': {'tables': []}},
             {
@@ -872,7 +872,7 @@ async def test_update_config(
         pytest.param(
             [
                 ConfigParamRemove(op='remove', path='existing_param'),
-                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+                ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             None,
             {
