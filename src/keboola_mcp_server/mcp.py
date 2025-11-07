@@ -102,19 +102,26 @@ class SessionStateMiddleware(fmw.Middleware):
     Note: HTTP headers and URL query parameters are only used when the server runs on HTTP-based transport.
     """
 
-    async def on_message(
+    async def on_request(
         self,
-        context: fmw.MiddlewareContext[Any],
-        call_next: fmw.CallNext[Any, Any],
+        context: fmw.MiddlewareContext[mt.Request[Any, Any]],
+        call_next: fmw.CallNext[mt.Request[Any, Any], Any],
     ) -> Any:
         """
         Manages session state in the Context parameter. This middleware sets up the session state for all the other
         MCP functions down the chain. It is called for each tool, prompt, resource, etc. calls.
 
+        In fastmcp 2.13.0+, this must run in on_request rather than on_message because ctx.session
+        requires the request context to be available.
+
         :param context: Middleware context containing FastMCP context.
         :param call_next: Next middleware in the chain to call.
         :returns: Result from executing the middleware chain.
         """
+        # Skip session setup for initialize request - session state is only needed for actual operations
+        if context.method == 'initialize':
+            return await call_next(context)
+
         ctx = context.fastmcp_context
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
