@@ -9,7 +9,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 
 @pytest.fixture
 def mock_components() -> list[dict[str, Any]]:
-    """Mock list_components tool."""
+    """Mock result of `component_list`"""
     return [
         {
             'id': 'keboola.ex-aws-s3',
@@ -44,7 +44,7 @@ def mock_components() -> list[dict[str, Any]]:
 
 @pytest.fixture
 def mock_configurations() -> list[dict[str, Any]]:
-    """Mock mock_configurations tool."""
+    """Mock result of `configuration_list`"""
     return [
         {
             'id': '123',
@@ -71,7 +71,7 @@ def mock_configurations() -> list[dict[str, Any]]:
 
 @pytest.fixture
 def mock_component() -> dict[str, Any]:
-    """Mock mock_component tool."""
+    """Mock result of `component_detail`"""
     return {
         'id': 'keboola.ex-aws-s3',
         'name': 'AWS S3 Extractor',
@@ -92,6 +92,33 @@ def mock_component() -> dict[str, Any]:
 
 
 @pytest.fixture
+def mock_tf_component() -> dict[str, Any]:
+    """Mock result of `component_detail` for a transformation component"""
+    return {
+        'componentId': 'keboola.google-bigquery-transformation',
+        'componentType': 'transformation',
+        'componentName': 'Google BigQuery',
+        'componentCategories': [],
+        'description': "BigQuery is Google's fully managed, serverless data warehouse",
+        'longDescription': 'Application which runs KBC transformations',
+        'documentationUrl': 'https://help.keboola.com/transformations/bigquery',
+        'documentation': '---\ntitle: Google BigQuery Transformation\npermalink: /transformations/bigquery/\n---',
+        'configurationSchema': {},
+        'configurationRowSchema': {},
+        'configurationDescription': None,
+        'rootConfigurationExamples': [],
+        'rowConfigurationExamples': [],
+        'componentFlags': [
+            'genericDockerUI',
+            'genericDockerUI-tableOutput',
+            'genericCodeBlocksUI',
+            'genericVariablesUI',
+            'genericDockerUI-tableInput',
+        ],
+    }
+
+
+@pytest.fixture
 def mock_configuration() -> dict[str, Any]:
     """Mock mock_configuration tool."""
     return {
@@ -104,6 +131,34 @@ def mock_configuration() -> dict[str, Any]:
         'version': 1,
         'configuration': {},
         'rows': [{'id': '1', 'name': 'Row 1', 'version': 1}, {'id': '2', 'name': 'Row 2', 'version': 1}],
+    }
+
+
+@pytest.fixture
+def mock_tf_configuration() -> dict[str, Any]:
+    """Mock mock_configuration tool."""
+    return {
+        'id': '124',
+        'name': 'My Transformation',
+        'description': 'Test transformation configuration',
+        'created': '2024-01-01T00:00:00Z',
+        'isDisabled': False,
+        'isDeleted': False,
+        'version': 1,
+        'configuration': {
+            'parameters': {
+                'blocks': [
+                    {
+                        'name': 'Blocks',
+                        'codes': [{'name': 'Code 1', 'script': ['SELECT * FROM customers;', 'SELECT * FROM orders']}],
+                    },
+                ],
+            },
+            'storage': {
+                'input': {'tables': []},
+                'output': {'tables': [{'source': 'customers', 'destination': 'out.c-my-transformation.customers'}]},
+            },
+        },
     }
 
 

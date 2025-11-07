@@ -24,16 +24,16 @@ import copy
 import logging
 import re
 import unicodedata
-from typing import Any, Mapping, Optional, Sequence, TypeVar, cast
+from typing import Any, Mapping, Sequence, TypeVar, cast
 
 import jsonpath_ng
 from httpx import HTTPStatusError
-from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.tools.components import tf_update
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentSummary,
@@ -41,6 +41,9 @@ from keboola_mcp_server.tools.components.model import (
     ComponentWithConfigurations,
     ConfigParamUpdate,
     ConfigurationSummary,
+    SimplifiedTfBlocks,
+    TfParamUpdate,
+    TransformationConfiguration,
 )
 
 LOG = logging.getLogger(__name__)
@@ -268,87 +271,31 @@ def clean_bucket_name(bucket_name: str) -> str:
     return bucket_name
 
 
-# ============================================================================
-# DATA MODELS
-# ============================================================================
-
-
-class TransformationConfiguration(BaseModel):
-    """
-    Creates the transformation configuration, a schema for the transformation configuration in the API.
-    Currently, the storage configuration uses only input and output tables, excluding files, etc.
-    """
-
-    class Parameters(BaseModel):
-        """The parameters for the transformation."""
-
-        class Block(BaseModel):
-            """The transformation block."""
-
-            class Code(BaseModel):
-                """The code block for the transformation block."""
-
-                name: str = Field(description='The name of the current code block describing the purpose of the block')
-                sql_statements: Sequence[str] = Field(
-                    description=(
-                        'The executable SQL query statements written in the current SQL dialect. '
-                        'Each statement must be executable and a separate item in the list.'
-                    ),
-                    # We use sql_statements for readability but serialize to script due to api expected request
-                    serialization_alias='script',
-                    validation_alias=AliasChoices('sql_statements', 'script'),
-                )
-
-            name: str = Field(description='The name of the current block')
-            codes: list[Code] = Field(description='The code scripts')
-
-        blocks: list[Block] = Field(description='The blocks for the transformation')
-
-    class Storage(BaseModel):
-        """The storage configuration for the transformation. For now it stores only input and output tables."""
-
-        class Destination(BaseModel):
-            """Tables' destinations for the transformation. Either input or output tables."""
-
-            class Table(BaseModel):
-                """The table used in the transformation"""
-
-                destination: Optional[str] = Field(description='The destination table name', default=None)
-                source: Optional[str] = Field(description='The source table name', default=None)
-
-            tables: list[Table] = Field(description='The tables used in the transformation', default_factory=list)
-
-        input: Destination = Field(description='The input tables for the transformation', default_factory=Destination)
-        output: Destination = Field(description='The output tables for the transformation', default_factory=Destination)
-
-    parameters: Parameters = Field(description='The parameters for the transformation')
-    storage: Storage = Field(description='The storage configuration for the transformation')
-
-
-def get_transformation_configuration(
-    codes: Sequence[TransformationConfiguration.Parameters.Block.Code],
+async def create_transformation_configuration(
+    codes: Sequence[SimplifiedTfBlocks.Block.Code],
     transformation_name: str,
     output_tables: Sequence[str],
 ) -> TransformationConfiguration:
     """
-    Sets the transformation configuration from code statements.
-    Creates the expected configuration for the transformation, parameters and storage.
+    Creates transformation configuration from simplified code blocks and output tables.
+    Handles splitting the SQL `script`s into arrays of statements and creating the storage configuration.
 
-    :param codes: The code blocks (sql for now)
+    :param codes: The code blocks
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
     :return: TransformationConfiguration with parameters and storage
     """
     storage = TransformationConfiguration.Storage()
     # build parameters configuration out of code blocks
-    parameters = TransformationConfiguration.Parameters(
+    parameters = SimplifiedTfBlocks(
         blocks=[
-            TransformationConfiguration.Parameters.Block(
+            SimplifiedTfBlocks.Block(
                 name='Blocks',
                 codes=list(codes),
             )
         ]
     )
+    raw_parameters = await parameters.to_raw_parameters()
     if output_tables:
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
@@ -365,7 +312,8 @@ def get_transformation_configuration(
             )
             for out_table in output_tables
         ]
-    return TransformationConfiguration(parameters=parameters, storage=storage)
+
+    return TransformationConfiguration(parameters=raw_parameters, storage=storage)
 
 
 async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
@@ -519,6 +467,21 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
 
         return jsonpath_expr.filter(lambda x: True, params)
 
+    elif update.op == 'list_append':
+        matches = jsonpath_expr.find(params)
+
+        if not matches:
+            raise ValueError(f'Path "{update.path}" does not exist')
+
+        for match in matches:
+            current_value = match.value
+            if not isinstance(current_value, list):
+                raise ValueError(f'Path "{match.full_path}" is not a list')
+
+            current_value.append(update.value)
+
+        return params
+
 
 def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) -> dict[str, Any]:
     """
@@ -534,3 +497,112 @@ def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) 
     for update in updates:
         params = _apply_param_update(params, update)
     return params
+
+
+def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) -> tuple[dict[str, Any], str]:
+    """
+    Applies a single parameter update to the given transformation parameters.
+    Note: This function modifies the input dictionary in place for efficiency.
+    The caller (update_transformation_parameters) is responsible for creating a copy if needed.
+    :param parameters: The transformation parameters
+    :param update: Parameter update operation to apply
+    :return: Tuple of (updated transformation parameters, change summary message)
+    """
+    operation = update.op
+    tf_update_func = getattr(tf_update, operation)
+    return tf_update_func(parameters, update)
+
+
+def add_ids(parameters: dict[str, Any]) -> dict[str, Any]:
+    """
+    Adds IDs to the parameters dictionary.
+    Blocks are numbered sequentially from 0.
+    Codes are numbered sequentially from 0 within each block and prefixed with the block ID.
+    """
+    for bidx, block in enumerate(parameters['blocks']):
+        block['id'] = f'b{bidx}'
+        for cidx, code in enumerate(block['codes']):
+            code['id'] = f'b{bidx}.c{cidx}'
+    return parameters
+
+
+def structure_summary(parameters: dict[str, Any]) -> str:
+    """
+    Generate a markdown summary of transformation structure showing block IDs, code IDs, and SQL snippets.
+
+    :param parameters: Transformation parameters dictionary with blocks containing IDs
+    :return: Markdown formatted summary of the transformation structure
+    """
+    lines = ['## Updated Transformation Structure', '']
+
+    blocks = parameters.get('blocks', [])
+
+    if not blocks:
+        return '## Updated Transformation Structure\n\nNo blocks found in transformation.\n'
+
+    for block in blocks:
+        block_id = block['id']
+        block_name = block.get('name', '')
+
+        lines.append(f'### Block id: `{block_id}`, name: `{block_name}`')
+        lines.append('')
+
+        codes = block.get('codes', [])
+
+        if not codes:
+            lines.append('*No code blocks*')
+            lines.append('')
+            continue
+
+        for code in codes:
+            code_id = code['id']
+            code_name = code.get('name', '')
+            script = code.get('script', '')
+
+            lines.append(f'- **Code id: `{code_id}`, name: `{code_name}`** SQL snippet:')
+            lines.append('')
+
+            # SQL snippet (first 150 characters)
+            if script:
+                snippet = script.strip()
+                if len(snippet) > 150:
+                    truncated_chars = len(snippet) - 150
+                    snippet = snippet[:150] + f'... ({truncated_chars} chars truncated)'
+                lines.append('  ```sql')
+                lines.append(f'  {snippet}')
+                lines.append('  ```')
+            else:
+                lines.append('  *Empty script*')
+
+            lines.append('')
+
+    return '\n'.join(lines)
+
+
+def update_transformation_parameters(
+    parameters: SimplifiedTfBlocks, updates: Sequence[TfParamUpdate]
+) -> tuple[SimplifiedTfBlocks, str]:
+    """
+    Applies a list of parameter updates to the given transformation parameters.
+    The original parameters are not modified.
+
+    :param parameters: The transformation parameters
+    :param updates: Sequence of parameter update operations
+    :return: The updated transformation parameters and a summary of the changes.
+    """
+    is_structure_change = any(update.op in tf_update.STRUCTURAL_OPS for update in updates)
+    parameters_dict = add_ids(parameters.model_dump())
+    messages = []
+    for update in updates:
+        parameters_dict, message = _apply_tf_param_update(parameters_dict, update)
+
+        if message:
+            messages.append(message)
+
+    if is_structure_change:
+        # re-assign IDs to reflect changes in the structure
+        parameters_dict = add_ids(parameters_dict)
+        messages.append(structure_summary(parameters_dict))
+
+    change_summary = '\n'.join(messages)
+    return SimplifiedTfBlocks.model_validate(parameters_dict, extra='ignore'), change_summary

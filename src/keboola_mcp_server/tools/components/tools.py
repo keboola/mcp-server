@@ -49,19 +49,25 @@ from keboola_mcp_server.tools.components.model import (
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
+    SimplifiedTfBlocks,
+    TfParamUpdate,
+    TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
-    TransformationConfiguration,
+    BIGQUERY_TRANSFORMATION_ID,
+    SNOWFLAKE_TRANSFORMATION_ID,
+    add_ids,
+    create_transformation_configuration,
     expand_component_types,
     fetch_component,
     get_sql_transformation_id_from_sql_dialect,
-    get_transformation_configuration,
     list_configs_by_ids,
     list_configs_by_types,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
     set_nested_value,
     update_params,
+    update_transformation_parameters,
 )
 from keboola_mcp_server.tools.validation import (
     validate_processors_configuration,
@@ -331,6 +337,13 @@ async def get_config(
         links=links,
     )
 
+    if component_id in (SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID):
+        original_parameters = TransformationConfiguration.Parameters.model_validate(
+            configuration.configuration_root.parameters
+        )
+        simplified_parameters: SimplifiedTfBlocks = await original_parameters.to_simplified_parameters()
+        configuration.configuration_root.parameters = add_ids(simplified_parameters.model_dump())
+
     return configuration
 
 
@@ -358,11 +371,11 @@ async def create_sql_transformation(
         ),
     ],
     sql_code_blocks: Annotated[
-        Sequence[TransformationConfiguration.Parameters.Block.Code],
+        Sequence[SimplifiedTfBlocks.Block.Code],
         Field(
             description=(
-                'The SQL query code blocks, each containing a descriptive name and a sequence of '
-                'semantically related independently executable sql_statements written in the current SQL dialect.'
+                'The SQL query code blocks, each containing a descriptive name and an executable SQL script '
+                'written in the current SQL dialect.'
             ),
         ),
     ],
@@ -414,7 +427,7 @@ async def create_sql_transformation(
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
-    transformation_configuration_payload = get_transformation_configuration(
+    transformation_configuration_payload = await create_transformation_configuration(
         codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names
     )
 
@@ -460,71 +473,276 @@ async def create_sql_transformation(
 @tool_errors()
 async def update_sql_transformation(
     ctx: Context,
-    configuration_id: Annotated[str, Field(description='ID of the transformation configuration to update')],
+    configuration_id: Annotated[str, Field(description='The ID of the transformation configuration to update.')],
     change_description: Annotated[
         str,
-        Field(description='Description of the changes made to the transformation configuration.'),
-    ],
-    parameters: Annotated[
-        TransformationConfiguration.Parameters,
         Field(
             description=(
-                'The updated "parameters" part of the transformation configuration that contains the newly '
-                'applied settings and preserves all other existing settings. Only updated if provided.'
+                'A clear, human-readable summary of what changed in this transformation update. '
+                'Be specific: e.g., "Added JOIN with customers table", "Updated WHERE clause to filter active records".'
             ),
-            json_schema_extra={'type': 'object'},
+        ),
+    ],
+    parameter_updates: Annotated[
+        list[TfParamUpdate],
+        Field(
+            description=(
+                'List of operations to apply to the transformation structure (blocks, codes, SQL scripts). '
+                'Each operation modifies specific elements using block_id and code_id identifiers. '
+                'Only provide if updating SQL code or block structure - do not use for description or storage changes. '
+                '\n\n'
+                'IMPORTANT: Use get_config first to retrieve the current transformation structure and identify '
+                'the block_id and code_id values needed for your operations. IDs are automatically assigned.\n'
+                '\n'
+                'Available operations:\n'
+                '1. add_block: Add a new block to the transformation\n'
+                '   - Fields: op="add_block", block={name, codes}, position="start"|"end"\n'
+                '2. remove_block: Remove an existing block\n'
+                '   - Fields: op="remove_block", block_id (e.g., "b0")\n'
+                '3. rename_block: Rename an existing block\n'
+                '   - Fields: op="rename_block", block_id (e.g., "b0"), block_name\n'
+                '4. add_code: Add a new code block to an existing block\n'
+                '   - Fields: op="add_code", block_id (e.g., "b0"), code={name, script}, position="start"|"end"\n'
+                '5. remove_code: Remove an existing code block\n'
+                '   - Fields: op="remove_code", block_id (e.g., "b0"), code_id (e.g., "b0.c0")\n'
+                '6. rename_code: Rename an existing code block\n'
+                '   - Fields: op="rename_code", block_id (e.g., "b0"), code_id (e.g., "b0.c0"), code_name\n'
+                '7. set_code: Replace the entire SQL script of a code block\n'
+                '   - Fields: op="set_code", block_id (e.g., "b0"), code_id (e.g., "b0.c0"), script\n'
+                '8. add_script: Append or prepend SQL to a code block\n'
+                '   - Fields: op="add_script", block_id (e.g., "b0"), code_id (e.g., "b0.c0"), script,'
+                '     position="start"|"end"\n'
+                '9. str_replace: Replace substring in SQL scripts\n'
+                '   - Fields: op="str_replace", search_for, replace_with, block_id (optional), code_id (optional)\n'
+                '   - If block_id omitted: replaces in all blocks\n'
+                '   - If code_id omitted: replaces in all codes of the specified block\n'
+            ),
         ),
     ] = None,
     storage: Annotated[
         dict[str, Any],
         Field(
             description=(
-                'The updated "storage" part of the transformation configuration that contains the newly '
-                'applied settings and preserves all other existing settings. Only updated if provided.'
-            ),
+                'Complete storage configuration for transformation input/output table mappings. '
+                'Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. '
+                '\n\n'
+                'When to use:\n'
+                '- Adding/removing input tables for the transformation\n'
+                '- Modifying output table mappings and destinations\n'
+                '- Changing table aliases used in SQL\n'
+                '\n'
+                'Important:\n'
+                '- Must conform to transformation storage schema (input/output tables)\n'
+                '- Replaces ALL existing storage config - include all mappings you want to keep\n'
+                '- Use get_config first to see current storage configuration\n'
+                '- Leave unfilled to preserve existing storage configuration'
+            )
         ),
     ] = None,
     updated_description: Annotated[
         str,
         Field(
-            description='Updated transformation description reflecting the changes made in the behavior of '
-            'the transformation. If no behavior changes are made, empty string preserves the original description.',
+            description=(
+                'New detailed description for the transformation. Only provide if changing the description. '
+                'Should explain what the transformation does, data sources, and business logic. '
+                'Leave empty to preserve the original description.'
+            ),
         ),
     ] = '',
     is_disabled: Annotated[
         bool,
         Field(
-            description='Whether to disable the transformation configuration. Default is False.',
+            description=(
+                'Whether to disable the transformation. Set to True to disable execution without deleting. '
+                'Default is False (transformation remains enabled).'
+            ),
         ),
     ] = False,
 ) -> ConfigToolOutput:
     """
-    Updates an existing SQL transformation configuration, optionally updating the description and disabling the
-    configuration.
+    Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
 
-    CONSIDERATIONS:
-    - The parameters configuration must include blocks with codes of SQL statements. Using one block with many codes of
-      SQL statements is preferred and commonly used unless specified otherwise by the user.
-    - Each code contains SQL statements that are semantically related and have a descriptive name.
-    - Each SQL statement must be executable and follow the current SQL dialect, which can be retrieved using
-      appropriate tool.
-    - The storage configuration must not be empty, and it should include input or output tables with correct mappings
-      for the transformation.
-    - When the behavior of the transformation is not changed, the updated_description can be empty string.
-    - SCHEMA CHANGES: If the transformation update results in a destructive
-      schema change to the output table (such as removing columns, changing
-      column types, or renaming columns), you MUST inform the user that they
-      need to
-      manually delete the output table completely before running the updated
-      transformation. Otherwise, the transformation will fail with a schema
-      mismatch error. Non-destructive changes (adding new columns) typically do
-      not require table deletion.
+    This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
+    the operations you want to perform. All other fields will remain unchanged.
+    Use this for modifying SQL transformations created with create_sql_transformation.
 
-    EXAMPLES:
-    - user_input: `Can you edit this transformation configuration that [USER INTENT]?`
-        - set the transformation configuration_id accordingly and update parameters and storage tool arguments based on
-          the [USER INTENT]
-        - returns the updated transformation configuration if successful.
+    WHEN TO USE:
+    - Modifying SQL queries in transformation (add/edit/remove SQL statements)
+    - Updating transformation block or code block names
+    - Changing input/output table mappings for the transformation
+    - Updating the transformation description
+    - Enabling or disabling the transformation
+    - Any combination of the above
+
+    PREREQUISITES:
+    - Transformation must already exist (use create_sql_transformation for new transformations)
+    - You must know the configuration_id of the transformation
+    - SQL dialect is determined automatically from the workspace
+    - CRITICAL: Use get_config first to see the current transformation structure and get block_id/code_id values
+
+    TRANSFORMATION STRUCTURE:
+    A transformation has this hierarchy:
+      transformation
+      └─ blocks[] - List of transformation blocks (each has a unique block_id)
+         └─ block.name - Descriptive name for the block
+         └─ block.codes[] - List of code blocks within the block (each has a unique code_id)
+            └─ code.name - Descriptive name for the code block
+            └─ code.script - SQL script (string with SQL statements)
+
+    Example structure from get_config:
+    {
+      "blocks": [
+        {
+          "id": "b0",  ← block_id needed for operations (format: b{index})
+          "name": "Data Preparation",
+          "codes": [
+            {
+              "id": "b0.c0",  ← code_id needed for operations (format: b{block_index}.c{code_index})
+              "name": "Load customers",
+              "script": "SELECT * FROM customers WHERE status = 'active';"
+            }
+          ]
+        }
+      ]
+    }
+
+    PARAMETER UPDATE OPERATIONS:
+    All operations use block_id and code_id to identify elements (get these from get_config first).
+
+    ID Format:
+    - block_id: "b0", "b1", "b2", etc. (format: b{index})
+    - code_id: "b0.c0", "b0.c1", "b1.c0", etc. (format: b{block_index}.c{code_index})
+
+    1. BLOCK OPERATIONS:
+       - add_block: Create a new block in the transformation
+         {"op": "add_block", "block": {"name": "New Block", "codes": []}, "position": "end"}
+
+       - remove_block: Delete an entire block
+         {"op": "remove_block", "block_id": "b0"}
+
+       - rename_block: Change a block's name
+         {"op": "rename_block", "block_id": "b2", "block_name": "Updated Name"}
+
+    2. CODE BLOCK OPERATIONS:
+       - add_code: Create a new code block within an existing block
+         {"op": "add_code", "block_id": "b1", "code": {"name": "New Code", "script": "SELECT 1;"}, "position": "end"}
+
+       - remove_code: Delete a code block
+         {"op": "remove_code", "block_id": "b0", "code_id": "b0.c0"}
+
+       - rename_code: Change a code block's name
+         {"op": "rename_code", "block_id": "b1", "code_id": "b1.c2", "code_name": "Updated Name"}
+
+    3. SQL SCRIPT OPERATIONS:
+       - set_code: Replace the entire SQL script (overwrites existing)
+         {"op": "set_code", "block_id": "b0", "code_id": "b0.c0", "script": "SELECT * FROM new_table;"}
+
+       - add_script: Append or prepend SQL to existing script (preserves existing)
+         {"op": "add_script", "block_id": "b2", "code_id": "b2.c1", "script": "WHERE date > '2024-01-01'",
+          "position": "end"}
+
+       - str_replace: Find and replace text in SQL scripts
+         {"op": "str_replace", "search_for": "old_table", "replace_with": "new_table", "block_id": "b0",'
+          "code_id": "b0.c0"}
+         - Omit code_id to replace in all codes of a block
+         - Omit both block_id and code_id to replace everywhere
+
+    IMPORTANT CONSIDERATIONS:
+    - Parameter updates are PARTIAL - only the operations you specify are applied
+    - All other parts of the transformation remain unchanged
+    - Each SQL script must be executable and follow the current SQL dialect
+    - Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
+    - Leave updated_description empty to preserve the original description
+    - SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
+      manually deleting the output table before running the updated transformation to avoid schema mismatch errors.
+      Non-destructive changes (adding columns) typically do not require table deletion.
+
+    WORKFLOW:
+    1. Call get_config to retrieve current transformation structure and identify block_id/code_id values
+    2. Identify what needs to change (SQL code, storage, description)
+    3. For SQL changes: Prepare parameter_updates list with targeted operations
+    4. For storage changes: Build complete storage configuration (include all mappings)
+    5. Call update_sql_transformation with change_description and only the fields to change
+
+    EXAMPLE WORKFLOWS:
+
+    Example 1 - Update SQL script in existing code block:
+    Step 1: Get current config
+      result = get_config(component_id="keboola.snowflake-transformation", configuration_id="12345")
+      # Note the block_id (e.g., "b0") and code_id (e.g., "b0.c1") from result
+
+    Step 2: Update the SQL
+      update_sql_transformation(
+        configuration_id="12345",
+        change_description="Updated WHERE clause to filter active customers only",
+        parameter_updates=[
+          {
+            "op": "set_code",
+            "block_id": "b0",      # from step 1
+            "code_id": "b0.c0",    # from step 1
+            "script": "SELECT * FROM customers WHERE status = 'active' AND region = 'US';"
+          }
+        ]
+      )
+
+    Example 2 - Append a new code block to the second block of an existing transformation:
+      update_sql_transformation(
+        configuration_id="12345",
+        change_description="Added aggregation step",
+        parameter_updates=[
+          {
+            "op": "add_code",
+            "block_id": "b1",  # second block
+            "code": {
+              "name": "Aggregate Sales",
+              "script": "SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;"
+            },
+            "position": "end"
+          }
+        ]
+      )
+
+    Example 3 - Replace table name across all SQL scripts:
+      update_sql_transformation(
+        configuration_id="12345",
+        change_description="Renamed source table from old_customers to customers",
+        parameter_updates=[
+          {
+            "op": "str_replace",
+            "search_for": "old_customers",
+            "replace_with": "customers"
+            # No block_id or code_id = applies to all scripts
+          }
+        ]
+      )
+
+    Example 4 - Update storage mappings:
+      update_sql_transformation(
+        configuration_id="12345",
+        change_description="Added new input table",
+        storage={
+          "input": {
+            "tables": [
+              {
+                "source": "in.c-main.customers",
+                "destination": "customers"
+              },
+              {
+                "source": "in.c-main.orders",
+                "destination": "orders"
+              }
+            ]
+          },
+          "output": {
+            "tables": [
+              {
+                "source": "result",
+                "destination": "out.c-main.customer_summary"
+              }
+            ]
+          }
+        }
+      )
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -532,16 +750,30 @@ async def update_sql_transformation(
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
-    current_config = await client.storage_client.configuration_detail(
+    config_details = await client.storage_client.configuration_detail(
         component_id=sql_transformation_id, configuration_id=configuration_id
     )
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
     transformation = Component.from_api_response(api_component)
 
-    updated_configuration = current_config.get('configuration', {})
+    updated_configuration = config_details.get('configuration', {})
 
-    if parameters is not None:
-        updated_configuration['parameters'] = parameters.model_dump(by_alias=True)
+    msg = ''
+
+    if parameter_updates:
+        current_param_dict = updated_configuration.get('parameters', {})
+        current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
+        simplified_parameters = await current_raw_parameters.to_simplified_parameters()
+
+        updated_params, msg = update_transformation_parameters(simplified_parameters, parameter_updates)
+        updated_raw_parameters = await updated_params.to_raw_parameters()
+
+        parameters_cfg = validate_root_parameters_configuration(
+            component=transformation,
+            parameters=updated_raw_parameters.model_dump(exclude_none=True),
+            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
+        )
+        updated_configuration['parameters'] = parameters_cfg
 
     if storage is not None:
         storage_cfg = validate_root_storage_configuration(
@@ -588,6 +820,7 @@ async def update_sql_transformation(
         success=True,
         links=links,
         version=updated_raw_configuration['version'],
+        change_summary=msg,
     )
 
 
@@ -896,7 +1129,7 @@ async def update_config(
         Field(
             description=(
                 'List of granular parameter update operations to apply. '
-                'Each operation (set, str_replace, remove) modifies a specific '
+                'Each operation (set, str_replace, remove, list_append) modifies a specific '
                 'value using JSONPath notation. Only provide if updating parameters -'
                 ' do not use for changing description, storage or processors. '
                 'Prefer simple dot-delimited JSONPaths '
@@ -957,7 +1190,7 @@ async def update_config(
 
     IMPORTANT CONSIDERATIONS:
     - Parameter updates are PARTIAL - only specify fields you want to change
-    - parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+    - parameter_updates supports granular operations: set keys, replace strings, remove keys, or append to lists
     - Parameters must conform to the component's root_configuration_schema
     - Validate schemas before calling: use get_component to retrieve root_configuration_schema
     - For row-based components, this updates the ROOT only (use update_config_row for individual rows)

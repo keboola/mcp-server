@@ -16,8 +16,7 @@ description, and a list of created table names.
 component IDs.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
-- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration, optionally updating the description and disabling the
-configuration.
+- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
 
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
@@ -286,20 +285,17 @@ EXAMPLES:
       "description": "The code block for the transformation block.",
       "properties": {
         "name": {
-          "description": "The name of the current code block describing the purpose of the block",
+          "description": "A descriptive name for the code block",
           "type": "string"
         },
-        "sql_statements": {
-          "description": "The executable SQL query statements written in the current SQL dialect. Each statement must be executable and a separate item in the list.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "script": {
+          "description": "The SQL script of the code block",
+          "type": "string"
         }
       },
       "required": [
         "name",
-        "sql_statements"
+        "script"
       ],
       "type": "object"
     }
@@ -314,7 +310,7 @@ EXAMPLES:
       "type": "string"
     },
     "sql_code_blocks": {
-      "description": "The SQL query code blocks, each containing a descriptive name and a sequence of semantically related independently executable sql_statements written in the current SQL dialect.",
+      "description": "The SQL query code blocks, each containing a descriptive name and an executable SQL script written in the current SQL dialect.",
       "items": {
         "$ref": "#/$defs/Code"
       },
@@ -570,7 +566,7 @@ PREREQUISITES:
 
 IMPORTANT CONSIDERATIONS:
 - Parameter updates are PARTIAL - only specify fields you want to change
-- parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
+- parameter_updates supports granular operations: set keys, replace strings, remove keys, or append to lists
 - Parameters must conform to the component's root_configuration_schema
 - Validate schemas before calling: use get_component to retrieve root_configuration_schema
 - For row-based components, this updates the ROOT only (use update_config_row for individual rows)
@@ -586,6 +582,29 @@ WORKFLOW:
 ```json
 {
   "$defs": {
+    "ConfigParamListAppend": {
+      "description": "Append a value to a list parameter.",
+      "properties": {
+        "op": {
+          "const": "list_append",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the list parameter",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to append to the list",
+          "title": "Value"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "value"
+      ],
+      "type": "object"
+    },
     "ConfigParamRemove": {
       "description": "Remove a parameter key.",
       "properties": {
@@ -681,10 +700,11 @@ WORKFLOW:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {
+            "list_append": "#/$defs/ConfigParamListAppend",
             "remove": "#/$defs/ConfigParamRemove",
             "set": "#/$defs/ConfigParamSet",
             "str_replace": "#/$defs/ConfigParamReplace"
@@ -700,6 +720,9 @@ WORKFLOW:
           },
           {
             "$ref": "#/$defs/ConfigParamRemove"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamListAppend"
           }
         ]
       },
@@ -786,6 +809,29 @@ WORKFLOW:
 ```json
 {
   "$defs": {
+    "ConfigParamListAppend": {
+      "description": "Append a value to a list parameter.",
+      "properties": {
+        "op": {
+          "const": "list_append",
+          "type": "string"
+        },
+        "path": {
+          "description": "JSONPath to the list parameter",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to append to the list",
+          "title": "Value"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "value"
+      ],
+      "type": "object"
+    },
     "ConfigParamRemove": {
       "description": "Remove a parameter key.",
       "properties": {
@@ -889,6 +935,7 @@ WORKFLOW:
       "items": {
         "discriminator": {
           "mapping": {
+            "list_append": "#/$defs/ConfigParamListAppend",
             "remove": "#/$defs/ConfigParamRemove",
             "set": "#/$defs/ConfigParamSet",
             "str_replace": "#/$defs/ConfigParamReplace"
@@ -904,6 +951,9 @@ WORKFLOW:
           },
           {
             "$ref": "#/$defs/ConfigParamRemove"
+          },
+          {
+            "$ref": "#/$defs/ConfigParamListAppend"
           }
         ]
       },
@@ -953,32 +1003,189 @@ WORKFLOW:
 
 **Description**:
 
-Updates an existing SQL transformation configuration, optionally updating the description and disabling the
-configuration.
+Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
 
-CONSIDERATIONS:
-- The parameters configuration must include blocks with codes of SQL statements. Using one block with many codes of
-  SQL statements is preferred and commonly used unless specified otherwise by the user.
-- Each code contains SQL statements that are semantically related and have a descriptive name.
-- Each SQL statement must be executable and follow the current SQL dialect, which can be retrieved using
-  appropriate tool.
-- The storage configuration must not be empty, and it should include input or output tables with correct mappings
-  for the transformation.
-- When the behavior of the transformation is not changed, the updated_description can be empty string.
-- SCHEMA CHANGES: If the transformation update results in a destructive
-  schema change to the output table (such as removing columns, changing
-  column types, or renaming columns), you MUST inform the user that they
-  need to
-  manually delete the output table completely before running the updated
-  transformation. Otherwise, the transformation will fail with a schema
-  mismatch error. Non-destructive changes (adding new columns) typically do
-  not require table deletion.
+This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
+the operations you want to perform. All other fields will remain unchanged.
+Use this for modifying SQL transformations created with create_sql_transformation.
 
-EXAMPLES:
-- user_input: `Can you edit this transformation configuration that [USER INTENT]?`
-    - set the transformation configuration_id accordingly and update parameters and storage tool arguments based on
-      the [USER INTENT]
-    - returns the updated transformation configuration if successful.
+WHEN TO USE:
+- Modifying SQL queries in transformation (add/edit/remove SQL statements)
+- Updating transformation block or code block names
+- Changing input/output table mappings for the transformation
+- Updating the transformation description
+- Enabling or disabling the transformation
+- Any combination of the above
+
+PREREQUISITES:
+- Transformation must already exist (use create_sql_transformation for new transformations)
+- You must know the configuration_id of the transformation
+- SQL dialect is determined automatically from the workspace
+- CRITICAL: Use get_config first to see the current transformation structure and get block_id/code_id values
+
+TRANSFORMATION STRUCTURE:
+A transformation has this hierarchy:
+  transformation
+  └─ blocks[] - List of transformation blocks (each has a unique block_id)
+     └─ block.name - Descriptive name for the block
+     └─ block.codes[] - List of code blocks within the block (each has a unique code_id)
+        └─ code.name - Descriptive name for the code block
+        └─ code.script - SQL script (string with SQL statements)
+
+Example structure from get_config:
+{
+  "blocks": [
+    {
+      "id": "b0",  ← block_id needed for operations (format: b{index})
+      "name": "Data Preparation",
+      "codes": [
+        {
+          "id": "b0.c0",  ← code_id needed for operations (format: b{block_index}.c{code_index})
+          "name": "Load customers",
+          "script": "SELECT * FROM customers WHERE status = 'active';"
+        }
+      ]
+    }
+  ]
+}
+
+PARAMETER UPDATE OPERATIONS:
+All operations use block_id and code_id to identify elements (get these from get_config first).
+
+ID Format:
+- block_id: "b0", "b1", "b2", etc. (format: b{index})
+- code_id: "b0.c0", "b0.c1", "b1.c0", etc. (format: b{block_index}.c{code_index})
+
+1. BLOCK OPERATIONS:
+   - add_block: Create a new block in the transformation
+     {"op": "add_block", "block": {"name": "New Block", "codes": []}, "position": "end"}
+
+   - remove_block: Delete an entire block
+     {"op": "remove_block", "block_id": "b0"}
+
+   - rename_block: Change a block's name
+     {"op": "rename_block", "block_id": "b2", "block_name": "Updated Name"}
+
+2. CODE BLOCK OPERATIONS:
+   - add_code: Create a new code block within an existing block
+     {"op": "add_code", "block_id": "b1", "code": {"name": "New Code", "script": "SELECT 1;"}, "position": "end"}
+
+   - remove_code: Delete a code block
+     {"op": "remove_code", "block_id": "b0", "code_id": "b0.c0"}
+
+   - rename_code: Change a code block's name
+     {"op": "rename_code", "block_id": "b1", "code_id": "b1.c2", "code_name": "Updated Name"}
+
+3. SQL SCRIPT OPERATIONS:
+   - set_code: Replace the entire SQL script (overwrites existing)
+     {"op": "set_code", "block_id": "b0", "code_id": "b0.c0", "script": "SELECT * FROM new_table;"}
+
+   - add_script: Append or prepend SQL to existing script (preserves existing)
+     {"op": "add_script", "block_id": "b2", "code_id": "b2.c1", "script": "WHERE date > '2024-01-01'",
+      "position": "end"}
+
+   - str_replace: Find and replace text in SQL scripts
+     {"op": "str_replace", "search_for": "old_table", "replace_with": "new_table", "block_id": "b0",'
+      "code_id": "b0.c0"}
+     - Omit code_id to replace in all codes of a block
+     - Omit both block_id and code_id to replace everywhere
+
+IMPORTANT CONSIDERATIONS:
+- Parameter updates are PARTIAL - only the operations you specify are applied
+- All other parts of the transformation remain unchanged
+- Each SQL script must be executable and follow the current SQL dialect
+- Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
+- Leave updated_description empty to preserve the original description
+- SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
+  manually deleting the output table before running the updated transformation to avoid schema mismatch errors.
+  Non-destructive changes (adding columns) typically do not require table deletion.
+
+WORKFLOW:
+1. Call get_config to retrieve current transformation structure and identify block_id/code_id values
+2. Identify what needs to change (SQL code, storage, description)
+3. For SQL changes: Prepare parameter_updates list with targeted operations
+4. For storage changes: Build complete storage configuration (include all mappings)
+5. Call update_sql_transformation with change_description and only the fields to change
+
+EXAMPLE WORKFLOWS:
+
+Example 1 - Update SQL script in existing code block:
+Step 1: Get current config
+  result = get_config(component_id="keboola.snowflake-transformation", configuration_id="12345")
+  # Note the block_id (e.g., "b0") and code_id (e.g., "b0.c1") from result
+
+Step 2: Update the SQL
+  update_sql_transformation(
+    configuration_id="12345",
+    change_description="Updated WHERE clause to filter active customers only",
+    parameter_updates=[
+      {
+        "op": "set_code",
+        "block_id": "b0",      # from step 1
+        "code_id": "b0.c0",    # from step 1
+        "script": "SELECT * FROM customers WHERE status = 'active' AND region = 'US';"
+      }
+    ]
+  )
+
+Example 2 - Append a new code block to the second block of an existing transformation:
+  update_sql_transformation(
+    configuration_id="12345",
+    change_description="Added aggregation step",
+    parameter_updates=[
+      {
+        "op": "add_code",
+        "block_id": "b1",  # second block
+        "code": {
+          "name": "Aggregate Sales",
+          "script": "SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;"
+        },
+        "position": "end"
+      }
+    ]
+  )
+
+Example 3 - Replace table name across all SQL scripts:
+  update_sql_transformation(
+    configuration_id="12345",
+    change_description="Renamed source table from old_customers to customers",
+    parameter_updates=[
+      {
+        "op": "str_replace",
+        "search_for": "old_customers",
+        "replace_with": "customers"
+        # No block_id or code_id = applies to all scripts
+      }
+    ]
+  )
+
+Example 4 - Update storage mappings:
+  update_sql_transformation(
+    configuration_id="12345",
+    change_description="Added new input table",
+    storage={
+      "input": {
+        "tables": [
+          {
+            "source": "in.c-main.customers",
+            "destination": "customers"
+          },
+          {
+            "source": "in.c-main.orders",
+            "destination": "orders"
+          }
+        ]
+      },
+      "output": {
+        "tables": [
+          {
+            "source": "result",
+            "destination": "out.c-main.customer_summary"
+          }
+        ]
+      }
+    }
+  )
 
 
 **Input JSON Schema**:
@@ -989,11 +1196,11 @@ EXAMPLES:
       "description": "The transformation block.",
       "properties": {
         "name": {
-          "description": "The name of the current block",
+          "description": "A descriptive name for the code block",
           "type": "string"
         },
         "codes": {
-          "description": "The code scripts",
+          "description": "SQL code sub-blocks",
           "items": {
             "$ref": "#/$defs/Code"
           },
@@ -1010,69 +1217,357 @@ EXAMPLES:
       "description": "The code block for the transformation block.",
       "properties": {
         "name": {
-          "description": "The name of the current code block describing the purpose of the block",
+          "description": "A descriptive name for the code block",
           "type": "string"
         },
-        "sql_statements": {
-          "description": "The executable SQL query statements written in the current SQL dialect. Each statement must be executable and a separate item in the list.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "script": {
+          "description": "The SQL script of the code block",
+          "type": "string"
         }
       },
       "required": [
         "name",
-        "sql_statements"
+        "script"
       ],
       "type": "object"
     },
-    "Parameters": {
-      "description": "The parameters for the transformation.",
+    "TfAddBlock": {
+      "description": "Add a new block to the transformation.",
       "properties": {
-        "blocks": {
-          "description": "The blocks for the transformation",
-          "items": {
-            "$ref": "#/$defs/Block"
-          },
-          "type": "array"
+        "op": {
+          "const": "add_block",
+          "type": "string"
+        },
+        "block": {
+          "$ref": "#/$defs/Block",
+          "description": "The block to add"
+        },
+        "position": {
+          "default": "end",
+          "description": "The position of the block to add",
+          "enum": [
+            "start",
+            "end"
+          ],
+          "type": "string"
         }
       },
       "required": [
-        "blocks"
+        "op",
+        "block"
+      ],
+      "type": "object"
+    },
+    "TfAddCode": {
+      "description": "Add a new code to an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "add_code",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to add the code to",
+          "type": "string"
+        },
+        "code": {
+          "$ref": "#/$defs/Code",
+          "description": "The code to add"
+        },
+        "position": {
+          "default": "end",
+          "description": "The position of the code to add",
+          "enum": [
+            "start",
+            "end"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code"
+      ],
+      "type": "object"
+    },
+    "TfAddScript": {
+      "description": "Append or prepend SQL script text to an existing code in an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "add_script",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to add the script to",
+          "type": "string"
+        },
+        "code_id": {
+          "description": "The ID of the code to add the script to",
+          "type": "string"
+        },
+        "script": {
+          "description": "The SQL script to add",
+          "type": "string"
+        },
+        "position": {
+          "default": "end",
+          "description": "The position of the script to add",
+          "enum": [
+            "start",
+            "end"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code_id",
+        "script"
+      ],
+      "type": "object"
+    },
+    "TfRemoveBlock": {
+      "description": "Remove an existing block from the transformation.",
+      "properties": {
+        "op": {
+          "const": "remove_block",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to remove",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id"
+      ],
+      "type": "object"
+    },
+    "TfRemoveCode": {
+      "description": "Remove an existing code from an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "remove_code",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to remove the code from",
+          "type": "string"
+        },
+        "code_id": {
+          "description": "The ID of the code to remove",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code_id"
+      ],
+      "type": "object"
+    },
+    "TfRenameBlock": {
+      "description": "Rename an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "rename_block",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to rename",
+          "type": "string"
+        },
+        "block_name": {
+          "description": "The new name of the block",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "block_name"
+      ],
+      "type": "object"
+    },
+    "TfRenameCode": {
+      "description": "Rename an existing code in an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "rename_code",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to rename the code in",
+          "type": "string"
+        },
+        "code_id": {
+          "description": "The ID of the code to rename",
+          "type": "string"
+        },
+        "code_name": {
+          "description": "The new name of the code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code_id",
+        "code_name"
+      ],
+      "type": "object"
+    },
+    "TfSetCode": {
+      "description": "Set the SQL script of an existing code in an existing block in the transformation.",
+      "properties": {
+        "op": {
+          "const": "set_code",
+          "type": "string"
+        },
+        "block_id": {
+          "description": "The ID of the block to set the code in",
+          "type": "string"
+        },
+        "code_id": {
+          "description": "The ID of the code to set",
+          "type": "string"
+        },
+        "script": {
+          "description": "The SQL script of the code to set",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "block_id",
+        "code_id",
+        "script"
+      ],
+      "type": "object"
+    },
+    "TfStrReplace": {
+      "description": "Replace a substring in SQL statements in the transformation.",
+      "properties": {
+        "op": {
+          "const": "str_replace",
+          "type": "string"
+        },
+        "block_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The ID of the block to replace substrings in. If not provided, all blocks will be updated."
+        },
+        "code_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The ID of the code to replace substrings in. If not provided, all codes in the block will be updated."
+        },
+        "search_for": {
+          "description": "Substring to search for (non-empty)",
+          "type": "string"
+        },
+        "replace_with": {
+          "description": "Replacement string (can be empty for deletion)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "search_for",
+        "replace_with"
       ],
       "type": "object"
     }
   },
   "properties": {
     "configuration_id": {
-      "description": "ID of the transformation configuration to update",
+      "description": "The ID of the transformation configuration to update.",
       "type": "string"
     },
     "change_description": {
-      "description": "Description of the changes made to the transformation configuration.",
+      "description": "A clear, human-readable summary of what changed in this transformation update. Be specific: e.g., \"Added JOIN with customers table\", \"Updated WHERE clause to filter active records\".",
       "type": "string"
     },
-    "parameters": {
-      "$ref": "#/$defs/Parameters",
+    "parameter_updates": {
       "default": null,
-      "description": "The updated \"parameters\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
-      "type": "object"
+      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_config first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "add_block": "#/$defs/TfAddBlock",
+            "add_code": "#/$defs/TfAddCode",
+            "add_script": "#/$defs/TfAddScript",
+            "remove_block": "#/$defs/TfRemoveBlock",
+            "remove_code": "#/$defs/TfRemoveCode",
+            "rename_block": "#/$defs/TfRenameBlock",
+            "rename_code": "#/$defs/TfRenameCode",
+            "set_code": "#/$defs/TfSetCode",
+            "str_replace": "#/$defs/TfStrReplace"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/TfAddBlock"
+          },
+          {
+            "$ref": "#/$defs/TfRemoveBlock"
+          },
+          {
+            "$ref": "#/$defs/TfRenameBlock"
+          },
+          {
+            "$ref": "#/$defs/TfAddCode"
+          },
+          {
+            "$ref": "#/$defs/TfRemoveCode"
+          },
+          {
+            "$ref": "#/$defs/TfRenameCode"
+          },
+          {
+            "$ref": "#/$defs/TfSetCode"
+          },
+          {
+            "$ref": "#/$defs/TfAddScript"
+          },
+          {
+            "$ref": "#/$defs/TfStrReplace"
+          }
+        ]
+      },
+      "type": "array"
     },
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "The updated \"storage\" part of the transformation configuration that contains the newly applied settings and preserves all other existing settings. Only updated if provided.",
+      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
     },
     "updated_description": {
       "default": "",
-      "description": "Updated transformation description reflecting the changes made in the behavior of the transformation. If no behavior changes are made, empty string preserves the original description.",
+      "description": "New detailed description for the transformation. Only provide if changing the description. Should explain what the transformation does, data sources, and business logic. Leave empty to preserve the original description.",
       "type": "string"
     },
     "is_disabled": {
       "default": false,
-      "description": "Whether to disable the transformation configuration. Default is False.",
+      "description": "Whether to disable the transformation. Set to True to disable execution without deleting. Default is False (transformation remains enabled).",
       "type": "boolean"
     }
   },
