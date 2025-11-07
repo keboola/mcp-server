@@ -207,6 +207,9 @@ class ConfigurationRoot(BaseModel):
     storage: Optional[dict[str, Any]] = Field(
         default=None, description='The table and/or file input/output mapping configuration'
     )
+    processors: Optional[dict[str, Any]] = Field(
+        default=None, description='The processors that run before or after the configured component.'
+    )
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list, description='Configuration metadata including MCP tracking'
     )
@@ -232,6 +235,7 @@ class ConfigurationRoot(BaseModel):
             is_deleted=api_config.is_deleted,
             parameters=api_config.configuration.get('parameters', {}),
             storage=api_config.configuration.get('storage'),
+            processors=api_config.configuration.get('processors'),
             configuration_metadata=api_config.metadata,
         )
 
@@ -258,6 +262,9 @@ class ConfigurationRow(BaseModel):
     )
     storage: Optional[dict[str, Any]] = Field(
         default=None, description='The table and/or file input/output mapping configuration'
+    )
+    processors: Optional[dict[str, Any]] = Field(
+        default=None, description='The processors that run before or after the configured component row.'
     )
     configuration_metadata: list[dict[str, Any]] = Field(default_factory=list, description='Configuration row metadata')
 
@@ -290,6 +297,7 @@ class ConfigurationRow(BaseModel):
             is_deleted=row_data.get('isDeleted', False),
             parameters=row_data.get('configuration', {}).get('parameters', {}),
             storage=row_data.get('configuration', {}).get('storage'),
+            processors=row_data.get('configuration', {}).get('processors'),
             configuration_metadata=row_data.get('configuration', {}).get('metadata', []),
         )
 

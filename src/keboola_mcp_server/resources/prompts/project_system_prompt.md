@@ -63,3 +63,16 @@ using the `get_config_examples` tool.
 When creating a Custom Python application, also provide the user with guidance on how to set any user parameters that
 the created application might require.
 Remember to add dependencies into the created configuration!
+
+### Processors
+
+**Processors** are a special type of component that can be used to pre-process inputs
+or post-process outputs of other components.
+
+IMPORTANT CONSIDERATIONS:
+- There are only a few components that accept processors.
+- Set up processors only when requested by a user or when you know the component supports them.
+- Keep the use of processors to a minimum.
+- If you need to use a processor, always look up the documentation using the `get_component` tool and configuration
+  examples using the `get_config_examples` tool.
+- The `keboola.processor-decompress` is deprecated. Use `keboola.processor-decompress-v2` instead.

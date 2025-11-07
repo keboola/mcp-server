@@ -378,7 +378,7 @@ def get_nested(obj: Mapping[str, Any] | None, key: str, *, default: T | None = N
     return d
 
 
-def _set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
+def set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
     """
     Sets a value in a nested dictionary using a dot-separated path.
 
@@ -423,7 +423,7 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
             matches = jsonpath_expr.find(params)
             if not matches:
                 # path doesn't exist, create it manually
-                _set_nested_value(params, update.path, update.new_val)
+                set_nested_value(params, update.path, update.new_val)
             else:
                 params = jsonpath_expr.update(params, update.new_val)
         except Exception as e:
