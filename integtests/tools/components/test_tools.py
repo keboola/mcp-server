@@ -261,12 +261,12 @@ async def initial_cmpconf(
         {
             'name': 'Updated Test Configuration',
             'description': 'Updated test configuration by automated test',
-            'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'new_val': 'updated_value'}],
+            'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'value': 'updated_value'}],
             'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}},
         },
         {'name': 'Updated just name'},
         {'description': 'Updated just description'},
-        {'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'new_val': 'Updated just parameters'}]},
+        {'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'value': 'Updated just parameters'}]},
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
     ],
 )
@@ -518,16 +518,12 @@ async def initial_cmpconf_row(
         {
             'name': 'Updated Row Configuration',
             'description': 'Updated row configuration by automated test',
-            'parameter_updates': [{'op': 'set', 'path': '$', 'new_val': {'updated_row_param': 'updated_row_value'}}],
+            'parameter_updates': [{'op': 'set', 'path': '$', 'value': {'updated_row_param': 'updated_row_value'}}],
             'storage': {},
         },
         {'name': 'Updated just name'},
         {'description': 'Updated just description'},
-        {
-            'parameter_updates': [
-                {'op': 'set', 'path': '$', 'new_val': {'updated_row_param': 'Updated just parameters'}}
-            ]
-        },
+        {'parameter_updates': [{'op': 'set', 'path': '$', 'value': {'updated_row_param': 'Updated just parameters'}}]},
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
     ],
 )
@@ -609,7 +605,7 @@ async def test_update_config_row(
 
     if (parameter_updates := updates.get('parameter_updates')) is not None:
         # Using the assumption that parameter_updates is a list with one element with 'set' operation on root path
-        assert row_config_data['parameters'] == parameter_updates[0]['new_val']
+        assert row_config_data['parameters'] == parameter_updates[0]['value']
 
     if (expected_storage := updates.get('storage')) is not None:
         # Storage API might return more keys than what we set, so we check subset

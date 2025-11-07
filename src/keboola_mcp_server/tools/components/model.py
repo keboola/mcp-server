@@ -473,7 +473,7 @@ class ConfigParamSet(BaseModel):
 
     op: Literal['set']  # name 'op' inspired by JSON Patch (https://datatracker.ietf.org/doc/html/rfc6902)
     path: str = Field(description='JSONPath to the parameter key to set (e.g., "api_key", "database.host")')
-    new_val: Any = Field(description='New value to set')
+    value: Any = Field(description='New value to set')
 
 
 class ConfigParamReplace(BaseModel):

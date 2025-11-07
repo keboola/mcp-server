@@ -662,15 +662,15 @@ WORKFLOW:
           "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
           "type": "string"
         },
-        "new_val": {
+        "value": {
           "description": "New value to set",
-          "title": "New Val"
+          "title": "Value"
         }
       },
       "required": [
         "op",
         "path",
-        "new_val"
+        "value"
       ],
       "type": "object"
     }
@@ -889,15 +889,15 @@ WORKFLOW:
           "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
           "type": "string"
         },
-        "new_val": {
+        "value": {
           "description": "New value to set",
-          "title": "New Val"
+          "title": "Value"
         }
       },
       "required": [
         "op",
         "path",
-        "new_val"
+        "value"
       ],
       "type": "object"
     }
@@ -931,7 +931,7 @@ WORKFLOW:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {

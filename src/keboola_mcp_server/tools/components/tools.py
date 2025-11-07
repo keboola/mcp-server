@@ -1320,7 +1320,7 @@ async def update_config_row(
         Field(
             description=(
                 'List of granular parameter update operations to apply to this row. '
-                'Each operation (set, str_replace, remove) modifies a specific '
+                'Each operation (set, str_replace, remove, list_append) modifies a specific '
                 'parameter using JSONPath notation. Only provide if updating parameters - '
                 'do not use for changing description or storage. '
                 'Prefer simple dot-delimited JSONPaths '
