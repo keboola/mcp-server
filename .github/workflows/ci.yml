@@ -146,29 +146,29 @@ jobs:
 #          name: Integration test results (${{ matrix.python-version }})
 #          path: ./integtest-results.xml
 #          reporter: 'java-junit'
-
-  deploy_to_pypi:
-    name: Deploy to pypi.org
-    needs:
-      - build
-      - integration_tests
-    runs-on: ubuntu-latest
-    if: |
-      startsWith(github.ref, 'refs/tags/') &&
-      needs.build.outputs.is_semantic_tag == 'true' &&
-      needs.build.outputs.tag == format('v{0}', needs.build.outputs.version)
-    steps:
-      - name: Download wheel package
-        uses: actions/download-artifact@v4
-        with:
-          name: keboola_mcp_server-${{ needs.build.outputs.version }}-py3-none-any.whl
-          path: dist/
-
-      - name: Publish package
-        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
+#
+#  deploy_to_pypi:
+#    name: Deploy to pypi.org
+#    needs:
+#      - build
+#      - integration_tests
+#    runs-on: ubuntu-latest
+#    if: |
+#      startsWith(github.ref, 'refs/tags/') &&
+#      needs.build.outputs.is_semantic_tag == 'true' &&
+#      needs.build.outputs.tag == format('v{0}', needs.build.outputs.version)
+#    steps:
+#      - name: Download wheel package
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: keboola_mcp_server-${{ needs.build.outputs.version }}-py3-none-any.whl
+#          path: dist/
+#
+#      - name: Publish package
+#        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+#        with:
+#          user: __token__
+#          password: ${{ secrets.PYPI_API_TOKEN }}
 
   register-with-anthropic:
     name: Register with Anthropic
