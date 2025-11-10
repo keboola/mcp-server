@@ -39,7 +39,6 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.sql_utils import join_sql_statements, split_sql_statements
 
 # ============================================================================
 # TYPE DEFINITIONS
@@ -540,6 +539,9 @@ class TransformationConfiguration(BaseModel):
         blocks: list[Block] = Field(description='The blocks for the transformation')
 
         async def to_simplified_parameters(self) -> 'SimplifiedTfBlocks':
+            # Avoid circular import
+            from keboola_mcp_server.tools.components.sql_utils import join_sql_statements
+
             """Convert the raw parameters to simplified parameters."""
             return SimplifiedTfBlocks(
                 blocks=[
@@ -595,6 +597,9 @@ class SimplifiedTfBlocks(BaseModel):
             script: str = Field(description='The SQL script of the code block')
 
             async def to_raw_code(self) -> TransformationConfiguration.Parameters.Block.Code:
+                # Avoid circular import
+                from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
+
                 """Convert the simplified code to the raw code."""
                 return TransformationConfiguration.Parameters.Block.Code(
                     name=self.name, script=await split_sql_statements(self.script)

@@ -27,7 +27,6 @@ import unicodedata
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
 import jsonpath_ng
-import sqlglot
 from httpx import HTTPStatusError
 
 from keboola_mcp_server.clients.base import JsonDict
@@ -46,6 +45,7 @@ from keboola_mcp_server.tools.components.model import (
     TfParamUpdate,
     TransformationConfiguration,
 )
+from keboola_mcp_server.tools.components.sql_utils import format_transformation_parameters
 
 LOG = logging.getLogger(__name__)
 T = TypeVar('T')
@@ -67,6 +67,9 @@ BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 def expand_component_types(component_types: Sequence[ComponentType]) -> tuple[ComponentType, ...]:
     """
     Expand empty component types list to all component types.
+
+    :param component_types: Sequence of component types to expand
+    :return: Tuple of component types, or all component types if input is empty
     """
     if not component_types:
         return ALL_COMPONENT_TYPES
@@ -256,6 +259,9 @@ def clean_bucket_name(bucket_name: str) -> str:
     - Converts spaces to dashes.
     - Removes leading underscores, dashes, and whitespace.
     - Removes any character that is not alphanumeric, dash, or underscore.
+
+    :param bucket_name: Raw bucket name to clean
+    :return: Cleaned bucket name suitable for Keboola storage
     """
     max_bucket_length = 96
     bucket_name = bucket_name.strip()
@@ -272,91 +278,11 @@ def clean_bucket_name(bucket_name: str) -> str:
     return bucket_name
 
 
-def format_sql_statement(sql: str, dialect: str) -> str:
-    """
-    Format SQL statement using sqlglot for better readability.
-
-    Args:
-        sql: Raw SQL statement string
-        dialect: SQL dialect ('snowflake' or 'bigquery')
-
-    Returns:
-        Formatted SQL string, or original if formatting fails
-    """
-    try:
-        formatted = sqlglot.transpile(sql, read=dialect, pretty=True)[0]
-        return formatted
-    except Exception:
-        return sql
-
-
-def format_code_blocks(
-        code_blocks: Sequence['TransformationConfiguration.Parameters.Block.Code'],
-        dialect: str,
-        conditional: bool = False,
-) -> list['TransformationConfiguration.Parameters.Block.Code']:
-    """
-    Format SQL statements in code blocks using sqlglot for better readability.
-
-    Args:
-        code_blocks: Sequence of code blocks containing SQL statements
-        dialect: SQL dialect ('snowflake' or 'bigquery')
-        conditional: If True, only format statements without newlines (default: False)
-
-    Returns:
-        List of formatted code blocks
-    """
-    formatted_blocks = []
-    for block in code_blocks:
-        formatted_statements = []
-        for stmt in block.sql_statements:
-            if conditional and '\n' in stmt:
-                formatted_statements.append(stmt)
-            else:
-                formatted_stmt = format_sql_statement(stmt, dialect)
-                formatted_statements.append(formatted_stmt)
-
-        formatted_block = TransformationConfiguration.Parameters.Block.Code(
-            name=block.name,
-            sql_statements=formatted_statements,
-        )
-        formatted_blocks.append(formatted_block)
-
-    return formatted_blocks
-
-
-def format_transformation_parameters(
-        parameters: 'TransformationConfiguration.Parameters',
-        dialect: str,
-        conditional: bool = False,
-) -> 'TransformationConfiguration.Parameters':
-    """
-    Format SQL statements in transformation parameters using sqlglot for better readability.
-
-    Args:
-        parameters: Transformation parameters containing blocks with code
-        dialect: SQL dialect ('snowflake' or 'bigquery')
-        conditional: If True, only format statements without newlines (default: False)
-
-    Returns:
-        Formatted transformation parameters
-    """
-    formatted_blocks = []
-    for block in parameters.blocks:
-        formatted_codes = format_code_blocks(block.codes, dialect, conditional)
-        formatted_block = TransformationConfiguration.Parameters.Block(
-            name=block.name,
-            codes=formatted_codes,
-        )
-        formatted_blocks.append(formatted_block)
-
-    return TransformationConfiguration.Parameters(blocks=formatted_blocks)
-
-
 async def create_transformation_configuration(
     codes: Sequence[SimplifiedTfBlocks.Block.Code],
     transformation_name: str,
     output_tables: Sequence[str],
+    sql_dialect: str,
 ) -> TransformationConfiguration:
     """
     Creates transformation configuration from simplified code blocks and output tables.
@@ -365,6 +291,7 @@ async def create_transformation_configuration(
     :param codes: The code blocks
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
+    :param sql_dialect: The SQL dialect of the transformation
     :return: TransformationConfiguration with parameters and storage
     """
     storage = TransformationConfiguration.Storage()
@@ -394,6 +321,7 @@ async def create_transformation_configuration(
             )
             for out_table in output_tables
         ]
+    raw_parameters = format_transformation_parameters(raw_parameters, sql_dialect.lower())
 
     return TransformationConfiguration(parameters=raw_parameters, storage=storage)
 
@@ -451,6 +379,11 @@ async def set_cfg_update_metadata(
 def get_nested(obj: Mapping[str, Any] | None, key: str, *, default: T | None = None) -> T | None:
     """
     Gets a value from a nested mapping associated with the key.
+
+    :param obj: Mapping (dictionary) object to search in
+    :param key: Dot-separated key path (e.g., 'database.host')
+    :param default: Default value to return if key is not found
+    :return: Value associated with the key, or default if not found
     """
     d = obj
     for k in key.split('.'):
@@ -584,8 +517,10 @@ def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) 
 def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) -> tuple[dict[str, Any], str]:
     """
     Applies a single parameter update to the given transformation parameters.
+
     Note: This function modifies the input dictionary in place for efficiency.
     The caller (update_transformation_parameters) is responsible for creating a copy if needed.
+
     :param parameters: The transformation parameters
     :param update: Parameter update operation to apply
     :return: Tuple of (updated transformation parameters, change summary message)
@@ -600,6 +535,9 @@ def add_ids(parameters: dict[str, Any]) -> dict[str, Any]:
     Adds IDs to the parameters dictionary.
     Blocks are numbered sequentially from 0.
     Codes are numbered sequentially from 0 within each block and prefixed with the block ID.
+
+    :param parameters: Transformation parameters dictionary
+    :return: Parameters dictionary with IDs added to blocks and codes
     """
     for bidx, block in enumerate(parameters['blocks']):
         block['id'] = f'b{bidx}'

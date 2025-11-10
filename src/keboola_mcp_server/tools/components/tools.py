@@ -60,8 +60,6 @@ from keboola_mcp_server.tools.components.utils import (
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
-    format_code_blocks,
-    format_transformation_parameters,
     get_sql_transformation_id_from_sql_dialect,
     list_configs_by_ids,
     list_configs_by_types,
@@ -427,12 +425,10 @@ async def create_sql_transformation(
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
-    formatted_code_blocks = format_code_blocks(sql_code_blocks, sql_dialect.lower())
-
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
     transformation_configuration_payload = await create_transformation_configuration(
-        codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names
+        codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names, sql_dialect=sql_dialect
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
