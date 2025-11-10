@@ -1,6 +1,5 @@
 import json
 import logging
-from pickle import FALSE
 from typing import Any, AsyncGenerator
 
 import pytest
@@ -564,7 +563,9 @@ async def test_update_flow(
         expected_phases = [
             phase.model_dump(exclude_unset=True, by_alias=True) for phase in initial_flow.configuration.phases
         ]
-    assert len(flow_data['phases']) == len(expected_phases), f"Phases count mismatch: {len(flow_data['phases'])} vs {len(expected_phases)}"
+    assert len(flow_data['phases']) == len(
+        expected_phases
+    ), f"Phases count mismatch: {len(flow_data['phases'])} vs {len(expected_phases)}"
     assert all(
         actual['id'] == expected['id']
         and actual['name'] == expected['name']
@@ -749,11 +750,11 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    'new_config, expected_error_message',
+    ('new_config', 'expected_error_message'),
     [
         (
             {
-                "phases": [
+                'phases': [
                     {
                         'id': 'phase-1',
                         'name': 'Phase1',
@@ -765,7 +766,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                         'next': [{'id': 'transition-2', 'goto': None}],
                     },
                 ],
-                "tasks": [
+                'tasks': [
                     {
                         'id': 'task-1',
                         'name': 'Task1',
@@ -779,11 +780,11 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                     }
                 ],
             },
-            "Flow has multiple entry phases",
+            'Flow has multiple entry phases',
         ),
         (
             {
-                "phases": [
+                'phases': [
                     {
                         'id': 'phase-1',
                         'name': 'Phase1',
@@ -795,7 +796,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                         'next': [{'id': 'transition-2', 'goto': 'phase-1'}],
                     },
                 ],
-                "tasks": [
+                'tasks': [
                     {
                         'id': 'task-1',
                         'name': 'Task1',
@@ -820,16 +821,15 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                     },
                 ],
             },
-            "Flow has no ending phases",
+            'Flow has no ending phases',
         ),
     ],
 )
-async def test_create_conditional_flow_invalid_structure(
-    mcp_context: Context, configs: list[ConfigDef], new_config: dict[str, list[dict]], expected_error_message: str
+async def test_create_conditional_flow_sematnically_invalid_structure(
+    mcp_context: Context, new_config: dict[str, list[dict]], expected_error_message: str
 ) -> None:
     # Test invalid conditional flow structure - missing required fields and invalid types
     phases = new_config['phases']
-
     tasks = new_config['tasks']
 
     with pytest.raises(ValueError, match=expected_error_message):
