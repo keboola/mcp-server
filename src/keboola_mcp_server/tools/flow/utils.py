@@ -42,7 +42,9 @@ def get_schema_as_markdown(flow_type: FlowType) -> str:
     return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 
-def get_flow_configuration(phases: list[dict[str, Any]] | None, tasks: list[dict[str, Any]] | None, flow_type: FlowType) -> JsonDict:
+def get_flow_configuration(
+    phases: list[dict[str, Any]] | None, tasks: list[dict[str, Any]] | None, flow_type: FlowType
+) -> JsonDict:
     """Get the flow configuration from tasks and phases. For legacy flows, apply necesarry sanitization.
 
     :param phases: The list of phases.
