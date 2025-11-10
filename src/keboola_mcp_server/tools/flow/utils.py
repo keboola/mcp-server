@@ -42,7 +42,7 @@ def get_schema_as_markdown(flow_type: FlowType) -> str:
     return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 
-def get_flow_configuration(phases: list[dict[str, Any]], tasks: list[dict[str, Any]], flow_type: FlowType) -> JsonDict:
+def get_flow_configuration(phases: list[dict[str, Any]] | None, tasks: list[dict[str, Any]] | None, flow_type: FlowType) -> JsonDict:
     """Get the flow configuration from tasks and phases. For legacy flows, apply necesarry sanitization.
 
     :param phases: The list of phases.
@@ -51,18 +51,18 @@ def get_flow_configuration(phases: list[dict[str, Any]], tasks: list[dict[str, A
     :return: The dictionary containing the flow configuration (phases and tasks) serialized to JSON.
     """
     if flow_type == ORCHESTRATOR_COMPONENT_ID:
-        phases = ensure_legacy_phase_ids(phases)
-        tasks = ensure_legacy_task_ids(tasks)
+        processed_phases = ensure_legacy_phase_ids(phases or [])
+        processed_tasks = ensure_legacy_task_ids(tasks or [])
         return {
-            'phases': [phase.model_dump(by_alias=True) for phase in phases],
-            'tasks': [task.model_dump(by_alias=True) for task in tasks],
+            'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
+            'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
         }
     else:
-        phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
-        tasks = [ConditionalFlowTask.model_validate(task) for task in tasks]
+        processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases or []]
+        processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks or []]
         return {
-            'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in phases],
-            'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in tasks],
+            'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
+            'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
         }
 
 

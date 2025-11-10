@@ -355,9 +355,9 @@ async def update_flow(
     flow_configuration = current_config.get('configuration', {}).copy()
 
     updated_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
-    if updated_configuration.get('phases', []) != []:
+    if updated_configuration.get('phases'):
         flow_configuration['phases'] = updated_configuration['phases']
-    if updated_configuration.get('tasks', []) != []:
+    if updated_configuration.get('tasks'):
         flow_configuration['tasks'] = updated_configuration['tasks']
 
     # Validate flow structure to catch semantic errors in the structure
