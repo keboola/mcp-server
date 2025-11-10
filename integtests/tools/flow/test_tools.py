@@ -1,10 +1,13 @@
 import json
 import logging
 from typing import Any, AsyncGenerator
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 from fastmcp import Client, Context, FastMCP
+from fastmcp.server.middleware import CallNext, MiddlewareContext
+from mcp import types as mt
 from pydantic import ValidationError
 
 from integtests.conftest import ConfigDef, ProjectDef
@@ -234,7 +237,18 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
 
 
 @pytest.fixture
-def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
+def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str, mocker) -> FastMCP:
+    # allow all tool calls regardless the testing project features
+    async def on_call_tool(
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
+    ) -> mt.CallToolResult:
+        return await call_next(context)
+
+    mocker.patch(
+        'keboola_mcp_server.server.ToolsFilteringMiddleware.on_call_tool', new=AsyncMock(side_effect=on_call_tool)
+    )
+
     config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
     return create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
 

@@ -64,6 +64,7 @@ class TestServer:
             'modify_data_app',
             'query_data',
             'run_job',
+            'search',
             'update_config',
             'update_config_row',
             'update_descriptions',

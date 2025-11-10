@@ -30,8 +30,14 @@ from keboola_mcp_server.tools.components.model import (
     ConfigurationRootSummary,
     ConfigurationSummary,
     ListConfigsOutput,
+    SimplifiedTfBlocks,
+    TfParamUpdate,
+    TfRenameBlock,
+    TfSetCode,
+    TfStrReplace,
 )
-from keboola_mcp_server.tools.components.utils import TransformationConfiguration, clean_bucket_name
+from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
+from keboola_mcp_server.tools.components.utils import clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -245,6 +251,51 @@ async def test_get_config(
     )
 
 
+@pytest.mark.asyncio
+async def test_get_config_transformation(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_tf_configuration: dict[str, Any],
+    mock_tf_component: dict[str, Any],
+    mock_metadata: list[dict[str, Any]],
+):
+    """
+    Test get_config tool for transformations.
+    We test that the transformation parameters are correctly simplified and IDs are added.
+    """
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    mock_ai_service = mocker.MagicMock()
+    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_tf_component)
+
+    keboola_client.ai_service_client = mock_ai_service
+    # mock the configuration_detail method to return the mock_configuration
+    # simulate the response from the API
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={**mock_tf_configuration, 'component': mock_tf_component, 'configurationMetadata': mock_metadata}
+    )
+
+    result = await get_config(
+        component_id=mock_tf_component['componentId'],
+        configuration_id=mock_tf_configuration['id'],
+        ctx=context,
+    )
+
+    assert isinstance(result, Configuration)
+    assert result.configuration_root.parameters == {
+        'blocks': [
+            {
+                'id': 'b0',
+                'name': 'Blocks',
+                'codes': [
+                    {'id': 'b0.c0', 'name': 'Code 1', 'script': 'SELECT * FROM customers;\n\nSELECT * FROM orders;\n\n'}
+                ],
+            }
+        ],
+    }
+
+
 @pytest.mark.parametrize(
     ('sql_dialect', 'expected_component_id', 'expected_configuration_id'),
     [
@@ -284,8 +335,8 @@ async def test_create_sql_transformation(
     bucket_name = clean_bucket_name(transformation_name)
     description = mock_configuration['description']
     code_blocks = [
-        TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=['SELECT * FROM test']),
-        TransformationConfiguration.Parameters.Block.Code(name='Code 1', sql_statements=['SELECT * FROM test2']),
+        SimplifiedTfBlocks.Block.Code(name='Code 0', script='SELECT * FROM test'),
+        SimplifiedTfBlocks.Block.Code(name='Code 1', script='SELECT * FROM test2; SELECT * FROM test3;'),
     ]
     created_table_name = 'test_table_1'
 
@@ -313,7 +364,10 @@ async def test_create_sql_transformation(
                 'blocks': [
                     {
                         'name': 'Blocks',
-                        'codes': [{'name': code.name, 'script': code.sql_statements} for code in code_blocks],
+                        'codes': [
+                            {'name': code.name, 'script': await split_sql_statements(code.script)}
+                            for code in code_blocks
+                        ],
                     }
                 ]
             },
@@ -349,42 +403,61 @@ async def test_create_sql_transformation_fail(
             ctx=context,
             name='test_name',
             description='test_description',
-            sql_code_blocks=[
-                TransformationConfiguration.Parameters.Block.Code(name='Code 0', sql_statements=['SELECT * FROM test'])
-            ],
+            sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='Code 0', script='SELECT * FROM test')],
         )
 
 
 @pytest.mark.parametrize(
-    ('sql_dialect', 'expected_component_id', 'parameters', 'storage', 'expected_config'),
+    ('sql_dialect', 'expected_component_id', 'parameter_updates', 'storage', 'expected_config'),
     [
         pytest.param(
             'Snowflake',
             'keboola.snowflake-transformation',
-            {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]},
+            [
+                TfRenameBlock(op='rename_block', block_id='b0', block_name='Updated Blocks'),
+                TfSetCode(
+                    op='set_code',
+                    block_id='b0',
+                    code_id='b0.c0',
+                    script='SELECT 1;\n\nSELECT * FROM new_table;\n\n',
+                ),
+            ],
             {'output': {'tables': []}},
             {
                 'parameters': {
-                    'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]
+                    'blocks': [
+                        {
+                            'name': 'Updated Blocks',
+                            'codes': [{'name': 'Existing Code', 'script': ['SELECT 1;', 'SELECT * FROM new_table;']}],
+                        }
+                    ]
                 },
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
             },
-            id='snowflake_both_provided',
+            id='snowflake_rename_block_and_set_code',
         ),
         pytest.param(
             'BigQuery',
             'keboola.google-bigquery-transformation',
-            {'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]},
+            [
+                TfStrReplace(
+                    op='str_replace',
+                    block_id='b0',
+                    code_id='b0.c0',
+                    search_for='SELECT 1',
+                    replace_with='SELECT 2',
+                ),
+            ],
             None,
             {
                 'parameters': {
-                    'blocks': [{'name': 'Blocks', 'codes': [{'name': 'Code 0', 'script': ['SELECT * FROM test']}]}]
+                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 2;']}]}]
                 },
                 'storage': {'input': {'tables': ['existing_table']}},
                 'other_field': 'should_be_preserved',
             },
-            id='bigquery_parameters_only',
+            id='bigquery_str_replace',
         ),
         pytest.param(
             'Snowflake',
@@ -410,11 +483,13 @@ async def test_update_sql_transformation(
     mock_configuration: dict[str, Any],
     sql_dialect: str,
     expected_component_id: str,
-    parameters: dict[str, Any] | None,
+    parameter_updates: list[TfParamUpdate] | None,
     storage: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
-    """Test update_sql_transformation tool."""
+    """
+    Test update_sql_transformation tool with transformation-specific parameter_updates.
+    """
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     # Mock the WorkspaceManager
@@ -444,16 +519,11 @@ async def test_update_sql_transformation(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
-    # Convert parameters dict to TransformationConfiguration.Parameters if provided
-    transformation_parameters = None
-    if parameters is not None:
-        transformation_parameters = TransformationConfiguration.Parameters.model_validate(parameters)
-
     updated_result = await update_sql_transformation(
         context,
         mock_configuration['id'],
         new_change_description,
-        parameters=transformation_parameters,
+        parameter_updates=parameter_updates,
         storage=storage,
         updated_description=str(),
         is_disabled=False,
@@ -629,7 +699,7 @@ async def test_add_config_row(
     [
         pytest.param(
             [
-                ConfigParamSet(op='set', path='api_key', new_val='new_api_key'),
+                ConfigParamSet(op='set', path='api_key', value='new_api_key'),
                 ConfigParamReplace(op='str_replace', path='database.host', search_for='old', replace_with='new'),
                 ConfigParamRemove(op='remove', path='deprecated_field'),
             ],
@@ -649,7 +719,7 @@ async def test_add_config_row(
         pytest.param(
             [
                 ConfigParamRemove(op='remove', path='existing_param'),
-                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+                ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             None,
             {
@@ -668,7 +738,7 @@ async def test_add_config_row(
         pytest.param(
             [
                 ConfigParamRemove(op='remove', path='existing_param'),
-                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+                ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             {'output': {'tables': []}},
             {
@@ -789,7 +859,7 @@ async def test_update_config(
         pytest.param(
             [
                 ConfigParamRemove(op='remove', path='existing_param'),
-                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+                ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             {'output': {'tables': []}},
             {
@@ -802,7 +872,7 @@ async def test_update_config(
         pytest.param(
             [
                 ConfigParamRemove(op='remove', path='existing_param'),
-                ConfigParamSet(op='set', path='updated_param', new_val='updated_value'),
+                ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             None,
             {

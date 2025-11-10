@@ -20,6 +20,7 @@ from fastmcp.tools import Tool
 from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel
+from pydantic_core import to_json
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -232,15 +233,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tools = await call_next(context)
         features = await self.get_project_features(context.fastmcp_context)
 
-        from keboola_mcp_server.tools import search
-
-        if 'global-search' not in features:
-            tools = [t for t in tools if t.name != search.SEARCH_TOOL_NAME]
-
-        # TODO: uncomment and adjust when WAII tools are implemented
-        # if 'waii-integration' not in features:
-        #     tools = [t for t in tools if t.name != 'text_to_sql']
-
         if 'hide-conditional-flows' in features:
             tools = [t for t in tools if t.name != 'create_conditional_flow']
         else:
@@ -256,33 +248,53 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
         features = await self.get_project_features(context.fastmcp_context)
 
-        if 'global-search' not in features:
-            if tool.name == 'search':
+        if 'hide-conditional-flows' in features:
+            if tool.name == 'create_conditional_flow':
                 raise ToolError(
-                    'The "search" tool is not available in this project. '
-                    'Please ask Keboola support to enable "Global Search" feature.'
+                    'The "create_conditional_flow" tool is not available in this project. '
+                    'Please ask Keboola support to enable "Conditional Flows" feature '
+                    'or use "create_flow" tool instead.'
                 )
-
-        # TODO: uncomment and adjust when WAII tools are implemented
-        # if 'waii-integration' not in features:
-        #     if tool.name == 'text_to_sql':
-        #         raise ToolError('The "text_to_sql" tool is not available in this project. '
-        #                         'Please ask Keboola support to enable "WAII Integration" feature.')
-
-        # TODO: uncomment and adjust when the conditional flows support is added
-        # if 'conditional-flows-disabled' in features:
-        #     if tool.name == 'create_conditional_flow':
-        #         raise ToolError('The "create_conditional_flow" tool is not available in this project. '
-        #                         'Please ask Keboola support to enable "Conditional Flows" feature '
-        #                         'or use "create_flow" tool instead.')
-        # else:
-        #     if tool.name == 'create_flow':
-        #         raise ToolError('The "create_flow" tool is not available in this project. '
-        #                         'This project uses "Conditional Flows", '
-        #                         'please use"create_conditional_flow" tool instead.')
+        else:
+            if tool.name == 'create_flow':
+                raise ToolError(
+                    'The "create_flow" tool is not available in this project. '
+                    'This project uses "Conditional Flows", '
+                    'please use"create_conditional_flow" tool instead.'
+                )
 
         return await call_next(context)
 
 
-def _exclude_none_serializer(data: BaseModel) -> str:
-    return data.model_dump_json(exclude_none=True, by_alias=False)
+def _exclude_none_serializer(data: Any) -> str:
+    if (cleaned := _to_python(data)) is not None:
+        return to_json(cleaned, fallback=str).decode('utf-8')
+    else:
+        return ''
+
+
+def _to_python(data: Any) -> Any | None:
+    if isinstance(data, BaseModel):
+        return data.model_dump(exclude_none=True, by_alias=False)
+    elif isinstance(data, (list, tuple)):
+        # Handle sequences of BaseModels
+        cleaned = []
+        for item in data:
+            if isinstance(item, BaseModel):
+                cleaned.append(item.model_dump(exclude_none=True, by_alias=False))
+            elif item is not None:
+                cleaned.append(_to_python(item))
+        return cleaned
+    elif isinstance(data, dict):
+        # Handle dictionaries that might contain BaseModels
+        cleaned = {}
+        for key, value in data.items():
+            if isinstance(value, BaseModel):
+                cleaned[key] = value.model_dump(exclude_none=True, by_alias=False)
+            elif value is not None:
+                cleaned[key] = _to_python(value)
+        return cleaned
+    elif data is not None:
+        return data
+    else:
+        return None

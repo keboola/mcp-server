@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, cast
 import pytest
 import pytest_asyncio
 from fastmcp import Client, Context, FastMCP
+from pydantic import TypeAdapter
 
 from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
@@ -27,12 +28,22 @@ from keboola_mcp_server.tools.components.model import (
     ConfigToolOutput,
     Configuration,
     ListConfigsOutput,
-)
-from keboola_mcp_server.tools.components.utils import (
+    SimplifiedTfBlocks,
+    TfAddScript,
+    TfParamUpdate,
+    TfRenameBlock,
+    TfRenameCode,
+    TfSetCode,
+    TfStrReplace,
     TransformationConfiguration,
+)
+from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
+from keboola_mcp_server.tools.components.utils import (
+    clean_bucket_name,
     expand_component_types,
     get_sql_transformation_id_from_sql_dialect,
     update_params,
+    update_transformation_parameters,
 )
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -250,12 +261,12 @@ async def initial_cmpconf(
         {
             'name': 'Updated Test Configuration',
             'description': 'Updated test configuration by automated test',
-            'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'new_val': 'updated_value'}],
+            'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'value': 'updated_value'}],
             'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}},
         },
         {'name': 'Updated just name'},
         {'description': 'Updated just description'},
-        {'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'new_val': 'Updated just parameters'}]},
+        {'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'value': 'Updated just parameters'}]},
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
     ],
 )
@@ -280,8 +291,6 @@ async def test_update_config(
         orig_parameters = cast(dict, orig_config.get('configuration', {}).get('parameters', {}))
 
         # Convert the parameter update dicts to ConfigParamUpdate objects
-        from pydantic import TypeAdapter
-
         param_updates = []
         for update_dict in param_update_dicts:
             update = TypeAdapter(ConfigParamUpdate).validate_python(update_dict)
@@ -509,16 +518,12 @@ async def initial_cmpconf_row(
         {
             'name': 'Updated Row Configuration',
             'description': 'Updated row configuration by automated test',
-            'parameter_updates': [{'op': 'set', 'path': '$', 'new_val': {'updated_row_param': 'updated_row_value'}}],
+            'parameter_updates': [{'op': 'set', 'path': '$', 'value': {'updated_row_param': 'updated_row_value'}}],
             'storage': {},
         },
         {'name': 'Updated just name'},
         {'description': 'Updated just description'},
-        {
-            'parameter_updates': [
-                {'op': 'set', 'path': '$', 'new_val': {'updated_row_param': 'Updated just parameters'}}
-            ]
-        },
+        {'parameter_updates': [{'op': 'set', 'path': '$', 'value': {'updated_row_param': 'Updated just parameters'}}]},
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
     ],
 )
@@ -600,7 +605,7 @@ async def test_update_config_row(
 
     if (parameter_updates := updates.get('parameter_updates')) is not None:
         # Using the assumption that parameter_updates is a list with one element with 'set' operation on root path
-        assert row_config_data['parameters'] == parameter_updates[0]['new_val']
+        assert row_config_data['parameters'] == parameter_updates[0]['value']
 
     if (expected_storage := updates.get('storage')) is not None:
         # Storage API might return more keys than what we set, so we check subset
@@ -634,8 +639,8 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
 
     # Define test SQL code blocks
     test_sql_code_blocks = [
-        TransformationConfiguration.Parameters.Block.Code(
-            name='Main transformation', sql_statements=['SELECT 1 as test_column', 'SELECT 2 as another_column']
+        SimplifiedTfBlocks.Block.Code(
+            name='Main transformation', script='SELECT 1 as test_column; SELECT 2 as another_column;'
         )
     ]
 
@@ -701,30 +706,36 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         assert 'parameters' in configuration_data
         assert 'storage' in configuration_data
 
-        # Verify the parameters structure
-        parameters = configuration_data['parameters']
-        assert 'blocks' in parameters
-        assert len(parameters['blocks']) == 1
+        # Verify the parameters structure matches expected
+        bucket_name = clean_bucket_name(test_name)
+        expected_parameters = {
+            'blocks': [
+                {
+                    'name': 'Blocks',
+                    'codes': [
+                        {
+                            'name': test_sql_code_blocks[0].name,
+                            'script': await split_sql_statements(test_sql_code_blocks[0].script),
+                        }
+                    ],
+                }
+            ]
+        }
+        assert configuration_data['parameters'] == expected_parameters
 
-        block = parameters['blocks'][0]
-        assert 'codes' in block
-        assert len(block['codes']) == len(test_sql_code_blocks)
-
-        code = block['codes'][0]
-        assert code['name'] == test_sql_code_blocks[0].name
-        assert 'script' in code  # API uses 'script' instead of 'sql_statements'
-        assert len(code['script']) == len(test_sql_code_blocks[0].sql_statements)
-        assert code['script'][0] == test_sql_code_blocks[0].sql_statements[0]
-        assert code['script'][1] == test_sql_code_blocks[0].sql_statements[1]
-
-        # Verify the storage structure contains output tables
-        storage = configuration_data['storage']
-        assert 'output' in storage
-        assert 'tables' in storage['output']
-        assert len(storage['output']['tables']) == len(test_created_table_names)
-
-        output_table = storage['output']['tables'][0]
-        assert output_table['source'] == test_created_table_names[0]
+        # Verify the storage structure matches expected
+        expected_storage = {
+            'input': {'tables': []},
+            'output': {
+                'tables': [
+                    {
+                        'source': test_created_table_names[0],
+                        'destination': f'out.c-{bucket_name}.{test_created_table_names[0]}',
+                    }
+                ]
+            },
+        }
+        assert configuration_data['storage'] == expected_storage
 
         # Verify the metadata - check that KBC.MCP.createdBy is set to 'true'
         metadata = await client.storage_client.configuration_metadata_get(
@@ -756,7 +767,7 @@ async def initial_sqltrfm(
         arguments={
             'name': 'Initial Test SQL Transformation',
             'description': 'Initial SQL transformation for update test',
-            'sql_code_blocks': [{'name': 'Initial transformation', 'sql_statements': ['SELECT 1 as initial_column']}],
+            'sql_code_blocks': [{'name': 'Initial transformation', 'script': 'SELECT 1 as initial_column;'}],
             'created_table_names': ['initial_output_table'],
         },
     )
@@ -777,23 +788,19 @@ async def initial_sqltrfm(
     [
         {
             'updated_description': 'Updated SQL transformation description',
-            'parameters': {
-                'blocks': [
-                    {
-                        'name': 'Updated block',
-                        'codes': [
-                            {
-                                'name': 'Updated transformation',
-                                'sql_statements': [
-                                    'SELECT 1 as updated_column',
-                                    'SELECT 2 as additional_column',
-                                    'SELECT 3 as third_column',
-                                ],
-                            }
-                        ],
-                    }
-                ]
-            },
+            'parameter_updates': [
+                TfRenameBlock(op='rename_block', block_id='b0', block_name='Updated block'),
+                TfRenameCode(op='rename_code', block_id='b0', code_id='b0.c0', code_name='Updated code'),
+                TfSetCode(
+                    op='set_code',
+                    block_id='b0',
+                    code_id='b0.c0',
+                    script=(
+                        'SELECT 1 as updated_column;\n\nSELECT 2 as additional_column;\n\n'
+                        'SELECT 3 as third_column;\n\n'
+                    ),
+                ),
+            ],
             'storage': {
                 'input': {'tables': [{'source': 'in.c-bucket.input_table', 'destination': 'input.csv'}]},
                 'output': {
@@ -807,23 +814,22 @@ async def initial_sqltrfm(
         },
         {'updated_description': 'Updated SQL transformation description'},
         {
-            'parameters': {
-                'blocks': [
-                    {
-                        'name': 'Updated block',
-                        'codes': [
-                            {
-                                'name': 'Updated transformation',
-                                'sql_statements': [
-                                    'SELECT 1 as updated_column',
-                                    'SELECT 2 as additional_column',
-                                    'SELECT 3 as third_column',
-                                ],
-                            }
-                        ],
-                    }
-                ]
-            }
+            'parameter_updates': [
+                TfStrReplace(
+                    op='str_replace',
+                    block_id='b0',
+                    code_id='b0.c0',
+                    search_for='SELECT 1 as initial_column',
+                    replace_with='SELECT * FROM updated_table',
+                ),
+                TfAddScript(
+                    op='add_script',
+                    block_id='b0',
+                    code_id='b0.c0',
+                    script='SELECT 2 as additional_column',
+                    position='end',
+                ),
+            ]
         },
         {
             'storage': {
@@ -850,12 +856,42 @@ async def test_update_sql_transformation(
     project_id = keboola_project.project_id
     component_id = initial_sqltrfm.component_id
     configuration_id = initial_sqltrfm.configuration_id
+    param_update_objects = updates.get('parameter_updates')
+
+    if param_update_objects is not None:
+        # Get the original configuration so we can compare the parameters
+        orig_config = await keboola_client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=configuration_id
+        )
+        orig_parameters_dict = cast(dict, orig_config.get('configuration', {}).get('parameters', {}))
+
+        # Convert the parameter update objects to TfParamUpdate if needed
+        param_updates: list[TfParamUpdate] = []
+        for update_obj in param_update_objects:
+            if isinstance(update_obj, dict):
+                update = TypeAdapter(TfParamUpdate).validate_python(update_obj)
+            else:
+                update = update_obj
+            param_updates.append(update)
+
+    # Convert parameter update objects to dict format for tool call if needed
+    updates_dict = updates.copy()
+    if param_update_objects is not None:
+        param_updates_list = []
+        for update_obj in param_update_objects:
+            if isinstance(update_obj, dict):
+                param_updates_list.append(update_obj)
+            else:
+                # Convert Pydantic model to dict
+                param_updates_list.append(update_obj.model_dump())
+        updates_dict['parameter_updates'] = param_updates_list
+
     tool_result = await mcp_client.call_tool(
         name='update_sql_transformation',
         arguments={
             'change_description': 'Integration test update',
             'configuration_id': configuration_id,
-            **updates,
+            **updates_dict,
         },
     )
 
@@ -900,9 +936,17 @@ async def test_update_sql_transformation(
 
     actual_parameters = trfm_data.get('parameters')
     assert isinstance(actual_parameters, dict), f'Expecting dict, got: {type(actual_parameters)}'
-    if (expected_parameters := updates.get('updated_parameters')) is not None:
-        assert isinstance(expected_description, TransformationConfiguration.Parameters)
-        assert actual_parameters == expected_parameters.model_dump()
+
+    if param_update_objects is not None:
+        # Convert original parameters to SimplifiedTfBlocks, apply updates, then convert back
+        orig_raw_parameters = TransformationConfiguration.Parameters.model_validate(orig_parameters_dict)
+        orig_simplified_parameters = await orig_raw_parameters.to_simplified_parameters()
+
+        updated_params, _ = update_transformation_parameters(orig_simplified_parameters, param_updates)
+        updated_raw_parameters = await updated_params.to_raw_parameters()
+
+        expected_parameters = updated_raw_parameters.model_dump(exclude_none=True)
+        assert actual_parameters == expected_parameters
 
     actual_storage = trfm_data.get('storage')
     assert isinstance(actual_storage, dict), f'Expecting dict, got: {type(actual_storage)}'
