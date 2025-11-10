@@ -68,7 +68,7 @@ def test_expand_component_types(
                             codes=[
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
-                                    script=['SELECT * FROM test;', 'SELECT * FROM test2;'],
+                                    script=['SELECT\n  *\nFROM test', 'SELECT\n  *\nFROM test2'],
                                 )
                             ],
                         )
@@ -88,6 +88,7 @@ def test_expand_component_types(
                     name='Code 0',
                     script=(
                         'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";\n'
+                        '-- comment\n'
                         'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";'
                     ),
                 )
@@ -103,8 +104,9 @@ def test_expand_component_types(
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
                                     script=[
-                                        'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
-                                        'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+                                        'CREATE OR REPLACE TABLE "test_table_1" AS\nSELECT\n  *\nFROM "test"',
+                                        '/* comment */\nCREATE OR REPLACE TABLE "test_table_2" AS\nSELECT\n  *\n'
+                                        'FROM "test"',
                                     ],
                                 )
                             ],
@@ -146,7 +148,7 @@ def test_expand_component_types(
                             codes=[
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
-                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
+                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS\nSELECT\n  *\nFROM "test"'],
                                 )
                             ],
                         )
@@ -181,6 +183,7 @@ async def test_create_transformation_configuration(
         codes=codes,
         transformation_name=transformation_name,
         output_tables=output_tables,
+        sql_dialect='snowflake',
     )
 
     assert configuration == expected

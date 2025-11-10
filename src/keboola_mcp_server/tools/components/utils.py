@@ -305,6 +305,8 @@ async def create_transformation_configuration(
         ]
     )
     raw_parameters = await parameters.to_raw_parameters()
+    raw_parameters = format_transformation_parameters(raw_parameters, sql_dialect)
+
     if output_tables:
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
@@ -321,7 +323,6 @@ async def create_transformation_configuration(
             )
             for out_table in output_tables
         ]
-    raw_parameters = format_transformation_parameters(raw_parameters, sql_dialect.lower())
 
     return TransformationConfiguration(parameters=raw_parameters, storage=storage)
 

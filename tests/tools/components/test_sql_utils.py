@@ -531,13 +531,13 @@ async def test_split_sql_statements(input_sql, expected, timeout_seconds, test_i
         # Single statement
         (
             ['SELECT 1'],
-            'SELECT 1;\n\n',
+            'SELECT 1\n\n',
             'single_statement',
         ),
         # Multiple statements
         (
             ['SELECT 1', 'SELECT 2', 'SELECT 3'],
-            'SELECT 1;\n\nSELECT 2;\n\nSELECT 3;\n\n',
+            'SELECT 1\n\nSELECT 2\n\nSELECT 3\n\n',
             'multiple_statements',
         ),
         # Preserve existing semicolons
@@ -546,125 +546,53 @@ async def test_split_sql_statements(input_sql, expected, timeout_seconds, test_i
             'SELECT 1;\n\nSELECT 2;\n\n',
             'existing_semicolons',
         ),
-        # Statement ending with line comment
+        # Mixed statements (with and without semicolons)
         (
-            ['SELECT 1 -- comment', 'SELECT 2'],
-            'SELECT 1 -- comment\n\nSELECT 2;\n\n',
-            'ending_with_line_comment',
-        ),
-        # Statement ending with block comment
-        (
-            ['SELECT 1 /* comment */', 'SELECT 2'],
-            'SELECT 1 /* comment */\n\nSELECT 2;\n\n',
-            'ending_with_block_comment',
-        ),
-        # Mixed statements
-        (
-            ['SELECT 1;', 'SELECT 2', 'SELECT 3 -- comment', 'SELECT 4'],
-            'SELECT 1;\n\nSELECT 2;\n\nSELECT 3 -- comment\n\nSELECT 4;\n\n',
+            ['SELECT 1;', 'SELECT 2', 'SELECT 3'],
+            'SELECT 1;\n\nSELECT 2\n\nSELECT 3\n\n',
             'mixed_statements',
         ),
         # Filter empty statements
         (
             ['SELECT 1', '', '  ', 'SELECT 2'],
-            'SELECT 1;\n\nSELECT 2;\n\n',
+            'SELECT 1\n\nSELECT 2\n\n',
             'filter_empty_statements',
         ),
         # Preserve internal whitespace
         (
             ['SELECT  \n  1'],
-            'SELECT  \n  1;\n\n',
+            'SELECT  \n  1\n\n',
             'preserve_whitespace',
         ),
         # Statement with trailing whitespace
         (
             ['SELECT 1;   ', 'SELECT 2  '],
-            'SELECT 1;\n\nSELECT 2;\n\n',
+            'SELECT 1;\n\nSELECT 2\n\n',
             'trailing_whitespace',
-        ),
-        # Multi-line statement with line comment in middle (not at end)
-        (
-            ['SELECT 1 -- comment\nFROM table'],
-            'SELECT 1 -- comment\nFROM table;\n\n',
-            'multiline_comment_in_middle',
-        ),
-        # Statement ending with hash comment
-        (
-            ['SELECT 1 # hash comment'],
-            'SELECT 1 # hash comment\n\n',
-            'ending_with_hash_comment',
-        ),
-        # Statement ending with double slash comment
-        (
-            ['SELECT 1 // slash comment'],
-            'SELECT 1 // slash comment\n\n',
-            'ending_with_slash_comment',
-        ),
-        # Multi-line with comment not at end
-        (
-            ['SELECT 1\n-- comment\nFROM table\nWHERE id = 1'],
-            'SELECT 1\n-- comment\nFROM table\nWHERE id = 1;\n\n',
-            'multiline_comment_not_at_end',
-        ),
-        # Statement with comment in middle and semicolon at end
-        (
-            ['SELECT 1 -- comment\nFROM table;'],
-            'SELECT 1 -- comment\nFROM table;\n\n',
-            'comment_middle_semicolon_end',
-        ),
-        # Block comment in middle of statement
-        (
-            ['SELECT /* inline comment */ 1'],
-            'SELECT /* inline comment */ 1;\n\n',
-            'block_comment_in_middle',
         ),
         # Multiple trailing spaces and tabs
         (
             ['SELECT 1  \t  ', '  \t SELECT 2'],
-            'SELECT 1;\n\nSELECT 2;\n\n',
+            'SELECT 1\n\nSELECT 2\n\n',
             'mixed_whitespace',
-        ),
-        # Statement with newline and ending comment
-        (
-            ['SELECT 1\nFROM table -- get data'],
-            'SELECT 1\nFROM table -- get data\n\n',
-            'newline_with_ending_comment',
         ),
         # Multiple empty strings (should be filtered)
         (
             ['SELECT 1', '', '   ', '\t'],
-            'SELECT 1;\n\n',
+            'SELECT 1\n\n',
             'with_multiple_empty',
         ),
-        # Pure comment statement with double dash
+        # Pure comment statement (comments are preserved like any other statement)
         (
             ['-- This is just a comment', 'SELECT 1'],
-            '-- This is just a comment\n\nSELECT 1;\n\n',
-            'pure_comment_double_dash',
+            '-- This is just a comment\n\nSELECT 1\n\n',
+            'pure_comment_statement',
         ),
-        # Pure comment statement with hash
+        # Multi-line statement with comments (preserved as-is)
         (
-            ['# This is just a comment', 'SELECT 1'],
-            '# This is just a comment\n\nSELECT 1;\n\n',
-            'pure_comment_hash',
-        ),
-        # Complex multi-line with various comment positions
-        (
-            ['SELECT a -- comment 1\n, b -- comment 2\nFROM table -- comment 3'],
-            'SELECT a -- comment 1\n, b -- comment 2\nFROM table -- comment 3\n\n',
-            'complex_multiline_comments',
-        ),
-        # Statement ending with semicolon and trailing whitespace
-        (
-            ['SELECT 1;  \n  ', 'SELECT 2'],
-            'SELECT 1;\n\nSELECT 2;\n\n',
-            'semicolon_with_trailing_whitespace',
-        ),
-        # Comment in middle followed by more code without comment at end
-        (
-            ['SELECT 1 -- inline\n, 2\nFROM t'],
-            'SELECT 1 -- inline\n, 2\nFROM t;\n\n',
-            'inline_comment_no_end_comment',
+            ['SELECT a -- comment 1\n, b -- comment 2\nFROM table'],
+            'SELECT a -- comment 1\n, b -- comment 2\nFROM table\n\n',
+            'multiline_with_comments',
         ),
     ],
 )

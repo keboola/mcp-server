@@ -15,7 +15,6 @@ import sqlglot
 
 from keboola_mcp_server.tools.components.model import TransformationConfiguration
 
-
 LOG = logging.getLogger(__name__)
 
 SQL_SPLIT_REGEX = re.compile(
@@ -102,7 +101,7 @@ def join_sql_statements(statements: Iterable[str]) -> str:
     Join SQL statements into a single script string.
 
     :param statements: List of SQL statements to join
-    :return: Concatenated SQL script string with proper delimiters
+    :return: Concatenated SQL script string separated by double newlines
     """
     if not statements:
         return ''
@@ -114,15 +113,7 @@ def join_sql_statements(statements: Iterable[str]) -> str:
         if not trimmed_stmt:
             continue
 
-        ends_with_semicolon = trimmed_stmt.endswith(';')
-
-        # Check if ends with block comment or line comment at the end of the string
-        ends_with_comment = trimmed_stmt.endswith('*/') or bool(re.search(r'(--|//|#)[^\n]*$', trimmed_stmt))
-
         result_parts.append(trimmed_stmt)
-        if not ends_with_semicolon and not ends_with_comment:
-            result_parts.append(';')
-
         result_parts.append('\n\n')
 
     return ''.join(result_parts)
@@ -137,7 +128,7 @@ def format_sql_statement(sql: str, dialect: str) -> str:
     :return: Formatted SQL string, or original if formatting fails
     """
     try:
-        formatted = sqlglot.transpile(sql, read=dialect, pretty=True)[0]
+        formatted = '\n'.join(sqlglot.transpile(sql, read=dialect, pretty=True))
         return formatted
     except Exception:
         return sql
