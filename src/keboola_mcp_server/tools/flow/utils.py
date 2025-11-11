@@ -335,7 +335,6 @@ def _validate_conditional_flow_structure(
                     succ_phases[phase.id].add(transition.goto)
                     pred_phases[transition.goto].add(phase.id)
 
-
     # Check that we have at least one ending phase
     if not ending_phases:
         raise ValueError(
