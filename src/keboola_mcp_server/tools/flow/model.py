@@ -309,7 +309,7 @@ class ConditionalFlowPhase(BaseModel):
         # Keboola Designer.
         data = super().model_dump(exclude_unset=exclude_unset, **kwargs)
         if exclude_unset:
-            if "next" in data and isinstance(data['next'], list) and len(data['next']) == 0:
+            if 'next' in data and isinstance(data['next'], list) and len(data['next']) == 0:
                 data.pop('next')
         return data
 
