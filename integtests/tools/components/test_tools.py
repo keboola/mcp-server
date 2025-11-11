@@ -656,7 +656,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         sql_code_blocks=test_sql_code_blocks,
         created_table_names=test_created_table_names,
     )
-    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
+    sql_dialect = (await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()).lower()
     expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     project_id = keboola_project.project_id
 
