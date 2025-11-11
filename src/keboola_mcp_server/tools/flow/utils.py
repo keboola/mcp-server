@@ -334,7 +334,7 @@ def _validate_conditional_flow_structure(
         if not phase.next:
             ending_phases.add(phase.id)
 
-    # Check that we have atleast one ending phase
+    # Check that we have at least one ending phase
     if not ending_phases:
         raise ValueError(
             'Flow has no ending phases. Each conditional flow must have at least one ending phase. Any ending phase '
