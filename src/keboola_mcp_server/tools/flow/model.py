@@ -5,7 +5,7 @@ Flow models for Keboola MCP server.
 from datetime import datetime
 from typing import Any, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
 from keboola_mcp_server.clients.storage import APIFlowResponse
@@ -302,6 +302,16 @@ class ConditionalFlowPhase(BaseModel):
     next: Optional[list[ConditionalFlowTransition]] = Field(
         default_factory=list, description='Array of transitions to other phases'
     )
+
+    def model_dump(self, *, exclude_unset: bool = False, **kwargs):
+        # When exclude_unset=True, also exclude "next" if next is an empty list.
+        # This allows us to modify the ending phases without specified transitions in the UI of conditional flow
+        # designer.
+        data = super().model_dump(exclude_unset=exclude_unset, **kwargs)
+        if exclude_unset:
+            if "next" in data and isinstance(data["next"], list) and len(data["next"]) == 0:
+                data.pop("next")
+        return data
 
 
 class ConditionalFlowConfiguration(BaseModel):
