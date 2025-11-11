@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections import Counter, defaultdict
 from importlib import resources
 from typing import Any, Mapping, Sequence
 
@@ -298,18 +299,15 @@ def _validate_conditional_flow_structure(
     """
 
     # Validate that there are no duplicate phase or task IDs
-    phase_ids_list = [phase.id for phase in phases]
-    phase_ids = set(phase_ids_list)
-    if len(phase_ids) != len(phase_ids_list):
-        raise ValueError(
-            f'Flow contains duplicate phase IDs: {phase_ids_list} from which only {len(phase_ids)} are unique.'
-        )
-    task_ids_list = [task.id for task in tasks]
-    task_ids = set(task_ids_list)
-    if len(task_ids) != len(task_ids_list):
-        raise ValueError(
-            f'Flow contains duplicate task IDs: {task_ids_list} from which only {len(task_ids)} are unique.'
-        )
+    counter_phases = Counter([phase.id for phase in phases])
+    phase_ids = set(counter_phases)
+    if counter_phases.most_common(1)[0][1] > 1:
+        duplicate_phase_ids = [pid for pid, count in counter_phases.most_common() if count > 1]
+        raise ValueError(f'Flow contains duplicate phase IDs: {duplicate_phase_ids}.')
+    counter_tasks = Counter([task.id for task in tasks])
+    if counter_tasks.most_common(1)[0][1] > 1:
+        duplicate_task_ids = [tid for tid, count in counter_tasks.most_common() if count > 1]
+        raise ValueError(f'Flow contains duplicate task IDs: {duplicate_task_ids}.')
 
     # Validate that all tasks reference existing phases
     for task in tasks:
@@ -318,9 +316,9 @@ def _validate_conditional_flow_structure(
 
     # Build graph of transitions: phase_id -> set of target phase IDs
     # Also track which phases have incoming transitions
-    succ_phases: dict[str, set[str]] = {pid: set() for pid in phase_ids}
-    pred_phases: dict[str, set[str]] = {pid: set() for pid in phase_ids}
-    ending_phases: set[str] = set()
+    succ_phases = defaultdict[str, set[str]](set)
+    pred_phases = defaultdict[str, set[str]](set)
+    ending_phases = set[str]()
 
     for phase in phases:
         for transition in phase.next:
