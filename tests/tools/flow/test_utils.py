@@ -5,6 +5,7 @@ import pytest
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.flow.utils import (
     _check_legacy_circular_dependencies,
+    _reachable_ids,
     ensure_legacy_phase_ids,
     ensure_legacy_task_ids,
     get_flow_configuration,
@@ -350,3 +351,120 @@ class TestConditionalFlowValidation:
 
         with pytest.raises(ValueError, match='not reachable'):
             validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+
+class TestReachableIds:
+    """Test _reachable_ids function for finding reachable phases in a graph."""
+
+    def test_empty_graph_single_node(self):
+        """Test with a single node and no edges."""
+        edges: dict[str, set[str]] = {}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A'}
+        assert visited == {'A'}
+
+    def test_single_node_no_outgoing_edges(self):
+        """Test with a node that has no outgoing edges."""
+        edges: dict[str, set[str]] = {'A': set()}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A'}
+        assert visited == {'A'}
+
+    def test_start_node_not_in_edges(self):
+        """Test when start node is not in edges dictionary."""
+        edges: dict[str, set[str]] = {'B': {'C'}, 'C': set()}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A'}
+        assert visited == {'A'}
+
+    def test_single_node_self_loop(self):
+        """Test with a node that has a self-loop."""
+        edges: dict[str, set[str]] = {'A': {'A'}}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A'}
+        assert visited == {'A'}
+
+    def test_linear_chain(self):
+        """Test a simple linear chain: A -> B -> C."""
+        edges: dict[str, set[str]] = {'A': {'B'}, 'B': {'C'}, 'C': set()}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B', 'C'}
+        assert visited == {'A', 'B', 'C'}
+
+    def test_branching_structure(self):
+        """Test branching: A -> B, A -> C."""
+        edges: dict[str, set[str]] = {'A': {'B', 'C'}, 'B': set(), 'C': set()}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B', 'C'}
+        assert visited == {'A', 'B', 'C'}
+
+    def test_cycle_handling(self):
+        """Test that cycles are handled correctly: A -> B -> C -> A."""
+        edges: dict[str, set[str]] = {'A': {'B'}, 'B': {'C'}, 'C': {'A'}}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B', 'C'}
+        assert visited == {'A', 'B', 'C'}
+
+    def test_disconnected_graph(self):
+        """Test with disconnected components - only reachable nodes are returned."""
+        edges: dict[str, set[str]] = {'A': {'B'}, 'B': set(), 'C': {'D'}, 'D': set()}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B'}
+        assert 'C' not in result
+        assert 'D' not in result
+
+    def test_already_visited_nodes(self):
+        """Test that already visited nodes are not revisited."""
+        edges: dict[str, set[str]] = {'A': {'B'}, 'B': {'A', 'C'}, 'C': set()}
+        visited: set[str] = {'B'}
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B'}
+        assert visited == {'A', 'B'}
+        assert 'C' not in result
+
+    def test_complex_graph_with_branches_and_merges(self):
+        """Test a complex graph with multiple branches and merges."""
+        edges: dict[str, set[str]] = {
+            'A': {'B', 'C'},
+            'B': {'D'},
+            'C': {'D', 'E'},
+            'D': {'F'},
+            'E': {'F'},
+            'F': set(),
+        }
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B', 'C', 'D', 'E', 'F'}
+        assert visited == {'A', 'B', 'C', 'D', 'E', 'F'}
+
+    def test_node_with_multiple_outgoing_edges(self):
+        """Test node with multiple outgoing edges to different targets."""
+        edges: dict[str, set[str]] = {'A': {'B', 'C', 'D'}, 'B': set(), 'C': set(), 'D': set()}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B', 'C', 'D'}
+        assert visited == {'A', 'B', 'C', 'D'}
+
+    def test_nested_cycles(self):
+        """Test graph with nested cycles."""
+        edges: dict[str, set[str]] = {'A': {'B'}, 'B': {'C'}, 'C': {'B', 'D'}, 'D': {'A'}}
+        visited: set[str] = set()
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B', 'C', 'D'}
+        assert visited == {'A', 'B', 'C', 'D'}
+
+    def test_partial_visited_set(self):
+        """Test with some nodes already in visited set."""
+        edges: dict[str, set[str]] = {'A': {'B', 'C'}, 'B': {'D'}, 'C': {'D'}, 'D': set()}
+        visited: set[str] = {'C', 'D'}
+        result = _reachable_ids('A', edges, visited)
+        assert result == {'A', 'B', 'C', 'D'}
+        assert visited == {'A', 'B', 'C', 'D'}
