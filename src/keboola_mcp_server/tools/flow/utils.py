@@ -321,18 +321,20 @@ def _validate_conditional_flow_structure(
     ending_phases = set[str]()
 
     for phase in phases:
-        for transition in phase.next:
-            if transition.goto is None:
-                ending_phases.add(phase.id)
-            else:
-                if transition.goto not in phase_ids:
-                    raise ValueError(
-                        f'Phase {phase.id} has a transition that references non-existent phase {transition.goto}'
-                    )
-                succ_phases[phase.id].add(transition.goto)
-                pred_phases[transition.goto].add(phase.id)
         if not phase.next:
             ending_phases.add(phase.id)
+        else:
+            for transition in phase.next:
+                if transition.goto is None:
+                    ending_phases.add(phase.id)
+                else:
+                    if transition.goto not in phase_ids:
+                        raise ValueError(
+                            f'Phase {phase.id} has a transition that references non-existent phase {transition.goto}'
+                        )
+                    succ_phases[phase.id].add(transition.goto)
+                    pred_phases[transition.goto].add(phase.id)
+
 
     # Check that we have at least one ending phase
     if not ending_phases:
