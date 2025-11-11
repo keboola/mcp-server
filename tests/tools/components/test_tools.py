@@ -466,7 +466,7 @@ async def test_create_sql_transformation_fail(
             {'output': {'tables': []}},
             {
                 'parameters': {
-                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1']}]}]
+                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1;']}]}]
                 },
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
@@ -502,7 +502,7 @@ async def test_update_sql_transformation(
         'description': 'Existing description',
         'configuration': {
             'parameters': {
-                'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1']}]}]
+                'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1;']}]}]
             },
             'storage': {'input': {'tables': ['existing_table']}},
             'other_field': 'should_be_preserved',

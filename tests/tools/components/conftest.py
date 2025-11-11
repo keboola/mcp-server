@@ -150,7 +150,7 @@ def mock_tf_configuration() -> dict[str, Any]:
                 'blocks': [
                     {
                         'name': 'Blocks',
-                        'codes': [{'name': 'Code 1', 'script': ['SELECT * FROM customers;', 'SELECT * FROM orders']}],
+                        'codes': [{'name': 'Code 1', 'script': ['SELECT * FROM customers;', 'SELECT * FROM orders;']}],
                     },
                 ],
             },
