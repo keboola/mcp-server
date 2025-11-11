@@ -18,6 +18,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer
+from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -108,6 +109,9 @@ class BucketDetail(BaseModel):
         serialization_alias='tablesCount',
     )
     links: Optional[list[Link]] = Field(default=None, description='The links relevant to the bucket.')
+    source_project: str | None = Field(
+        default=None, description='The source Keboola project that the bucket is linked from.'
+    )
 
     # these are internal fields not meant to be exposed to LLMs
     branch_id: Optional[str] = Field(
@@ -171,6 +175,13 @@ class BucketDetail(BaseModel):
         else:
             values['branch_id'] = None
             values['prod_id'] = values['id']
+        return values
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_source_project(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if source_project_raw := cast(dict[str, Any], get_nested(values, 'sourceBucket.project')):
+            values['source_project'] = f'{source_project_raw["name"]} (ID: {source_project_raw["id"]})'
         return values
 
 
@@ -238,6 +249,9 @@ class TableDetail(BaseModel):
         serialization_alias='fullyQualifiedName',
     )
     links: list[Link] | None = Field(default=None, description='The links relevant to the table.')
+    source_project: str | None = Field(
+        default=None, description='The source Keboola project that the table is linked from.'
+    )
 
     # these are internal fields not meant to be exposed to LLMs
     branch_id: Optional[str] = Field(
@@ -261,6 +275,13 @@ class TableDetail(BaseModel):
         else:
             values['branch_id'] = None
             values['prod_id'] = values['id']
+        return values
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_source_project(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if source_project_raw := cast(dict[str, Any], get_nested(values, 'sourceTable.project')):
+            values['source_project'] = f'{source_project_raw["name"]} (ID: {source_project_raw["id"]})'
         return values
 
 
