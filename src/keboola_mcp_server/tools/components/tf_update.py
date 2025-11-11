@@ -18,17 +18,23 @@ from keboola_mcp_server.tools.components.model import (
     TfSetCode,
     TfStrReplace,
 )
+from keboola_mcp_server.tools.components.sql_utils import (
+    format_simplified_tf_block,
+    format_simplified_tf_code,
+    format_sql_statement,
+)
 
 # Operations that change the structure of the transformation
 STRUCTURAL_OPS = frozenset[str]({'add_block', 'add_code', 'remove_block', 'remove_code'})
 
 
-def add_block(params: dict, op: TfAddBlock) -> tuple[dict, str]:
+def add_block(params: dict, op: TfAddBlock, sql_dialect: str) -> tuple[dict, str]:
     """
     Add a new block to the transformation.
 
     :param params: The transformation parameters dictionary with 'blocks' key
     :param op: The add_block operation
+    :param sql_dialect: The SQL dialect of the transformation
     :return: Tuple of (modified parameters dictionary, change summary message)
     :raises ValueError: If params doesn't contain 'blocks' key or block name is empty/whitespace
     """
@@ -38,17 +44,22 @@ def add_block(params: dict, op: TfAddBlock) -> tuple[dict, str]:
     if not op.block.name.strip():
         raise ValueError('Invalid operation: block name cannot be empty')
 
-    new_block_dict = op.block.model_dump()
+    new_block, is_reformatted = format_simplified_tf_block(block=op.block, dialect=sql_dialect)
+    new_block_dict = new_block.model_dump()
 
     if op.position == 'start':
         params['blocks'].insert(0, new_block_dict)
     else:  # 'end'
         params['blocks'].append(new_block_dict)
 
-    return params, ''
+    message = f'Added block with name "{op.block.name}"'
+    if is_reformatted:
+        message += ' (code was automatically reformatted)'
+
+    return params, message
 
 
-def remove_block(params: dict, op: TfRemoveBlock) -> tuple[dict, str]:
+def remove_block(params: dict, op: TfRemoveBlock, sql_dialect: str) -> tuple[dict, str]:
     """
     Remove an existing block from the transformation.
 
@@ -66,7 +77,7 @@ def remove_block(params: dict, op: TfRemoveBlock) -> tuple[dict, str]:
     return expr.filter(lambda x: True, params), ''
 
 
-def rename_block(params: dict, op: TfRenameBlock) -> tuple[dict, str]:
+def rename_block(params: dict, op: TfRenameBlock, sql_dialect: str) -> tuple[dict, str]:
     """
     Rename an existing block in the transformation.
 
@@ -87,12 +98,13 @@ def rename_block(params: dict, op: TfRenameBlock) -> tuple[dict, str]:
     return expr.update(params, op.block_name), ''
 
 
-def add_code(params: dict, op: TfAddCode) -> tuple[dict, str]:
+def add_code(params: dict, op: TfAddCode, sql_dialect: str) -> tuple[dict, str]:
     """
     Add a new code to an existing block in the transformation.
 
     :param params: The transformation parameters dictionary with 'blocks' key
     :param op: The add_code operation
+    :param sql_dialect: The SQL dialect of the transformation
     :return: Tuple of (modified parameters dictionary, change summary message)
     :raises ValueError: If block_id doesn't exist or code name is empty/whitespace
     """
@@ -106,17 +118,23 @@ def add_code(params: dict, op: TfAddCode) -> tuple[dict, str]:
         raise ValueError(f"Block with id '{op.block_id}' does not exist")
 
     codes = matches[0].value
-    code_dict = op.code.model_dump()
+
+    new_code, is_reformatted = format_simplified_tf_code(code=op.code, dialect=sql_dialect)
+    new_code_dict = new_code.model_dump()
 
     if op.position == 'start':
-        codes.insert(0, code_dict)
+        codes.insert(0, new_code_dict)
     else:  # 'end'
-        codes.append(code_dict)
+        codes.append(new_code_dict)
 
-    return params, ''
+    message = f'Added code with name "{op.code.name}"'
+    if is_reformatted:
+        message += ' (code was automatically reformatted)'
+
+    return params, message
 
 
-def remove_code(params: dict, op: TfRemoveCode) -> tuple[dict, str]:
+def remove_code(params: dict, op: TfRemoveCode, sql_dialect: str) -> tuple[dict, str]:
     """
     Remove an existing code from an existing block in the transformation.
 
@@ -135,7 +153,7 @@ def remove_code(params: dict, op: TfRemoveCode) -> tuple[dict, str]:
     return expr.filter(lambda x: True, params), ''
 
 
-def rename_code(params: dict, op: TfRenameCode) -> tuple[dict, str]:
+def rename_code(params: dict, op: TfRenameCode, sql_dialect: str) -> tuple[dict, str]:
     """
     Rename an existing code in an existing block in the transformation.
 
@@ -157,7 +175,7 @@ def rename_code(params: dict, op: TfRenameCode) -> tuple[dict, str]:
     return expr.update(params, op.code_name), ''
 
 
-def set_code(params: dict, op: TfSetCode) -> tuple[dict, str]:
+def set_code(params: dict, op: TfSetCode, sql_dialect: str) -> tuple[dict, str]:
     """
     Set the SQL script of an existing code in an existing block in the transformation.
 
@@ -168,6 +186,9 @@ def set_code(params: dict, op: TfSetCode) -> tuple[dict, str]:
     if not op.script.strip():
         raise ValueError('Invalid operation: script cannot be empty')
 
+    formatted_script = format_sql_statement(sql=op.script, dialect=sql_dialect)
+    is_reformatted = formatted_script != op.script
+
     # Target the specific code's script field directly
     expr = parse_jsonpath(f"$.blocks[?(@.id = '{op.block_id}')].codes[?(@.id = '{op.code_id}')].script")
     matches = expr.find(params)
@@ -176,10 +197,13 @@ def set_code(params: dict, op: TfSetCode) -> tuple[dict, str]:
         raise ValueError(f"Code with id '{op.code_id}' in block '{op.block_id}' does not exist")
 
     # Update the script field
-    return expr.update(params, op.script), ''
+    message = f"Changed code with id '{op.code_id}' in block '{op.block_id}'"
+    if is_reformatted:
+        message += ' (code was automatically reformatted)'
+    return expr.update(params, formatted_script), message
 
 
-def add_script(params: dict, op: TfAddScript) -> tuple[dict, str]:
+def add_script(params: dict, op: TfAddScript, sql_dialect: str) -> tuple[dict, str]:
     """
     Append or prepend SQL script text to an existing code in an existing block in the transformation.
 
@@ -206,11 +230,17 @@ def add_script(params: dict, op: TfAddScript) -> tuple[dict, str]:
     else:  # 'end'
         new_script = f'{current_script} {op.script}' if current_script else op.script
 
+    formatted_script = format_sql_statement(sql=new_script, dialect=sql_dialect)
+    is_reformatted = formatted_script != new_script
+
     # Update the script field
-    return expr.update(params, new_script), ''
+    message = f"Added script to code with id '{op.code_id}' in block '{op.block_id}'"
+    if is_reformatted:
+        message += ' (code was automatically reformatted)'
+    return expr.update(params, formatted_script), message
 
 
-def str_replace(params: dict, op: TfStrReplace) -> tuple[dict, str]:
+def str_replace(params: dict, op: TfStrReplace, sql_dialect: str) -> tuple[dict, str]:
     """
     Replace a substring in SQL statements in the transformation.
 

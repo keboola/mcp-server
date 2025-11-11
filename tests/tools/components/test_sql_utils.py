@@ -7,7 +7,11 @@ the Python implementation matches the production-proven JavaScript logic.
 
 import pytest
 
-from keboola_mcp_server.tools.components.sql_utils import join_sql_statements, split_sql_statements
+from keboola_mcp_server.tools.components.sql_utils import (
+    format_sql_statement,
+    join_sql_statements,
+    split_sql_statements,
+)
 
 
 @pytest.mark.parametrize(
@@ -643,3 +647,141 @@ async def test_validate_round_trip(original, test_id):
 
     # Verify round-trip consistency
     assert split_original == split_again
+
+
+@pytest.mark.parametrize(
+    ('input_sql', 'dialect', 'expected', 'test_id'),
+    [
+        # Pure comment - should not get a semicolon
+        (
+            '-- This is a comment',
+            'snowflake',
+            '-- This is a comment',
+            'pure_line_comment',
+        ),
+        # Pure block comment - should not get a semicolon
+        (
+            '/* This is a comment */',
+            'snowflake',
+            '/* This is a comment */',
+            'pure_block_comment',
+        ),
+        # Single statement without semicolon - should add semicolon
+        (
+            'SELECT 1',
+            'snowflake',
+            'SELECT\n  1;',
+            'single_statement_no_semicolon',
+        ),
+        # Single statement with semicolon - should preserve semicolon
+        (
+            'SELECT 1;',
+            'snowflake',
+            'SELECT\n  1;',
+            'single_statement_with_semicolon',
+        ),
+        # Multiple statements without semicolons - should add semicolons
+        (
+            'SELECT 1; SELECT 2',
+            'snowflake',
+            'SELECT\n  1;\n\nSELECT\n  2;',
+            'multiple_statements_no_semicolons',
+        ),
+        # Multiple statements with semicolons - should preserve semicolons
+        (
+            'SELECT 1; SELECT 2;',
+            'snowflake',
+            'SELECT\n  1;\n\nSELECT\n  2;',
+            'multiple_statements_with_semicolons',
+        ),
+        # Statements with inline comment - comment preserved, semicolon added
+        (
+            'SELECT 1;\n-- comment\nSELECT 2',
+            'snowflake',
+            'SELECT\n  1;\n\n/* comment */\nSELECT\n  2;',
+            'statements_with_inline_comment',
+        ),
+        # Complex statement - properly formatted with semicolon
+        (
+            'SELECT a, b FROM table WHERE x > 10',
+            'snowflake',
+            'SELECT\n  a,\n  b\nFROM table\nWHERE\n  x > 10;',
+            'complex_statement',
+        ),
+        # BigQuery dialect tests
+        # Pure comment - should not get a semicolon
+        (
+            '-- This is a comment',
+            'bigquery',
+            '-- This is a comment',
+            'bigquery_pure_line_comment',
+        ),
+        # Pure block comment - should not get a semicolon
+        (
+            '/* This is a comment */',
+            'bigquery',
+            '/* This is a comment */',
+            'bigquery_pure_block_comment',
+        ),
+        # Single statement without semicolon - should add semicolon
+        (
+            'SELECT 1',
+            'bigquery',
+            'SELECT\n  1;',
+            'bigquery_single_statement_no_semicolon',
+        ),
+        # Single statement with semicolon - should preserve semicolon
+        (
+            'SELECT 1;',
+            'bigquery',
+            'SELECT\n  1;',
+            'bigquery_single_statement_with_semicolon',
+        ),
+        # Multiple statements - should add semicolons
+        (
+            'SELECT 1; SELECT 2',
+            'bigquery',
+            'SELECT\n  1;\n\nSELECT\n  2;',
+            'bigquery_multiple_statements',
+        ),
+        # Statements with inline comment - comment preserved, semicolon added
+        (
+            'SELECT 1;\n-- comment\nSELECT 2',
+            'bigquery',
+            'SELECT\n  1;\n\n/* comment */\nSELECT\n  2;',
+            'bigquery_statements_with_inline_comment',
+        ),
+        # Complex statement - properly formatted with semicolon
+        (
+            'SELECT a, b FROM table WHERE x > 10',
+            'bigquery',
+            'SELECT\n  a,\n  b\nFROM table\nWHERE\n  x > 10;',
+            'bigquery_complex_statement',
+        ),
+        # BigQuery-specific: backtick-quoted identifiers
+        (
+            'SELECT * FROM `project.dataset.table` WHERE id > 10',
+            'bigquery',
+            'SELECT\n  *\nFROM `project.dataset.table`\nWHERE\n  id > 10;',
+            'bigquery_backtick_identifiers',
+        ),
+        # BigQuery-specific: STRUCT syntax
+        (
+            'SELECT STRUCT(1 AS a, 2 AS b) AS my_struct',
+            'bigquery',
+            'SELECT\n  STRUCT(1 AS a, 2 AS b) AS my_struct;',
+            'bigquery_struct_syntax',
+        ),
+        # BigQuery-specific: ARRAY syntax (preserved as-is)
+        (
+            'SELECT [1, 2, 3] AS my_array',
+            'bigquery',
+            'SELECT\n  [1, 2, 3] AS my_array;',
+            'bigquery_array_syntax',
+        ),
+    ],
+)
+def test_format_sql_statement(input_sql, dialect, expected, test_id):
+    """Test SQL formatting with semicolon and comment handling."""
+    result = format_sql_statement(input_sql, dialect)
+    assert result == expected

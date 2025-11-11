@@ -13,7 +13,7 @@ from typing import Iterable
 
 import sqlglot
 
-from keboola_mcp_server.tools.components.model import TransformationConfiguration
+from keboola_mcp_server.tools.components.model import SimplifiedTfBlocks, TransformationConfiguration
 
 LOG = logging.getLogger(__name__)
 
@@ -123,13 +123,43 @@ def format_sql_statement(sql: str, dialect: str) -> str:
     """
     Format SQL statement using sqlglot for better readability.
 
-    :param sql: Raw SQL statement string
+    :param sql: Raw SQL statement string (may contain multiple statements)
     :param dialect: SQL dialect ('snowflake' or 'bigquery')
     :return: Formatted SQL string, or original if formatting fails
     """
     try:
-        formatted = '\n'.join(sqlglot.transpile(sql, read=dialect, pretty=True))
-        return formatted
+        # transpile returns a list - one item per statement/comment
+        formatted_items = sqlglot.transpile(sql, read=dialect, pretty=True)
+
+        if not formatted_items:
+            return sql
+
+        result = []
+        for item in formatted_items:
+            item = item.rstrip()
+
+            # Skip empty strings
+            if not item:
+                continue
+
+            # Check if it's ONLY a comment (no SQL after it)
+            # Remove block comments and check if anything substantial remains
+            without_comments = re.sub(r'/\*.*?\*/', '', item, flags=re.DOTALL).strip()
+            without_line_comments = re.sub(r'(--.*)$', '', without_comments, flags=re.MULTILINE).strip()
+
+            is_only_comment = not without_line_comments
+
+            # Add semicolon only to actual SQL statements (not pure comments)
+            if not is_only_comment and not item.endswith(';'):
+                item += ';'
+
+            result.append(item)
+
+        if not result:
+            return sql
+
+        # Join with double newlines (consistent with join_sql_statements)
+        return '\n\n'.join(result)
     except Exception:
         return sql
 
@@ -190,3 +220,37 @@ def format_transformation_parameters(
         formatted_blocks.append(formatted_block)
 
     return TransformationConfiguration.Parameters(blocks=formatted_blocks)
+
+
+def format_simplified_tf_code(
+    code: SimplifiedTfBlocks.Block.Code, dialect: str
+) -> tuple[SimplifiedTfBlocks.Block.Code, bool]:
+    """
+    Format the simplified transformation code using sqlglot for better readability.
+
+    :param code: The simplified transformation code
+    :param dialect: SQL dialect ('snowflake' or 'bigquery')
+    :return: Tuple of (formatted simplified transformation code,
+      bool representing if the script was changed by formatting)
+    """
+    formatted_script = format_sql_statement(sql=code.script, dialect=dialect)
+
+    return SimplifiedTfBlocks.Block.Code(name=code.name, script=formatted_script), formatted_script != code.script
+
+
+def format_simplified_tf_block(block: SimplifiedTfBlocks.Block, dialect: str) -> tuple[SimplifiedTfBlocks.Block, bool]:
+    """
+    Format the simplified transformation block using sqlglot for better readability.
+
+    :param block: The simplified transformation block
+    :param dialect: SQL dialect ('snowflake' or 'bigquery')
+    :return: Tuple of (formatted simplified transformation block,
+      bool representing if the block was changed by formatting)
+    """
+    formatted_codes = []
+    is_changed = False
+    for code in block.codes:
+        formatted_code, is_changed_code = format_simplified_tf_code(code=code, dialect=dialect)
+        is_changed = is_changed or is_changed_code
+        formatted_codes.append(formatted_code)
+    return SimplifiedTfBlocks.Block(name=block.name, codes=formatted_codes), is_changed

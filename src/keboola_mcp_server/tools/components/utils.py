@@ -515,7 +515,9 @@ def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) 
     return params
 
 
-def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) -> tuple[dict[str, Any], str]:
+def _apply_tf_param_update(
+    parameters: dict[str, Any], update: TfParamUpdate, sql_dialect: str
+) -> tuple[dict[str, Any], str]:
     """
     Applies a single parameter update to the given transformation parameters.
 
@@ -524,11 +526,12 @@ def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) ->
 
     :param parameters: The transformation parameters
     :param update: Parameter update operation to apply
+    :param sql_dialect: The SQL dialect of the transformation
     :return: Tuple of (updated transformation parameters, change summary message)
     """
     operation = update.op
     tf_update_func = getattr(tf_update, operation)
-    return tf_update_func(parameters, update)
+    return tf_update_func(params=parameters, op=update, sql_dialect=sql_dialect)
 
 
 def add_ids(parameters: dict[str, Any]) -> dict[str, Any]:
@@ -601,7 +604,7 @@ def structure_summary(parameters: dict[str, Any]) -> str:
 
 
 def update_transformation_parameters(
-    parameters: SimplifiedTfBlocks, updates: Sequence[TfParamUpdate]
+    parameters: SimplifiedTfBlocks, updates: Sequence[TfParamUpdate], sql_dialect: str
 ) -> tuple[SimplifiedTfBlocks, str]:
     """
     Applies a list of parameter updates to the given transformation parameters.
@@ -609,13 +612,16 @@ def update_transformation_parameters(
 
     :param parameters: The transformation parameters
     :param updates: Sequence of parameter update operations
+    :param sql_dialect: The SQL dialect of the transformation
     :return: The updated transformation parameters and a summary of the changes.
     """
     is_structure_change = any(update.op in tf_update.STRUCTURAL_OPS for update in updates)
     parameters_dict = add_ids(parameters.model_dump())
     messages = []
     for update in updates:
-        parameters_dict, message = _apply_tf_param_update(parameters_dict, update)
+        parameters_dict, message = _apply_tf_param_update(
+            parameters=parameters_dict, update=update, sql_dialect=sql_dialect
+        )
 
         if message:
             messages.append(message)

@@ -310,7 +310,7 @@ EXAMPLES:
       "type": "string"
     },
     "sql_code_blocks": {
-      "description": "The SQL query code blocks, each containing a descriptive name and an executable SQL script written in the current SQL dialect.",
+      "description": "The SQL query code blocks, each containing a descriptive name and an executable SQL script written in the current SQL dialect. The query will be automatically reformatted to be more readable.",
       "items": {
         "$ref": "#/$defs/Code"
       },
