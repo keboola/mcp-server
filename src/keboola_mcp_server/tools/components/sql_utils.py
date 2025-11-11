@@ -160,7 +160,8 @@ def format_sql_statement(sql: str, dialect: str) -> str:
 
         # Join with double newlines (consistent with join_sql_statements)
         return '\n\n'.join(result)
-    except Exception:
+    except Exception as e:
+        LOG.warning(f'Failed to format SQL statement in {dialect} dialect: {sql}. Error: {e}')
         return sql
 
 

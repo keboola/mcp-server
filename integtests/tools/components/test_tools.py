@@ -821,8 +821,8 @@ async def initial_sqltrfm(
                     op='str_replace',
                     block_id='b0',
                     code_id='b0.c0',
-                    search_for='SELECT 1 as initial_column',
-                    replace_with='SELECT * FROM updated_table',
+                    search_for='SELECT\n  1',
+                    replace_with='SELECT\n  12',
                 ),
                 TfAddScript(
                     op='add_script',
@@ -944,7 +944,9 @@ async def test_update_sql_transformation(
         orig_raw_parameters = TransformationConfiguration.Parameters.model_validate(orig_parameters_dict)
         orig_simplified_parameters = await orig_raw_parameters.to_simplified_parameters()
 
-        updated_params, _ = update_transformation_parameters(orig_simplified_parameters, param_updates)
+        updated_params, _ = update_transformation_parameters(
+            orig_simplified_parameters, param_updates, sql_dialect='snowflake'
+        )
         updated_raw_parameters = await updated_params.to_raw_parameters()
 
         expected_parameters = updated_raw_parameters.model_dump(exclude_none=True)

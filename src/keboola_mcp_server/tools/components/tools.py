@@ -421,9 +421,9 @@ async def create_sql_transformation(
 
     # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
-    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    sql_dialect = (await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()).lower()
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
+    LOG.info(f'Creating transformation. SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
@@ -746,9 +746,9 @@ async def update_sql_transformation(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    sql_dialect = (await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()).lower()
+
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
     config_details = await client.storage_client.configuration_detail(
         component_id=sql_transformation_id, configuration_id=configuration_id
@@ -787,7 +787,10 @@ async def update_sql_transformation(
         )
         updated_configuration['storage'] = storage_cfg
 
-    LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+    LOG.info(
+        f'Updating transformation: {sql_transformation_id} with config ID: {configuration_id}. '
+        f'SQL dialect: {sql_dialect}'
+    )
 
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
