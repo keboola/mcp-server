@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Optional, Union, cast
 
 import httpx
@@ -6,6 +7,8 @@ JsonPrimitive = Union[int, float, str, bool, None]
 JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
 JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
+
+LOG = logging.getLogger(__name__)
 
 
 class RawKeboolaClient:
@@ -50,8 +53,16 @@ class RawKeboolaClient:
 
             try:
                 error_data = response.json()
-                if error_msg := error_data.get('error'):
+                LOG.error(f'API error data: {error_data}')
+
+                if error_msg := error_data.get('exception'):
+                    # Query Service error message
                     message_parts.append(f'API error: {error_msg}')
+
+                elif error_msg := error_data.get('error'):
+                    # SAPI error message
+                    message_parts.append(f'API error: {error_msg}')
+
                 if exception_id := error_data.get('exceptionId'):
                     message_parts.append(f'Exception ID: {exception_id}')
                     message_parts.append('When contacting Keboola support please provide the exception ID.')
