@@ -416,13 +416,13 @@ async def initial_cf(
                         'id': 'phase1',
                         'name': 'Phase1',
                         'description': 'First phase updated',
-                        'next': [{'id': 'phase1_end', 'name': 'End Flow', 'goto': None}],
+                        'next': [{'id': 'phase1_phase2', 'name': 'End Flow', 'goto': 'phase2'}],
                     },
                     {
                         'id': 'phase2',
                         'name': 'Phase2',
                         'description': 'Second phase added',
-                        'next': [{'id': 'phase1_end', 'name': 'End Flow', 'goto': None}],
+                        'next': [{'id': 'phase2_end', 'name': 'End Flow', 'goto': None}],
                     },
                 ],
                 'tasks': [
@@ -459,13 +459,13 @@ async def initial_cf(
                         'id': 'phase1',
                         'name': 'Phase1',
                         'description': 'First phase updated',
-                        'next': [{'id': 'phase1_end', 'name': 'End Flow', 'goto': None}],
+                        'next': [{'id': 'phase1_phase2', 'name': 'End Flow', 'goto': 'phase2'}],
                     },
                     {
                         'id': 'phase2',
                         'name': 'Phase2',
                         'description': 'Second phase added',
-                        'next': [{'id': 'phase1_end', 'name': 'End Flow', 'goto': None}],
+                        'next': [{'id': 'phase2_end', 'name': 'End Flow', 'goto': None}],
                     },
                 ]
             },
@@ -513,9 +513,11 @@ async def test_update_flow(
     keboola_client: KeboolaClient,
 ) -> None:
     """Tests that 'update_flow' tool works as expected."""
-    initial_flow = initial_lf if flow_type == ORCHESTRATOR_COMPONENT_ID else initial_cf
+    flow_id = initial_lf.configuration_id if flow_type == ORCHESTRATOR_COMPONENT_ID else initial_cf.configuration_id
+    raw_initial_flow = await mcp_client.call_tool(name='get_flow', arguments={'configuration_id': flow_id})
+    initial_flow = Flow.model_validate(raw_initial_flow.structured_content)
+
     project_id = keboola_project.project_id
-    flow_id = initial_flow.configuration_id
     tool_result = await mcp_client.call_tool(
         name='update_flow',
         arguments={
@@ -560,24 +562,48 @@ async def test_update_flow(
     )
 
     # Verify the configuration was updated
-    flow_detail = await keboola_client.storage_client.configuration_detail(
-        component_id=flow_type, configuration_id=updated_flow.configuration_id
-    )
+    raw_updated_flow = await mcp_client.call_tool(name='get_flow', arguments={'configuration_id': flow_id})
+    flow_detail = Flow.model_validate(raw_updated_flow.structured_content)
 
-    assert flow_detail['name'] == expected_name
-    assert flow_detail['description'] == expected_description
+    assert flow_detail.name == expected_name
+    assert flow_detail.description == expected_description
 
-    flow_data = flow_detail.get('configuration')
-    assert isinstance(flow_data, dict), f'Expecting dict, got: {type(flow_data)}'
+    flow_data = flow_detail.configuration.model_dump(exclude_unset=True, by_alias=True)
 
-    if (expected_phases := updates.get('phases')) is not None:
-        assert flow_data['phases'] == expected_phases
+    # Check that ids, names, and transitions match for phases using assert all
+    if updates.get('phases'):
+        expected_phases = updates['phases']
+    else:
+        expected_phases = [
+            phase.model_dump(exclude_unset=True, by_alias=True) for phase in initial_flow.configuration.phases
+        ]
+    assert len(flow_data['phases']) == len(
+        expected_phases
+    ), f"Phases count mismatch: {len(flow_data['phases'])} vs {len(expected_phases)}"
+    assert all(
+        actual['id'] == expected['id']
+        and actual['name'] == expected['name']
+        and len(actual.get('next', [])) == len(expected.get('next', []))
+        and all(
+            act_tr['id'] == exp_tr['id'] and act_tr['goto'] == exp_tr['goto']
+            for act_tr, exp_tr in zip(actual.get('next', []), expected.get('next', []))
+        )
+        for actual, expected in zip(flow_data['phases'], expected_phases)
+    ), f"Phase id, name, or transitions do not match!\nExpected: {expected_phases}\nGot: {flow_data['phases']}"
 
-    if (expected_tasks := updates.get('tasks')) is not None:
-        assert flow_data['tasks'] == expected_tasks
+    # Check that all task ids and names match between actual and expected using all()
+    if updates.get('tasks'):
+        expected_tasks = updates['tasks']
+    else:
+        expected_tasks = [
+            task.model_dump(exclude_unset=True, by_alias=True) for task in initial_flow.configuration.tasks
+        ]
+    assert all(
+        actual_task['id'] == expected_task['id'] and actual_task['name'] == expected_task['name']
+        for actual_task, expected_task in zip(flow_data['tasks'], expected_tasks)
+    ), f"Task id or name mismatch!\nExpected: {expected_tasks}\nGot: {flow_data['tasks']}"
 
-    current_version = flow_detail['version']
-    assert isinstance(current_version, int), f'Expecting int, got: {type(current_version)}'
+    current_version = flow_detail.version
     assert current_version == 2
 
     # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
@@ -727,6 +753,100 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
     ]
 
     with pytest.raises(ValidationError):
+        await create_conditional_flow(
+            ctx=mcp_context,
+            name='Invalid Conditional Flow',
+            description='Should fail',
+            phases=phases,
+            tasks=tasks,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('new_config', 'expected_error_message'),
+    [
+        (
+            {
+                'phases': [
+                    {
+                        'id': 'phase-1',
+                        'name': 'Phase1',
+                        'next': [{'id': 'transition-1', 'goto': None}],
+                    },
+                    {
+                        'id': 'phase-2',
+                        'name': 'Phase2',
+                        'next': [{'id': 'transition-2', 'goto': None}],
+                    },
+                ],
+                'tasks': [
+                    {
+                        'id': 'task-1',
+                        'name': 'Task1',
+                        'phase': 'phase-1',
+                        'task': {
+                            'type': 'job',
+                            'componentId': 'ex-generic-v2',
+                            'configId': 'test_config_002',
+                            'mode': 'run',
+                        },
+                    }
+                ],
+            },
+            'Flow has multiple entry phases',
+        ),
+        (
+            {
+                'phases': [
+                    {
+                        'id': 'phase-1',
+                        'name': 'Phase1',
+                        'next': [{'id': 'transition-1', 'goto': 'phase-2'}],
+                    },
+                    {
+                        'id': 'phase-2',
+                        'name': 'Phase2',
+                        'next': [{'id': 'transition-2', 'goto': 'phase-1'}],
+                    },
+                ],
+                'tasks': [
+                    {
+                        'id': 'task-1',
+                        'name': 'Task1',
+                        'phase': 'phase-1',
+                        'task': {
+                            'type': 'job',
+                            'componentId': 'ex-generic-v2',
+                            'configId': 'test_config_002',
+                            'mode': 'run',
+                        },
+                    },
+                    {
+                        'id': 'task-2',
+                        'name': 'Task2',
+                        'phase': 'phase-2',
+                        'task': {
+                            'type': 'job',
+                            'componentId': 'ex-generic-v2',
+                            'configId': 'test_config_002',
+                            'mode': 'run',
+                        },
+                    },
+                ],
+            },
+            'Flow has no ending phases',
+        ),
+    ],
+)
+async def test_create_conditional_flow_sematnically_invalid_structure(
+    mcp_context: Context, new_config: dict[str, list[dict]], expected_error_message: str
+) -> None:
+    # Test invalid conditional flow structure - missing required fields and invalid types
+    phases = new_config['phases']
+    tasks = new_config['tasks']
+
+    with pytest.raises(ValueError, match=expected_error_message):
         await create_conditional_flow(
             ctx=mcp_context,
             name='Invalid Conditional Flow',

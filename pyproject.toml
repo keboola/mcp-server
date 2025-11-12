@@ -11,8 +11,8 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    "fastmcp == 2.12.4",
-    "mcp == 1.17.0",
+    "fastmcp == 2.13.0.2",
+    "mcp == 1.21.0",
     "httpx ~= 0.28",
     "jsonpath-ng ~= 1.7",
     "jsonschema ~= 4.25",

@@ -303,6 +303,16 @@ class ConditionalFlowPhase(BaseModel):
         default_factory=list, description='Array of transitions to other phases'
     )
 
+    def model_dump(self, *, exclude_unset: bool = False, **kwargs):
+        # When exclude_unset=True, also exclude "next" if next is an empty list.
+        # This allows us to modify the ending phases without specified transitions in the UI of conditional flows in
+        # Keboola Designer.
+        data = super().model_dump(exclude_unset=exclude_unset, **kwargs)
+        if exclude_unset:
+            if 'next' in data and isinstance(data['next'], list) and len(data['next']) == 0:
+                data.pop('next')
+        return data
+
 
 class ConditionalFlowConfiguration(BaseModel):
     """Represents a complete legacy flow configuration."""

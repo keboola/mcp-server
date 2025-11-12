@@ -24,22 +24,17 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
-    ConditionalFlowPhase,
-    ConditionalFlowTask,
     Flow,
-    FlowPhase,
-    FlowTask,
     FlowToolOutput,
     ListFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.utils import (
-    ensure_legacy_phase_ids,
-    ensure_legacy_task_ids,
     get_all_flows,
+    get_flow_configuration,
     get_flows_by_ids,
     get_schema_as_markdown,
     resolve_flow_by_id,
-    validate_legacy_flow_structure,
+    validate_flow_structure,
 )
 from keboola_mcp_server.tools.project import get_project_info
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
@@ -174,13 +169,11 @@ async def create_flow(
         - fill `phases` parameter by grouping tasks into phases
     """
     flow_type = ORCHESTRATOR_COMPONENT_ID
-    processed_phases = ensure_legacy_phase_ids(phases)
-    processed_tasks = ensure_legacy_task_ids(tasks)
-    validate_legacy_flow_structure(processed_phases, processed_tasks)
-    flow_configuration = {
-        'phases': [phase.model_dump(by_alias=True) for phase in processed_phases],
-        'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
-    }
+    flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
+
+    # Validate flow structure before to catch semantic errors in the structure
+    validate_flow_structure(cast(JsonDict, flow_configuration), flow_type=flow_type)
+    # Validate flow configuration against schema to catch syntax errors in the configuration
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
     LOG.info(f'Creating new flow: {name} (type: {ORCHESTRATOR_COMPONENT_ID})')
@@ -245,13 +238,13 @@ async def create_conditional_flow(
     - User needs a data pipeline with sophisticated branching or notifications
     """
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
-    processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
-    processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks]
-    flow_configuration = {
-        'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
-        'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
-    }
+    flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
+
+    # Validate flow structure to catch semantic errors in the structure
+    validate_flow_structure(flow_configuration=flow_configuration, flow_type=flow_type)
+    # Validate flow configuration against schema to catch syntax errors in the configuration
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
+
     LOG.info(f'Creating new enhanced conditional flow: {name} (type: {flow_type})')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -361,32 +354,15 @@ async def update_flow(
     )
     flow_configuration = current_config.get('configuration', {}).copy()
 
-    if phases is not None:
-        if flow_type == ORCHESTRATOR_COMPONENT_ID:
-            processed_phases = ensure_legacy_phase_ids(phases)
-            flow_configuration['phases'] = [phase.model_dump(by_alias=True) for phase in processed_phases]
-        else:
-            processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases]
-            flow_configuration['phases'] = [
-                phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases
-            ]
+    updated_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
+    if updated_configuration.get('phases'):
+        flow_configuration['phases'] = updated_configuration['phases']
+    if updated_configuration.get('tasks'):
+        flow_configuration['tasks'] = updated_configuration['tasks']
 
-    if tasks is not None:
-        if flow_type == ORCHESTRATOR_COMPONENT_ID:
-            processed_tasks = ensure_legacy_task_ids(tasks)
-            flow_configuration['tasks'] = [task.model_dump(by_alias=True) for task in processed_tasks]
-        else:
-            processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks]
-            flow_configuration['tasks'] = [
-                task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks
-            ]
-
-    if flow_type == ORCHESTRATOR_COMPONENT_ID:
-        validate_legacy_flow_structure(
-            phases=[FlowPhase.model_validate(phase) for phase in flow_configuration.get('phases', [])],
-            tasks=[FlowTask.model_validate(task) for task in flow_configuration.get('tasks', [])],
-        )
-
+    # Validate flow structure to catch semantic errors in the structure
+    validate_flow_structure(flow_configuration=flow_configuration, flow_type=flow_type)
+    # Validate flow configuration against schema to catch syntax errors in the configuration
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
     LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
