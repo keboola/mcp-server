@@ -37,7 +37,7 @@ from keboola_mcp_server.tools.components.model import (
     TfSetCode,
     TfStrReplace,
 )
-from keboola_mcp_server.tools.components.sql_utils import format_code_blocks
+from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_code
 from keboola_mcp_server.tools.components.utils import clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -356,9 +356,8 @@ async def test_create_sql_transformation(
     assert new_transformation_configuration.description == mock_configuration['description']
     assert new_transformation_configuration.version == mock_configuration['version']
 
-    formatted_code_blocks = format_code_blocks(
-        await asyncio.gather(*[code.to_raw_code() for code in code_blocks]), sql_dialect.lower()
-    )
+    formatted_code_blocks = [format_simplified_tf_code(c, sql_dialect.lower())[0] for c in code_blocks]
+    raw_code_blocks = await asyncio.gather(*[b.to_raw_code() for b in formatted_code_blocks])
     keboola_client.storage_client.configuration_create.assert_called_once_with(
         component_id=expected_component_id,
         name=transformation_name,
@@ -368,7 +367,7 @@ async def test_create_sql_transformation(
                 'blocks': [
                     {
                         'name': 'Blocks',
-                        'codes': [b.model_dump() for b in formatted_code_blocks],
+                        'codes': [b.model_dump() for b in raw_code_blocks],
                     }
                 ]
             },

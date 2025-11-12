@@ -45,7 +45,7 @@ from keboola_mcp_server.tools.components.model import (
     TfParamUpdate,
     TransformationConfiguration,
 )
-from keboola_mcp_server.tools.components.sql_utils import format_transformation_parameters
+from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_block
 
 LOG = logging.getLogger(__name__)
 T = TypeVar('T')
@@ -295,17 +295,14 @@ async def create_transformation_configuration(
     :return: TransformationConfiguration with parameters and storage
     """
     storage = TransformationConfiguration.Storage()
-    # build parameters configuration out of code blocks
-    parameters = SimplifiedTfBlocks(
-        blocks=[
-            SimplifiedTfBlocks.Block(
-                name='Blocks',
-                codes=list(codes),
-            )
-        ]
+    # for simplicity, we create a single block with the name 'Blocks'
+    block = SimplifiedTfBlocks.Block(
+        name='Blocks',
+        codes=list(codes),
     )
+    block, _ = format_simplified_tf_block(block=block, dialect=sql_dialect)
+    parameters = SimplifiedTfBlocks(blocks=[block])
     raw_parameters = await parameters.to_raw_parameters()
-    raw_parameters = format_transformation_parameters(raw_parameters, sql_dialect)
 
     if output_tables:
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)

@@ -13,7 +13,7 @@ from typing import Iterable
 
 import sqlglot
 
-from keboola_mcp_server.tools.components.model import SimplifiedTfBlocks, TransformationConfiguration
+from keboola_mcp_server.tools.components.model import SimplifiedTfBlocks
 
 LOG = logging.getLogger(__name__)
 
@@ -134,26 +134,26 @@ def format_sql_statement(sql: str, dialect: str) -> str:
         if not formatted_items:
             return sql
 
-        result = []
-        for item in formatted_items:
+        def process_item(item: str) -> str | None:
+            """Process a single formatted item, returning None if it should be skipped."""
             item = item.rstrip()
-
-            # Skip empty strings
             if not item:
-                continue
+                return None
 
             # Check if it's ONLY a comment (no SQL after it)
-            # Remove block comments and check if anything substantial remains
-            without_comments = re.sub(r'/\*.*?\*/', '', item, flags=re.DOTALL).strip()
-            without_line_comments = re.sub(r'(--.*)$', '', without_comments, flags=re.MULTILINE).strip()
+            # Remove block comments and line comments, then check if anything substantial remains
+            sql_content = re.sub(r'/\*.*?\*/', '', item, flags=re.DOTALL)
+            sql_content = re.sub(r'(--.*)$', '', sql_content, flags=re.MULTILINE).strip()
 
-            is_only_comment = not without_line_comments
+            is_only_comment = not sql_content
 
             # Add semicolon only to actual SQL statements (not pure comments)
             if not is_only_comment and not item.endswith(';'):
                 item += ';'
 
-            result.append(item)
+            return item
+
+        result = [processed for item in formatted_items if (processed := process_item(item)) is not None]
 
         if not result:
             return sql
@@ -163,64 +163,6 @@ def format_sql_statement(sql: str, dialect: str) -> str:
     except Exception as e:
         LOG.warning(f'Failed to format SQL statement in {dialect} dialect: {sql}. Error: {e}')
         return sql
-
-
-def format_code_blocks(
-    code_blocks: Iterable[TransformationConfiguration.Parameters.Block.Code],
-    dialect: str,
-    conditional: bool = False,
-) -> list[TransformationConfiguration.Parameters.Block.Code]:
-    """
-    Format SQL statements in code blocks using sqlglot for better readability.
-
-    :param code_blocks: Sequence of code blocks containing SQL statements
-    :param dialect: SQL dialect ('snowflake' or 'bigquery')
-    :param conditional: If True, only format statements without newlines (default: False)
-    :return: List of formatted code blocks
-    """
-    formatted_blocks = []
-    for block in code_blocks:
-        formatted_statements = []
-        for stmt in block.script:
-            if conditional and '\n' in stmt:
-                formatted_statements.append(stmt)
-            else:
-                formatted_stmt = format_sql_statement(stmt, dialect)
-                formatted_statements.append(formatted_stmt)
-
-        formatted_block = TransformationConfiguration.Parameters.Block.Code(
-            name=block.name,
-            script=formatted_statements,
-        )
-        formatted_blocks.append(formatted_block)
-
-    return formatted_blocks
-
-
-def format_transformation_parameters(
-    parameters: TransformationConfiguration.Parameters,
-    dialect: str,
-    conditional: bool = False,
-) -> TransformationConfiguration.Parameters:
-    """
-    Format SQL statements in transformation parameters using sqlglot for better readability.
-
-    :param parameters: Transformation parameters containing blocks with code
-    :param dialect: SQL dialect ('snowflake' or 'bigquery')
-    :param conditional: If True, only format statements without newlines (default: False)
-    :return: Formatted transformation parameters
-    """
-
-    formatted_blocks = []
-    for block in parameters.blocks:
-        formatted_codes = format_code_blocks(block.codes, dialect, conditional)
-        formatted_block = TransformationConfiguration.Parameters.Block(
-            name=block.name,
-            codes=formatted_codes,
-        )
-        formatted_blocks.append(formatted_block)
-
-    return TransformationConfiguration.Parameters(blocks=formatted_blocks)
 
 
 def format_simplified_tf_code(
