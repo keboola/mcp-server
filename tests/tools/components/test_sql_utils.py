@@ -8,7 +8,7 @@ the Python implementation matches the production-proven JavaScript logic.
 import pytest
 
 from keboola_mcp_server.tools.components.sql_utils import (
-    format_sql_statement,
+    format_sql,
     join_sql_statements,
     split_sql_statements,
 )
@@ -701,6 +701,13 @@ async def test_validate_round_trip(original, test_id):
             'SELECT\n  1;\n\n/* comment */\nSELECT\n  2;',
             'statements_with_inline_comment',
         ),
+        # Statements with inline comment - comment preserved, semicolon added
+        (
+            'SELECT 1;\n// comment\nSELECT 2',
+            'snowflake',
+            'SELECT\n  1;\n\n/* comment */\nSELECT\n  2;',
+            'statements_with_inline_comment_cpp',
+        ),
         # Complex statement - properly formatted with semicolon
         (
             'SELECT a, b FROM table WHERE x > 10',
@@ -781,7 +788,112 @@ async def test_validate_round_trip(original, test_id):
         ),
     ],
 )
-def test_format_sql_statement(input_sql, dialect, expected, test_id):
+def test_format_sql(input_sql, dialect, expected, test_id):
     """Test SQL formatting with semicolon and comment handling."""
-    result = format_sql_statement(input_sql, dialect)
+    result = format_sql(input_sql, dialect)
     assert result == expected
+
+
+@pytest.mark.parametrize(
+    ('input_sql', 'dialect', 'test_id'),
+    [
+        # Invalid dialect handling
+        (
+            'SELECT 1',
+            'invalid_dialect_name',
+            'invalid_dialect',
+        ),
+        (
+            'SELECT * FROM table',
+            'nonexistent_sql_dialect',
+            'nonexistent_dialect',
+        ),
+        # SQL that sqlglot cannot parse
+        (
+            'SELECT FROM WHERE',
+            'snowflake',
+            'malformed_sql_missing_table',
+        ),
+        (
+            'SELECT * FROM',
+            'bigquery',
+            'malformed_sql_incomplete',
+        ),
+        (
+            'SELECT * FROM table WHERE x =',
+            'snowflake',
+            'malformed_sql_incomplete_where',
+        ),
+        (
+            'CREATE TABLE (id INT)',
+            'bigquery',
+            'malformed_sql_missing_table_name',
+        ),
+        (
+            'SELECT * FROM table WHERE x = (SELECT',
+            'snowflake',
+            'malformed_sql_unclosed_subquery',
+        ),
+        (
+            'SELECT * FROM table WHERE x = "unclosed string',
+            'bigquery',
+            'malformed_sql_unclosed_string',
+        ),
+        (
+            "SELECT * FROM table WHERE x = 'unclosed string",
+            'snowflake',
+            'malformed_sql_unclosed_single_quote',
+        ),
+        (
+            'SELECT * FROM table WHERE x = /* unclosed comment',
+            'bigquery',
+            'malformed_sql_unclosed_comment',
+        ),
+        (
+            'SELECT * FROM table WHERE x = $$ unclosed dollar quote',
+            'snowflake',
+            'malformed_sql_unclosed_dollar_quote',
+        ),
+        # Unsupported comment: '#'
+        (
+            'SELECT 1;\n-- comment1\nSELECT 2;\n# comment2\nSELECT 3;\n// comment3',
+            'snowflake',
+            'unsupported_comment_hash',
+        ),
+        # Empty strings and whitespace-only input
+        (
+            '',
+            'snowflake',
+            'empty_string',
+        ),
+        (
+            '',
+            'bigquery',
+            'empty_string_bigquery',
+        ),
+        (
+            '   ',
+            'snowflake',
+            'whitespace_only_spaces',
+        ),
+        (
+            '\t\t',
+            'bigquery',
+            'whitespace_only_tabs',
+        ),
+        (
+            '\n\n\n',
+            'snowflake',
+            'whitespace_only_newlines',
+        ),
+        (
+            ' \t\n\r ',
+            'bigquery',
+            'whitespace_only_mixed',
+        ),
+    ],
+)
+def test_format_sql_error(input_sql, dialect, test_id):
+    result = format_sql(input_sql, dialect)
+    # On error, format_sql returns the original SQL unchanged
+    assert result == input_sql

@@ -21,7 +21,7 @@ from keboola_mcp_server.tools.components.model import (
 from keboola_mcp_server.tools.components.sql_utils import (
     format_simplified_tf_block,
     format_simplified_tf_code,
-    format_sql_statement,
+    format_sql,
 )
 
 # Operations that change the structure of the transformation
@@ -186,7 +186,7 @@ def set_code(params: dict, op: TfSetCode, sql_dialect: str) -> tuple[dict, str]:
     if not op.script.strip():
         raise ValueError('Invalid operation: script cannot be empty')
 
-    formatted_script = format_sql_statement(sql=op.script, dialect=sql_dialect)
+    formatted_script = format_sql(sql=op.script, dialect=sql_dialect)
     is_reformatted = formatted_script != op.script
 
     # Target the specific code's script field directly
@@ -230,7 +230,7 @@ def add_script(params: dict, op: TfAddScript, sql_dialect: str) -> tuple[dict, s
     else:  # 'end'
         new_script = f'{current_script} {op.script}' if current_script else op.script
 
-    formatted_script = format_sql_statement(sql=new_script, dialect=sql_dialect)
+    formatted_script = format_sql(sql=new_script, dialect=sql_dialect)
     is_reformatted = formatted_script != new_script
 
     # Update the script field

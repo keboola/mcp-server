@@ -37,7 +37,7 @@ from keboola_mcp_server.tools.components.model import (
     TfStrReplace,
     TransformationConfiguration,
 )
-from keboola_mcp_server.tools.components.sql_utils import format_sql_statement, split_sql_statements
+from keboola_mcp_server.tools.components.sql_utils import format_sql, split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
     clean_bucket_name,
     expand_component_types,
@@ -656,7 +656,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
         sql_code_blocks=test_sql_code_blocks,
         created_table_names=test_created_table_names,
     )
-    sql_dialect = (await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()).lower()
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
     expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     project_id = keboola_project.project_id
 
@@ -708,7 +708,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
 
         # Verify the parameters structure matches expected
         bucket_name = clean_bucket_name(test_name)
-        expected_script = format_sql_statement(test_sql_code_blocks[0].script, sql_dialect)
+        expected_script = format_sql(test_sql_code_blocks[0].script, sql_dialect)
         expected_script = await split_sql_statements(expected_script)
         expected_parameters = {
             'blocks': [

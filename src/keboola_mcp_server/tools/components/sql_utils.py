@@ -47,7 +47,7 @@ CODE_MARKER_REGEX = re.compile(r'/\*\s*=+\s*CODE:\s*([^*]+?)\s*=+\s*\*/', re.MUL
 
 async def split_sql_statements(script: str, timeout_seconds: float = 1.0) -> list[str]:
     """
-    Split a SQL script string into individual statements.
+    Splits a SQL script string into individual statements.
 
     Uses regex-based parsing similar to UI's splitQueriesWorker.worker.ts.
     Includes timeout protection to prevent catastrophic backtracking.
@@ -66,7 +66,7 @@ async def split_sql_statements(script: str, timeout_seconds: float = 1.0) -> lis
             statements = await asyncio.wait_for(asyncio.to_thread(_split_with_regex, script), timeout=timeout_seconds)
         except asyncio.TimeoutError:
             raise ValueError(
-                f'SQL parsing took too long ' f'(possible catastrophic backtracking). ' f'Timeout: {timeout_seconds}s'
+                f'SQL parsing took too long (possible catastrophic backtracking). Timeout: {timeout_seconds}s'
             )
 
         if statements is None:
@@ -98,7 +98,7 @@ def _split_with_regex(script: str) -> list[str]:
 
 def join_sql_statements(statements: Iterable[str]) -> str:
     """
-    Join SQL statements into a single script string.
+    Joins SQL statements into a single script string.
 
     :param statements: List of SQL statements to join
     :return: Concatenated SQL script string separated by double newlines
@@ -119,17 +119,17 @@ def join_sql_statements(statements: Iterable[str]) -> str:
     return ''.join(result_parts)
 
 
-def format_sql_statement(sql: str, dialect: str) -> str:
+def format_sql(sql: str, dialect: str) -> str:
     """
-    Format SQL statement using sqlglot for better readability.
+    Formats SQL code using sqlglot for better readability.
 
-    :param sql: Raw SQL statement string (may contain multiple statements)
-    :param dialect: SQL dialect ('snowflake' or 'bigquery')
-    :return: Formatted SQL string, or original if formatting fails
+    :param sql: Raw SQL code (may contain multiple statements)
+    :param dialect: SQL dialect
+    :return: Formatted SQL code, or original if formatting fails
     """
     try:
         # transpile returns a list - one item per statement/comment
-        formatted_items = sqlglot.transpile(sql, read=dialect, pretty=True)
+        formatted_items = sqlglot.transpile(sql, read=dialect.lower(), pretty=True)
 
         if not formatted_items:
             return sql
@@ -169,21 +169,21 @@ def format_simplified_tf_code(
     code: SimplifiedTfBlocks.Block.Code, dialect: str
 ) -> tuple[SimplifiedTfBlocks.Block.Code, bool]:
     """
-    Format the simplified transformation code using sqlglot for better readability.
+    Formats the simplified transformation code using sqlglot for better readability.
 
     :param code: The simplified transformation code
     :param dialect: SQL dialect ('snowflake' or 'bigquery')
     :return: Tuple of (formatted simplified transformation code,
       bool representing if the script was changed by formatting)
     """
-    formatted_script = format_sql_statement(sql=code.script, dialect=dialect)
+    formatted_script = format_sql(sql=code.script, dialect=dialect)
 
     return SimplifiedTfBlocks.Block.Code(name=code.name, script=formatted_script), formatted_script != code.script
 
 
 def format_simplified_tf_block(block: SimplifiedTfBlocks.Block, dialect: str) -> tuple[SimplifiedTfBlocks.Block, bool]:
     """
-    Format the simplified transformation block using sqlglot for better readability.
+    Formats the simplified transformation block using sqlglot for better readability.
 
     :param block: The simplified transformation block
     :param dialect: SQL dialect ('snowflake' or 'bigquery')

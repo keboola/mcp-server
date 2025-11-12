@@ -421,7 +421,7 @@ async def create_sql_transformation(
 
     # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
-    sql_dialect = (await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()).lower()
+    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'Creating transformation. SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
@@ -746,7 +746,7 @@ async def update_sql_transformation(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    sql_dialect = (await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()).lower()
+    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
 
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
 
