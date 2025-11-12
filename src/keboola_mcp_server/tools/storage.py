@@ -110,7 +110,7 @@ class BucketDetail(BaseModel):
     )
     links: Optional[list[Link]] = Field(default=None, description='The links relevant to the bucket.')
     source_project: str | None = Field(
-        default=None, description='The source Keboola project that the bucket is linked from.'
+        default=None, description='The source Keboola project of the linked bucket, None otherwise.'
     )
 
     # these are internal fields not meant to be exposed to LLMs
@@ -250,7 +250,7 @@ class TableDetail(BaseModel):
     )
     links: list[Link] | None = Field(default=None, description='The links relevant to the table.')
     source_project: str | None = Field(
-        default=None, description='The source Keboola project that the table is linked from.'
+        default=None, description='The source Keboola project of the linked table, None otherwise.'
     )
 
     # these are internal fields not meant to be exposed to LLMs
