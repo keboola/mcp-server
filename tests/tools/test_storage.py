@@ -198,6 +198,12 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 ],
             },
             'bucket': {'id': 'in.c-1246948-foo', 'name': 'c-1246948-foo'},
+            'sourceTable': {
+                'project': {
+                    'name': 'Source Project',
+                    'id': '1234',
+                }
+            },
         },
     ]
     if not details:
@@ -527,6 +533,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                         url='https://connection.test.keboola.com/admin/projects/69420/storage',
                     ),
                 ],
+                source_project='A demo project (ID: 1234)',
             ),
         ),
         (
@@ -552,6 +559,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                         url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948/storage',
                     ),
                 ],
+                source_project='A demo project (ID: 1234)',
             ),
         ),
         (
@@ -630,6 +638,7 @@ async def test_get_bucket(
                     stage='out',
                     created='2024-04-03T14:11:53+0200',
                     data_size_bytes=2048,
+                    source_project='A demo project (ID: 1234)',
                 ),
             ],
         ),
@@ -653,6 +662,7 @@ async def test_get_bucket(
                     stage='out',
                     created='2024-04-03T14:11:53+0200',
                     data_size_bytes=2048,
+                    source_project='A demo project (ID: 1234)',
                 ),
                 BucketDetail(
                     id='in.c-baz',
@@ -911,6 +921,7 @@ async def test_list_buckets(
                         '/storage/in.c-1246948-foo',
                     ),
                 ],
+                source_project='Source Project (ID: 1234)',
             ),
         ),
     ],
@@ -1031,6 +1042,7 @@ async def test_get_table(
                     created='2025-08-22T11:22:33+0200',
                     rows_count=123,
                     data_size_bytes=123456,
+                    source_project='Source Project (ID: 1234)',
                 ),
             ],
         ),
