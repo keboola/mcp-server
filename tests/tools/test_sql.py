@@ -183,16 +183,17 @@ class TestWorkspaceManagerSnowflake:
                             {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},
                         ],
                     ),
-                    message=None,
+                    data_rows=2,
+                    total_query_rows=2,
                 ),
             ),
             (
                 'create table foo (id integer, name varchar);',
-                QueryResult(status='ok', data=None, message='1 table created'),
+                QueryResult(status='ok', message='1 table created'),
             ),
             (
                 'bla bla bla',
-                QueryResult(status='error', data=None, message='Invalid SQL...'),
+                QueryResult(status='error', message='Invalid SQL...'),
             ),
         ],
     )
@@ -212,6 +213,7 @@ class TestWorkspaceManagerSnowflake:
             'data': [list(row.values()) for row in expected.data.rows] if expected.data else [],
             'columns': [{'name': col_name} for col_name in expected.data.columns] if expected.data else [],
             'message': expected.message,
+            'numberOfRows': len(expected.data.rows) if expected.data else None,
         }
         mocker.patch('keboola_mcp_server.workspace.QueryServiceClient.create', return_value=qsclient)
 
@@ -222,7 +224,7 @@ class TestWorkspaceManagerSnowflake:
         keboola_client.storage_client.branches_list.assert_called_once()
         qsclient.submit_job.assert_called_once()
         qsclient.get_job_status.assert_called_once_with('qs-job-1234')
-        qsclient.get_job_results.assert_called_once_with('qs-job-1234', 'qs-job-statement-1234')
+        qsclient.get_job_results.assert_called_once_with('qs-job-1234', 'qs-job-statement-1234', offset=0, limit=1000)
 
 
 class TestWorkspaceManagerBigQuery:
@@ -305,6 +307,8 @@ class TestWorkspaceManagerBigQuery:
                             {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},
                         ],
                     ),
+                    data_rows=2,
+                    total_query_rows=2,
                 ),
             ),
             (

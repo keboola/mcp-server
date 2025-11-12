@@ -14,6 +14,8 @@ from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
 LOG = logging.getLogger(__name__)
 
 SQL_TOOLS_TAG = 'sql'
+MAX_ROWS = 1_000
+MAX_CHARS = 50_000
 
 
 class QueryDataOutput(BaseModel):
@@ -21,6 +23,8 @@ class QueryDataOutput(BaseModel):
 
     query_name: str = Field(description='The name of the executed query')
     csv_data: str = Field(description='The retrieved data in CSV format')
+    csv_data_rows: int | None = Field(default=None, description='Number of rows fetched in the "csv_data" field.')
+    total_query_rows: int | None = Field(default=None, description='Total number of rows selected by the SQL query.')
 
 
 def add_sql_tools(mcp: FastMCP) -> None:
@@ -87,13 +91,16 @@ async def query_data(
     * Use NULLIF or CASE statements to handle empty values
     * Always use TRY_CAST or similar safe casting functions when converting data types
     * Check for division by zero using NULLIF(denominator, 0)
+    * Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
+      by this tool on the maximum number of rows that can be fetched and the maximum number of characters.
+      The tool will raise an error when the fetched data exceeds these limits.
 
     DATA VALIDATION:
     * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    result = await workspace_manager.execute_query(sql_query)
+    result = await workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS)
     if result.is_ok:
         if result.data:
             data = result.data
@@ -101,13 +108,27 @@ async def query_data(
             # non-SELECT query, this should not really happen, because this tool is for running SELECT queries
             data = SqlSelectData(columns=['message'], rows=[{'message': result.message}])
 
-        # Convert to CSV
-        output = StringIO()
-        writer = csv.DictWriter(output, fieldnames=data.columns)
-        writer.writeheader()
-        writer.writerows(data.rows)
+        rows_num = len(data.rows)
+        value_chars_num = data.value_chars()
+        if rows_num < MAX_ROWS and value_chars_num < MAX_CHARS:
+            # Convert to CSV
+            output = StringIO()
+            writer = csv.DictWriter(output, fieldnames=data.columns)
+            writer.writeheader()
+            writer.writerows(data.rows)
 
-        return QueryDataOutput(query_name=query_name, csv_data=output.getvalue())
+            return QueryDataOutput(
+                query_name=query_name,
+                csv_data=output.getvalue(),
+                csv_data_rows=result.data_rows,
+                total_query_rows=result.total_query_rows,
+            )
+
+        else:
+            raise ValueError(
+                f'The query fetched too much data (fetched {rows_num} rows with {value_chars_num} characters).'
+                f'The hard limits of this tool are max {MAX_ROWS} rows and max {MAX_CHARS} characters.'
+            )
 
     else:
         raise ValueError(f'Failed to run SQL query, error: {result.message}')

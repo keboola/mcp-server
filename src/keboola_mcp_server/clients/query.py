@@ -86,13 +86,22 @@ class QueryServiceClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'queries/{job_id}'))
 
-    async def get_job_results(self, job_id: str, statement_id: str) -> JsonDict:
+    async def get_job_results(
+        self, job_id: str, statement_id: str, *, offset: int | None = None, limit: int | None = None
+    ) -> JsonDict:
         """
         Gets the results of a specific statement within a query job and returns data, rows affected count,
         and status information with pagination support.
 
         :param job_id: A unique identifier for the query job.
         :param statement_id: A unique identifier for the specific query statement within the job.
+        :param offset: The offset of the first row to return.
+        :param limit: The maximum number of rows to return.
         :return: The query statement results.
         """
-        return cast(JsonDict, await self.get(endpoint=f'queries/{job_id}/{statement_id}/results'))
+        params = {}
+        if offset is not None:
+            params['offset'] = offset
+        if limit is not None:
+            params['pageSize'] = limit
+        return cast(JsonDict, await self.get(endpoint=f'queries/{job_id}/{statement_id}/results', params=params))

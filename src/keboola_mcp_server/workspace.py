@@ -67,12 +67,24 @@ class SqlSelectData:
         description='Selected rows, each row is a dictionary of column: value pairs.'
     )
 
+    def value_chars(self) -> int:
+        chars = 0
+        for r in self.rows:
+            for v in r.values():
+                if v:
+                    chars += len(str(v))
+        return chars
+
 
 @dataclass(frozen=True)
 class QueryResult:
     status: QueryStatus = Field(description='Status of running the SQL query.')
-    data: SqlSelectData | None = Field(None, description='Data selected by the SQL SELECT query.')
-    message: str | None = Field(None, description='Either an error message or the information from non-SELECT queries.')
+    data: SqlSelectData | None = Field(default=None, description='Data selected by the SQL SELECT query.')
+    message: str | None = Field(
+        default=None, description='Either an error message or the information from non-SELECT queries.'
+    )
+    data_rows: int | None = Field(default=None, description='Number of rows fetched in the "data" field.')
+    total_query_rows: int | None = Field(default=None, description='Total number of rows selected by the SQL query.')
 
     @property
     def is_ok(self) -> bool:
@@ -107,7 +119,7 @@ class _Workspace(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def execute_query(self, sql_query: str) -> QueryResult:
+    async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
         """Runs a SQL SELECT query."""
         pass
 
@@ -198,7 +210,10 @@ class _SnowflakeWorkspace(_Workspace):
 
         return None
 
-    async def execute_query(self, sql_query: str) -> QueryResult:
+    async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
+        if max_rows is not None and max_rows < 0:
+            raise ValueError('The "max_rows" must be a positive integer or None.')
+
         if not self._qsclient:
             self._qsclient = await self._create_qs_client()
 
@@ -218,25 +233,68 @@ class _SnowflakeWorkspace(_Workspace):
                 )
 
         statement_id = cast(list[JsonDict], job_status['statements'])[0]['id']
-        results = await self._qsclient.get_job_results(job_id, statement_id)
 
-        if results['status'] == 'completed':
-            columns = [col['name'] for col in cast(list[JsonDict], results['columns'])]
-            rows = [
-                {col_name: value for col_name, value in zip(columns, row)}
-                for row in cast(list[list[Any]], results['data'])
-            ]
-            query_result = QueryResult(
-                status='ok',
-                data=SqlSelectData(columns=columns, rows=rows) if columns else None,
-                message=results['message'],
+        # Fetch results with pagination
+        all_rows: list[list[Any]] = []
+        columns: list[str] = []
+        offset = 0
+        page_size = 1_000
+        message: str | None = None
+        total_query_rows: int | None = None
+
+        while True:
+            if max_rows is not None:
+                remaining = max_rows - len(all_rows)
+                if remaining <= 0:
+                    break
+                rows_to_fetch = min(page_size, remaining)
+            else:
+                rows_to_fetch = page_size
+
+            results = await self._qsclient.get_job_results(
+                job_id,
+                statement_id,
+                offset=offset,
+                limit=max(rows_to_fetch, 100),  # QueryService requires 100 - 10_000
             )
 
-        elif results['status'] in ['failed', 'canceled']:
-            query_result = QueryResult(status='error', data=None, message=results['message'])
+            # Store message, total_query_rows and columns from the first response
+            if offset == 0:
+                status = results['status']
+                message = results['message']
+                total_query_rows = results.get('numberOfRows')
 
-        else:
-            raise ValueError(f'Unexpected query status: {results["status"]}')
+                if status in ['failed', 'canceled']:
+                    return QueryResult(status='error', data=None, message=message)
+                elif status != 'completed':
+                    raise ValueError(f'Unexpected query status: {status}')
+
+                columns = [col['name'] for col in cast(list[JsonDict], results['columns'])]
+
+            page_data = cast(list[list[Any]], results.get('data', []))
+            if not page_data:
+                break
+
+            page_data = page_data[:rows_to_fetch]
+            all_rows.extend(page_data)
+
+            if len(page_data) < rows_to_fetch:
+                break
+
+            if max_rows is not None and len(all_rows) >= max_rows:
+                break
+
+            offset += len(page_data)
+
+        rows = [{col_name: value for col_name, value in zip(columns, row)} for row in all_rows]
+
+        query_result = QueryResult(
+            status='ok',
+            data=SqlSelectData(columns=columns, rows=rows) if columns else None,
+            message=message,
+            data_rows=len(rows) if columns else None,
+            total_query_rows=total_query_rows,
+        )
 
         return query_result
 
@@ -319,9 +377,25 @@ class _BigQueryWorkspace(_Workspace):
 
         return None
 
-    async def execute_query(self, sql_query: str) -> QueryResult:
+    async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
+        if max_rows is not None and max_rows < 0:
+            raise ValueError('The "max_rows" must be a positive integer or None.')
+
         resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
-        return TypeAdapter(QueryResult).validate_python(resp)
+        qr = TypeAdapter(QueryResult).validate_python(resp)
+        if qr.data:
+            total_query_rows = len(qr.data.rows)
+            max_rows = max_rows or total_query_rows
+            rows = qr.data.rows[:max_rows]
+            qr = QueryResult(
+                status=qr.status,
+                data=SqlSelectData(columns=qr.data.columns, rows=rows),
+                message=qr.message,
+                data_rows=len(rows) if rows else None,
+                total_query_rows=total_query_rows if total_query_rows else None,
+            )
+
+        return qr
 
     async def get_branch_id(self) -> str:
         return self._client.branch_id or 'default'
@@ -529,9 +603,9 @@ class WorkspaceManager:
         else:
             raise ValueError('Failed to initialize Keboola Workspace.')
 
-    async def execute_query(self, sql_query: str) -> QueryResult:
+    async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
         workspace = await self._get_workspace()
-        return await workspace.execute_query(sql_query)
+        return await workspace.execute_query(sql_query, max_rows=max_rows)
 
     async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
