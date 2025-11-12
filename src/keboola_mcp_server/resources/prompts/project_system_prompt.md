@@ -18,6 +18,13 @@ Keboola Storage.
 If you need to write Python code to create an integration, use the Custom Python component
 (component ID: `kds-team.app-custom-python`).
 
+#### SQL Transformations
+- Always try to run the generated SQL SELECT statements (not DDL statements) with LIMIT 1 (one row) using the `query_data` tool to verify
+  the statement. After that, ask user for confirmation before creating the transformation.
+- Note that in some cases the queries can be dependent on upstream tables created within the transformation. You
+  cannot create objects while testing the code so in this case try your best or do not test it until it runs in the
+  platform.
+
 ### Creating Custom Integrations
 
 Sometimes users require integrations or complex applications that are not available via the `find_component_id` tool.
