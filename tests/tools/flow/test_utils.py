@@ -352,6 +352,68 @@ class TestConditionalFlowValidation:
         with pytest.raises(ValueError, match='not reachable'):
             validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
 
+    def test_validate_conditional_flow_circular_dependency(self):
+        """Test detection of direct circular dependency in conditional flows."""
+        phases = [
+            {'id': 'phase0', 'name': 'Phase 0', 'next': [{'id': 't0', 'goto': 'phase1'}]},
+            {'id': 'phase1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+            {'id': 'phase2', 'name': 'Phase 2', 'next': [{'id': 't2', 'goto': 'phase1'}, {'id': 't3', 'goto': None}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
+
+        with pytest.raises(ValueError, match='Circular dependency detected'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_indirect_circular_dependency(self):
+        """Test detection of indirect circular dependency in conditional flows."""
+        phases = [
+            {'id': 'phase0', 'name': 'Phase 0', 'next': [{'id': 't0', 'goto': 'phase1'}]},
+            {'id': 'phase1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+            {'id': 'phase2', 'name': 'Phase 2', 'next': [{'id': 't2', 'goto': 'phase3'}]},
+            {'id': 'phase3', 'name': 'Phase 3', 'next': [{'id': 't3', 'goto': 'phase1'}, {'id': 't4', 'goto': None}]},
+        ]
+        tasks = [
+            _notification_task('task1', 'phase1'),
+            _notification_task('task2', 'phase2'),
+            _notification_task('task3', 'phase3'),
+        ]
+
+        with pytest.raises(ValueError, match='Circular dependency detected'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_self_referencing_dependency(self):
+        """Test detection of self-referencing dependency in conditional flows."""
+        phases = [
+            {'id': 'phase0', 'name': 'Phase 0', 'next': [{'id': 't0', 'goto': 'phase1'}]},
+            {'id': 'phase1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': 'phase1'}, {'id': 't2', 'goto': None}]},
+        ]
+        tasks = [_notification_task('task1', 'phase1')]
+
+        with pytest.raises(ValueError, match='Circular dependency detected'):
+            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_validate_conditional_flow_complex_valid_dependencies(self):
+        """Test complex but valid dependency structure in conditional flows."""
+        phases = [
+            {'id': 'phase1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+            {
+                'id': 'phase2',
+                'name': 'Phase 2',
+                'next': [{'id': 't2', 'goto': 'phase3'}, {'id': 't3', 'goto': 'phase4'}],
+            },
+            {'id': 'phase3', 'name': 'Phase 3', 'next': [{'id': 't4', 'goto': None}]},
+            {'id': 'phase4', 'name': 'Phase 4', 'next': [{'id': 't5', 'goto': None}]},
+        ]
+        tasks = [
+            _notification_task('task1', 'phase1'),
+            _notification_task('task2', 'phase2'),
+            _notification_task('task3', 'phase3'),
+            _notification_task('task4', 'phase4'),
+        ]
+
+        # Should not raise any errors
+        validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
 
 class TestReachableIds:
     """Test _reachable_ids function for finding reachable phases in a graph."""
