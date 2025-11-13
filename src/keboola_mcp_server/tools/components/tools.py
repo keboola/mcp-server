@@ -375,7 +375,7 @@ async def create_sql_transformation(
         Field(
             description=(
                 'The SQL query code blocks, each containing a descriptive name and an executable SQL script '
-                'written in the current SQL dialect.'
+                'written in the current SQL dialect. The query will be automatically reformatted to be more readable.'
             ),
         ),
     ],
@@ -423,12 +423,12 @@ async def create_sql_transformation(
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    LOG.info(f'SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
+    LOG.info(f'Creating transformation. SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
     # Process the data to be stored in the transformation configuration - parameters(sql statements)
     # and storage (input and output tables)
     transformation_configuration_payload = await create_transformation_configuration(
-        codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names
+        codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names, sql_dialect=sql_dialect
     )
 
     client = KeboolaClient.from_state(ctx.session.state)
@@ -747,8 +747,8 @@ async def update_sql_transformation(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    LOG.info(f'SQL transformation ID: {sql_transformation_id}')
 
     config_details = await client.storage_client.configuration_detail(
         component_id=sql_transformation_id, configuration_id=configuration_id
@@ -765,7 +765,11 @@ async def update_sql_transformation(
         current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
         simplified_parameters = await current_raw_parameters.to_simplified_parameters()
 
-        updated_params, msg = update_transformation_parameters(simplified_parameters, parameter_updates)
+        updated_params, msg = update_transformation_parameters(
+            parameters=simplified_parameters,
+            updates=parameter_updates,
+            sql_dialect=sql_dialect,
+        )
         updated_raw_parameters = await updated_params.to_raw_parameters()
 
         parameters_cfg = validate_root_parameters_configuration(
@@ -783,7 +787,10 @@ async def update_sql_transformation(
         )
         updated_configuration['storage'] = storage_cfg
 
-    LOG.info(f'Updating transformation: {sql_transformation_id} with configuration: {configuration_id}.')
+    LOG.info(
+        f'Updating transformation: {sql_transformation_id} with config ID: {configuration_id}. '
+        f'SQL dialect: {sql_dialect}'
+    )
 
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,

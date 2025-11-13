@@ -68,7 +68,7 @@ def test_expand_component_types(
                             codes=[
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
-                                    script=['SELECT * FROM test;', 'SELECT * FROM test2;'],
+                                    script=['SELECT\n  *\nFROM test;', 'SELECT\n  *\nFROM test2;'],
                                 )
                             ],
                         )
@@ -88,6 +88,7 @@ def test_expand_component_types(
                     name='Code 0',
                     script=(
                         'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";\n'
+                        '-- comment\n'
                         'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";'
                     ),
                 )
@@ -103,8 +104,9 @@ def test_expand_component_types(
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
                                     script=[
-                                        'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
-                                        'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+                                        'CREATE OR REPLACE TABLE "test_table_1" AS\nSELECT\n  *\nFROM "test";',
+                                        '/* comment */\nCREATE OR REPLACE TABLE "test_table_2" AS\nSELECT\n  *\n'
+                                        'FROM "test";',
                                     ],
                                 )
                             ],
@@ -146,7 +148,7 @@ def test_expand_component_types(
                             codes=[
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
-                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
+                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS\nSELECT\n  *\nFROM "test";'],
                                 )
                             ],
                         )
@@ -181,6 +183,7 @@ async def test_create_transformation_configuration(
         codes=codes,
         transformation_name=transformation_name,
         output_tables=output_tables,
+        sql_dialect='snowflake',
     )
 
     assert configuration == expected
@@ -950,7 +953,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(name='New Block', codes=[]),
                 ]
             ),
-            '## Updated Transformation Structure',
+            'Added block with name "New Block"\n## Updated Transformation Structure',
         ),
         # Non-structural operations - should return empty message
         (
@@ -1024,14 +1027,14 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='Block A',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT\n  *\nFROM new_table;'),
                         ],
                     ),
                 ]
             ),
-            '',
+            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
         ),
-        # Multiple non-structural operations - should return empty message
+        # Multiple non-structural operations - should return message from set_code
         (
             SimplifiedTfBlocks(
                 blocks=[
@@ -1052,12 +1055,12 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='Renamed Block',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT\n  *\nFROM new_table;'),
                         ],
                     ),
                 ]
             ),
-            '',
+            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
         ),
         # Structural change + string replacement - should report both
         (
@@ -1093,12 +1096,15 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='New Block',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  *\nIN table2;'),
                         ],
                     ),
                 ]
             ),
-            'Replaced 2 occurrences of "FROM" in the transformation\n## Updated Transformation Structure',
+            (
+                'Added block with name "New Block" (code was automatically reformatted)\n'
+                'Replaced 2 occurrences of "FROM" in the transformation\n## Updated Transformation Structure'
+            ),
         ),
         # Multiple string replacements - should report all
         (
@@ -1164,12 +1170,13 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                         name='Block A',
                         codes=[
                             SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  *\nIN table2;'),
                         ],
                     ),
                 ]
             ),
-            'Replaced 2 occurrences of "FROM" in the transformation\n## Updated Transformation Structure',
+            'Added code with name "New Code" (code was automatically reformatted)\nReplaced 2 occurrences of "FROM" in '
+            'the transformation\n## Updated Transformation Structure',
         ),
         # Remove code (structural) - should report structure
         (
@@ -1230,13 +1237,17 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                         name='Block A',
                         codes=[
                             SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT 1'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  1;'),
                         ],
                     ),
                     SimplifiedTfBlocks.Block(name='New Block', codes=[]),
                 ]
             ),
-            '## Updated Transformation Structure',
+            (
+                'Added block with name "New Block"\n'
+                'Added code with name "New Code" (code was automatically reformatted)\n'
+                '## Updated Transformation Structure'
+            ),
         ),
         # Empty updates list - should return empty message
         (
@@ -1271,7 +1282,7 @@ def test_update_transformation_parameters(
     expected_params: SimplifiedTfBlocks,
     expected_msg: str,
 ):
-    result_params, result_msg = update_transformation_parameters(initial_params, updates)
+    result_params, result_msg = update_transformation_parameters(initial_params, updates, sql_dialect='snowflake')
 
     assert result_params == expected_params
 
