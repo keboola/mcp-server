@@ -129,60 +129,59 @@ class TestFlowHelpers:
 class TestCircularDependencies:
     """Test circular dependency detection."""
 
-    def test_no_circular_dependencies(self):
-        """Test flow with no circular dependencies."""
-        phases = ensure_legacy_phase_ids(
-            [
-                {'id': 1, 'name': 'Phase 1'},
-                {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
-                {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]},
-            ]
-        )
+    @pytest.mark.parametrize(
+        'phases',
+        [
+            pytest.param(
+                [
+                    {'id': 1, 'name': 'Phase 1'},
+                    {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
+                    {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]},
+                ],
+                id='no_circular_dependencies',
+            ),
+            pytest.param(
+                [
+                    {'id': 1, 'name': 'Phase 1'},
+                    {'id': 2, 'name': 'Phase 2'},
+                    {'id': 3, 'name': 'Phase 3', 'dependsOn': [1, 2]},
+                    {'id': 4, 'name': 'Phase 4', 'dependsOn': [3]},
+                    {'id': 5, 'name': 'Phase 5', 'dependsOn': [1]},
+                ],
+                id='complex_valid_dependencies',
+            ),
+        ],
+    )
+    def test_no_circular_dependency_cases(self, phases: list[dict[str, Any]]):
+        """Test cases where no circular dependencies should be detected."""
+        phases = ensure_legacy_phase_ids(phases)
+        ret = _check_legacy_circular_dependencies(phases)
+        assert ret is None
 
-        _check_legacy_circular_dependencies(phases)
-
-    def test_direct_circular_dependency(self):
-        """Test detection of direct circular dependency."""
-        phases = ensure_legacy_phase_ids(
-            [{'id': 1, 'name': 'Phase 1', 'dependsOn': [2]}, {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]}]
-        )
+    @pytest.mark.parametrize(
+        'phases',
+        [
+            pytest.param(
+                [{'id': 1, 'name': 'Phase 1', 'dependsOn': [2]}, {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]}],
+                id='direct_circular_dependency',
+            ),
+            pytest.param(
+                [
+                    {'id': 1, 'name': 'Phase 1', 'dependsOn': [3]},
+                    {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
+                    {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]},
+                ],
+                id='indirect_circular_dependency',
+            ),
+            pytest.param([{'id': 1, 'name': 'Phase 1', 'dependsOn': [1]}], id='self_referencing_dependency'),
+        ],
+    )
+    def test_circular_dependency_errors(self, phases: list[dict[str, Any]]):
+        """Test detection of direct, indirect, and self-referencing circular dependencies."""
+        phases = ensure_legacy_phase_ids(phases)
 
         with pytest.raises(ValueError, match='Circular dependency detected'):
             _check_legacy_circular_dependencies(phases)
-
-    def test_indirect_circular_dependency(self):
-        """Test detection of indirect circular dependency."""
-        phases = ensure_legacy_phase_ids(
-            [
-                {'id': 1, 'name': 'Phase 1', 'dependsOn': [3]},
-                {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
-                {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]},
-            ]
-        )
-
-        with pytest.raises(ValueError, match='Circular dependency detected'):
-            _check_legacy_circular_dependencies(phases)
-
-    def test_self_referencing_dependency(self):
-        """Test detection of self-referencing dependency."""
-        phases = ensure_legacy_phase_ids([{'id': 1, 'name': 'Phase 1', 'dependsOn': [1]}])
-
-        with pytest.raises(ValueError, match='Circular dependency detected'):
-            _check_legacy_circular_dependencies(phases)
-
-    def test_complex_valid_dependencies(self):
-        """Test complex but valid dependency structure."""
-        phases = ensure_legacy_phase_ids(
-            [
-                {'id': 1, 'name': 'Phase 1'},
-                {'id': 2, 'name': 'Phase 2'},
-                {'id': 3, 'name': 'Phase 3', 'dependsOn': [1, 2]},
-                {'id': 4, 'name': 'Phase 4', 'dependsOn': [3]},
-                {'id': 5, 'name': 'Phase 5', 'dependsOn': [1]},
-            ]
-        )
-
-        _check_legacy_circular_dependencies(phases)
 
 
 # --- Test Edge Cases ---
@@ -209,7 +208,8 @@ class TestFlowEdgeCases:
     def test_empty_flow_validation(self):
         """Test validation of completely empty flow."""
         flow_configuration = get_flow_configuration([], [], ORCHESTRATOR_COMPONENT_ID)
-        validate_flow_structure(flow_configuration, flow_type=ORCHESTRATOR_COMPONENT_ID)
+        ret = validate_flow_structure(flow_configuration, flow_type=ORCHESTRATOR_COMPONENT_ID)
+        assert ret is None
 
 
 class TestFlowConfigurationBuilder:
@@ -259,212 +259,301 @@ class TestFlowConfigurationBuilder:
 class TestConditionalFlowValidation:
     """Test validation logic for conditional flows."""
 
-    def test_validate_conditional_flow_success(self):
-        phases = [
-            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
-            {'id': 'phase2', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
-        ]
-        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
+    @pytest.mark.parametrize(
+        'phases',
+        [
+            pytest.param(
+                [
+                    {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+                    {'id': 'phase2', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
+                ],
+                id='simple-start-end',
+            ),
+            pytest.param(
+                [
+                    {'id': 'phase1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+                    {
+                        'id': 'phase2',
+                        'name': 'Phase 2',
+                        'next': [{'id': 't2', 'goto': 'phase3'}, {'id': 't3', 'goto': 'phase4'}],
+                    },
+                    {'id': 'phase3', 'name': 'Phase 3', 'next': [{'id': 't4', 'goto': None}]},
+                    {'id': 'phase4', 'name': 'Phase 4', 'next': [{'id': 't5', 'goto': None}]},
+                ],
+                id='complex-branched',
+            ),
+        ],
+    )
+    def test_validate_conditional_flow_valid_cases(self, phases: list[dict[str, Any]]):
+        """Test valid conditional flow dependency structures (includes both simple and complex cases)."""
+        tasks = [_notification_task(f'task{i}', phase['id']) for i, phase in enumerate(phases)]
+        # Should not raise any errors
+        ret = validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        assert ret is None
 
-        validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+    @pytest.mark.parametrize(
+        ('phases', 'task_specs', 'error_match'),
+        [
+            pytest.param(
+                [
+                    {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+                    {'id': 'phase1', 'name': 'Duplicate', 'next': [{'id': 't2', 'goto': None}]},
+                ],
+                [('task1', 'phase1'), ('task2', 'phase1')],
+                'duplicate phase IDs',
+                id='duplicate_phase_ids',
+            ),
+            pytest.param(
+                [{'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': None}]}],
+                [('task1', 'phase1'), ('task1', 'phase1')],
+                'duplicate task IDs',
+                id='duplicate_task_ids',
+            ),
+            pytest.param(
+                [{'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': None}]}],
+                [('task1', 'missing-phase')],
+                'references non-existent phase',
+                id='task_references_missing_phase',
+            ),
+            pytest.param(
+                [{'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'ghost-phase'}]}],
+                [('task1', 'phase1')],
+                'references non-existent phase',
+                id='transition_references_missing_phase',
+            ),
+            pytest.param(
+                [
+                    {'id': 'phase0', 'name': 'Start', 'next': [{'id': 't0', 'goto': 'phase1'}]},
+                    {'id': 'phase1', 'name': 'Loop', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+                    {'id': 'phase2', 'name': 'Loop Again', 'next': [{'id': 't2', 'goto': 'phase1'}]},
+                ],
+                [('task1', 'phase1'), ('task2', 'phase2')],
+                'has no ending phases',
+                id='requires_ending_phase',
+            ),
+            pytest.param(
+                [
+                    {'id': 'phase1', 'name': 'One', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+                    {
+                        'id': 'phase2',
+                        'name': 'Two',
+                        'next': [{'id': 't2', 'goto': 'phase1'}, {'id': 't3', 'goto': None}],
+                    },
+                ],
+                [('task1', 'phase1'), ('task2', 'phase2')],
+                'has no entry phase',
+                id='requires_entry_phase',
+            ),
+            pytest.param(
+                [
+                    {'id': 'phase1', 'name': 'Entry A', 'next': [{'id': 't1', 'goto': None}]},
+                    {'id': 'phase2', 'name': 'Entry B', 'next': [{'id': 't2', 'goto': None}]},
+                ],
+                [('task1', 'phase1'), ('task2', 'phase2')],
+                'multiple entry phases',
+                id='single_entry_required',
+            ),
+            pytest.param(
+                [
+                    {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+                    {'id': 'phase2', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
+                    {'id': 'phase3', 'name': 'Isolated', 'next': [{'id': 't3', 'goto': 'phase4'}]},
+                    {'id': 'phase4', 'name': 'Isolated', 'next': [{'id': 't4', 'goto': 'phase3'}]},
+                ],
+                [('task1', 'phase1'), ('task2', 'phase2'), ('task3', 'phase3')],
+                'not reachable',
+                id='all_phases_reachable',
+            ),
+            pytest.param(
+                [
+                    {'id': 'phase0', 'name': 'Phase 0', 'next': [{'id': 't0', 'goto': 'phase1'}]},
+                    {'id': 'phase1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+                    {
+                        'id': 'phase2',
+                        'name': 'Phase 2',
+                        'next': [{'id': 't2', 'goto': 'phase1'}, {'id': 't3', 'goto': None}],
+                    },
+                ],
+                [('task1', 'phase1'), ('task2', 'phase2')],
+                'Circular dependency detected',
+                id='circular_dependency',
+            ),
+            pytest.param(
+                [
+                    {'id': 'phase0', 'name': 'Phase 0', 'next': [{'id': 't0', 'goto': 'phase1'}]},
+                    {'id': 'phase1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': 'phase2'}]},
+                    {'id': 'phase2', 'name': 'Phase 2', 'next': [{'id': 't2', 'goto': 'phase3'}]},
+                    {
+                        'id': 'phase3',
+                        'name': 'Phase 3',
+                        'next': [{'id': 't3', 'goto': 'phase1'}, {'id': 't4', 'goto': None}],
+                    },
+                ],
+                [('task1', 'phase1'), ('task2', 'phase2'), ('task3', 'phase3')],
+                'Circular dependency detected',
+                id='indirect_circular_dependency',
+            ),
+            pytest.param(
+                [
+                    {'id': 'phase0', 'name': 'Phase 0', 'next': [{'id': 't0', 'goto': 'phase1'}]},
+                    {
+                        'id': 'phase1',
+                        'name': 'Phase 1',
+                        'next': [{'id': 't1', 'goto': 'phase1'}, {'id': 't2', 'goto': None}],
+                    },
+                ],
+                [('task1', 'phase1')],
+                'Circular dependency detected',
+                id='self_referencing_dependency',
+            ),
+        ],
+    )
+    def test_validate_conditional_flow_error_cases(
+        self, phases: list[dict[str, Any]], task_specs: list[tuple[str, str]], error_match: str
+    ):
+        """Parametrize conditional flow error cases to avoid repetitive tests."""
+        tasks = [_notification_task(task_id, phase_id) for task_id, phase_id in task_specs]
 
-    def test_validate_conditional_flow_duplicate_phase_ids(self):
-        phases = [
-            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
-            {'id': 'phase1', 'name': 'Duplicate', 'next': [{'id': 't2', 'goto': None}]},
-        ]
-        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase1')]
-
-        with pytest.raises(ValueError, match='duplicate phase IDs'):
-            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-
-    def test_validate_conditional_flow_duplicate_task_ids(self):
-        phases = [
-            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': None}]},
-        ]
-        tasks = [_notification_task('task1', 'phase1'), _notification_task('task1', 'phase1')]
-
-        with pytest.raises(ValueError, match='duplicate task IDs'):
-            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-
-    def test_validate_conditional_flow_task_references_missing_phase(self):
-        phases = [
-            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': None}]},
-        ]
-        tasks = [_notification_task('task1', 'missing-phase')]
-
-        with pytest.raises(ValueError, match='references non-existent phase'):
-            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-
-    def test_validate_conditional_flow_transition_references_missing_phase(self):
-        phases = [
-            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'ghost-phase'}]},
-        ]
-        tasks = [_notification_task('task1', 'phase1')]
-
-        with pytest.raises(ValueError, match='references non-existent phase'):
-            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-
-    def test_validate_conditional_flow_requires_ending_phase(self):
-        phases = [
-            {'id': 'phase0', 'name': 'Start', 'next': [{'id': 't0', 'goto': 'phase1'}]},
-            {'id': 'phase1', 'name': 'Loop', 'next': [{'id': 't1', 'goto': 'phase2'}]},
-            {'id': 'phase2', 'name': 'Loop Again', 'next': [{'id': 't2', 'goto': 'phase1'}]},
-        ]
-        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
-
-        with pytest.raises(ValueError, match='has no ending phases'):
-            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-
-    def test_validate_conditional_flow_requires_entry_phase(self):
-        phases = [
-            {'id': 'phase1', 'name': 'One', 'next': [{'id': 't1', 'goto': 'phase2'}]},
-            {'id': 'phase2', 'name': 'Two', 'next': [{'id': 't2', 'goto': 'phase1'}, {'id': 't3', 'goto': None}]},
-        ]
-        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
-
-        with pytest.raises(ValueError, match='has no entry phase'):
-            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-
-    def test_validate_conditional_flow_single_entry_required(self):
-        phases = [
-            {'id': 'phase1', 'name': 'Entry A', 'next': [{'id': 't1', 'goto': None}]},
-            {'id': 'phase2', 'name': 'Entry B', 'next': [{'id': 't2', 'goto': None}]},
-        ]
-        tasks = [_notification_task('task1', 'phase1'), _notification_task('task2', 'phase2')]
-
-        with pytest.raises(ValueError, match='multiple entry phases'):
-            validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
-
-    def test_validate_conditional_flow_all_phases_reachable(self):
-        phases = [
-            {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
-            {'id': 'phase2', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
-            {'id': 'phase3', 'name': 'Isolated', 'next': [{'id': 't3', 'goto': 'phase4'}]},
-            {'id': 'phase4', 'name': 'Isolated', 'next': [{'id': 't4', 'goto': 'phase3'}]},
-        ]
-        tasks = [
-            _notification_task('task1', 'phase1'),
-            _notification_task('task2', 'phase2'),
-            _notification_task('task3', 'phase3'),
-        ]
-
-        with pytest.raises(ValueError, match='not reachable'):
+        with pytest.raises(ValueError, match=error_match):
             validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
 
 
 class TestReachableIds:
     """Test _reachable_ids function for finding reachable phases in a graph."""
 
-    def test_empty_graph_single_node(self):
-        """Test with a single node and no edges."""
-        edges: dict[str, set[str]] = {}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A'}
-        assert visited == {'A'}
+    @pytest.mark.parametrize(
+        (
+            'start_id',
+            'edges',
+            'initial_visited',
+            'expected',
+            'expected_visited',
+        ),
+        [
+            pytest.param(
+                'A',
+                {},
+                set(),
+                {'A'},
+                {'A'},
+                id='empty_graph_single_node',
+            ),
+            pytest.param(
+                'A',
+                {'A': set()},
+                set(),
+                {'A'},
+                {'A'},
+                id='single_node_no_outgoing_edges',
+            ),
+            pytest.param(
+                'A',
+                {'B': {'C'}, 'C': set()},
+                set(),
+                {'A'},
+                {'A'},
+                id='start_node_not_in_edges',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'A'}},
+                set(),
+                {'A'},
+                {'A'},
+                id='single_node_self_loop',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B'}, 'B': {'C'}, 'C': set()},
+                set(),
+                {'A', 'B', 'C'},
+                {'A', 'B', 'C'},
+                id='linear_chain',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B', 'C'}, 'B': set(), 'C': set()},
+                set(),
+                {'A', 'B', 'C'},
+                {'A', 'B', 'C'},
+                id='branching_structure',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B'}, 'B': {'C'}, 'C': {'A'}},
+                set(),
+                {'A', 'B', 'C'},
+                {'A', 'B', 'C'},
+                id='cycle_handling',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B'}, 'B': set(), 'C': {'D'}, 'D': set()},
+                set(),
+                {'A', 'B'},
+                {'A', 'B'},
+                id='disconnected_graph',
+            ),
+            pytest.param(
+                'A',
+                {
+                    'A': {'B', 'C'},
+                    'B': {'D'},
+                    'C': {'D', 'E'},
+                    'D': {'F'},
+                    'E': {'F'},
+                    'F': set(),
+                },
+                set(),
+                {'A', 'B', 'C', 'D', 'E', 'F'},
+                {'A', 'B', 'C', 'D', 'E', 'F'},
+                id='complex_graph_with_branches_and_merges',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B', 'C', 'D'}, 'B': set(), 'C': set(), 'D': set()},
+                set(),
+                {'A', 'B', 'C', 'D'},
+                {'A', 'B', 'C', 'D'},
+                id='node_with_multiple_outgoing_edges',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B'}, 'B': {'C'}, 'C': {'B', 'D'}, 'D': {'A'}},
+                set(),
+                {'A', 'B', 'C', 'D'},
+                {'A', 'B', 'C', 'D'},
+                id='nested_cycles',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B', 'C'}, 'B': {'D'}, 'C': {'D'}, 'D': set()},
+                {'C', 'D'},
+                {'A', 'B', 'C', 'D'},
+                {'A', 'B', 'C', 'D'},
+                id='partial_visited_set',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B'}, 'B': {'A', 'C'}, 'C': set()},
+                set('B'),
+                {'A', 'B'},
+                {'A', 'B'},
+                id='visited_nodes_are_not_revisited',
+            ),
+        ],
+    )
+    def test_reachable_ids(
+        self,
+        start_id: str,
+        edges: dict[str, set[str]],
+        initial_visited: set[str],
+        expected: set[str],
+        expected_visited: set[str],
+    ):
+        """Parametrized coverage for _reachable_ids scenarios."""
+        visited = set(initial_visited)
+        result = _reachable_ids(start_id, edges, visited)
 
-    def test_single_node_no_outgoing_edges(self):
-        """Test with a node that has no outgoing edges."""
-        edges: dict[str, set[str]] = {'A': set()}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A'}
-        assert visited == {'A'}
-
-    def test_start_node_not_in_edges(self):
-        """Test when start node is not in edges dictionary."""
-        edges: dict[str, set[str]] = {'B': {'C'}, 'C': set()}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A'}
-        assert visited == {'A'}
-
-    def test_single_node_self_loop(self):
-        """Test with a node that has a self-loop."""
-        edges: dict[str, set[str]] = {'A': {'A'}}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A'}
-        assert visited == {'A'}
-
-    def test_linear_chain(self):
-        """Test a simple linear chain: A -> B -> C."""
-        edges: dict[str, set[str]] = {'A': {'B'}, 'B': {'C'}, 'C': set()}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B', 'C'}
-        assert visited == {'A', 'B', 'C'}
-
-    def test_branching_structure(self):
-        """Test branching: A -> B, A -> C."""
-        edges: dict[str, set[str]] = {'A': {'B', 'C'}, 'B': set(), 'C': set()}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B', 'C'}
-        assert visited == {'A', 'B', 'C'}
-
-    def test_cycle_handling(self):
-        """Test that cycles are handled correctly: A -> B -> C -> A."""
-        edges: dict[str, set[str]] = {'A': {'B'}, 'B': {'C'}, 'C': {'A'}}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B', 'C'}
-        assert visited == {'A', 'B', 'C'}
-
-    def test_disconnected_graph(self):
-        """Test with disconnected components - only reachable nodes are returned."""
-        edges: dict[str, set[str]] = {'A': {'B'}, 'B': set(), 'C': {'D'}, 'D': set()}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B'}
-        assert 'C' not in result
-        assert 'D' not in result
-
-    def test_already_visited_nodes(self):
-        """Test that already visited nodes are not revisited."""
-        edges: dict[str, set[str]] = {'A': {'B'}, 'B': {'A', 'C'}, 'C': set()}
-        visited: set[str] = {'B'}
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B'}
-        assert visited == {'A', 'B'}
-        assert 'C' not in result
-
-    def test_complex_graph_with_branches_and_merges(self):
-        """Test a complex graph with multiple branches and merges."""
-        edges: dict[str, set[str]] = {
-            'A': {'B', 'C'},
-            'B': {'D'},
-            'C': {'D', 'E'},
-            'D': {'F'},
-            'E': {'F'},
-            'F': set(),
-        }
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B', 'C', 'D', 'E', 'F'}
-        assert visited == {'A', 'B', 'C', 'D', 'E', 'F'}
-
-    def test_node_with_multiple_outgoing_edges(self):
-        """Test node with multiple outgoing edges to different targets."""
-        edges: dict[str, set[str]] = {'A': {'B', 'C', 'D'}, 'B': set(), 'C': set(), 'D': set()}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B', 'C', 'D'}
-        assert visited == {'A', 'B', 'C', 'D'}
-
-    def test_nested_cycles(self):
-        """Test graph with nested cycles."""
-        edges: dict[str, set[str]] = {'A': {'B'}, 'B': {'C'}, 'C': {'B', 'D'}, 'D': {'A'}}
-        visited: set[str] = set()
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B', 'C', 'D'}
-        assert visited == {'A', 'B', 'C', 'D'}
-
-    def test_partial_visited_set(self):
-        """Test with some nodes already in visited set."""
-        edges: dict[str, set[str]] = {'A': {'B', 'C'}, 'B': {'D'}, 'C': {'D'}, 'D': set()}
-        visited: set[str] = {'C', 'D'}
-        result = _reachable_ids('A', edges, visited)
-        assert result == {'A', 'B', 'C', 'D'}
-        assert visited == {'A', 'B', 'C', 'D'}
+        assert result == expected
+        assert visited == expected_visited
