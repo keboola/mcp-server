@@ -130,7 +130,7 @@ class TestCircularDependencies:
     """Test circular dependency detection."""
 
     @pytest.mark.parametrize(
-        "phases",
+        'phases',
         [
             pytest.param(
                 [
@@ -138,7 +138,7 @@ class TestCircularDependencies:
                     {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
                     {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]},
                 ],
-                id="no_circular_dependencies",
+                id='no_circular_dependencies',
             ),
             pytest.param(
                 [
@@ -148,22 +148,22 @@ class TestCircularDependencies:
                     {'id': 4, 'name': 'Phase 4', 'dependsOn': [3]},
                     {'id': 5, 'name': 'Phase 5', 'dependsOn': [1]},
                 ],
-                id="complex_valid_dependencies",
+                id='complex_valid_dependencies',
             ),
         ],
     )
-    def test_no_circular_dependency_cases(self, phases):
+    def test_no_circular_dependency_cases(self, phases: list[dict[str, Any]]):
         """Test cases where no circular dependencies should be detected."""
         phases = ensure_legacy_phase_ids(phases)
         ret = _check_legacy_circular_dependencies(phases)
         assert ret is None
 
     @pytest.mark.parametrize(
-        "phases",
+        'phases',
         [
             pytest.param(
                 [{'id': 1, 'name': 'Phase 1', 'dependsOn': [2]}, {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]}],
-                id="direct_circular_dependency",
+                id='direct_circular_dependency',
             ),
             pytest.param(
                 [
@@ -171,12 +171,12 @@ class TestCircularDependencies:
                     {'id': 2, 'name': 'Phase 2', 'dependsOn': [1]},
                     {'id': 3, 'name': 'Phase 3', 'dependsOn': [2]},
                 ],
-                id="indirect_circular_dependency",
+                id='indirect_circular_dependency',
             ),
-            pytest.param([{'id': 1, 'name': 'Phase 1', 'dependsOn': [1]}], id="self_referencing_dependency"),
+            pytest.param([{'id': 1, 'name': 'Phase 1', 'dependsOn': [1]}], id='self_referencing_dependency'),
         ],
     )
-    def test_circular_dependency_errors(self, phases):
+    def test_circular_dependency_errors(self, phases: list[dict[str, Any]]):
         """Test detection of direct, indirect, and self-referencing circular dependencies."""
         phases = ensure_legacy_phase_ids(phases)
 
@@ -260,14 +260,14 @@ class TestConditionalFlowValidation:
     """Test validation logic for conditional flows."""
 
     @pytest.mark.parametrize(
-        "phases",
+        'phases',
         [
             pytest.param(
                 [
                     {'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': 'phase2'}]},
                     {'id': 'phase2', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
                 ],
-                id="simple-start-end",
+                id='simple-start-end',
             ),
             pytest.param(
                 [
@@ -280,7 +280,7 @@ class TestConditionalFlowValidation:
                     {'id': 'phase3', 'name': 'Phase 3', 'next': [{'id': 't4', 'goto': None}]},
                     {'id': 'phase4', 'name': 'Phase 4', 'next': [{'id': 't5', 'goto': None}]},
                 ],
-                id="complex-branched",
+                id='complex-branched',
             ),
         ],
     )
@@ -292,7 +292,7 @@ class TestConditionalFlowValidation:
         assert ret is None
 
     @pytest.mark.parametrize(
-        ("phases", "task_specs", "error_match"),
+        ('phases', 'task_specs', 'error_match'),
         [
             pytest.param(
                 [
@@ -532,6 +532,14 @@ class TestReachableIds:
                 {'A', 'B', 'C', 'D'},
                 {'A', 'B', 'C', 'D'},
                 id='partial_visited_set',
+            ),
+            pytest.param(
+                'A',
+                {'A': {'B'}, 'B': {'A', 'C'}, 'C': set()},
+                set('B'),
+                {'A', 'B'},
+                {'A', 'B'},
+                id='visited_nodes_are_not_revisited',
             ),
         ],
     )
