@@ -58,8 +58,7 @@ Use Custom Python component in cases when:
 - The existing Generic Extractor extraction is too slow and the user complains about its performance.
 - You have already tried Generic Extractor but it's failing. Use Custom Python as a fallback.
 
-When using Custom Python, always look up the documentation using the `get_component` tool and configuration examples
-using the `get_config_examples` tool.
+When using Custom Python, always look up the documentation using the `get_component` tool.
 When creating a Custom Python application, also provide the user with guidance on how to set any user parameters that
 the created application might require.
 Remember to add dependencies into the created configuration!
