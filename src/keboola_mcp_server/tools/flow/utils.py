@@ -237,53 +237,66 @@ def _validate_legacy_flow_structure(
         if task.phase not in phase_ids:
             raise ValueError(f'Task {task.id} references non-existent phase {task.phase}')
 
+    # Check for circular dependencies
     _check_legacy_circular_dependencies(phases)
 
 
 def _check_legacy_circular_dependencies(phases: list[FlowPhase]) -> None:
+    """Check for circular dependencies in a legacy flow."""
+    edges = {phase.id: phase.depends_on for phase in phases}
+    all_phase_ids = {phase.id for phase in phases}
+    _check_circular_dependencies(edges, all_phase_ids)
+
+
+def _check_circular_dependencies(edges: dict[Any, list[Any]], all_node_ids: set[Any] | None = None) -> None:
     """
+    Generic circular dependency check that accepts edges in format {node_id: [target_node_id, ...]}.
+
     Optimized circular dependency check that:
     1. Uses O(n) dict lookup instead of O(n²) list search
     2. Returns detailed cycle path information for better debugging
+
+    :param edges: Dictionary mapping node IDs to lists of target node IDs.
+    :param all_node_ids: Optional set of all node IDs in the graph. If provided, ensures all nodes are checked.
+    :raises ValueError: If a circular dependency is detected.
     """
 
-    # Build efficient lookup graph once - O(n) optimization
-    graph = {phase.id: phase.depends_on for phase in phases}
-
-    def _has_cycle(phase_id: Any, _visited: set, rec_stack: set, path: list[Any]) -> list[Any] | None:
+    def _has_cycle(node_id: Any, _visited: set, rec_stack: set, path: list[Any]) -> list[Any] | None:
         """
-        Returns None if no cycle found, or List[phase_ids] representing the cycle path.
+        Returns None if no cycle found, or List[node_ids] representing the cycle path.
         """
-        _visited.add(phase_id)
-        rec_stack.add(phase_id)
-        path.append(phase_id)
+        _visited.add(node_id)
+        rec_stack.add(node_id)
+        path.append(node_id)
 
-        dependencies = graph.get(phase_id, [])
+        targets = edges.get(node_id, [])
 
-        for dep_id in dependencies:
-            if dep_id not in _visited:
-                cycle = _has_cycle(dep_id, _visited, rec_stack, path)
+        for target_id in targets:
+            if target_id not in _visited:
+                cycle = _has_cycle(target_id, _visited, rec_stack, path)
                 if cycle is not None:
                     return cycle
 
-            elif dep_id in rec_stack:
+            elif target_id in rec_stack:
                 try:
-                    cycle_start_index = path.index(dep_id)
-                    return path[cycle_start_index:] + [dep_id]
+                    cycle_start_index = path.index(target_id)
+                    return path[cycle_start_index:] + [target_id]
                 except ValueError:
-                    return [phase_id, dep_id]
+                    return [node_id, target_id]
 
         path.pop()
-        rec_stack.remove(phase_id)
+        rec_stack.remove(node_id)
         return None
 
     visited = set()
-    for phase in phases:
-        if phase.id not in visited:
-            cycle_path = _has_cycle(phase.id, visited, set(), [])
+    nodes_to_check = all_node_ids if all_node_ids is not None else set(edges.keys())
+
+    for node_id in nodes_to_check:
+        if node_id not in visited:
+            cycle_path = _has_cycle(node_id, visited, set(), [])
             if cycle_path is not None:
                 cycle_str = ' -> '.join(str(pid) for pid in cycle_path)
-                raise ValueError(f'Circular dependency detected in phases: {cycle_str}')
+                raise ValueError(f'Circular dependency detected: {cycle_str}')
 
 
 def _validate_conditional_flow_structure(
@@ -358,25 +371,36 @@ def _validate_conditional_flow_structure(
         )
 
     # All phases must be reachable from the entry point
-    reachable_ids = _reachable_ids(entry_phase[0], succ_phases, set[str]())
+    _check_reachable_ids(entry_phase[0], succ_phases, phase_ids)
+
+    # Check for circular dependencies
+    _check_circular_dependencies(
+        edges={phase_id: list(target_ids) for phase_id, target_ids in succ_phases.items()}, all_node_ids=phase_ids
+    )
+
+
+def _check_reachable_ids(start_id: str, edges: dict[str, set[str]], phase_ids: set[str]) -> None:
+    """
+    Checks that all phases are reachable from a starting phase using DFS.
+
+    :param start_id: The ID of the starting phase.
+    :param edges: Dictionary mapping phase IDs to sets of target phase IDs.
+    :param visited: Set of phase IDs that have been visited.
+    :param phase_ids: Set of all phase IDs in the flow.
+    :raises ValueError: If the flow has phases that are not reachable from the starting phase.
+    """
+
+    reachable_ids = _reachable_ids(start_id, edges, set[str]())
     if reachable_ids != phase_ids:
         raise ValueError(
-            f'Flow has phases that are not reachable from the entry phase ({entry_phase[0]}): '
+            f'Flow has phases that are not reachable from the entry phase ({start_id}): '
             f'{phase_ids - reachable_ids}. All phases must be reachable from the entry phase by a valid path of '
             'transitions.'
         )
 
 
 def _reachable_ids(start_id: str, edges: dict[str, set[str]], visited: set[str]) -> set[str]:
-    """
-    Find all phases reachable from a starting phase using DFS.
-
-    :param start_id: The ID of the starting phase.
-    :param edges: Dictionary mapping phase IDs to sets of target phase IDs.
-    :param visited: Set of phase IDs that have been visited.
-    :return: Set of IDs reachable from the starting ID.
-    """
-
+    """Find all phases reachable from a starting phase using DFS."""
     visited.add(start_id)
     for target_id in edges.get(start_id, []):
         if target_id not in visited:
