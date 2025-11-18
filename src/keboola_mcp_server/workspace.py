@@ -75,8 +75,6 @@ class QueryResult:
     message: str | None = Field(
         default=None, description='Either an error message or the information from non-SELECT queries.'
     )
-    data_rows: int | None = Field(default=None, description='Number of rows fetched in the "data" field.')
-    total_query_rows: int | None = Field(default=None, description='Total number of rows selected by the SQL query.')
 
     @property
     def is_ok(self) -> bool:
@@ -89,6 +87,7 @@ class QueryResult:
 
 class _Workspace(abc.ABC):
     _QUERY_TIMEOUT = 300.0  # 5 minutes
+    _SELECTED_ROWS_MSG = 'Returning {rows} of {total} selected rows.'
 
     def __init__(self, workspace_id: int) -> None:
         self._workspace_id = workspace_id
@@ -308,13 +307,13 @@ class _SnowflakeWorkspace(_Workspace):
 
         rows = [{col_name: value for col_name, value in zip(columns, row)} for row in all_rows]
 
-        query_result = QueryResult(
-            status='ok',
-            data=SqlSelectData(columns=columns, rows=rows) if columns else None,
-            message=message,
-            data_rows=len(rows) if columns else None,
-            total_query_rows=total_query_rows,
-        )
+        if columns:
+            message = ' '.join(
+                filter(None, [message, self._SELECTED_ROWS_MSG.format(rows=len(rows), total=total_query_rows)])
+            )
+            query_result = QueryResult(status='ok', data=SqlSelectData(columns=columns, rows=rows), message=message)
+        else:
+            query_result = QueryResult(status='ok', message=message)
 
         return query_result
 
@@ -424,9 +423,9 @@ class _BigQueryWorkspace(_Workspace):
             qr = QueryResult(
                 status=qr.status,
                 data=SqlSelectData(columns=qr.data.columns, rows=rows),
-                message=qr.message,
-                data_rows=len(rows) if rows else None,
-                total_query_rows=total_query_rows if total_query_rows else None,
+                message=' '.join(
+                    filter(None, [qr.message, self._SELECTED_ROWS_MSG.format(rows=len(rows), total=total_query_rows)])
+                ),
             )
 
         return qr

@@ -23,8 +23,7 @@ class QueryDataOutput(BaseModel):
 
     query_name: str = Field(description='The name of the executed query')
     csv_data: str = Field(description='The retrieved data in CSV format')
-    csv_data_rows: int | None = Field(default=None, description='Number of rows fetched in the "csv_data" field.')
-    total_query_rows: int | None = Field(default=None, description='Total number of rows selected by the SQL query.')
+    message: str | None = Field(default=None, description='A message from the query execution')
 
 
 def add_sql_tools(mcp: FastMCP) -> None:
@@ -101,10 +100,7 @@ async def query_data(
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     result = await workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS, max_chars=MAX_CHARS)
-    LOG.info(
-        f'Query "{query_name}" executed successfully, {result.data_rows} rows fetched, '
-        f'{result.total_query_rows} rows selected.'
-    )
+    LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
     if result.is_ok:
         if result.data:
             data = result.data
@@ -118,12 +114,7 @@ async def query_data(
         writer.writeheader()
         writer.writerows(data.rows)
 
-        return QueryDataOutput(
-            query_name=query_name,
-            csv_data=output.getvalue(),
-            csv_data_rows=result.data_rows,
-            total_query_rows=result.total_query_rows,
-        )
+        return QueryDataOutput(query_name=query_name, csv_data=output.getvalue(), message=result.message)
 
     else:
         raise ValueError(f'Failed to run SQL query, error: {result.message}')

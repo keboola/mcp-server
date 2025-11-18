@@ -31,9 +31,7 @@ def _truncate_data(qr: QueryResult, max_rows: int | None, max_chars: int | None)
     return QueryResult(
         status=qr.status,
         data=SqlSelectData(columns=qr.data.columns, rows=rows),
-        message=qr.message,
-        data_rows=len(rows),
-        total_query_rows=len(qr.data.rows),
+        message=_SnowflakeWorkspace._SELECTED_ROWS_MSG.format(rows=len(rows), total=len(qr.data.rows)),
     )
 
 
@@ -359,8 +357,7 @@ class TestWorkspaceManagerSnowflake:
                     {'id': 10, 'name': 'Jackson', 'email': 'jackson@foo.com'},
                 ],
             ),
-            data_rows=10,
-            total_query_rows=10,
+            message='Returning 10 of 10 selected rows.',
         )
 
         keboola_client.storage_client.branches_list.assert_called_once()
