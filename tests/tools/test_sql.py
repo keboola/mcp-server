@@ -1,5 +1,6 @@
 import json
 from typing import Any
+from unittest.mock import call
 
 import pytest
 from mcp.server.fastmcp import Context
@@ -13,7 +14,27 @@ from keboola_mcp_server.workspace import (
     SqlSelectData,
     TableFqn,
     WorkspaceManager,
+    _SnowflakeWorkspace,
 )
+
+
+def _truncate_data(qr: QueryResult, max_rows: int | None, max_chars: int | None) -> QueryResult:
+    rows = []
+    total_chars = 0
+    for row in qr.data.rows[: (max_rows or len(qr.data.rows))]:
+        chars = sum(len(str(v)) for v in row.values() if v is not None)
+        if max_chars is not None and total_chars + chars > max_chars:
+            break
+        total_chars += chars
+        rows.append(row)
+
+    return QueryResult(
+        status=qr.status,
+        data=SqlSelectData(columns=qr.data.columns, rows=rows),
+        message=qr.message,
+        data_rows=len(rows),
+        total_query_rows=len(qr.data.rows),
+    )
 
 
 @pytest.mark.asyncio
@@ -156,7 +177,7 @@ class TestWorkspaceManagerSnowflake:
                 'message': '',
             },
         ]
-        mocker.patch('keboola_mcp_server.workspace.QueryServiceClient.create', return_value=qsclient)
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
@@ -170,7 +191,7 @@ class TestWorkspaceManagerSnowflake:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('query', 'expected'),
+        ('query', 'db_data', 'max_rows', 'max_chars'),
         [
             (
                 'select id, name, email from user;',
@@ -183,22 +204,58 @@ class TestWorkspaceManagerSnowflake:
                             {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},
                         ],
                     ),
-                    data_rows=2,
-                    total_query_rows=2,
                 ),
+                None,
+                None,
+            ),
+            (
+                'select id, name, email from user;',
+                QueryResult(
+                    status='ok',
+                    data=SqlSelectData(
+                        columns=['id', 'name', 'email'],
+                        rows=[
+                            {'id': 1, 'name': 'John', 'email': 'john@foo.com'},
+                            {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},
+                        ],
+                    ),
+                ),
+                1,
+                None,
+            ),
+            (
+                'select id, name, email from user;',
+                QueryResult(
+                    status='ok',
+                    data=SqlSelectData(
+                        columns=['id', 'name', 'email'],
+                        rows=[
+                            {'id': 1, 'name': 'John', 'email': 'john@foo.com'},  # 17 characters
+                            {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},  # 16 characters
+                        ],
+                    ),
+                ),
+                None,
+                20,
             ),
             (
                 'create table foo (id integer, name varchar);',
                 QueryResult(status='ok', message='1 table created'),
+                None,
+                None,
             ),
-            (
-                'bla bla bla',
-                QueryResult(status='error', message='Invalid SQL...'),
-            ),
+            ('bla bla bla', QueryResult(status='error', message='Invalid SQL...'), None, None),
         ],
     )
     async def test_execute_query(
-        self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context, mocker
+        self,
+        query: str,
+        db_data: QueryResult,
+        max_rows: int | None,
+        max_chars: int | None,
+        keboola_client: KeboolaClient,
+        context: Context,
+        mocker,
     ):
         keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
 
@@ -209,22 +266,113 @@ class TestWorkspaceManagerSnowflake:
             'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
         }
         qsclient.get_job_results.return_value = {
-            'status': 'completed' if expected.is_ok else 'failed',
-            'data': [list(row.values()) for row in expected.data.rows] if expected.data else [],
-            'columns': [{'name': col_name} for col_name in expected.data.columns] if expected.data else [],
-            'message': expected.message,
-            'numberOfRows': len(expected.data.rows) if expected.data else None,
+            'status': 'completed' if db_data.is_ok else 'failed',
+            'data': [list(row.values()) for row in db_data.data.rows] if db_data.data else [],
+            'columns': [{'name': col_name} for col_name in db_data.data.columns] if db_data.data else [],
+            'message': db_data.message,
+            'numberOfRows': len(db_data.data.rows) if db_data.data else None,
         }
-        mocker.patch('keboola_mcp_server.workspace.QueryServiceClient.create', return_value=qsclient)
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+
+        if db_data.data is not None:
+            expected = _truncate_data(db_data, max_rows, max_chars)
+        else:
+            expected = db_data
 
         m = WorkspaceManager.from_state(context.session.state)
-        result = await m.execute_query(query)
-        assert result == expected
+        actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
+
+        assert actual == expected
 
         keboola_client.storage_client.branches_list.assert_called_once()
         qsclient.submit_job.assert_called_once()
         qsclient.get_job_status.assert_called_once_with('qs-job-1234')
-        qsclient.get_job_results.assert_called_once_with('qs-job-1234', 'qs-job-statement-1234', offset=0, limit=1000)
+        qsclient.get_job_results.assert_called_once_with(
+            'qs-job-1234', 'qs-job-statement-1234', offset=0, limit=1000 if max_rows is None else max(max_rows, 100)
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_query_pagination(self, keboola_client: KeboolaClient, context: Context, mocker):
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-1234'
+        qsclient.get_job_status.return_value = {
+            'status': 'completed',
+            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
+        }
+        qsclient.get_job_results.side_effect = [
+            {
+                'status': 'completed',
+                'data': [
+                    [1, 'John', 'john@foo.com'],
+                    [2, 'Joe', 'joe@foo.com'],
+                    [3, 'Jack', 'jack@foo.com'],
+                    [4, 'Jerry', 'jerry@foo.com'],
+                ],
+                'columns': [{'name': 'id'}, {'name': 'name'}, {'name': 'email'}],
+                'message': None,
+                'numberOfRows': 10,
+            },
+            {
+                'status': 'completed',
+                'data': [
+                    [5, 'James', 'james@foo.com'],
+                    [6, 'Julian', 'julian@foo.com'],
+                    [7, 'Jordan', 'jordan@foo.com'],
+                    [8, 'Jacob', 'jacob@foo.com'],
+                ],
+                'columns': [{'name': 'id'}, {'name': 'name'}, {'name': 'email'}],
+                'message': None,
+                'numberOfRows': 10,
+            },
+            {
+                'status': 'completed',
+                'data': [
+                    [9, 'Jagger', 'jagger@foo.com'],
+                    [10, 'Jackson', 'jackson@foo.com'],
+                ],
+                'columns': [{'name': 'id'}, {'name': 'name'}, {'name': 'email'}],
+                'message': None,
+                'numberOfRows': 10,
+            },
+        ]
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_PAGE_SIZE', 4)
+
+        m = WorkspaceManager.from_state(context.session.state)
+        actual = await m.execute_query('select id, name, email from user;')
+        assert actual == QueryResult(
+            status='ok',
+            data=SqlSelectData(
+                columns=['id', 'name', 'email'],
+                rows=[
+                    {'id': 1, 'name': 'John', 'email': 'john@foo.com'},
+                    {'id': 2, 'name': 'Joe', 'email': 'joe@foo.com'},
+                    {'id': 3, 'name': 'Jack', 'email': 'jack@foo.com'},
+                    {'id': 4, 'name': 'Jerry', 'email': 'jerry@foo.com'},
+                    {'id': 5, 'name': 'James', 'email': 'james@foo.com'},
+                    {'id': 6, 'name': 'Julian', 'email': 'julian@foo.com'},
+                    {'id': 7, 'name': 'Jordan', 'email': 'jordan@foo.com'},
+                    {'id': 8, 'name': 'Jacob', 'email': 'jacob@foo.com'},
+                    {'id': 9, 'name': 'Jagger', 'email': 'jagger@foo.com'},
+                    {'id': 10, 'name': 'Jackson', 'email': 'jackson@foo.com'},
+                ],
+            ),
+            data_rows=10,
+            total_query_rows=10,
+        )
+
+        keboola_client.storage_client.branches_list.assert_called_once()
+        qsclient.submit_job.assert_called_once()
+        qsclient.get_job_status.assert_called_once_with('qs-job-1234')
+        qsclient.get_job_results.assert_has_calls(
+            [
+                call('qs-job-1234', 'qs-job-statement-1234', offset=0, limit=100),
+                call('qs-job-1234', 'qs-job-statement-1234', offset=4, limit=100),
+                call('qs-job-1234', 'qs-job-statement-1234', offset=8, limit=100),
+            ]
+        )
 
 
 class TestWorkspaceManagerBigQuery:
@@ -294,7 +442,7 @@ class TestWorkspaceManagerBigQuery:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('query', 'expected'),
+        ('query', 'db_data', 'max_rows', 'max_chars'),
         [
             (
                 'select id, name, email from user;',
@@ -307,24 +455,66 @@ class TestWorkspaceManagerBigQuery:
                             {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},
                         ],
                     ),
-                    data_rows=2,
-                    total_query_rows=2,
                 ),
+                None,
+                None,
+            ),
+            (
+                'select id, name, email from user;',
+                QueryResult(
+                    status='ok',
+                    data=SqlSelectData(
+                        columns=['id', 'name', 'email'],
+                        rows=[
+                            {'id': 1, 'name': 'John', 'email': 'john@foo.com'},
+                            {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},
+                        ],
+                    ),
+                ),
+                1,
+                None,
+            ),
+            (
+                'select id, name, email from user;',
+                QueryResult(
+                    status='ok',
+                    data=SqlSelectData(
+                        columns=['id', 'name', 'email'],
+                        rows=[
+                            {'id': 1, 'name': 'John', 'email': 'john@foo.com'},  # 17 characters
+                            {'id': 2, 'name': 'Joe', 'email': 'joe@bar.com'},  # 16 characters
+                        ],
+                    ),
+                ),
+                None,
+                20,
             ),
             (
                 'CREATE TABLE `foo` (id INT64, name STRING);',
-                QueryResult(status='ok', data=SqlSelectData(columns=[], rows=[])),
+                QueryResult(status='ok', data=None, message='1 table created'),
+                None,
+                None,
             ),
-            (
-                'bla bla bla',
-                QueryResult(status='error', data=None, message='400 Invalid SQL...'),
-            ),
+            ('bla bla bla', QueryResult(status='error', data=None, message='400 Invalid SQL...'), None, None),
         ],
     )
     async def test_execute_query(
-        self, query: str, expected: QueryResult, keboola_client: KeboolaClient, context: Context
+        self,
+        query: str,
+        db_data: QueryResult,
+        max_rows: int | None,
+        max_chars: int | None,
+        keboola_client: KeboolaClient,
+        context: Context,
     ):
-        keboola_client.storage_client.workspace_query.return_value = TypeAdapter(QueryResult).dump_python(expected)
+        keboola_client.storage_client.workspace_query.return_value = TypeAdapter(QueryResult).dump_python(db_data)
+
+        if db_data.data is not None:
+            expected = _truncate_data(db_data, max_rows, max_chars)
+        else:
+            expected = db_data
+
         m = WorkspaceManager.from_state(context.session.state)
-        result = await m.execute_query(query)
-        assert result == expected
+        actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
+
+        assert actual == expected

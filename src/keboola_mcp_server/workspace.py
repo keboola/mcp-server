@@ -67,14 +67,6 @@ class SqlSelectData:
         description='Selected rows, each row is a dictionary of column: value pairs.'
     )
 
-    def value_chars(self) -> int:
-        chars = 0
-        for r in self.rows:
-            for v in r.values():
-                if v:
-                    chars += len(str(v))
-        return chars
-
 
 @dataclass(frozen=True)
 class QueryResult:
@@ -119,12 +111,15 @@ class _Workspace(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
+    async def execute_query(
+        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+    ) -> QueryResult:
         """
         Runs a given SQL query.
 
         :param sql_query: The SQL query to be executed.
         :param max_rows: The maximum number of rows to fetch from the query results. If None, no limit is applied.
+        :param max_chars: The maximum number of chars to fetch from the query results. If None, no limit is applied.
         :return: The result of the executed query.
         """
         pass
@@ -136,6 +131,8 @@ class _Workspace(abc.ABC):
 
 
 class _SnowflakeWorkspace(_Workspace):
+    _PAGE_SIZE = 1_000
+
     def __init__(self, workspace_id: int, schema: str, client: KeboolaClient):
         super().__init__(workspace_id)
         self._schema = schema  # default schema created for the workspace
@@ -216,9 +213,13 @@ class _SnowflakeWorkspace(_Workspace):
 
         return None
 
-    async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
+    async def execute_query(
+        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+    ) -> QueryResult:
         if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
+        if max_chars is not None and max_chars <= 0:
+            raise ValueError('The "max_chars" must be a positive integer or None.')
 
         if not self._qsclient:
             self._qsclient = await self._create_qs_client()
@@ -242,9 +243,10 @@ class _SnowflakeWorkspace(_Workspace):
 
         # Fetch results with pagination
         all_rows: list[list[Any]] = []
+        all_rows_chars: int = 0
         columns: list[str] = []
         offset = 0
-        page_size = 1_000
+        page_size = self._PAGE_SIZE
         message: str | None = None
         total_query_rows: int | None = None
 
@@ -282,12 +284,24 @@ class _SnowflakeWorkspace(_Workspace):
                 break
 
             page_data = page_data[:rows_to_fetch]
-            all_rows.extend(page_data)
+            if max_chars is not None:
+                for row in page_data:
+                    chars = sum(len(str(v)) for v in row if v is not None)
+                    if all_rows_chars + chars <= max_chars:
+                        all_rows.append(row)
+                        all_rows_chars += chars
+                    else:
+                        break
+            else:
+                all_rows.extend(page_data)
 
             if len(page_data) < rows_to_fetch:
                 break
 
             if max_rows is not None and len(all_rows) >= max_rows:
+                break
+
+            if max_chars is not None and all_rows_chars >= max_chars:
                 break
 
             offset += len(page_data)
@@ -383,16 +397,30 @@ class _BigQueryWorkspace(_Workspace):
 
         return None
 
-    async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
+    async def execute_query(
+        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+    ) -> QueryResult:
         if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
+        if max_chars is not None and max_chars <= 0:
+            raise ValueError('The "max_chars" must be a positive integer or None.')
 
         resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
-        qr = TypeAdapter(QueryResult).validate_python(resp)
+        qr = cast(QueryResult, TypeAdapter(QueryResult).validate_python(resp))
         if qr.data:
             total_query_rows = len(qr.data.rows)
             max_rows = max_rows or total_query_rows
-            rows = qr.data.rows[:max_rows]
+            if max_chars is not None:
+                rows: list[SqlSelectDataRow] = []
+                total_chars = 0
+                for row in qr.data.rows[:max_rows]:
+                    chars = sum(len(str(v)) for v in row.values() if v is not None)
+                    if total_chars + chars <= max_chars:
+                        rows.append(row)
+                        total_chars += chars
+            else:
+                rows = cast(list[SqlSelectDataRow], qr.data.rows[:max_rows])
+
             qr = QueryResult(
                 status=qr.status,
                 data=SqlSelectData(columns=qr.data.columns, rows=rows),
@@ -609,9 +637,11 @@ class WorkspaceManager:
         else:
             raise ValueError('Failed to initialize Keboola Workspace.')
 
-    async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
+    async def execute_query(
+        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+    ) -> QueryResult:
         workspace = await self._get_workspace()
-        return await workspace.execute_query(sql_query, max_rows=max_rows)
+        return await workspace.execute_query(sql_query, max_rows=max_rows, max_chars=max_chars)
 
     async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']

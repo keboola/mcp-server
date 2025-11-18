@@ -100,7 +100,11 @@ async def query_data(
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    result = await workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS)
+    result = await workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS, max_chars=MAX_CHARS)
+    LOG.info(
+        f'Query "{query_name}" executed successfully, {result.data_rows} rows fetched, '
+        f'{result.total_query_rows} rows selected.'
+    )
     if result.is_ok:
         if result.data:
             data = result.data
@@ -108,27 +112,18 @@ async def query_data(
             # non-SELECT query, this should not really happen, because this tool is for running SELECT queries
             data = SqlSelectData(columns=['message'], rows=[{'message': result.message}])
 
-        rows_num = len(data.rows)
-        value_chars_num = data.value_chars()
-        if rows_num < MAX_ROWS and value_chars_num < MAX_CHARS:
-            # Convert to CSV
-            output = StringIO()
-            writer = csv.DictWriter(output, fieldnames=data.columns)
-            writer.writeheader()
-            writer.writerows(data.rows)
+        # Convert to CSV
+        output = StringIO()
+        writer = csv.DictWriter(output, fieldnames=data.columns)
+        writer.writeheader()
+        writer.writerows(data.rows)
 
-            return QueryDataOutput(
-                query_name=query_name,
-                csv_data=output.getvalue(),
-                csv_data_rows=result.data_rows,
-                total_query_rows=result.total_query_rows,
-            )
-
-        else:
-            raise ValueError(
-                f'The query fetched too much data (fetched {rows_num} rows with {value_chars_num} characters).'
-                f'The hard limits of this tool are max {MAX_ROWS} rows and max {MAX_CHARS} characters.'
-            )
+        return QueryDataOutput(
+            query_name=query_name,
+            csv_data=output.getvalue(),
+            csv_data_rows=result.data_rows,
+            total_query_rows=result.total_query_rows,
+        )
 
     else:
         raise ValueError(f'Failed to run SQL query, error: {result.message}')
