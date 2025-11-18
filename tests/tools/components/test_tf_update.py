@@ -70,7 +70,7 @@ def empty_params():
 
 
 @pytest.mark.parametrize(
-    ('initial_params', 'operation', 'expected_params'),
+    ('initial_params', 'operation', 'expected_params', 'expected_message'),
     [
         # Add block to end of existing blocks
         (
@@ -90,6 +90,7 @@ def empty_params():
                     {'name': 'New Block', 'codes': []},
                 ]
             },
+            'Added block with name "New Block"',
         ),
         # Add block to start of existing blocks
         (
@@ -109,6 +110,7 @@ def empty_params():
                     {'id': 'b0', 'name': 'Existing Block', 'codes': []},
                 ]
             },
+            'Added block with name "New Block"',
         ),
         # Add block with multiple codes
         (
@@ -118,8 +120,23 @@ def empty_params():
                 block=SimplifiedTfBlocks.Block(
                     name='Multi Code Block',
                     codes=[
-                        SimplifiedTfBlocks.Block.Code(name='Code 1', script='SELECT 1'),
-                        SimplifiedTfBlocks.Block.Code(name='Code 2', script='SELECT 2'),
+                        SimplifiedTfBlocks.Block.Code(
+                            name='Code 1',
+                            script=(
+                                'SELECT u.id, u.name, COUNT(o.id) as order_count '
+                                'FROM users u LEFT JOIN orders o ON u.id = o.user_id '
+                                "WHERE u.created_at > '2024-01-01' "
+                                'GROUP BY u.id, u.name HAVING COUNT(o.id) > 5'
+                            ),
+                        ),
+                        SimplifiedTfBlocks.Block.Code(
+                            name='Code 2',
+                            script=(
+                                'SELECT p.product_name, SUM(oi.quantity * oi.price) as revenue '
+                                'FROM products p INNER JOIN order_items oi ON p.id = oi.product_id '
+                                'GROUP BY p.product_name ORDER BY revenue DESC LIMIT 10'
+                            ),
+                        ),
                     ],
                 ),
             ),
@@ -128,21 +145,55 @@ def empty_params():
                     {
                         'name': 'Multi Code Block',
                         'codes': [
-                            {'name': 'Code 1', 'script': 'SELECT 1'},
-                            {'name': 'Code 2', 'script': 'SELECT 2'},
+                            {
+                                'name': 'Code 1',
+                                'script': (
+                                    'SELECT\n'
+                                    '  u.id,\n'
+                                    '  u.name,\n'
+                                    '  COUNT(o.id) AS order_count\n'
+                                    'FROM users AS u\n'
+                                    'LEFT JOIN orders AS o\n'
+                                    '  ON u.id = o.user_id\n'
+                                    'WHERE\n'
+                                    "  u.created_at > '2024-01-01'\n"
+                                    'GROUP BY\n'
+                                    '  u.id,\n'
+                                    '  u.name\n'
+                                    'HAVING\n'
+                                    '  COUNT(o.id) > 5;'
+                                ),
+                            },
+                            {
+                                'name': 'Code 2',
+                                'script': (
+                                    'SELECT\n'
+                                    '  p.product_name,\n'
+                                    '  SUM(oi.quantity * oi.price) AS revenue\n'
+                                    'FROM products AS p\n'
+                                    'INNER JOIN order_items AS oi\n'
+                                    '  ON p.id = oi.product_id\n'
+                                    'GROUP BY\n'
+                                    '  p.product_name\n'
+                                    'ORDER BY\n'
+                                    '  revenue DESC\n'
+                                    'LIMIT 10;'
+                                ),
+                            },
                         ],
                     },
                 ]
             },
+            'Added block with name "Multi Code Block" (code was automatically reformatted)',
         ),
     ],
 )
-def test_add_block(initial_params, operation, expected_params):
+def test_add_block(initial_params, operation, expected_params, expected_message):
     """Test adding blocks to transformation parameters."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = add_block(params, operation)
+    result_params, result_msg = add_block(params, operation, 'snowflake')
     assert result_params == expected_params
-    assert result_msg == ''
+    assert result_msg == expected_message
 
 
 @pytest.mark.parametrize(
@@ -173,7 +224,7 @@ def test_add_block_error(initial_params, block_name, error_match):
     )
 
     with pytest.raises(ValueError, match=error_match):
-        add_block(params, operation)
+        add_block(params, operation, 'snowflake')
 
 
 # ============================================================================
@@ -246,7 +297,7 @@ def test_add_block_error(initial_params, block_name, error_match):
 def test_remove_block_success(initial_params, operation, expected_params):
     """Test successfully removing blocks from transformation parameters."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = remove_block(params, operation)
+    result_params, result_msg = remove_block(params, operation, 'snowflake')
     assert result_params == expected_params
     assert result_msg == ''
 
@@ -276,7 +327,7 @@ def test_remove_block_error(initial_params, block_id_to_remove):
     operation = TfRemoveBlock(op='remove_block', block_id=block_id_to_remove)
 
     with pytest.raises(ValueError, match=f"Block with id '{block_id_to_remove}' does not exist"):
-        remove_block(params, operation)
+        remove_block(params, operation, 'snowflake')
 
 
 # ============================================================================
@@ -342,7 +393,7 @@ def test_remove_block_error(initial_params, block_id_to_remove):
 def test_rename_block_success(initial_params, operation, expected_params):
     """Test successfully renaming blocks."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = rename_block(params, operation)
+    result_params, result_msg = rename_block(params, operation, 'snowflake')
     assert result_params == expected_params
     assert result_msg == ''
 
@@ -367,7 +418,7 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
     operation = TfRenameBlock(op='rename_block', block_id=block_id, block_name=block_name)
 
     with pytest.raises(ValueError, match=error_match):
-        rename_block(params, operation)
+        rename_block(params, operation, 'snowflake')
 
 
 # ============================================================================
@@ -376,7 +427,7 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
 
 
 @pytest.mark.parametrize(
-    ('initial_params', 'operation', 'expected_params'),
+    ('initial_params', 'operation', 'expected_params', 'expected_message'),
     [
         # Add code to end
         (
@@ -395,7 +446,10 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
             TfAddCode(
                 op='add_code',
                 block_id='b0',
-                code=SimplifiedTfBlocks.Block.Code(name='New Code at End', script='SELECT 1'),
+                code=SimplifiedTfBlocks.Block.Code(
+                    name='New Code at End',
+                    script=('SELECT col1 FROM table1;'),
+                ),
                 position='end',
             ),
             {
@@ -406,11 +460,12 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
                         'codes': [
                             {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table1'},
                             {'id': 'b0.c1', 'name': 'Code Y', 'script': 'SELECT * FROM table2'},
-                            {'name': 'New Code at End', 'script': 'SELECT 1'},
+                            {'name': 'New Code at End', 'script': 'SELECT\n  col1\nFROM table1;'},
                         ],
                     },
                 ]
             },
+            'Added code with name "New Code at End" (code was automatically reformatted)',
         ),
         # Add code to start
         (
@@ -428,7 +483,13 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
             TfAddCode(
                 op='add_code',
                 block_id='b0',
-                code=SimplifiedTfBlocks.Block.Code(name='New Code at Start', script='SELECT 1'),
+                code=SimplifiedTfBlocks.Block.Code(
+                    name='New Code at Start',
+                    script=(
+                        'SELECT DISTINCT category, AVG(price) OVER (PARTITION BY category) as avg_price '
+                        'FROM products WHERE in_stock = true ORDER BY category'
+                    ),
+                ),
                 position='start',
             ),
             {
@@ -437,21 +498,34 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'name': 'New Code at Start', 'script': 'SELECT 1'},
+                            {
+                                'name': 'New Code at Start',
+                                'script': (
+                                    'SELECT DISTINCT\n'
+                                    '  category,\n'
+                                    '  AVG(price) OVER (PARTITION BY category) AS avg_price\n'
+                                    'FROM products\n'
+                                    'WHERE\n'
+                                    '  in_stock = TRUE\n'
+                                    'ORDER BY\n'
+                                    '  category;'
+                                ),
+                            },
                             {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table1'},
                         ],
                     },
                 ]
             },
+            'Added code with name "New Code at Start" (code was automatically reformatted)',
         ),
     ],
 )
-def test_add_code_success(initial_params, operation, expected_params):
+def test_add_code_success(initial_params, operation, expected_params, expected_message):
     """Test successfully adding code to blocks."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = add_code(params, operation)
+    result_params, result_msg = add_code(params, operation, sql_dialect='snowflake')
     assert result_params == expected_params
-    assert result_msg == ''
+    assert result_msg == expected_message
 
 
 @pytest.mark.parametrize(
@@ -479,7 +553,7 @@ def test_add_code_error(sample_params, block_id, code_name, error_match):
     )
 
     with pytest.raises(ValueError, match=error_match):
-        add_code(params, operation)
+        add_code(params, operation, sql_dialect='snowflake')
 
 
 # ============================================================================
@@ -546,7 +620,7 @@ def test_add_code_error(sample_params, block_id, code_name, error_match):
 def test_remove_code_success(initial_params, operation, expected_params):
     """Test successfully removing code from blocks."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = remove_code(params, operation)
+    result_params, result_msg = remove_code(params, operation, sql_dialect='snowflake')
     assert result_params == expected_params
     assert result_msg == ''
 
@@ -565,7 +639,7 @@ def test_remove_code_error(sample_params, block_id, code_id):
     operation = TfRemoveCode(op='remove_code', block_id=block_id, code_id=code_id)
 
     with pytest.raises(ValueError, match=f"Code with id '{code_id}' in block '{block_id}' does not exist"):
-        remove_code(params, operation)
+        remove_code(params, operation, sql_dialect='snowflake')
 
 
 # ============================================================================
@@ -651,7 +725,7 @@ def test_remove_code_error(sample_params, block_id, code_id):
 def test_rename_code_success(initial_params, operation, expected_params):
     """Test successfully renaming code in blocks."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = rename_code(params, operation)
+    result_params, result_msg = rename_code(params, operation, sql_dialect='snowflake')
     assert result_params == expected_params
     assert result_msg == ''
 
@@ -677,7 +751,7 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
     operation = TfRenameCode(op='rename_code', block_id=block_id, code_id=code_id, code_name=code_name)
 
     with pytest.raises(ValueError, match=error_match):
-        rename_code(params, operation)
+        rename_code(params, operation, sql_dialect='snowflake')
 
 
 # ============================================================================
@@ -686,7 +760,7 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
 
 
 @pytest.mark.parametrize(
-    ('initial_params', 'operation', 'expected_params'),
+    ('initial_params', 'operation', 'expected_params', 'expected_message'),
     [
         # Set code script
         (
@@ -708,11 +782,12 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM new_table'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  *\nFROM new_table;'},
                         ],
                     },
                 ]
             },
+            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
         ),
         # Set multiline script
         (
@@ -734,20 +809,21 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT *\nFROM table1\nWHERE col = 1'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  *\nFROM table1\nWHERE\n  col = 1;'},
                         ],
                     },
                 ]
             },
+            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
         ),
     ],
 )
-def test_set_code_success(initial_params, operation, expected_params):
+def test_set_code_success(initial_params, operation, expected_params, expected_message):
     """Test successfully setting code script."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = set_code(params, operation)
+    result_params, result_msg = set_code(params, operation, sql_dialect='snowflake')
     assert result_params == expected_params
-    assert result_msg == ''
+    assert result_msg == expected_message
 
 
 @pytest.mark.parametrize(
@@ -765,7 +841,7 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
     operation = TfSetCode(op='set_code', block_id=block_id, code_id=code_id, script=script)
 
     with pytest.raises(ValueError, match=error_match):
-        set_code(params, operation)
+        set_code(params, operation, sql_dialect='snowflake')
 
 
 # ============================================================================
@@ -774,7 +850,7 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
 
 
 @pytest.mark.parametrize(
-    ('initial_params', 'operation', 'expected_params'),
+    ('initial_params', 'operation', 'expected_params', 'expected_message'),
     [
         # Append to existing script
         (
@@ -789,20 +865,58 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                     },
                 ]
             },
-            TfAddScript(op='add_script', block_id='b0', code_id='b0.c0', script='SELECT * FROM table2'),
+            TfAddScript(op='add_script', block_id='b0', code_id='b0.c0', script='WHERE col = 1'),
             {
                 'blocks': [
                     {
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table1 SELECT * FROM table2'},
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Code X',
+                                'script': 'SELECT\n  *\nFROM table1\nWHERE\n  col = 1;',
+                            },
                         ],
                     },
                 ]
             },
+            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
         ),
         # Prepend to existing script
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Block A',
+                        'codes': [
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table1'},
+                        ],
+                    },
+                ]
+            },
+            TfAddScript(
+                op='add_script', block_id='b0', code_id='b0.c0', script='SELECT * FROM table0;', position='start'
+            ),
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Block A',
+                        'codes': [
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Code X',
+                                'script': 'SELECT\n  *\nFROM table0;\n\nSELECT\n  *\nFROM table1;',
+                            },
+                        ],
+                    },
+                ]
+            },
+            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+        ),
+        # Prepend to existing script (creates invalid SQL, not reformatted)
         (
             {
                 'blocks': [
@@ -824,11 +938,16 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table0 SELECT * FROM table1'},
+                            {
+                                'id': 'b0.c0',
+                                'name': 'Code X',
+                                'script': 'SELECT * FROM table0 SELECT * FROM table1',
+                            },
                         ],
                     },
                 ]
             },
+            "Added script to code with id 'b0.c0' in block 'b0'",
         ),
         # Append to empty script
         (
@@ -850,20 +969,21 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT 1'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  1;'},
                         ],
                     },
                 ]
             },
+            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
         ),
     ],
 )
-def test_add_script_success(initial_params, operation, expected_params):
+def test_add_script_success(initial_params, operation, expected_params, expected_message):
     """Test successfully adding script to code."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = add_script(params, operation)
+    result_params, result_msg = add_script(params, operation, sql_dialect='snowflake')
     assert result_params == expected_params
-    assert result_msg == ''
+    assert result_msg == expected_message
 
 
 @pytest.mark.parametrize(
@@ -892,7 +1012,7 @@ def test_add_script_error(sample_params, block_id, code_id, script, error_match)
     )
 
     with pytest.raises(ValueError, match=error_match):
-        add_script(params, operation)
+        add_script(params, operation, sql_dialect='snowflake')
 
 
 # ============================================================================
@@ -1052,7 +1172,7 @@ def test_add_script_error(sample_params, block_id, code_id, script, error_match)
 def test_str_replace_success(initial_params, operation, expected_params, expected_msg):
     """Test successfully replacing strings in scripts."""
     params = copy.deepcopy(initial_params)
-    result_params, result_msg = str_replace(params, operation)
+    result_params, result_msg = str_replace(params, operation, sql_dialect='snowflake')
     assert result_params == expected_params
     assert result_msg == expected_msg
 
@@ -1084,7 +1204,7 @@ def test_str_replace_error(sample_params, block_id, code_id, search_for, replace
     )
 
     with pytest.raises(ValueError, match=error_match):
-        str_replace(params, operation)
+        str_replace(params, operation, sql_dialect='snowflake')
 
 
 # ============================================================================
@@ -1107,11 +1227,14 @@ def test_multiple_operations_sequence(sample_params):
             ),
             position='end',
         ),
+        'snowflake',
     )
     assert len(params['blocks']) == 3
 
     # 2. Rename an existing block
-    params, _ = rename_block(params, TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed Block A'))
+    params, _ = rename_block(
+        params, TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed Block A'), sql_dialect='snowflake'
+    )
     assert params['blocks'][0]['name'] == 'Renamed Block A'
 
     # 3. Add code to existing block
@@ -1123,12 +1246,14 @@ def test_multiple_operations_sequence(sample_params):
             code=SimplifiedTfBlocks.Block.Code(name='Additional Code', script='SELECT * FROM new_table'),
             position='end',
         ),
+        sql_dialect='snowflake',
     )
 
     # 4. Replace string in all scripts
     params, _ = str_replace(
         params,
         TfStrReplace(op='str_replace', block_id=None, code_id=None, search_for='FROM', replace_with='IN'),
+        sql_dialect='snowflake',
     )
 
     # Verify final state
@@ -1146,7 +1271,9 @@ def test_operations_preserve_unaffected_data(sample_params):
     original_second_block = copy.deepcopy(params['blocks'][1])
 
     # Modify first block
-    params, _ = rename_block(params, TfRenameBlock(op='rename_block', block_id='b0', block_name='Modified Block'))
+    params, _ = rename_block(
+        params, TfRenameBlock(op='rename_block', block_id='b0', block_name='Modified Block'), sql_dialect='snowflake'
+    )
 
     # Verify second block unchanged
     assert params['blocks'][1] == original_second_block

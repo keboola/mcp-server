@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Callable
 
 import pytest
@@ -36,7 +37,7 @@ from keboola_mcp_server.tools.components.model import (
     TfSetCode,
     TfStrReplace,
 )
-from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
+from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_code
 from keboola_mcp_server.tools.components.utils import clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -355,6 +356,8 @@ async def test_create_sql_transformation(
     assert new_transformation_configuration.description == mock_configuration['description']
     assert new_transformation_configuration.version == mock_configuration['version']
 
+    formatted_code_blocks = [format_simplified_tf_code(c, sql_dialect)[0] for c in code_blocks]
+    raw_code_blocks = await asyncio.gather(*[b.to_raw_code() for b in formatted_code_blocks])
     keboola_client.storage_client.configuration_create.assert_called_once_with(
         component_id=expected_component_id,
         name=transformation_name,
@@ -364,10 +367,7 @@ async def test_create_sql_transformation(
                 'blocks': [
                     {
                         'name': 'Blocks',
-                        'codes': [
-                            {'name': code.name, 'script': await split_sql_statements(code.script)}
-                            for code in code_blocks
-                        ],
+                        'codes': [b.model_dump() for b in raw_code_blocks],
                     }
                 ]
             },
@@ -419,7 +419,7 @@ async def test_create_sql_transformation_fail(
                     op='set_code',
                     block_id='b0',
                     code_id='b0.c0',
-                    script='SELECT 1;\n\nSELECT * FROM new_table;\n\n',
+                    script='SELECT 1;SELECT * FROM new_table;',
                 ),
             ],
             {'output': {'tables': []}},
@@ -428,7 +428,9 @@ async def test_create_sql_transformation_fail(
                     'blocks': [
                         {
                             'name': 'Updated Blocks',
-                            'codes': [{'name': 'Existing Code', 'script': ['SELECT 1;', 'SELECT * FROM new_table;']}],
+                            'codes': [
+                                {'name': 'Existing Code', 'script': ['SELECT\n  1;', 'SELECT\n  *\nFROM new_table;']}
+                            ],
                         }
                     ]
                 },
@@ -466,7 +468,7 @@ async def test_create_sql_transformation_fail(
             {'output': {'tables': []}},
             {
                 'parameters': {
-                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1']}]}]
+                    'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1;']}]}]
                 },
                 'storage': {'output': {'tables': []}},
                 'other_field': 'should_be_preserved',
@@ -502,7 +504,7 @@ async def test_update_sql_transformation(
         'description': 'Existing description',
         'configuration': {
             'parameters': {
-                'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1']}]}]
+                'blocks': [{'name': 'Existing', 'codes': [{'name': 'Existing Code', 'script': ['SELECT 1;']}]}]
             },
             'storage': {'input': {'tables': ['existing_table']}},
             'other_field': 'should_be_preserved',
