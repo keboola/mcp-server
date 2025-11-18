@@ -9,7 +9,7 @@ import httpx
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_serializer, model_validator
 
 from keboola_mcp_server.clients import AsyncStorageClient
 from keboola_mcp_server.clients.base import JsonDict
@@ -17,7 +17,7 @@ from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_proper
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer
+from keboola_mcp_server.mcp import KeboolaMcpServer, toon_serializer
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -43,6 +43,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             list_buckets,
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -57,6 +58,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             list_tables,
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -283,6 +285,12 @@ class TableDetail(BaseModel):
         if source_project_raw := cast(dict[str, Any], get_nested(values, 'sourceTable.project')):
             values['source_project'] = f'{source_project_raw["name"]} (ID: {source_project_raw["id"]})'
         return values
+
+    @field_serializer('primary_key')
+    # Serialize the primary key as a string so the whole TableDetail is serialized
+    # as tabular data in Toon format.
+    def serialize_primary_key(self, primary_key: list[str] | None) -> str | None:
+        return '|'.join(primary_key) if primary_key else None
 
 
 class ListTablesOutput(BaseModel):

@@ -21,6 +21,7 @@ dependencies = [
     "cryptography ~= 45.0",
     "pydantic ~= 2.12",
     "sqlglot ~= 25.0",
+    "toon-format ~= 0.9.0b1",
 ]
 [project.optional-dependencies]
 codestyle = [

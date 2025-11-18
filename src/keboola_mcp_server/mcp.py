@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from pydantic_core import to_json
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
+import toon_format
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -278,6 +279,13 @@ def _exclude_none_serializer(data: Any) -> str:
         return to_json(cleaned, fallback=str).decode('utf-8')
     else:
         return ''
+
+
+def toon_serializer(data: Any) -> str:
+    if isinstance(data, BaseModel):
+        return toon_format.encode(data.model_dump(exclude_none=False))
+    else:
+        return toon_format.encode(data)
 
 
 def _to_python(data: Any) -> Any | None:
