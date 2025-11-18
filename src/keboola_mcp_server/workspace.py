@@ -217,7 +217,7 @@ class _SnowflakeWorkspace(_Workspace):
         return None
 
     async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
-        if max_rows is not None and max_rows < 0:
+        if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
 
         if not self._qsclient:
@@ -384,7 +384,7 @@ class _BigQueryWorkspace(_Workspace):
         return None
 
     async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
-        if max_rows is not None and max_rows < 0:
+        if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
 
         resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
