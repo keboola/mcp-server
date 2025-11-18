@@ -120,7 +120,13 @@ class _Workspace(abc.ABC):
 
     @abc.abstractmethod
     async def execute_query(self, sql_query: str, *, max_rows: int | None = None) -> QueryResult:
-        """Runs a SQL SELECT query."""
+        """
+        Runs a given SQL query.
+
+        :param sql_query: The SQL query to be executed.
+        :param max_rows: The maximum number of rows to fetch from the query results. If None, no limit is applied.
+        :return: The result of the executed query.
+        """
         pass
 
     @abc.abstractmethod
