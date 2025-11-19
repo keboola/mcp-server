@@ -161,15 +161,24 @@ async def test_update_descriptions_bucket(mcp_context: Context, buckets: list[Bu
 
 
 @pytest.mark.asyncio
-async def test_update_descriptions_table(mcp_context: Context, tables: list[TableDef]):
-    """Tests that `update_descriptions` updates table descriptions correctly."""
+async def test_update_descriptions_table(mcp_context: Context, mcp_client: Client, tables: list[TableDef]):
+    """
+    Tests that `update_descriptions` updates table descriptions correctly.
+    Also tests that the tool output is in TOON format.
+    """
     table = tables[0]
-    client = KeboolaClient.from_state(mcp_context.session.state)
+    storage_client = KeboolaClient.from_state(mcp_context.session.state).storage_client
 
-    result = await update_descriptions(
-        ctx=mcp_context,
-        updates=[DescriptionUpdate(item_id=table.table_id, description='New Table Description')],
-    )
+    call_result = await mcp_client.call_tool('update_descriptions', {
+        'updates': [{'item_id': table.table_id, 'description': 'New Table Description'}],
+    })
+    assert len(call_result.content) == 1
+    assert call_result.content[0].type == 'text'
+
+    result = UpdateDescriptionsOutput.model_validate(call_result.structured_content)
+
+    toon_result = UpdateDescriptionsOutput.model_validate(toon_format.decode(call_result.content[0].text))
+    assert toon_result == result
 
     assert isinstance(result, UpdateDescriptionsOutput)
     assert result.total_processed == 1
@@ -184,7 +193,7 @@ async def test_update_descriptions_table(mcp_context: Context, tables: list[Tabl
     assert table_result.timestamp is not None
 
     # Verify the description was actually updated
-    metadata = await client.storage_client.table_metadata_get(table.table_id)
+    metadata = await storage_client.table_metadata_get(table.table_id)
     assert get_metadata_property(metadata, MetadataField.DESCRIPTION) == 'New Table Description'
 
 

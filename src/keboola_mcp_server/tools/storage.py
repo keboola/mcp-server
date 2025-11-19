@@ -66,6 +66,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             update_descriptions,
             annotations=ToolAnnotations(destructiveHint=True),
+            serializer=toon_serializer,
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -740,10 +741,7 @@ async def update_descriptions(
             'Examples: "bucket_id", "bucket_id.table_id", "bucket_id.table_id.column_name"'
         ),
     ],
-) -> Annotated[
-    UpdateDescriptionsOutput,
-    Field(description='The response object for the description updates.'),
-]:
+) -> UpdateDescriptionsOutput:
     """Updates the description for a Keboola storage item.
 
     This tool supports three item types, inferred from the provided item_id:
