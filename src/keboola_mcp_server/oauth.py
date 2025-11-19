@@ -255,8 +255,7 @@ class SimpleOAuthProvider(OAuthProvider):
         }
         state_jwt = self._encode(state)
 
-        # TODO: turn to debug when done with the testing
-        LOG.info(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
+        LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
 
         # create the authorization URL
         url_params = {
@@ -353,8 +352,7 @@ class SimpleOAuthProvider(OAuthProvider):
             state=state_data['state'],
             code_challenge=state_data['code_challenge'],
         )
-        # TODO: turn to debug when done with the testing
-        LOG.info(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
+        LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
 
         return mcp_redirect_uri
 
