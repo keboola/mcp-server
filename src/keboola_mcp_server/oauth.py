@@ -34,6 +34,7 @@ _WELL_KNOWN_DOMAINS = [
     re.compile(r'^.*make\.com$', re.IGNORECASE),
     re.compile(r'^api\.devin\.ai$', re.IGNORECASE),  # devin.ai API domain
     re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback
+    re.compile(r'^global\.consent\.azure-apim\.net$', re.IGNORECASE),  # Azure APIM consent domain
 ]
 _FORBIDDEN_SCHEMES = [
     # # Web/HTTP
