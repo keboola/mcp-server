@@ -2,7 +2,8 @@ import csv
 import logging
 
 import pytest
-from fastmcp import Context
+import toon_format
+from fastmcp import Client, Context
 
 from integtests.conftest import BucketDef, TableDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
@@ -47,6 +48,20 @@ async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
     # Verify the counts add up to the total
     assert (
         result.bucket_counts.input_buckets + result.bucket_counts.output_buckets == result.bucket_counts.total_buckets
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_buckets_output_format(mcp_client: Client, buckets: list[BucketDef]):
+    """Tests that `list_buckets` returns the tool output in TOON format."""
+    result = await mcp_client.call_tool('list_buckets')
+    assert len(result.content) == 1
+    assert result.content[0].type == 'text'
+    result_text = result.content[0].text
+    assert toon_format.decode(result_text)
+    assert result_text.startswith(
+        f'buckets[{len(buckets)}]'
+        '{id,name,display_name,description,stage,created,data_size_bytes,tables_count,links,source_project}:'
     )
 
 
@@ -101,6 +116,20 @@ async def test_list_tables(mcp_context: Context, tables: list[TableDef], buckets
         result_table_ids = {table.id for table in result.tables}
         expected_table_ids = {table.table_id for table in expected_tables}
         assert result_table_ids == expected_table_ids
+
+
+@pytest.mark.asyncio
+async def test_list_tables_output_format(mcp_client: Client, tables: list[TableDef], buckets: list[BucketDef]):
+    """Tests that `list_tables` returns the tool output in TOON format."""
+    result = await mcp_client.call_tool('list_tables', {'bucket_id': buckets[0].bucket_id})
+    assert len(result.content) == 1
+    assert result.content[0].type == 'text'
+    result_text = result.content[0].text
+    assert toon_format.decode(result_text)
+    assert result_text.startswith(
+        'tables[1]{id,name,display_name,description,primary_key,created,rows_count,'
+        'data_size_bytes,columns,fully_qualified_name,links,source_project}:'
+    )
 
 
 @pytest.mark.asyncio
