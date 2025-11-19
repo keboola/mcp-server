@@ -2590,6 +2590,9 @@ ERROR PREVENTION:
 * Use NULLIF or CASE statements to handle empty values
 * Always use TRY_CAST or similar safe casting functions when converting data types
 * Check for division by zero using NULLIF(denominator, 0)
+* Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
+  by this tool on the maximum number of rows that can be fetched and the maximum number of characters.
+  The tool will truncate the data if those limits are exceeded.
 
 DATA VALIDATION:
 * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
