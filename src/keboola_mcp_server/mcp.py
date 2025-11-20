@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
+import toon_format
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server import middleware as fmw
@@ -273,6 +274,37 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         return await call_next(context)
 
 
+def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
+    if isinstance(data, BaseModel):
+        return data.model_dump(exclude_none=exclude_none, by_alias=False)
+    elif isinstance(data, (list, tuple)):
+        # Handle sequences of BaseModels
+        cleaned = []
+        for item in data:
+            if isinstance(item, BaseModel):
+                cleaned.append(item.model_dump(exclude_none=exclude_none, by_alias=False))
+            elif item is not None:
+                cleaned.append(_to_python(item, exclude_none=exclude_none))
+            elif not exclude_none:
+                cleaned.append(None)
+        return cleaned
+    elif isinstance(data, dict):
+        # Handle dictionaries that might contain BaseModels
+        cleaned = {}
+        for key, value in data.items():
+            if isinstance(value, BaseModel):
+                cleaned[key] = value.model_dump(exclude_none=exclude_none, by_alias=False)
+            elif value is not None:
+                cleaned[key] = _to_python(value, exclude_none=exclude_none)
+            elif not exclude_none:
+                cleaned[key] = None
+        return cleaned
+    elif data is not None:
+        return data
+    else:
+        return None
+
+
 def _exclude_none_serializer(data: Any) -> str:
     if (cleaned := _to_python(data)) is not None:
         return to_json(cleaned, fallback=str).decode('utf-8')
@@ -280,28 +312,5 @@ def _exclude_none_serializer(data: Any) -> str:
         return ''
 
 
-def _to_python(data: Any) -> Any | None:
-    if isinstance(data, BaseModel):
-        return data.model_dump(exclude_none=True, by_alias=False)
-    elif isinstance(data, (list, tuple)):
-        # Handle sequences of BaseModels
-        cleaned = []
-        for item in data:
-            if isinstance(item, BaseModel):
-                cleaned.append(item.model_dump(exclude_none=True, by_alias=False))
-            elif item is not None:
-                cleaned.append(_to_python(item))
-        return cleaned
-    elif isinstance(data, dict):
-        # Handle dictionaries that might contain BaseModels
-        cleaned = {}
-        for key, value in data.items():
-            if isinstance(value, BaseModel):
-                cleaned[key] = value.model_dump(exclude_none=True, by_alias=False)
-            elif value is not None:
-                cleaned[key] = _to_python(value)
-        return cleaned
-    elif data is not None:
-        return data
-    else:
-        return None
+def toon_serializer(data: Any) -> str:
+    return toon_format.encode(_to_python(data, exclude_none=False))

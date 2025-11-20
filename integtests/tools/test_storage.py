@@ -2,7 +2,8 @@ import csv
 import logging
 
 import pytest
-from fastmcp import Context
+import toon_format
+from fastmcp import Client, Context
 
 from integtests.conftest import BucketDef, TableDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
@@ -47,6 +48,23 @@ async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
     # Verify the counts add up to the total
     assert (
         result.bucket_counts.input_buckets + result.bucket_counts.output_buckets == result.bucket_counts.total_buckets
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_buckets_output_format(mcp_client: Client, buckets: list[BucketDef]):
+    """Tests that `list_buckets` returns the tool output in TOON format."""
+    result = await mcp_client.call_tool('list_buckets')
+    assert len(result.content) == 1
+    assert result.content[0].type == 'text'
+    result_text = result.content[0].text
+    assert ListBucketsOutput.model_validate(toon_format.decode(result_text)) == ListBucketsOutput.model_validate(
+        result.structured_content
+    )
+    # check that the tables are presented in tabular format
+    assert result_text.startswith(
+        f'buckets[{len(buckets)}]'
+        '{id,name,display_name,description,stage,created,data_size_bytes,tables_count,links,source_project}:'
     )
 
 
@@ -104,6 +122,20 @@ async def test_list_tables(mcp_context: Context, tables: list[TableDef], buckets
 
 
 @pytest.mark.asyncio
+async def test_list_tables_output_format(mcp_client: Client, tables: list[TableDef], buckets: list[BucketDef]):
+    """Tests that `list_tables` returns the tool output in TOON format."""
+    result = await mcp_client.call_tool('list_tables', {'bucket_id': buckets[0].bucket_id})
+    assert len(result.content) == 1
+    assert result.content[0].type == 'text'
+    result_text = result.content[0].text
+    assert toon_format.decode(result_text)
+    assert result_text.startswith(
+        'tables[1]{id,name,display_name,description,primary_key,created,rows_count,'
+        'data_size_bytes,columns,fully_qualified_name,links,source_project}:'
+    )
+
+
+@pytest.mark.asyncio
 async def test_update_descriptions_bucket(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that `update_descriptions` updates bucket descriptions correctly."""
     bucket = buckets[0]
@@ -132,15 +164,27 @@ async def test_update_descriptions_bucket(mcp_context: Context, buckets: list[Bu
 
 
 @pytest.mark.asyncio
-async def test_update_descriptions_table(mcp_context: Context, tables: list[TableDef]):
-    """Tests that `update_descriptions` updates table descriptions correctly."""
+async def test_update_descriptions_table(mcp_context: Context, mcp_client: Client, tables: list[TableDef]):
+    """
+    Tests that `update_descriptions` updates table descriptions correctly.
+    Also tests that the tool output is in TOON format.
+    """
     table = tables[0]
-    client = KeboolaClient.from_state(mcp_context.session.state)
+    storage_client = KeboolaClient.from_state(mcp_context.session.state).storage_client
 
-    result = await update_descriptions(
-        ctx=mcp_context,
-        updates=[DescriptionUpdate(item_id=table.table_id, description='New Table Description')],
+    call_result = await mcp_client.call_tool(
+        'update_descriptions',
+        {
+            'updates': [{'item_id': table.table_id, 'description': 'New Table Description'}],
+        },
     )
+    assert len(call_result.content) == 1
+    assert call_result.content[0].type == 'text'
+
+    result = UpdateDescriptionsOutput.model_validate(call_result.structured_content)
+
+    toon_result = UpdateDescriptionsOutput.model_validate(toon_format.decode(call_result.content[0].text))
+    assert toon_result == result
 
     assert isinstance(result, UpdateDescriptionsOutput)
     assert result.total_processed == 1
@@ -155,7 +199,7 @@ async def test_update_descriptions_table(mcp_context: Context, tables: list[Tabl
     assert table_result.timestamp is not None
 
     # Verify the description was actually updated
-    metadata = await client.storage_client.table_metadata_get(table.table_id)
+    metadata = await storage_client.table_metadata_get(table.table_id)
     assert get_metadata_property(metadata, MetadataField.DESCRIPTION) == 'New Table Description'
 
 
