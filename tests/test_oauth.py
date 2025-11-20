@@ -128,6 +128,9 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://cloud.onyx.app'), True),
             (AnyUrl('https://cloud.onyx.app/mcp/oauth/callback'), True),
             (AnyUrl('https://foo.cloud.onyx.app/bar'), False),  # no subdomains allowed
+            (AnyUrl('https://global.consent.azure-apim.net'), True),
+            (AnyUrl('https://global.consent.azure-apim.net/oauth/callback'), True),
+            (AnyUrl('https://foo.global.consent.azure-apim.net/bar'), False),  # no subdomains allowed
             (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
             (None, False),
             (AnyUrl('https://foo.bar.com/callback'), False),
