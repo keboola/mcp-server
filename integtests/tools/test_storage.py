@@ -58,7 +58,10 @@ async def test_list_buckets_output_format(mcp_client: Client, buckets: list[Buck
     assert len(result.content) == 1
     assert result.content[0].type == 'text'
     result_text = result.content[0].text
-    assert toon_format.decode(result_text)
+    assert ListBucketsOutput.model_validate(toon_format.decode(result_text)) == ListBucketsOutput.model_validate(
+        result.structured_content
+    )
+    # check that the tables are presented in tabular format
     assert result_text.startswith(
         f'buckets[{len(buckets)}]'
         '{id,name,display_name,description,stage,created,data_size_bytes,tables_count,links,source_project}:'
@@ -169,9 +172,12 @@ async def test_update_descriptions_table(mcp_context: Context, mcp_client: Clien
     table = tables[0]
     storage_client = KeboolaClient.from_state(mcp_context.session.state).storage_client
 
-    call_result = await mcp_client.call_tool('update_descriptions', {
-        'updates': [{'item_id': table.table_id, 'description': 'New Table Description'}],
-    })
+    call_result = await mcp_client.call_tool(
+        'update_descriptions',
+        {
+            'updates': [{'item_id': table.table_id, 'description': 'New Table Description'}],
+        },
+    )
     assert len(call_result.content) == 1
     assert call_result.content[0].type == 'text'
 
