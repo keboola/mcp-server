@@ -5,14 +5,15 @@ import pytest
 from fastmcp import Context
 from pytest_mock import MockerFixture
 
+from keboola_mcp_server.clients.ai_service import ComponentSuggestionResponse, SuggestedComponent
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.tools.search import SearchHit, search
+from keboola_mcp_server.tools.search import SearchHit, find_component_id, search
 
 
-class TestSearchTool:
+class TestSearch:
     """Test cases for the search tool function."""
 
     @pytest.mark.asyncio
@@ -127,49 +128,109 @@ class TestSearchTool:
 
     @pytest.mark.asyncio
     async def test_search_default_parameters(self, mocker: MockerFixture, mcp_context_client: Context):
-        """Test search with default parameters."""
+        """Test search with default parameters (limit=50, offset=0, all item types)."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-        # Mock all endpoints to return empty results
-        keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=[])
+        # Create 60 buckets to verify default limit of 50 is applied
+        # Use lastChangeDate to ensure predictable sorting (most recent = bucket-059)
+        buckets = [
+            {
+                'id': f'in.c-test-bucket-{i:03d}',
+                'name': f'test-bucket-{i:03d}',
+                'created': '2024-01-01T00:00:00Z',
+                'lastChangeDate': f'2024-01-01T{i:02d}:00:00Z',
+            }
+            for i in range(60)
+        ]
+        keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=buckets)
+
+        # Mock other endpoints
+        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
+        # Call without specifying limit, offset, or item_types
         result = await search(ctx=mcp_context_client, patterns=['test'])
 
         assert isinstance(result, list)
-        assert result == []
+        # Should return exactly 50 items (default limit), not all 60
+        assert len(result) == 50, f'Expected default limit of 50, got {len(result)}'
+        # The first item should be the most recently updated
+        assert result[0].bucket_id == 'in.c-test-bucket-059'
 
     @pytest.mark.asyncio
     async def test_search_limit_out_of_range(self, mocker: MockerFixture, mcp_context_client: Context):
-        """Test search with limit out of range gets clamped to default."""
+        """Test search with limit out of range gets clamped to default (50)."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-        # Mock all endpoints
-        keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=[])
+        # Create 60 buckets to verify limit clamping
+        # Use lastChangeDate to ensure predictable sorting
+        buckets = [
+            {
+                'id': f'in.c-test-bucket-{i:03d}',
+                'name': f'test-bucket-{i:03d}',
+                'created': '2024-01-01T00:00:00Z',
+                'lastChangeDate': f'2024-01-01T{i:02d}:00:00Z',
+            }
+            for i in range(60)
+        ]
+        keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=buckets)
+
+        # Mock other endpoints
+        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
-        # Test with limit too high
+        # Test with limit too high (> MAX_GLOBAL_SEARCH_LIMIT = 100)
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=200)
         assert isinstance(result, list)
+        # Should be overridden to DEFAULT_GLOBAL_SEARCH_LIMIT = 50
+        assert len(result) == 50, f'Expected limit to be overridden to 50, got {len(result)}'
 
-        # Test with limit too low
+        # Test with limit too low (<= 0)
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=0)
         assert isinstance(result, list)
+        assert len(result) == 50, f'Expected limit to be overridden to 50, got {len(result)}'
+
+        # Test with negative limit
+        result = await search(ctx=mcp_context_client, patterns=['test'], limit=-5)
+        assert isinstance(result, list)
+        assert len(result) == 50, f'Expected limit to be overridden to 50, got {len(result)}'
 
     @pytest.mark.asyncio
     async def test_search_negative_offset(self, mocker: MockerFixture, mcp_context_client: Context):
         """Test search with negative offset gets clamped to 0."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-        # Mock all endpoints
-        keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=[])
+        # Create buckets with predictable order
+        # Use lastChangeDate to ensure bucket-009 is the most recent
+        buckets = [
+            {
+                'id': f'in.c-test-bucket-{i:03d}',
+                'name': f'test-bucket-{i:03d}',
+                'created': '2024-01-01T00:00:00Z',
+                'lastChangeDate': f'2024-01-01T{i:02d}:00:00Z',
+            }
+            for i in range(10)
+        ]
+        keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=buckets)
+
+        # Mock other endpoints
+        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
-        result = await search(ctx=mcp_context_client, patterns=['test'], offset=-10)
+        # Test with negative offset
+        result = await search(ctx=mcp_context_client, patterns=['test'], offset=-10, limit=5)
         assert isinstance(result, list)
+        # Should be overridden to offset=0, returning first 5 items
+        assert len(result) == 5
+        # First item should be the most recently updated (bucket-009)
+        assert result[0].bucket_id == 'in.c-test-bucket-009'
+
+        # Verify it matches the result with offset=0
+        result_with_zero_offset = await search(ctx=mcp_context_client, patterns=['test'], offset=0, limit=5)
+        assert result == result_with_zero_offset, 'Negative offset should behave the same as offset=0'
 
     @pytest.mark.asyncio
     async def test_search_pagination(self, mocker: MockerFixture, mcp_context_client: Context):
@@ -370,3 +431,21 @@ class TestSearchTool:
         )
         keboola_client.storage_client.component_list.assert_called_once_with(None, include=['configuration', 'rows'])
         keboola_client.storage_client.workspace_list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_component_id(mocker: MockerFixture, mcp_context_client: Context):
+    """Test find_component_id returns suggested components."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    # Mock suggest_component to return a list of suggested components
+    expected_component_1 = SuggestedComponent(componentId='keboola.ex-salesforce', score=0.95, source='ai')
+    expected_component_2 = SuggestedComponent(componentId='keboola.ex-db-mysql', score=0.85, source='ai')
+    mock_response = ComponentSuggestionResponse(components=[expected_component_1, expected_component_2])
+    keboola_client.ai_service_client.suggest_component = mocker.AsyncMock(return_value=mock_response)
+
+    query = 'I am looking for a salesforce extractor component'
+    result = await find_component_id(ctx=mcp_context_client, query=query)
+
+    assert result == [expected_component_1, expected_component_2]
+    keboola_client.ai_service_client.suggest_component.assert_called_once_with(query)
