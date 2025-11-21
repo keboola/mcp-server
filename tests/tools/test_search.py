@@ -439,8 +439,8 @@ async def test_find_component_id(mocker: MockerFixture, mcp_context_client: Cont
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
     # Mock suggest_component to return a list of suggested components
-    expected_component_1 = SuggestedComponent(componentId='keboola.ex-salesforce', score=0.95, source='ai')
-    expected_component_2 = SuggestedComponent(componentId='keboola.ex-db-mysql', score=0.85, source='ai')
+    expected_component_1 = SuggestedComponent(component_id='keboola.ex-salesforce', score=0.95, source='ai')
+    expected_component_2 = SuggestedComponent(component_id='keboola.ex-db-mysql', score=0.85, source='ai')
     mock_response = ComponentSuggestionResponse(components=[expected_component_1, expected_component_2])
     keboola_client.ai_service_client.suggest_component = mocker.AsyncMock(return_value=mock_response)
 
