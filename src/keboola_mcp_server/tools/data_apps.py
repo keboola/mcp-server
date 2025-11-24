@@ -15,6 +15,7 @@ from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppRespon
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import toon_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -38,6 +39,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
             get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
         )
     )
     mcp.add_tool(
@@ -99,8 +101,9 @@ class DataAppSummary(BaseModel):
         )
     )
     deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
-    auto_suspend_after_seconds: int = Field(
-        description='The number of seconds after which the running data app is automatically suspended.'
+    auto_suspend_after_seconds: Optional[int] = Field(
+        description='The number of seconds after which the running data app is automatically suspended.',
+        default=None,
     )
 
     @classmethod
@@ -155,8 +158,9 @@ class DataApp(BaseModel):
         )
     )
     deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
-    auto_suspend_after_seconds: int = Field(
-        description='The number of seconds after which the running data app is automatically suspended.'
+    auto_suspend_after_seconds: Optional[int] = Field(
+        description='The number of seconds after which the running data app is automatically suspended.',
+        default=None,
     )
     parameters: dict[str, Any] = Field(description='The parameters settings of the data app.')
     authorization: dict[str, Any] = Field(description='The authorization settings of the data app.')

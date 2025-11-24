@@ -22,6 +22,7 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
+from keboola_mcp_server.mcp import toon_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     Flow,
@@ -64,6 +65,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             list_flows,
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
             tags={FLOW_TOOLS_TAG},
         )
     )

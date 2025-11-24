@@ -40,7 +40,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse, JsonDict
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer
+from keboola_mcp_server.mcp import KeboolaMcpServer, toon_serializer
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentSummary,
@@ -110,6 +110,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
             list_configs,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
         )
     )
     mcp.add_tool(
