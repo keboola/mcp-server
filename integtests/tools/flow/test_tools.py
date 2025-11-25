@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
+import toon_format
 from fastmcp import Client, Context, FastMCP
 from fastmcp.server.middleware import CallNext, MiddlewareContext
 from mcp import types as mt
@@ -627,6 +628,37 @@ async def test_list_flows_empty(mcp_context: Context) -> None:
     """
     flows = await list_flows(mcp_context)
     assert isinstance(flows, ListFlowsOutput)
+
+
+@pytest.mark.asyncio
+async def test_list_flows(
+    keboola_project: ProjectDef, mcp_client: Client, initial_lf: FlowToolOutput, initial_cf: FlowToolOutput
+) -> None:
+    """Tests that `list_flows` tool works as expected."""
+    tool_result = await mcp_client.call_tool(name='list_flows', arguments={})
+    flows = ListFlowsOutput.model_validate(tool_result.structured_content)
+    assert len(flows.flows) == 2
+    assert frozenset(flows.links) == frozenset(
+        [
+            Link(
+                type='ui-dashboard',
+                title='Flows in the project',
+                url=f'https://connection.keboola.com/admin/projects/{keboola_project.project_id}/flows',
+            ),
+            Link(
+                type='ui-dashboard',
+                title='Conditional Flows in the project',
+                url=f'https://connection.keboola.com/admin/projects/{keboola_project.project_id}/flows-v2',
+            ),
+        ]
+    )
+    assert flows.flows[0].configuration_id == initial_cf.configuration_id
+    assert flows.flows[1].configuration_id == initial_lf.configuration_id
+    assert tool_result.content is not None
+    assert len(tool_result.content) == 1
+    assert tool_result.content[0].type == 'text'
+    toon_decoded = toon_format.decode(tool_result.content[0].text)
+    assert ListFlowsOutput.model_validate(toon_decoded) == flows
 
 
 @pytest.mark.asyncio
