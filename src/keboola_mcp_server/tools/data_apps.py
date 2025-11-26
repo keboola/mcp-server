@@ -15,6 +15,7 @@ from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppRespon
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import toon_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -38,6 +39,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
             get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
         )
     )
     mcp.add_tool(
@@ -99,8 +101,9 @@ class DataAppSummary(BaseModel):
         )
     )
     deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
-    auto_suspend_after_seconds: int = Field(
-        description='The number of seconds after which the running data app is automatically suspended.'
+    auto_suspend_after_seconds: Optional[int] = Field(
+        description='The number of seconds after which the running data app is automatically suspended.',
+        default=None,
     )
 
     @classmethod
@@ -155,8 +158,9 @@ class DataApp(BaseModel):
         )
     )
     deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
-    auto_suspend_after_seconds: int = Field(
-        description='The number of seconds after which the running data app is automatically suspended.'
+    auto_suspend_after_seconds: Optional[int] = Field(
+        description='The number of seconds after which the running data app is automatically suspended.',
+        default=None,
     )
     parameters: dict[str, Any] = Field(description='The parameters settings of the data app.')
     authorization: dict[str, Any] = Field(description='The authorization settings of the data app.')
@@ -414,12 +418,13 @@ async def get_data_apps(
         found_data_apps: list[DataApp] = [dap for dap in data_app_details if isinstance(dap, DataApp)]
         not_found_ids: list[str] = [dap for dap in data_app_details if isinstance(dap, str)]
         if not_found_ids:
-            await ctx.log(f'Could not find Data Apps Configurations for IDs: {not_found_ids}', 'error')
-            logging.error(f'Could not find Data Apps Configurations for IDs: {not_found_ids}')
+            LOG.error(f'Could not find Data Apps Configurations for IDs: {not_found_ids}')
         return GetDataAppsOutput(data_apps=found_data_apps)
     else:
         # List all data apps in the project
         data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
+        # Filter to only include keboola.data-apps component
+        data_apps = [app for app in data_apps if app.component_id == DATA_APP_COMPONENT_ID]
         links = [links_manager.get_data_app_dashboard_link()]
         return GetDataAppsOutput(
             data_apps=[DataAppSummary.from_api_response(data_app) for data_app in data_apps],
@@ -558,6 +563,11 @@ async def _fetch_data_app(
     if data_app_id:
         # Fetch data app from science API to get the configuration ID
         data_app_science = await client.data_science_client.get_data_app(data_app_id)
+        if data_app_science.component_id != DATA_APP_COMPONENT_ID:
+            raise ValueError(
+                f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
+                f'"{data_app_id}" has component_id "{data_app_science.component_id}".'
+            )
         raw_data_app_config = await client.storage_client.configuration_detail(
             component_id=DATA_APP_COMPONENT_ID, configuration_id=data_app_science.config_id
         )
@@ -574,6 +584,11 @@ async def _fetch_data_app(
         )
         data_app_id = cast(str, api_config.configuration['parameters']['id'])
         data_app_science = await client.data_science_client.get_data_app(data_app_id)
+        if data_app_science.component_id != DATA_APP_COMPONENT_ID:
+            raise ValueError(
+                f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
+                f'"{data_app_id}" has component_id "{data_app_science.component_id}".'
+            )
         return DataApp.from_api_responses(data_app_science, api_config)
     else:
         raise ValueError('Either data_app_id or configuration_id must be provided.')

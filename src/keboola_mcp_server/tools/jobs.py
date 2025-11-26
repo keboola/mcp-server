@@ -10,7 +10,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer
+from keboola_mcp_server.mcp import KeboolaMcpServer, toon_serializer
 
 LOG = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ def add_job_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             list_jobs,
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
             tags={JOB_TOOLS_TAG},
         )
     )

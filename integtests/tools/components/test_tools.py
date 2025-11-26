@@ -3,6 +3,7 @@ from typing import Any, AsyncGenerator, cast
 
 import pytest
 import pytest_asyncio
+import toon_format
 from fastmcp import Client, Context
 from pydantic import TypeAdapter
 
@@ -96,6 +97,30 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
         # Check that configurations belong to this component
         for config in item.configurations:
             assert config.configuration_root.component_id == item.component.component_id
+
+
+@pytest.mark.skip(reason='bug in toon_format library')
+@pytest.mark.asyncio
+async def test_list_configs_output_format(mcp_client: Client, configs: list[ConfigDef]):
+    """Tests that `list_configs` returns the tool output in TOON format."""
+    # Temporarily skip this test due to bug in the toon-format library:
+    # See: https://github.com/toon-format/toon-python/pull/36
+    # The bug creates TOON which not valid according to the TOON specs but still readable to the agents.
+    component_ids = list({config.component_id for config in configs})
+    assert len(component_ids) > 0
+
+    tool_result = await mcp_client.call_tool(name='list_configs', arguments={'component_ids': component_ids})
+
+    # Verify structured content
+    assert tool_result.structured_content is not None
+    result = ListConfigsOutput.model_validate(tool_result.structured_content)
+    assert len(result.components_with_configurations) > 0
+
+    # Verify TOON formatted text content matches structured content
+    assert len(tool_result.content) == 1
+    assert tool_result.content[0].type == 'text'
+    toon_decoded = toon_format.decode(tool_result.content[0].text)
+    assert ListConfigsOutput.model_validate(toon_decoded) == result
 
 
 @pytest.mark.parametrize(

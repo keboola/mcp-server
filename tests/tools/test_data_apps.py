@@ -4,12 +4,16 @@ import pytest
 from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.data_science import DataAppResponse
+from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
     _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
     _STORAGE_QUERY_DATA_FUNCTION_CODE,
     DataApp,
     DataAppSummary,
     _build_data_app_config,
+    _fetch_data_app,
     _get_authorization,
     _get_data_app_slug,
     _get_query_function_code,
@@ -18,6 +22,7 @@ from keboola_mcp_server.tools.data_apps import (
     _update_existing_data_app_config,
     _uses_basic_authentication,
     deploy_data_app,
+    get_data_apps,
 )
 
 
@@ -36,6 +41,25 @@ def data_app() -> DataApp:
         parameters={},
         authorization={},
         state='test',
+    )
+
+
+def _make_data_app_response(
+    component_id: str = DATA_APP_COMPONENT_ID,
+    data_app_id: str = 'app-123',
+    config_id: str = 'cfg-123',
+) -> DataAppResponse:
+    """Helper to create a DataAppResponse with sensible defaults."""
+    return DataAppResponse(
+        id=data_app_id,
+        project_id='proj-1',
+        component_id=component_id,
+        branch_id='branch-1',
+        config_id=config_id,
+        config_version='1',
+        type='streamlit',
+        state='running',
+        desired_state='running',
     )
 
 
@@ -288,3 +312,145 @@ def test_data_app_summary_from_dict_minimal(values: JsonDict) -> None:
     assert model.type == values['type']
     assert model.deployment_url == 'https://example.com/app'
     assert model.auto_suspend_after_seconds == 3600
+
+
+class TestGetDataAppsFiltering:
+    """Tests for get_data_apps filtering behavior by component_id."""
+
+    @pytest.mark.asyncio
+    async def test_get_data_apps_filters_by_component_id(self, mocker, mcp_context_client: Context) -> None:
+        """When listing data apps, only apps with DATA_APP_COMPONENT_ID are returned."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+        # Mock list_data_apps to return apps with different component_ids
+        keboola_client.data_science_client.list_data_apps = mocker.AsyncMock(
+            return_value=[
+                _make_data_app_response(component_id=DATA_APP_COMPONENT_ID, data_app_id='app-1'),
+                _make_data_app_response(component_id='keboola.sandboxes', data_app_id='app-2'),
+                _make_data_app_response(component_id=DATA_APP_COMPONENT_ID, data_app_id='app-3'),
+                _make_data_app_response(component_id='other.component', data_app_id='app-4'),
+            ]
+        )
+
+        # Mock ProjectLinksManager
+        mock_link = Link(type='ui-dashboard', title='Data Apps', url='https://example.com/data-apps')
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.ProjectLinksManager.from_client',
+            return_value=mocker.AsyncMock(get_data_app_dashboard_link=mocker.MagicMock(return_value=mock_link)),
+        )
+
+        result = await get_data_apps(ctx=mcp_context_client)
+
+        # Only apps with DATA_APP_COMPONENT_ID should be returned
+        assert len(result.data_apps) == 2
+        data_app_ids = [app.data_app_id for app in result.data_apps]
+        assert 'app-1' in data_app_ids
+        assert 'app-3' in data_app_ids
+        assert 'app-2' not in data_app_ids
+        assert 'app-4' not in data_app_ids
+
+    @pytest.mark.asyncio
+    async def test_get_data_apps_returns_empty_when_no_matching_apps(self, mocker, mcp_context_client: Context) -> None:
+        """When no apps match DATA_APP_COMPONENT_ID, an empty list is returned."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+        # Mock list_data_apps to return apps with different component_ids
+        keboola_client.data_science_client.list_data_apps = mocker.AsyncMock(
+            return_value=[
+                _make_data_app_response(component_id='keboola.sandboxes', data_app_id='app-1'),
+                _make_data_app_response(component_id='other.component', data_app_id='app-2'),
+            ]
+        )
+
+        mock_link = Link(type='ui-dashboard', title='Data Apps', url='https://example.com/data-apps')
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.ProjectLinksManager.from_client',
+            return_value=mocker.AsyncMock(get_data_app_dashboard_link=mocker.MagicMock(return_value=mock_link)),
+        )
+
+        result = await get_data_apps(ctx=mcp_context_client)
+
+        assert len(result.data_apps) == 0
+
+
+class TestFetchDataAppValidation:
+    """Tests for _fetch_data_app component_id validation."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_data_app_by_data_app_id_validates_component_id(
+        self, mocker, keboola_client: KeboolaClient
+    ) -> None:
+        """When fetching by data_app_id, raises ValueError if component_id doesn't match."""
+        wrong_component_id = 'keboola.sandboxes'
+        data_app_id = 'app-123'
+
+        keboola_client.data_science_client.get_data_app = mocker.AsyncMock(
+            return_value=_make_data_app_response(component_id=wrong_component_id, data_app_id=data_app_id)
+        )
+
+        with pytest.raises(ValueError, match=f'Data app tools only support {DATA_APP_COMPONENT_ID} component'):
+            await _fetch_data_app(keboola_client, data_app_id=data_app_id, configuration_id=None)
+
+    @pytest.mark.asyncio
+    async def test_fetch_data_app_by_configuration_id_validates_component_id(
+        self, mocker, keboola_client: KeboolaClient
+    ) -> None:
+        """When fetching by configuration_id, raises ValueError if component_id doesn't match."""
+        wrong_component_id = 'keboola.sandboxes'
+        configuration_id = 'cfg-123'
+        data_app_id = 'app-123'
+
+        # Mock configuration_detail to return valid config
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+            return_value={
+                'id': configuration_id,
+                'name': 'test-app',
+                'description': 'test',
+                'configuration': {'parameters': {'id': data_app_id}},
+                'version': 1,
+            }
+        )
+
+        # Mock get_data_app to return app with wrong component_id
+        keboola_client.data_science_client.get_data_app = mocker.AsyncMock(
+            return_value=_make_data_app_response(
+                component_id=wrong_component_id, data_app_id=data_app_id, config_id=configuration_id
+            )
+        )
+
+        with pytest.raises(ValueError, match=f'Data app tools only support {DATA_APP_COMPONENT_ID} component'):
+            await _fetch_data_app(keboola_client, data_app_id=None, configuration_id=configuration_id)
+
+    @pytest.mark.asyncio
+    async def test_fetch_data_app_by_data_app_id_succeeds_with_correct_component(
+        self, mocker, keboola_client: KeboolaClient
+    ) -> None:
+        """When component_id matches DATA_APP_COMPONENT_ID, fetch succeeds."""
+        data_app_id = 'app-123'
+        config_id = 'cfg-123'
+
+        data_app_response = _make_data_app_response(
+            component_id=DATA_APP_COMPONENT_ID, data_app_id=data_app_id, config_id=config_id
+        )
+
+        keboola_client.data_science_client.get_data_app = mocker.AsyncMock(return_value=data_app_response)
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+            return_value={
+                'id': config_id,
+                'name': 'test-app',
+                'description': 'test',
+                'configuration': {'parameters': {'id': data_app_id}, 'authorization': {}, 'storage': {}},
+                'version': 1,
+            }
+        )
+
+        result = await _fetch_data_app(keboola_client, data_app_id=data_app_id, configuration_id=None)
+
+        assert result.data_app_id == data_app_id
+        assert result.component_id == DATA_APP_COMPONENT_ID
+
+    @pytest.mark.asyncio
+    async def test_fetch_data_app_requires_either_id(self, keboola_client: KeboolaClient) -> None:
+        """When neither data_app_id nor configuration_id is provided, raises ValueError."""
+        with pytest.raises(ValueError, match='Either data_app_id or configuration_id must be provided'):
+            await _fetch_data_app(keboola_client, data_app_id=None, configuration_id=None)

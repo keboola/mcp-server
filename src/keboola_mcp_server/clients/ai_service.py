@@ -1,6 +1,6 @@
 from typing import Any, Optional, cast
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
 
@@ -21,7 +21,9 @@ class DocsQuestionResponse(BaseModel):
 class SuggestedComponent(BaseModel):
     """The AI service response to a /docs/suggest-component request."""
 
-    component_id: str = Field(description='The component ID.', alias='componentId')
+    component_id: str = Field(
+        description='The component ID.', validation_alias=AliasChoices('componentId', 'component_id')
+    )
     score: float = Field(description='Score of the component suggestion.')
     source: str = Field(description='Source of the component suggestion.')
 
