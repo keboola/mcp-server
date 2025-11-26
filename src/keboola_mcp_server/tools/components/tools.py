@@ -1139,7 +1139,7 @@ async def update_config(
                 'Each operation (set, str_replace, remove, list_append) modifies a specific '
                 'value using JSONPath notation. Only provide if updating parameters -'
                 ' do not use for changing description, storage or processors. '
-                'Prefer simple dot-delimited JSONPaths '
+                'Prefer simple JSONPaths (e.g., "array_param[1]", "object_param.key") '
                 'and make the smallest possible updates - only change what needs changing. '
                 'In case you need to replace the whole parameters section, you can use the `set` operation '
                 'with `$` as path.'
