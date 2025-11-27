@@ -194,7 +194,7 @@ async def fetch_component(
     Storage API endpoint.
 
     Used by:
-    - get_component tool
+    - get_components tool
     - Configuration creation/update operations that need component schemas
 
     :param client: Authenticated Keboola client instance

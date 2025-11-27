@@ -8,7 +8,7 @@ component-related operations in the MCP server.
 ## Tool Categories
 
 ### Component/Configuration Discovery
-- `get_component`: Retrieve detailed component information including schemas
+- `get_components`: Retrieve detailed component information including schemas
 - `find_component_id`: Search for components by natural language query
 - `get_config`: Retrieve detailed configuration with root + row structure
 - `list_configs`: List all component configurations (with filtering)
@@ -1219,14 +1219,14 @@ async def update_config(
     PREREQUISITES:
     - Configuration must already exist (use create_config for new configurations)
     - You must know both component_id and configuration_id
-    - For parameter updates: Review the component's root_configuration_schema using get_component.
+    - For parameter updates: Review the component's root_configuration_schema using get_components.
     - For storage updates: Ensure mappings are valid for the component type
 
     IMPORTANT CONSIDERATIONS:
     - Parameter updates are PARTIAL - only specify fields you want to change
     - parameter_updates supports granular operations: set keys, replace strings, remove keys, or append to lists
     - Parameters must conform to the component's root_configuration_schema
-    - Validate schemas before calling: use get_component to retrieve root_configuration_schema
+    - Validate schemas before calling: use get_components to retrieve root_configuration_schema
     - For row-based components, this updates the ROOT only (use update_config_row for individual rows)
 
     WORKFLOW:
@@ -1411,14 +1411,14 @@ async def update_config_row(
     PREREQUISITES:
     - The configuration row must already exist (use add_config_row for new rows)
     - You must know component_id, configuration_id, and configuration_row_id
-    - For parameter updates: Review the component's row_configuration_schema using get_component
+    - For parameter updates: Review the component's row_configuration_schema using get_components
     - For storage updates: Ensure mappings are valid for row-level storage
 
     IMPORTANT CONSIDERATIONS:
     - Parameter updates are PARTIAL - only specify fields you want to change
     - parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
     - Parameters must conform to the component's row_configuration_schema (not root schema)
-    - Validate schemas before calling: use get_component to retrieve row_configuration_schema
+    - Validate schemas before calling: use get_components to retrieve row_configuration_schema
     - Each row operates independently - changes to one row don't affect others
     - Row-level storage is separate from root-level storage configuration
 
