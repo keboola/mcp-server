@@ -25,6 +25,7 @@ component-related operations in the MCP server.
 - `update_sql_transformation`: Update existing SQL transformation configurations
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -48,6 +49,7 @@ from keboola_mcp_server.tools.components.model import (
     ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
+    GetComponentsOutput,
     ListConfigsOutput,
     SimplifiedTfBlocks,
     TfParamUpdate,
@@ -93,7 +95,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     # Component/Configuration discovery tools
     mcp.add_tool(
         FunctionTool.from_function(
-            get_component,
+            get_components,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
         )
@@ -268,27 +270,51 @@ async def list_configs(
 
 
 @tool_errors()
-async def get_component(
+async def get_components(
     ctx: Context,
-    component_id: Annotated[str, Field(description='ID of the component/transformation')],
-) -> Component:
+    component_ids: Annotated[Sequence[str], Field(description='IDs of the components')],
+) -> GetComponentsOutput:
     """
-    Gets information about a specific component given its ID.
+    Retrieves detailed information about one or more components by their IDs.
 
-    USAGE:
-    - Use when you want to see the details of a specific component to get its documentation, configuration schemas,
-      etc. Especially in situation when the users asks to create or update a component configuration.
-      This tool is mainly for internal use by the agent.
+    RETURNS FOR EACH COMPONENT:
+    - Component metadata (name, type, description)
+    - Documentation and usage instructions
+    - Configuration JSON schema (required for creating/updating configurations)
+    - Links to component dashboard in Keboola UI
+
+    WHEN TO USE:
+    - Before creating a new configuration: fetch the component to get its configuration schema
+    - Before updating a configuration: fetch the component to understand valid configuration options
+    - When user asks about component capabilities or documentation
+
+    PREREQUISITES:
+    - You must know the component_id(s). If unknown, first use `find_component_id` or `docs` tool to discover them.
 
     EXAMPLES:
-    - user_input: `Create a generic extractor configuration for x`
-        - Set the component_id if you know it or find the component_id by find_component_id
-          or docs use tool and set it
-        - returns the component
+    - User: "Create a generic extractor configuration"
+      → First call `find_component_id` to get the component_id, then call this tool to get the schema
+    - User: "What options does the Snowflake writer support?"
+      → Call this tool with the Snowflake writer component_id to retrieve its documentation and schema
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    api_component = await fetch_component(client=client, component_id=component_id)
-    return Component.from_api_response(api_component)
+    links_manager = await ProjectLinksManager.from_client(client)
+
+    semaphore = asyncio.Semaphore(10)
+
+    async def fetch_with_limit(component_id: str) -> Component:
+        async with semaphore:
+            api_component = await fetch_component(client=client, component_id=component_id)
+            component = Component.from_api_response(api_component)
+            component.links.append(
+                links_manager.get_config_dashboard_link(
+                    component_id=component_id, component_name=component.component_name
+                )
+            )
+            return component
+
+    components = await asyncio.gather(*[fetch_with_limit(cid) for cid in component_ids])
+    return GetComponentsOutput(components=list(components), links=[links_manager.get_used_components_link()])
 
 
 @tool_errors()

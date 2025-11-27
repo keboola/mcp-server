@@ -179,6 +179,13 @@ class Component(BaseModel):
         )
 
 
+class GetComponentsOutput(BaseModel):
+    """Output of the get_components tool."""
+
+    components: list[Component] = Field(description='The components')
+    links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
+
+
 # ============================================================================
 # CONFIGURATION MODELS
 # ============================================================================

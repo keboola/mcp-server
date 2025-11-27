@@ -9,7 +9,7 @@ component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and a list of created table names.
-- [get_component](#get_component): Gets information about a specific component given its ID.
+- [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
 - [get_config](#get_config): Gets information about a specific component/transformation configuration.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
 - [list_configs](#list_configs): Lists all component configurations in the project with optional filtering by component type or specific
@@ -335,39 +335,51 @@ EXAMPLES:
 ```
 
 ---
-<a name="get_component"></a>
-## get_component
+<a name="get_components"></a>
+## get_components
 **Annotations**: `read-only`
 
 **Tags**: `components`
 
 **Description**:
 
-Gets information about a specific component given its ID.
+Retrieves detailed information about one or more components by their IDs.
 
-USAGE:
-- Use when you want to see the details of a specific component to get its documentation, configuration schemas,
-  etc. Especially in situation when the users asks to create or update a component configuration.
-  This tool is mainly for internal use by the agent.
+RETURNS FOR EACH COMPONENT:
+- Component metadata (name, type, description)
+- Documentation and usage instructions
+- Configuration JSON schema (required for creating/updating configurations)
+- Links to component dashboard in Keboola UI
+
+WHEN TO USE:
+- Before creating a new configuration: fetch the component to get its configuration schema
+- Before updating a configuration: fetch the component to understand valid configuration options
+- When user asks about component capabilities or documentation
+
+PREREQUISITES:
+- You must know the component_id(s). If unknown, first use `find_component_id` or `docs` tool to discover them.
 
 EXAMPLES:
-- user_input: `Create a generic extractor configuration for x`
-    - Set the component_id if you know it or find the component_id by find_component_id
-      or docs use tool and set it
-    - returns the component
+- User: "Create a generic extractor configuration"
+  → First call `find_component_id` to get the component_id, then call this tool to get the schema
+- User: "What options does the Snowflake writer support?"
+  → Call this tool with the Snowflake writer component_id to retrieve its documentation and schema
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "component_id": {
-      "description": "ID of the component/transformation",
-      "type": "string"
+    "component_ids": {
+      "description": "IDs of the components",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
   "required": [
-    "component_id"
+    "component_ids"
   ],
   "type": "object"
 }

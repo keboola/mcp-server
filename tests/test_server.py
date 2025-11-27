@@ -46,7 +46,7 @@ class TestServer:
             'docs_query',
             'find_component_id',
             'get_bucket',
-            'get_component',
+            'get_components',
             'get_config',
             'get_config_examples',
             'get_data_apps',
@@ -298,7 +298,7 @@ async def test_tool_annotations_and_tags():
     ('tool_name', 'expected_readonly', 'expected_destructive', 'expected_idempotent', 'tags'),
     [
         # components
-        ('get_component', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('get_components', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('get_config', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('list_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('get_config_examples', True, None, None, {COMPONENT_TOOLS_TAG}),

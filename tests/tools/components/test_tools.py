@@ -11,6 +11,7 @@ from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
     create_sql_transformation,
+    get_components,
     get_config,
     get_config_examples,
     list_configs,
@@ -19,6 +20,8 @@ from keboola_mcp_server.tools.components import (
     update_sql_transformation,
 )
 from keboola_mcp_server.tools.components.model import (
+    Component,
+    ComponentCapabilities,
     ComponentSummary,
     ComponentType,
     ComponentWithConfigurations,
@@ -30,6 +33,7 @@ from keboola_mcp_server.tools.components.model import (
     Configuration,
     ConfigurationRootSummary,
     ConfigurationSummary,
+    GetComponentsOutput,
     ListConfigsOutput,
     SimplifiedTfBlocks,
     TfParamUpdate,
@@ -194,6 +198,105 @@ async def test_list_configs_from_ids(
     # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
     keboola_client.storage_client.component_detail.assert_called_once_with(component_id=mock_component['id'])
+
+
+@pytest.mark.asyncio
+async def test_get_components(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_components: list[dict[str, Any]],
+):
+    """Test get_components tool fetches components concurrently."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component_ids = [comp['id'] for comp in mock_components[:3]]
+
+    # Get URL components from context
+    storage_api_url = keboola_client.storage_api_url
+    project_id = await keboola_client.storage_client.project_id()
+    base_url = f'{storage_api_url}/admin/projects/{project_id}'
+
+    # Track call order to verify concurrent execution
+    call_order: list[str] = []
+
+    async def mock_fetch_component(client: KeboolaClient, component_id: str):
+        from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse
+
+        call_order.append(component_id)
+        # Find the matching mock component
+        for comp in mock_components:
+            if comp['id'] == component_id:
+                return ComponentAPIResponse.model_validate(comp)
+        raise ValueError(f'Component {component_id} not found')
+
+    mocker.patch(
+        'keboola_mcp_server.tools.components.tools.fetch_component',
+        side_effect=mock_fetch_component,
+    )
+
+    result = await get_components(ctx=context, component_ids=component_ids)
+
+    # Verify all components were fetched
+    assert set(call_order) == set(component_ids)
+
+    # Build expected components
+    expected_components = [
+        Component(
+            component_id=mock_components[0]['id'],
+            component_name=mock_components[0]['name'],
+            component_type=mock_components[0]['type'],
+            component_categories=[],
+            capabilities=ComponentCapabilities(),
+            links=[
+                Link(
+                    type='ui-dashboard',
+                    title=f'{mock_components[0]["name"]} Configurations Dashboard',
+                    url=f'{base_url}/components/{mock_components[0]["id"]}',
+                )
+            ],
+        ),
+        Component(
+            component_id=mock_components[1]['id'],
+            component_name=mock_components[1]['name'],
+            component_type=mock_components[1]['type'],
+            component_categories=[],
+            capabilities=ComponentCapabilities(),
+            links=[
+                Link(
+                    type='ui-dashboard',
+                    title=f'{mock_components[1]["name"]} Configurations Dashboard',
+                    url=f'{base_url}/components/{mock_components[1]["id"]}',
+                )
+            ],
+        ),
+        Component(
+            component_id=mock_components[2]['id'],
+            component_name=mock_components[2]['name'],
+            component_type=mock_components[2]['type'],
+            component_categories=[],
+            capabilities=ComponentCapabilities(),
+            links=[
+                Link(
+                    type='ui-dashboard',
+                    title=f'{mock_components[2]["name"]} Configurations Dashboard',
+                    url=f'{base_url}/components/{mock_components[2]["id"]}',
+                )
+            ],
+        ),
+    ]
+
+    expected_output = GetComponentsOutput(
+        components=expected_components,
+        links=[
+            Link(
+                type='ui-dashboard',
+                title='Used Components Dashboard',
+                url=f'{base_url}/components/configurations',
+            )
+        ],
+    )
+
+    assert result == expected_output
 
 
 @pytest.mark.asyncio

@@ -15,18 +15,18 @@ from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
     create_sql_transformation,
-    get_component,
+    get_components,
     get_config,
     get_config_examples,
     list_configs,
 )
 from keboola_mcp_server.tools.components.model import (
-    Component,
     ComponentType,
     ComponentWithConfigurations,
     ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
+    GetComponentsOutput,
     ListConfigsOutput,
     SimplifiedTfBlocks,
     TfAddScript,
@@ -991,15 +991,33 @@ async def test_update_sql_transformation(
 
 
 @pytest.mark.asyncio
-async def test_get_component(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_component` returns component details."""
-    test_config = configs[0]
-    component_id = test_config.component_id
+async def test_get_components(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_components` returns component details for multiple components."""
+    # Get unique component IDs from test configs
+    component_ids = list({config.component_id for config in configs})
+    assert len(component_ids) > 0
 
-    result = await get_component(component_id=component_id, ctx=mcp_context)
+    result = await get_components(component_ids=component_ids, ctx=mcp_context)
 
-    assert isinstance(result, Component)
-    assert result.component_id == test_config.component_id
+    # Verify result structure
+    assert isinstance(result, GetComponentsOutput)
+    assert len(result.components) == len(component_ids)
+
+    # Verify each component
+    returned_ids = {comp.component_id for comp in result.components}
+    assert returned_ids == set(component_ids)
+
+    for component in result.components:
+        assert component.component_id in component_ids
+        assert component.component_name is not None
+        assert component.component_type is not None
+        # Verify links are present
+        assert component.links, 'Component links should not be empty.'
+        for link in component.links:
+            assert isinstance(link, Link)
+
+    # Verify output-level links
+    assert result.links, 'Output links should not be empty.'
 
 
 @pytest.mark.asyncio
