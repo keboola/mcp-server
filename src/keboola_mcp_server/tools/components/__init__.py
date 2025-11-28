@@ -3,7 +3,7 @@ from keboola_mcp_server.tools.components.model import (
     ComponentConfigurationResponseBase,
     ComponentSummary,
     ComponentType,
-    ComponentWithConfigurations,
+    ComponentWithConfigs,
 )
 from keboola_mcp_server.tools.components.tools import (
     add_component_tools,
@@ -11,9 +11,8 @@ from keboola_mcp_server.tools.components.tools import (
     create_config,
     create_sql_transformation,
     get_components,
-    get_config,
     get_config_examples,
-    list_configs,
+    get_configs,
     update_config,
     update_config_row,
     update_sql_transformation,

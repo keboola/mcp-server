@@ -49,8 +49,11 @@ from keboola_mcp_server.tools.components.model import (
     ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
+    FullConfigId,
     GetComponentsOutput,
-    ListConfigsOutput,
+    GetConfigsDetailOutput,
+    GetConfigsListOutput,
+    GetConfigsOutput,
     SimplifiedTfBlocks,
     TfParamUpdate,
     TransformationConfiguration,
@@ -102,14 +105,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     )
     mcp.add_tool(
         FunctionTool.from_function(
-            get_config,
-            tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
-        )
-    )
-    mcp.add_tool(
-        FunctionTool.from_function(
-            list_configs,
+            get_configs,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
             serializer=toon_serializer,
@@ -178,16 +174,15 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
 
 
 @tool_errors()
-async def list_configs(
+async def get_configs(
     ctx: Context,
     component_types: Annotated[
         Sequence[ComponentType],
         Field(
             description=(
                 'Filter by component types. Options: "application", "extractor", "transformation", "writer". '
-                'Empty list [] means ALL component types will be returned '
-                '(application, extractor, transformation, writer). '
-                'This parameter is IGNORED when component_ids is provided (non-empty).'
+                'Empty list [] means ALL component types will be returned. '
+                'This parameter is IGNORED when configs is provided (non-empty) or component_ids is non-empty.'
             )
         ),
     ] = tuple(),
@@ -197,71 +192,109 @@ async def list_configs(
             description=(
                 'Filter by specific component IDs (e.g., ["keboola.ex-db-mysql", "keboola.wr-google-sheets"]). '
                 'Empty list [] uses component_types filtering instead. '
-                'When provided (non-empty), this parameter takes PRECEDENCE over component_types '
-                'and component_types is IGNORED.'
+                'When provided (non-empty) and configs is empty, lists summaries for these components. '
+                'Ignored if configs is provided.'
             )
         ),
     ] = tuple(),
-) -> ListConfigsOutput:
+    configs: Annotated[
+        Sequence[FullConfigId],
+        Field(
+            description=(
+                'List of specific configurations to retrieve full details for. '
+                'Each dict must have "component_id" (str) and "configuration_id" (str). '
+                'Example: [{"component_id": "keboola.ex-db-mysql", "configuration_id": "12345"}]. '
+                'If provided (non-empty), ignores other filters and returns full details only for these configs, '
+                'grouped by component. Use this for detailed retrieval.'
+            )
+        ),
+    ] = tuple(),
+) -> GetConfigsOutput:
     """
-    Lists all component configurations in the project with optional filtering by component type or specific
-    component IDs.
+    Retrieves component configurations in the project with optional filtering.
+
+    Can list summaries of multiple configurations (grouped by component) or retrieve full details
+    for specific configurations.
 
     Returns a list of components, each containing:
     - Component metadata (ID, name, type, description)
-    - All configurations for that component
+    - Configurations for that component (summaries by default, full details if requested)
     - Links to the Keboola UI
 
     PARAMETER BEHAVIOR:
-    - If component_ids is provided (non-empty): Returns ONLY those specific components, component_types is IGNORED
-    - If component_ids is empty [] and component_types is empty []: Returns ALL component types
-      (application, extractor, transformation, writer)
-    - If component_ids is empty [] and component_types has values: Returns components matching ONLY those types
+    - If configs is provided (non-empty): Returns FULL details ONLY for those configs.
+    - Else if component_ids is provided (non-empty): Lists config summaries for those components.
+    - Else: Lists configs based on component_types (all types if empty).
 
     WHEN TO USE:
-    - User asks for "all configurations" or "list configurations" → Use component_types=[], component_ids=[]
-    - User asks for specific component types (e.g., "extractors", "writers") → Use component_types with specific types
-    - User asks for "all transformations" or "list transformations" → Use component_types=["transformation"]
-    - User asks for specific component by ID → Use component_ids with the specific ID(s)
+    - For listing: Use component_types/component_ids (like old list_configs).
+    - For details: Use configs (can handle multiple).
+    - Replaces get_config: Use configs with one entry for single config details.
 
     EXAMPLES:
-    - user_input: "Show me all components in the project"
-      → component_types=[], component_ids=[]
-      → Returns ALL component types (application, extractor, transformation, writer) with their configurations
-
-    - user_input: "List all extractor configurations"
-      → component_types=["extractor"], component_ids=[]
-      → Returns only extractor component configurations
-
-    - user_input: "Show me all extractors and writers"
-      → component_types=["extractor", "writer"], component_ids=[]
-      → Returns extractor and writer configurations only
-
-    - user_input: "List all transformations"
-      → component_types=["transformation"], component_ids=[]
-      → Returns transformation configurations only
-
-    - user_input: "Show me configurations for keboola.ex-db-mysql"
-      → component_types=[], component_ids=["keboola.ex-db-mysql"]
-      → Returns only configurations for the MySQL extractor (component_types is ignored)
-
-    - user_input: "Get configs for these components: ex-db-mysql and wr-google-sheets"
-      → component_types=[], component_ids=["keboola.ex-db-mysql", "keboola.wr-google-sheets"]
-      → Returns configurations for both specified components (component_types is ignored)
+    - List all configs (summaries): component_types=[], component_ids=[]
+    - List extractors (summaries): component_types=["extractor"]
+    - Get details for specific configs:
+      configs=[{"component_id": "keboola.ex-db-mysql", "configuration_id": "12345"}]
     """
-    # If no component IDs are provided, retrieve component configurations by types (default is all types)
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    if not component_ids:
-        component_types = expand_component_types(component_types)
-        components_with_configurations = await list_configs_by_types(client, component_types)
-    # If component IDs are provided, retrieve component configurations by IDs
+
+    # Case 1: specific_configs provided - return full details for those configs
+    if configs:
+        semaphore = asyncio.Semaphore(10)
+
+        async def fetch_config_detail(spec: FullConfigId) -> Configuration:
+            async with semaphore:
+                component_id = spec.component_id
+                configuration_id = spec.configuration_id
+
+                raw_configuration = cast(
+                    JsonDict,
+                    await client.storage_client.configuration_detail(
+                        component_id=component_id, configuration_id=configuration_id
+                    ),
+                )
+
+                api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': component_id})
+                api_component = await fetch_component(client=client, component_id=component_id)
+                component_summary = ComponentSummary.from_api_response(api_component)
+
+                links = links_manager.get_configuration_links(
+                    component_id=component_id,
+                    configuration_id=configuration_id,
+                    configuration_name=str(raw_configuration.get('name', '')),
+                )
+
+                configuration = Configuration.from_api_response(
+                    api_config=api_config,
+                    component=component_summary,
+                    links=links,
+                )
+
+                # Handle transformation simplification
+                if component_id in (SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID):
+                    original_parameters = TransformationConfiguration.Parameters.model_validate(
+                        configuration.configuration_root.parameters
+                    )
+                    simplified_parameters: SimplifiedTfBlocks = await original_parameters.to_simplified_parameters()
+                    configuration.configuration_root.parameters = add_ids(simplified_parameters.model_dump())
+
+                return configuration
+
+        fetched_configs = await asyncio.gather(*[fetch_config_detail(spec) for spec in configs])
+        return GetConfigsDetailOutput(configs=list(fetched_configs))
+
+    # Case 2: component_ids provided - list summaries by IDs
+    if component_ids:
+        components_with_configs = await list_configs_by_ids(client, component_ids)
+    # Case 3: use component_types filtering (or all types if empty)
     else:
-        components_with_configurations = await list_configs_by_ids(client, component_ids)
+        component_types = expand_component_types(component_types)
+        components_with_configs = await list_configs_by_types(client, component_types)
 
     links = [links_manager.get_used_components_link(), links_manager.get_transformations_dashboard_link()]
-
-    return ListConfigsOutput(components_with_configurations=components_with_configurations, links=links)
+    return GetConfigsListOutput(components_with_configs=components_with_configs, links=links)
 
 
 # ============================================================================
@@ -315,63 +348,6 @@ async def get_components(
 
     components = await asyncio.gather(*[fetch_with_limit(cid) for cid in component_ids])
     return GetComponentsOutput(components=list(components), links=[links_manager.get_used_components_link()])
-
-
-@tool_errors()
-async def get_config(
-    component_id: Annotated[str, Field(description='ID of the component/transformation')],
-    configuration_id: Annotated[
-        str,
-        Field(
-            description='ID of the component/transformation configuration',
-        ),
-    ],
-    ctx: Context,
-) -> Configuration:
-    """
-    Gets information about a specific component/transformation configuration.
-
-    USAGE:
-    - Use when you want to see the configuration of a specific component/transformation.
-
-    EXAMPLES:
-    - user_input: `give me details about this configuration`
-        - set component_id and configuration_id to the specific component/transformation ID and configuration ID
-          if you know it
-        - returns the component/transformation configuration pair
-    """
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-
-    raw_configuration = cast(
-        JsonDict,
-        await client.storage_client.configuration_detail(component_id=component_id, configuration_id=configuration_id),
-    )
-
-    api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': component_id})
-    api_component = await fetch_component(client=client, component_id=component_id)
-    component_summary = ComponentSummary.from_api_response(api_component)
-
-    links = links_manager.get_configuration_links(
-        component_id=component_id,
-        configuration_id=configuration_id,
-        configuration_name=raw_configuration.get('name', ''),
-    )
-
-    configuration = Configuration.from_api_response(
-        api_config=api_config,
-        component=component_summary,
-        links=links,
-    )
-
-    if component_id in (SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID):
-        original_parameters = TransformationConfiguration.Parameters.model_validate(
-            configuration.configuration_root.parameters
-        )
-        simplified_parameters: SimplifiedTfBlocks = await original_parameters.to_simplified_parameters()
-        configuration.configuration_root.parameters = add_ids(simplified_parameters.model_dump())
-
-    return configuration
 
 
 # ============================================================================
@@ -470,7 +446,7 @@ async def create_sql_transformation(
         configuration=transformation_configuration_payload.model_dump(by_alias=True),
     )
 
-    configuration_id = new_raw_transformation_configuration['id']
+    configuration_id = str(new_raw_transformation_configuration['id'])
 
     await set_cfg_creation_metadata(
         client=client,

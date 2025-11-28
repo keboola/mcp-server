@@ -10,10 +10,8 @@ component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and a list of created table names.
 - [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
-- [get_config](#get_config): Gets information about a specific component/transformation configuration.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
-- [list_configs](#list_configs): Lists all component configurations in the project with optional filtering by component type or specific
-component IDs.
+- [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
@@ -386,48 +384,6 @@ EXAMPLES:
 ```
 
 ---
-<a name="get_config"></a>
-## get_config
-**Annotations**: `read-only`
-
-**Tags**: `components`
-
-**Description**:
-
-Gets information about a specific component/transformation configuration.
-
-USAGE:
-- Use when you want to see the configuration of a specific component/transformation.
-
-EXAMPLES:
-- user_input: `give me details about this configuration`
-    - set component_id and configuration_id to the specific component/transformation ID and configuration ID
-      if you know it
-    - returns the component/transformation configuration pair
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "component_id": {
-      "description": "ID of the component/transformation",
-      "type": "string"
-    },
-    "configuration_id": {
-      "description": "ID of the component/transformation configuration",
-      "type": "string"
-    }
-  },
-  "required": [
-    "component_id",
-    "configuration_id"
-  ],
-  "type": "object"
-}
-```
-
----
 <a name="get_config_examples"></a>
 ## get_config_examples
 **Annotations**: `read-only`
@@ -464,67 +420,68 @@ EXAMPLES:
 ```
 
 ---
-<a name="list_configs"></a>
-## list_configs
+<a name="get_configs"></a>
+## get_configs
 **Annotations**: `read-only`
 
 **Tags**: `components`
 
 **Description**:
 
-Lists all component configurations in the project with optional filtering by component type or specific
-component IDs.
+Retrieves component configurations in the project with optional filtering.
+
+Can list summaries of multiple configurations (grouped by component) or retrieve full details
+for specific configurations.
 
 Returns a list of components, each containing:
 - Component metadata (ID, name, type, description)
-- All configurations for that component
+- Configurations for that component (summaries by default, full details if requested)
 - Links to the Keboola UI
 
 PARAMETER BEHAVIOR:
-- If component_ids is provided (non-empty): Returns ONLY those specific components, component_types is IGNORED
-- If component_ids is empty [] and component_types is empty []: Returns ALL component types
-  (application, extractor, transformation, writer)
-- If component_ids is empty [] and component_types has values: Returns components matching ONLY those types
+- If configs is provided (non-empty): Returns FULL details ONLY for those configs.
+- Else if component_ids is provided (non-empty): Lists config summaries for those components.
+- Else: Lists configs based on component_types (all types if empty).
 
 WHEN TO USE:
-- User asks for "all configurations" or "list configurations" → Use component_types=[], component_ids=[]
-- User asks for specific component types (e.g., "extractors", "writers") → Use component_types with specific types
-- User asks for "all transformations" or "list transformations" → Use component_types=["transformation"]
-- User asks for specific component by ID → Use component_ids with the specific ID(s)
+- For listing: Use component_types/component_ids (like old list_configs).
+- For details: Use configs (can handle multiple).
+- Replaces get_config: Use configs with one entry for single config details.
 
 EXAMPLES:
-- user_input: "Show me all components in the project"
-  → component_types=[], component_ids=[]
-  → Returns ALL component types (application, extractor, transformation, writer) with their configurations
-
-- user_input: "List all extractor configurations"
-  → component_types=["extractor"], component_ids=[]
-  → Returns only extractor component configurations
-
-- user_input: "Show me all extractors and writers"
-  → component_types=["extractor", "writer"], component_ids=[]
-  → Returns extractor and writer configurations only
-
-- user_input: "List all transformations"
-  → component_types=["transformation"], component_ids=[]
-  → Returns transformation configurations only
-
-- user_input: "Show me configurations for keboola.ex-db-mysql"
-  → component_types=[], component_ids=["keboola.ex-db-mysql"]
-  → Returns only configurations for the MySQL extractor (component_types is ignored)
-
-- user_input: "Get configs for these components: ex-db-mysql and wr-google-sheets"
-  → component_types=[], component_ids=["keboola.ex-db-mysql", "keboola.wr-google-sheets"]
-  → Returns configurations for both specified components (component_types is ignored)
+- List all configs (summaries): component_types=[], component_ids=[]
+- List extractors (summaries): component_types=["extractor"]
+- Get details for specific configs:
+  configs=[{"component_id": "keboola.ex-db-mysql", "configuration_id": "12345"}]
 
 
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "FullConfigId": {
+      "description": "Composite configuration ID (component ID + configuration ID).",
+      "properties": {
+        "component_id": {
+          "description": "ID of the component",
+          "type": "string"
+        },
+        "configuration_id": {
+          "description": "ID of the configuration",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component_id",
+        "configuration_id"
+      ],
+      "type": "object"
+    }
+  },
   "properties": {
     "component_types": {
       "default": [],
-      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\". Empty list [] means ALL component types will be returned (application, extractor, transformation, writer). This parameter is IGNORED when component_ids is provided (non-empty).",
+      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\". Empty list [] means ALL component types will be returned. This parameter is IGNORED when configs is provided (non-empty) or component_ids is non-empty.",
       "items": {
         "enum": [
           "application",
@@ -538,9 +495,17 @@ EXAMPLES:
     },
     "component_ids": {
       "default": [],
-      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list [] uses component_types filtering instead. When provided (non-empty), this parameter takes PRECEDENCE over component_types and component_types is IGNORED.",
+      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list [] uses component_types filtering instead. When provided (non-empty) and configs is empty, lists summaries for these components. Ignored if configs is provided.",
       "items": {
         "type": "string"
+      },
+      "type": "array"
+    },
+    "configs": {
+      "default": [],
+      "description": "List of specific configurations to retrieve full details for. Each dict must have \"component_id\" (str) and \"configuration_id\" (str). Example: [{\"component_id\": \"keboola.ex-db-mysql\", \"configuration_id\": \"12345\"}]. If provided (non-empty), ignores other filters and returns full details only for these configs, grouped by component. Use this for detailed retrieval.",
+      "items": {
+        "$ref": "#/$defs/FullConfigId"
       },
       "type": "array"
     }

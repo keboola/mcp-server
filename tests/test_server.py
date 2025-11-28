@@ -47,8 +47,8 @@ class TestServer:
             'find_component_id',
             'get_bucket',
             'get_components',
-            'get_config',
             'get_config_examples',
+            'get_configs',
             'get_data_apps',
             'get_flow',
             'get_flow_examples',
@@ -57,7 +57,6 @@ class TestServer:
             'get_project_info',
             'get_table',
             'list_buckets',
-            'list_configs',
             'list_flows',
             'list_jobs',
             'list_tables',
@@ -299,8 +298,7 @@ async def test_tool_annotations_and_tags():
     [
         # components
         ('get_components', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('get_config', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('list_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('get_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('get_config_examples', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('create_config', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_config', None, True, None, {COMPONENT_TOOLS_TAG}),

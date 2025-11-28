@@ -12,9 +12,8 @@ from keboola_mcp_server.tools.components import (
     create_config,
     create_sql_transformation,
     get_components,
-    get_config,
     get_config_examples,
-    list_configs,
+    get_configs,
     update_config,
     update_config_row,
     update_sql_transformation,
@@ -24,17 +23,19 @@ from keboola_mcp_server.tools.components.model import (
     ComponentCapabilities,
     ComponentSummary,
     ComponentType,
-    ComponentWithConfigurations,
+    ComponentWithConfigs,
     ConfigParamRemove,
     ConfigParamReplace,
     ConfigParamSet,
     ConfigParamUpdate,
+    ConfigSummary,
     ConfigToolOutput,
     Configuration,
     ConfigurationRootSummary,
-    ConfigurationSummary,
+    FullConfigId,
     GetComponentsOutput,
-    ListConfigsOutput,
+    GetConfigsDetailOutput,
+    GetConfigsListOutput,
     SimplifiedTfBlocks,
     TfParamUpdate,
     TfRenameBlock,
@@ -45,72 +46,76 @@ from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_c
 from keboola_mcp_server.tools.components.utils import clean_bucket_name
 from keboola_mcp_server.workspace import WorkspaceManager
 
+# ============================================================================
+# get_configs TESTS
+# ============================================================================
+
 
 @pytest.fixture
-def assert_retrieve_components() -> Callable[
+def assert_get_configs_list() -> Callable[
     [
-        ListConfigsOutput,
+        GetConfigsListOutput,
         list[dict[str, Any]],
         list[dict[str, Any]],
     ],
     None,
 ]:
-    """Assert that the _retrieve_components_in_project tool returns the correct components and configurations."""
+    """Assert that the get_configs tool (list mode) returns the correct components and configurations."""
 
-    def _assert_retrieve_components(
-        result: ListConfigsOutput,
+    def _assert_get_configs_list(
+        result: GetConfigsListOutput,
         components: list[dict[str, Any]],
         configurations: list[dict[str, Any]],
     ):
-        components_with_configurations = result.components_with_configurations
+        components_with_configs = result.components_with_configs
 
-        assert len(components_with_configurations) == len(components)
+        assert len(components_with_configs) == len(components)
         # assert basics
-        assert all(isinstance(component, ComponentWithConfigurations) for component in components_with_configurations)
-        assert all(isinstance(component.component, ComponentSummary) for component in components_with_configurations)
-        assert all(isinstance(component.configurations, list) for component in components_with_configurations)
+        assert all(isinstance(component, ComponentWithConfigs) for component in components_with_configs)
+        assert all(isinstance(component.component, ComponentSummary) for component in components_with_configs)
+        assert all(isinstance(component.configs, list) for component in components_with_configs)
         assert all(
-            all(isinstance(config, ConfigurationSummary) for config in component.configurations)
-            for component in components_with_configurations
+            all(isinstance(config, ConfigSummary) for config in component.configs)
+            for component in components_with_configs
         )
         # assert component list details
         assert all(
             returned.component.component_id == expected['id']
-            for returned, expected in zip(components_with_configurations, components)
+            for returned, expected in zip(components_with_configs, components)
         )
         assert all(
             returned.component.component_name == expected['name']
-            for returned, expected in zip(components_with_configurations, components)
+            for returned, expected in zip(components_with_configs, components)
         )
         assert all(
             returned.component.component_type == expected['type']
-            for returned, expected in zip(components_with_configurations, components)
+            for returned, expected in zip(components_with_configs, components)
         )
-        assert all(not hasattr(returned.component, 'version') for returned in components_with_configurations)
+        assert all(not hasattr(returned.component, 'version') for returned in components_with_configs)
 
         # assert configurations list details
-        assert all(len(component.configurations) == len(configurations) for component in components_with_configurations)
+        assert all(len(component.configs) == len(configurations) for component in components_with_configs)
         assert all(
-            all(isinstance(config.configuration_root, ConfigurationRootSummary) for config in component.configurations)
-            for component in components_with_configurations
+            all(isinstance(config.configuration_root, ConfigurationRootSummary) for config in component.configs)
+            for component in components_with_configs
         )
         # use zip to iterate over the result and mock_configurations since we artificially mock the .get method
         assert all(
             all(
                 config.configuration_root.configuration_id == expected['id']
-                for config, expected in zip(component.configurations, configurations)
+                for config, expected in zip(component.configs, configurations)
             )
-            for component in components_with_configurations
+            for component in components_with_configs
         )
         assert all(
             all(
                 config.configuration_root.name == expected['name']
-                for config, expected in zip(component.configurations, configurations)
+                for config, expected in zip(component.configs, configurations)
             )
-            for component in components_with_configurations
+            for component in components_with_configs
         )
 
-    return _assert_retrieve_components
+    return _assert_get_configs_list
 
 
 @pytest.mark.asyncio
@@ -136,18 +141,18 @@ def assert_retrieve_components() -> Callable[
         (['extractor', 'writer', 'application'], ['application', 'extractor', 'writer'], [2, 0, 1]),
     ],
 )
-async def test_list_configs_by_types(
+async def test_get_configs_by_types(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_components: list[dict[str, Any]],
     mock_configurations: list[dict[str, Any]],
-    assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
+    assert_get_configs_list: Callable[[GetConfigsListOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
     component_types: list[ComponentType],
     expected_types: list[ComponentType],
     expected_mock_comp_idxs: list[int],
 ):
     """
-    Test list_configs when component types are provided with various filters.
+    Test get_configs (list mode) when component types are provided with various filters.
     The expected_mock_comp_idxs are the indices of mock_components that should be returned.
     """
     context = mcp_context_components_configs
@@ -165,11 +170,14 @@ async def test_list_configs_by_types(
 
     keboola_client.storage_client.component_list = mocker.AsyncMock(side_effect=mock_component_list)
 
-    result = await list_configs(ctx=context, component_types=component_types)
+    result = await get_configs(ctx=context, component_types=component_types)
+
+    # Verify we get the list output type
+    assert isinstance(result, GetConfigsListOutput)
 
     # Get the expected components based on the indices
     expected_components = [mock_components[i] for i in expected_mock_comp_idxs]
-    assert_retrieve_components(result, expected_components, mock_configurations)
+    assert_get_configs_list(result, expected_components, mock_configurations)
 
     # Verify the calls were made with the correct arguments (in sorted order)
     expected_calls = [mocker.call(component_type=comp_type, include=['configuration']) for comp_type in expected_types]
@@ -177,27 +185,236 @@ async def test_list_configs_by_types(
 
 
 @pytest.mark.asyncio
-async def test_list_configs_from_ids(
+async def test_get_configs_by_component_ids(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_configurations: list[dict[str, Any]],
     mock_component: dict[str, Any],
-    assert_retrieve_components: Callable[[ListConfigsOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
+    assert_get_configs_list: Callable[[GetConfigsListOutput, list[dict[str, Any]], list[dict[str, Any]]], None],
 ):
-    """Test list_configs when component IDs are provided."""
+    """Test get_configs (list mode) when component IDs are provided."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
 
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=mock_configurations)
     keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
 
-    result = await list_configs(context, component_ids=[mock_component['id']])
+    result = await get_configs(ctx=context, component_ids=[mock_component['id']])
 
-    assert_retrieve_components(result, [mock_component], mock_configurations)
+    # Verify we get the list output type
+    assert isinstance(result, GetConfigsListOutput)
+
+    assert_get_configs_list(result, [mock_component], mock_configurations)
 
     # Verify the calls were made with the correct arguments
     keboola_client.storage_client.configuration_list.assert_called_once_with(component_id=mock_component['id'])
     keboola_client.storage_client.component_detail.assert_called_once_with(component_id=mock_component['id'])
+
+
+@pytest.mark.asyncio
+async def test_get_configs_detail(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_configuration: dict[str, Any],
+    mock_component: dict[str, Any],
+    mock_metadata: list[dict[str, Any]],
+):
+    """Test get_configs (detail mode) when specific configs are provided."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    # Get URL components from context for link assertions
+    storage_api_url = keboola_client.storage_api_url
+    project_id = await keboola_client.storage_client.project_id()
+    base_url = f'{storage_api_url}/admin/projects/{project_id}'
+
+    mock_ai_service = mocker.MagicMock()
+    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+
+    keboola_client.ai_service_client = mock_ai_service
+    # mock the configuration_detail method to return the mock_configuration
+    # simulate the response from the API
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={**mock_configuration, 'component': mock_component, 'configurationMetadata': mock_metadata}
+    )
+
+    configs = [FullConfigId(component_id=mock_component['id'], configuration_id=mock_configuration['id'])]
+    result = await get_configs(ctx=context, configs=configs)
+
+    # Verify we get the detail output type
+    assert isinstance(result, GetConfigsDetailOutput)
+    assert len(result.configs) == 1
+
+    config = result.configs[0]
+    assert config.configuration_root.configuration_id == mock_configuration['id']
+    assert config.configuration_root.name == mock_configuration['name']
+    assert config.component is not None
+    assert config.component.component_id == mock_component['id']
+    assert config.component.component_name == mock_component['name']
+
+    # Verify links
+    assert set(config.links) == {
+        Link(
+            type='ui-detail',
+            title=f'Configuration: {mock_configuration["name"]}',
+            url=f'{base_url}/components/{mock_component["id"]}/{mock_configuration["id"]}',
+        ),
+        Link(
+            type='ui-dashboard',
+            title=f'{mock_component["id"]} Configurations Dashboard',
+            url=f'{base_url}/components/{mock_component["id"]}',
+        ),
+    }
+
+    # Verify the calls were made with the correct arguments
+    keboola_client.storage_client.configuration_detail.assert_called_once_with(
+        component_id=mock_component['id'], configuration_id=mock_configuration['id']
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_configs_detail_multiple(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_configuration: dict[str, Any],
+    mock_component: dict[str, Any],
+    mock_metadata: list[dict[str, Any]],
+):
+    """Test get_configs (detail mode) when multiple specific configs are provided."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    # Create a second configuration
+    mock_configuration_2 = {**mock_configuration, 'id': '456', 'name': 'My Config 2'}
+
+    mock_ai_service = mocker.MagicMock()
+    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+
+    keboola_client.ai_service_client = mock_ai_service
+
+    # Return different configs based on the configuration_id
+    async def mock_config_detail(component_id: str, configuration_id: str):
+        if configuration_id == mock_configuration['id']:
+            return {**mock_configuration, 'component': mock_component, 'configurationMetadata': mock_metadata}
+        else:
+            return {**mock_configuration_2, 'component': mock_component, 'configurationMetadata': mock_metadata}
+
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
+
+    configs = [
+        FullConfigId(component_id=mock_component['id'], configuration_id=mock_configuration['id']),
+        FullConfigId(component_id=mock_component['id'], configuration_id=mock_configuration_2['id']),
+    ]
+    result = await get_configs(ctx=context, configs=configs)
+
+    # Verify we get the detail output type with multiple configs
+    assert isinstance(result, GetConfigsDetailOutput)
+    assert len(result.configs) == 2
+
+    # Verify both configs are present
+    config_ids = {c.configuration_root.configuration_id for c in result.configs}
+    assert config_ids == {mock_configuration['id'], mock_configuration_2['id']}
+
+    # Verify each config has the expected data
+    for config in result.configs:
+        assert isinstance(config, Configuration)
+        assert config.component is not None
+        assert config.component.component_id == mock_component['id']
+
+
+@pytest.mark.asyncio
+async def test_get_configs_detail_transformation(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_tf_configuration: dict[str, Any],
+    mock_tf_component: dict[str, Any],
+    mock_metadata: list[dict[str, Any]],
+):
+    """
+    Test get_configs (detail mode) for transformations.
+    We test that the transformation parameters are correctly simplified and IDs are added.
+    """
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    mock_ai_service = mocker.MagicMock()
+    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_tf_component)
+
+    keboola_client.ai_service_client = mock_ai_service
+    # mock the configuration_detail method to return the mock_configuration
+    # simulate the response from the API
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={**mock_tf_configuration, 'component': mock_tf_component, 'configurationMetadata': mock_metadata}
+    )
+
+    configs = [
+        FullConfigId(component_id=mock_tf_component['componentId'], configuration_id=mock_tf_configuration['id'])
+    ]
+    result = await get_configs(ctx=context, configs=configs)
+
+    # Verify we get the detail output type
+    assert isinstance(result, GetConfigsDetailOutput)
+    assert len(result.configs) == 1
+
+    config = result.configs[0]
+    assert isinstance(config, Configuration)
+    assert config.configuration_root.parameters == {
+        'blocks': [
+            {
+                'id': 'b0',
+                'name': 'Blocks',
+                'codes': [
+                    {'id': 'b0.c0', 'name': 'Code 1', 'script': 'SELECT * FROM customers;\n\nSELECT * FROM orders;\n\n'}
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_configs_detail_ignores_other_params(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_configuration: dict[str, Any],
+    mock_component: dict[str, Any],
+    mock_metadata: list[dict[str, Any]],
+):
+    """Test that get_configs (detail mode) ignores component_types and component_ids when configs is provided."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    mock_ai_service = mocker.MagicMock()
+    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+
+    keboola_client.ai_service_client = mock_ai_service
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={**mock_configuration, 'component': mock_component, 'configurationMetadata': mock_metadata}
+    )
+    keboola_client.storage_client.component_list = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock()
+
+    configs = [FullConfigId(component_id=mock_component['id'], configuration_id=mock_configuration['id'])]
+
+    # Provide all params, but configs takes precedence
+    result = await get_configs(
+        ctx=context,
+        component_types=['extractor', 'writer'],  # Should be ignored
+        component_ids=['some-other-component'],  # Should be ignored
+        configs=configs,  # This should be used
+    )
+
+    # Verify we get the detail output type
+    assert isinstance(result, GetConfigsDetailOutput)
+    assert len(result.configs) == 1
+
+    # Verify that component_list and configuration_list were NOT called (because configs takes precedence)
+    keboola_client.storage_client.component_list.assert_not_called()
+    keboola_client.storage_client.configuration_list.assert_not_called()
+
+    # Verify configuration_detail was called for the specified config
+    keboola_client.storage_client.configuration_detail.assert_called_once_with(
+        component_id=mock_component['id'], configuration_id=mock_configuration['id']
+    )
 
 
 @pytest.mark.asyncio
@@ -297,107 +514,6 @@ async def test_get_components(
     )
 
     assert result == expected_output
-
-
-@pytest.mark.asyncio
-async def test_get_config(
-    mocker: MockerFixture,
-    mcp_context_components_configs: Context,
-    mock_configuration: dict[str, Any],
-    mock_component: dict[str, Any],
-    mock_metadata: list[dict[str, Any]],
-):
-    """Test get_config tool."""
-    context = mcp_context_components_configs
-    keboola_client = KeboolaClient.from_state(context.session.state)
-
-    mock_ai_service = mocker.MagicMock()
-    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
-
-    keboola_client.ai_service_client = mock_ai_service
-    # mock the configuration_detail method to return the mock_configuration
-    # simulate the response from the API
-    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
-        return_value={**mock_configuration, 'component': mock_component, 'configurationMetadata': mock_metadata}
-    )
-
-    result = await get_config(
-        component_id=mock_component['id'],
-        configuration_id=mock_configuration['id'],
-        ctx=context,
-    )
-
-    assert isinstance(result, Configuration)
-    assert result.configuration_root.configuration_id == mock_configuration['id']
-    assert result.configuration_root.name == mock_configuration['name']
-    assert result.component is not None
-    assert result.component.component_id == mock_component['id']
-    assert result.component.component_name == mock_component['name']
-    assert set(result.links) == {
-        Link(
-            type='ui-detail',
-            title=f'Configuration: {mock_configuration["name"]}',
-            url=(
-                f'https://connection.test.keboola.com/admin/projects/69420/components/'
-                f'{mock_component["id"]}/{mock_configuration["id"]}'
-            ),
-        ),
-        Link(
-            type='ui-dashboard',
-            title=f'{mock_component["id"]} Configurations Dashboard',
-            url=f'https://connection.test.keboola.com/admin/projects/69420/components/{mock_component["id"]}',
-        ),
-    }
-
-    # Verify the calls were made with the correct arguments
-    keboola_client.storage_client.configuration_detail.assert_called_once_with(
-        component_id=mock_component['id'], configuration_id=mock_configuration['id']
-    )
-
-
-@pytest.mark.asyncio
-async def test_get_config_transformation(
-    mocker: MockerFixture,
-    mcp_context_components_configs: Context,
-    mock_tf_configuration: dict[str, Any],
-    mock_tf_component: dict[str, Any],
-    mock_metadata: list[dict[str, Any]],
-):
-    """
-    Test get_config tool for transformations.
-    We test that the transformation parameters are correctly simplified and IDs are added.
-    """
-    context = mcp_context_components_configs
-    keboola_client = KeboolaClient.from_state(context.session.state)
-
-    mock_ai_service = mocker.MagicMock()
-    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_tf_component)
-
-    keboola_client.ai_service_client = mock_ai_service
-    # mock the configuration_detail method to return the mock_configuration
-    # simulate the response from the API
-    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
-        return_value={**mock_tf_configuration, 'component': mock_tf_component, 'configurationMetadata': mock_metadata}
-    )
-
-    result = await get_config(
-        component_id=mock_tf_component['componentId'],
-        configuration_id=mock_tf_configuration['id'],
-        ctx=context,
-    )
-
-    assert isinstance(result, Configuration)
-    assert result.configuration_root.parameters == {
-        'blocks': [
-            {
-                'id': 'b0',
-                'name': 'Blocks',
-                'codes': [
-                    {'id': 'b0.c0', 'name': 'Code 1', 'script': 'SELECT * FROM customers;\n\nSELECT * FROM orders;\n\n'}
-                ],
-            }
-        ],
-    }
 
 
 @pytest.mark.parametrize(
