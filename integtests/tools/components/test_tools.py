@@ -15,19 +15,20 @@ from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
     create_sql_transformation,
-    get_component,
-    get_config,
+    get_components,
     get_config_examples,
-    list_configs,
+    get_configs,
 )
 from keboola_mcp_server.tools.components.model import (
-    Component,
     ComponentType,
-    ComponentWithConfigurations,
+    ComponentWithConfigs,
     ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
-    ListConfigsOutput,
+    FullConfigId,
+    GetComponentsOutput,
+    GetConfigsDetailOutput,
+    GetConfigsListOutput,
     SimplifiedTfBlocks,
     TfAddScript,
     TfParamUpdate,
@@ -51,16 +52,21 @@ LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_config` returns a `Configuration` instance."""
+async def test_get_configs_detail(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_configs` with specific configs returns detailed `Configuration` instances."""
 
     for config in configs:
         assert config.configuration_id is not None
 
-        configuration = await get_config(
-            component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context
+        result = await get_configs(
+            ctx=mcp_context,
+            configs=[FullConfigId(component_id=config.component_id, configuration_id=config.configuration_id)],
         )
 
+        assert isinstance(result, GetConfigsDetailOutput)
+        assert len(result.configs) == 1
+
+        configuration = result.configs[0]
         assert isinstance(configuration, Configuration)
         assert configuration.component is not None
         assert configuration.component.component_id == config.component_id
@@ -77,50 +83,50 @@ async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
 
 
 @pytest.mark.asyncio
-async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `list_configs` returns components filtered by component IDs."""
+async def test_get_configs_list_by_ids(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_configs` returns components filtered by component IDs."""
 
     # Get unique component IDs from test configs
     component_ids = list({config.component_id for config in configs})
     assert len(component_ids) > 0
 
-    result = await list_configs(ctx=mcp_context, component_ids=component_ids)
+    result = await get_configs(ctx=mcp_context, component_ids=component_ids)
 
     # Verify result structure and content
-    assert isinstance(result, ListConfigsOutput)
-    assert len(result.components_with_configurations) == len(component_ids)
+    assert isinstance(result, GetConfigsListOutput)
+    assert len(result.components_with_configs) == len(component_ids)
 
-    for item in result.components_with_configurations:
-        assert isinstance(item, ComponentWithConfigurations)
+    for item in result.components_with_configs:
+        assert isinstance(item, ComponentWithConfigs)
         assert item.component.component_id in component_ids
 
         # Check that configurations belong to this component
-        for config in item.configurations:
+        for config in item.configs:
             assert config.configuration_root.component_id == item.component.component_id
 
 
 @pytest.mark.skip(reason='bug in toon_format library')
 @pytest.mark.asyncio
-async def test_list_configs_output_format(mcp_client: Client, configs: list[ConfigDef]):
-    """Tests that `list_configs` returns the tool output in TOON format."""
+async def test_get_configs_output_format(mcp_client: Client, configs: list[ConfigDef]):
+    """Tests that `get_configs` returns the tool output in TOON format."""
     # Temporarily skip this test due to bug in the toon-format library:
     # See: https://github.com/toon-format/toon-python/pull/36
     # The bug creates TOON which not valid according to the TOON specs but still readable to the agents.
     component_ids = list({config.component_id for config in configs})
     assert len(component_ids) > 0
 
-    tool_result = await mcp_client.call_tool(name='list_configs', arguments={'component_ids': component_ids})
+    tool_result = await mcp_client.call_tool(name='get_configs', arguments={'component_ids': component_ids})
 
     # Verify structured content
     assert tool_result.structured_content is not None
-    result = ListConfigsOutput.model_validate(tool_result.structured_content)
-    assert len(result.components_with_configurations) > 0
+    result = GetConfigsListOutput.model_validate(tool_result.structured_content)
+    assert len(result.components_with_configs) > 0
 
     # Verify TOON formatted text content matches structured content
     assert len(tool_result.content) == 1
     assert tool_result.content[0].type == 'text'
     toon_decoded = toon_format.decode(tool_result.content[0].text)
-    assert ListConfigsOutput.model_validate(toon_decoded) == result
+    assert GetConfigsListOutput.model_validate(toon_decoded) == result
 
 
 @pytest.mark.parametrize(
@@ -133,19 +139,19 @@ async def test_list_configs_output_format(mcp_client: Client, configs: list[Conf
     ],
 )
 @pytest.mark.asyncio
-async def test_list_configs_by_types(
+async def test_get_configs_list_by_types(
     mcp_context: Context, configs: list[ConfigDef], component_types: list[ComponentType], expected_count: int
 ):
-    """Tests that `list_configs` returns components filtered by component types."""
+    """Tests that `get_configs` returns components filtered by component types."""
 
-    result = await list_configs(ctx=mcp_context, component_types=component_types)
+    result = await get_configs(ctx=mcp_context, component_types=component_types)
 
-    assert isinstance(result, ListConfigsOutput)
+    assert isinstance(result, GetConfigsListOutput)
 
-    assert sum(len(cmp.configurations) for cmp in result.components_with_configurations) == expected_count
+    assert sum(len(cmp.configs) for cmp in result.components_with_configs) == expected_count
 
-    for item in result.components_with_configurations:
-        assert isinstance(item, ComponentWithConfigurations)
+    for item in result.components_with_configs:
+        assert isinstance(item, ComponentWithConfigs)
         assert item.component.component_type in expand_component_types(component_types)
 
 
@@ -991,15 +997,33 @@ async def test_update_sql_transformation(
 
 
 @pytest.mark.asyncio
-async def test_get_component(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_component` returns component details."""
-    test_config = configs[0]
-    component_id = test_config.component_id
+async def test_get_components(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_components` returns component details for multiple components."""
+    # Get unique component IDs from test configs
+    component_ids = list({config.component_id for config in configs})
+    assert len(component_ids) > 0
 
-    result = await get_component(component_id=component_id, ctx=mcp_context)
+    result = await get_components(component_ids=component_ids, ctx=mcp_context)
 
-    assert isinstance(result, Component)
-    assert result.component_id == test_config.component_id
+    # Verify result structure
+    assert isinstance(result, GetComponentsOutput)
+    assert len(result.components) == len(component_ids)
+
+    # Verify each component
+    returned_ids = {comp.component_id for comp in result.components}
+    assert returned_ids == set(component_ids)
+
+    for component in result.components:
+        assert component.component_id in component_ids
+        assert component.component_name is not None
+        assert component.component_type is not None
+        # Verify links are present
+        assert component.links, 'Component links should not be empty.'
+        for link in component.links:
+            assert isinstance(link, Link)
+
+    # Verify output-level links
+    assert result.links, 'Output links should not be empty.'
 
 
 @pytest.mark.asyncio
