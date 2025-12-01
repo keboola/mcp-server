@@ -10,8 +10,7 @@ component-related operations in the MCP server.
 ### Component/Configuration Discovery
 - `get_components`: Retrieve detailed component information including schemas
 - `find_component_id`: Search for components by natural language query
-- `get_config`: Retrieve detailed configuration with root + row structure
-- `list_configs`: List all component configurations (with filtering)
+- `get_configs`: Get details for specific configurations or list all configurations
 - `get_config_examples`: Get sample configuration examples for a component
 
 ### Configuration Management

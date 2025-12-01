@@ -22,10 +22,9 @@ description, and a list of created table names.
 ### Flow Tools
 - [create_conditional_flow](#create_conditional_flow): Creates a new conditional flow configuration in Keboola.
 - [create_flow](#create_flow): Creates a new flow configuration in Keboola.
-- [get_flow](#get_flow): Gets detailed information about a specific flow configuration.
 - [get_flow_examples](#get_flow_examples): Retrieves examples of valid flow configurations.
 - [get_flow_schema](#get_flow_schema): Returns the JSON schema for the given flow type in markdown format.
-- [list_flows](#list_flows): Retrieves flow configurations from the project.
+- [get_flows](#get_flows): Retrieves flow configurations from the project.
 - [update_flow](#update_flow): Updates an existing flow configuration in Keboola.
 
 ### Jobs Tools
@@ -1909,34 +1908,6 @@ EXAMPLES:
 ```
 
 ---
-<a name="get_flow"></a>
-## get_flow
-**Annotations**: `read-only`
-
-**Tags**: `flows`
-
-**Description**:
-
-Gets detailed information about a specific flow configuration.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "configuration_id": {
-      "description": "ID of the flow to retrieve.",
-      "type": "string"
-    }
-  },
-  "required": [
-    "configuration_id"
-  ],
-  "type": "object"
-}
-```
-
----
 <a name="get_flow_examples"></a>
 ## get_flow_examples
 **Annotations**: `read-only`
@@ -2015,15 +1986,33 @@ Usage:
 ```
 
 ---
-<a name="list_flows"></a>
-## list_flows
+<a name="get_flows"></a>
+## get_flows
 **Annotations**: `read-only`
 
 **Tags**: `flows`
 
 **Description**:
 
-Retrieves flow configurations from the project. Optionally filtered by IDs.
+Retrieves flow configurations from the project.
+
+Can list summaries of all flows or retrieve full details for specific flows.
+
+Returns:
+- When flow_ids is empty: List of flow summaries (all flows in project)
+- When flow_ids is provided: Full flow details including phases, tasks, and configuration
+
+PARAMETER BEHAVIOR:
+- If flow_ids is provided (non-empty): Returns FULL details for those flows.
+- Else: Lists all flow summaries in the project.
+
+WHEN TO USE:
+- For listing all flows: Use with empty flow_ids=[].
+- For details: Use flow_ids with specific IDs.
+
+EXAMPLES:
+- List all flows (summaries): flow_ids=[]
+- Get full details for specific flows: flow_ids=["12345", "67890"]
 
 
 **Input JSON Schema**:
@@ -2032,7 +2021,7 @@ Retrieves flow configurations from the project. Optionally filtered by IDs.
   "properties": {
     "flow_ids": {
       "default": [],
-      "description": "IDs of the flows to retrieve.",
+      "description": "IDs of flows to retrieve full details for. When provided (non-empty), returns full flow configurations including phases and tasks. When empty [], lists all flows in the project as summaries.",
       "items": {
         "type": "string"
       },
@@ -2062,7 +2051,7 @@ Each flow is composed of:
 
 PREREQUISITES:
 - The flow specified by `configuration_id` must already exist in the project
-- Use `get_flow` to retrieve the current flow configuration and determine its type
+- Use `get_flows` to retrieve the current flow configuration and determine its type
 - Use `get_flow_schema` with the correct flow type to understand the required structure
 - Ensure all referenced component configurations exist in the project
 
@@ -2082,7 +2071,7 @@ Use this tool to update an existing flow. You must specify the correct flow_type
 
 EXAMPLES:
 - user_input: "Add a new transformation phase to my existing flow"
-    - First use `get_flow` to retrieve the current flow configuration
+    - First use `get_flows` to retrieve the current flow configuration
     - Determine the flow type from the response
     - Use `get_flow_schema` with the correct flow type
     - Update the phases and tasks arrays with the new transformation
@@ -2437,7 +2426,7 @@ WHEN TO USE:
 - User asks "what tables/configs/flows do I have with X in the name?"
 - You need to discover items before performing operations on them
 - User asks to "list all items with [name] in it"
-- DO NOT use for listing all items of a specific type. Use list_configs, list_tables, list_flows, etc instead.
+- DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
 
 HOW IT WORKS:
 - Searches by regex pattern matching against id, name, displayName, and description fields
@@ -2448,10 +2437,10 @@ HOW IT WORKS:
 
 IMPORTANT:
 - Always use this tool when the user mentions a name but you don't have the exact ID
-- The search returns IDs that you can use with other tools (e.g., get_table, get_config, get_flow)
+- The search returns IDs that you can use with other tools (e.g., get_table, get_configs, get_flows)
 - Results are ordered by update time. The most recently updated items are returned first.
-- For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
-- Use find_component_id and list_configs tools to find configurations related to a specific component
+- For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
+- Use find_component_id and get_configs tools to find configurations related to a specific component
 
 USAGE EXAMPLES:
 - user_input: "Find all tables with 'customer' in the name"

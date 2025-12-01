@@ -300,7 +300,7 @@ async def search(
     - User asks "what tables/configs/flows do I have with X in the name?"
     - You need to discover items before performing operations on them
     - User asks to "list all items with [name] in it"
-    - DO NOT use for listing all items of a specific type. Use list_configs, list_tables, list_flows, etc instead.
+    - DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
 
     HOW IT WORKS:
     - Searches by regex pattern matching against id, name, displayName, and description fields
@@ -311,10 +311,10 @@ async def search(
 
     IMPORTANT:
     - Always use this tool when the user mentions a name but you don't have the exact ID
-    - The search returns IDs that you can use with other tools (e.g., get_table, get_config, get_flow)
+    - The search returns IDs that you can use with other tools (e.g., get_table, get_configs, get_flows)
     - Results are ordered by update time. The most recently updated items are returned first.
-    - For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
-    - Use find_component_id and list_configs tools to find configurations related to a specific component
+    - For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
+    - Use find_component_id and get_configs tools to find configurations related to a specific component
 
     USAGE EXAMPLES:
     - user_input: "Find all tables with 'customer' in the name"

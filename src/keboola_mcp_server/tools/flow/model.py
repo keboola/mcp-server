@@ -16,11 +16,20 @@ from keboola_mcp_server.links import Link
 # =============================================================================
 
 
-class ListFlowsOutput(BaseModel):
-    """Output of list_flows tool."""
+class GetFlowsListOutput(BaseModel, frozen=True):
+    """Output of get_flows tool when listing (no specific flow_ids)."""
 
     flows: list['FlowSummary'] = Field(description='The retrieved flow configurations.')
     links: list[Link] = Field(description='The list of links relevant to the flows.')
+
+
+class GetFlowsDetailOutput(BaseModel, frozen=True):
+    """Output of get_flows tool when retrieving specific flow_ids."""
+
+    flows: list['Flow'] = Field(description='The retrieved flow configurations with full details.')
+
+
+GetFlowsOutput = Union[GetFlowsListOutput, GetFlowsDetailOutput]
 
 
 class FlowToolOutput(BaseModel):
