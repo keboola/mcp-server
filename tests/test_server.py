@@ -53,11 +53,10 @@ class TestServer:
             'get_flow_examples',
             'get_flow_schema',
             'get_flows',
-            'get_job',
+            'get_jobs',
             'get_project_info',
             'get_table',
             'list_buckets',
-            'list_jobs',
             'list_tables',
             'modify_data_app',
             'query_data',
@@ -321,8 +320,7 @@ async def test_tool_annotations_and_tags():
         # sql
         ('query_data', True, None, None, {SQL_TOOLS_TAG}),
         # jobs
-        ('get_job', True, None, None, {JOB_TOOLS_TAG}),
-        ('list_jobs', True, None, None, {JOB_TOOLS_TAG}),
+        ('get_jobs', True, None, None, {JOB_TOOLS_TAG}),
         ('run_job', None, True, None, {JOB_TOOLS_TAG}),
         # project/doc/search
         ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),

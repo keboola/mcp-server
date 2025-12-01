@@ -15,7 +15,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import CONVERSATION_ID
 from keboola_mcp_server.tools.doc import docs_query
-from keboola_mcp_server.tools.jobs import get_job
+from keboola_mcp_server.tools.jobs import get_jobs
 from keboola_mcp_server.tools.sql import query_data
 from keboola_mcp_server.tools.storage import get_bucket
 
@@ -44,7 +44,7 @@ class TestHttpErrors:
             re.IGNORECASE,
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
-            await get_job('999999999', mcp_context)
+            await get_jobs(ctx=mcp_context, job_ids=('999999999',))
 
     @pytest.mark.asyncio
     async def test_docs_api_empty_query_error(self, mcp_context: Context):

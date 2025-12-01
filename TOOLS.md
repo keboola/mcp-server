@@ -28,10 +28,7 @@ description, and a list of created table names.
 - [update_flow](#update_flow): Updates an existing flow configuration in Keboola.
 
 ### Jobs Tools
-- [get_job](#get_job): Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
-results, and any relevant metadata.
-- [list_jobs](#list_jobs): Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
-filtering.
+- [get_jobs](#get_jobs): Retrieves job execution information from the Keboola project.
 - [run_job](#run_job): Starts a new job for a given component or transformation.
 
 ### OAuth Tools
@@ -2143,70 +2140,78 @@ EXAMPLES:
 ---
 
 # Jobs Tools
-<a name="get_job"></a>
-## get_job
+<a name="get_jobs"></a>
+## get_jobs
 **Annotations**: `read-only`
 
 **Tags**: `jobs`
 
 **Description**:
 
-Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
-results, and any relevant metadata.
+Retrieves job execution information from the Keboola project.
+
+CONTEXT:
+Jobs in Keboola are execution records of components (extractors, transformations, writers, flows).
+Each job represents a single run with its status, timing, configuration, and results.
+
+TWO MODES OF OPERATION (controlled by job_ids parameter):
+
+MODE 1: GET DETAILS FOR SPECIFIC JOBS (job_ids is non-empty)
+- Provide one or more job IDs: job_ids=["12345", "67890"]
+- Returns: FULL details for each job including status, config_data, results, timing, and metadata
+- Ignores: All filtering/sorting parameters (status, component_id, config_id, limit, offset, sort_by, sort_order)
+- Use when: You know specific job IDs and need complete information about them
+
+MODE 2: LIST/SEARCH JOBS (job_ids is empty)
+- Leave job_ids empty: job_ids=[]
+- Returns: SUMMARY list of jobs (id, status, component_id, config_id, timing only - no config_data or results)
+- Supports: Filtering by status/component_id/config_id, pagination with limit/offset, sorting
+- Use when: You need to find jobs, see recent executions, or monitor job history
+
+DECISION GUIDE:
+- Start with MODE 2 (list) to find jobs → then use MODE 1 (details) if you need full information
+- If you already know job IDs → use MODE 1 directly
+- For monitoring/browsing → use MODE 2 with filters
+- For troubleshooting specific jobs → use MODE 1 with known job IDs
+
+COMMON WORKFLOWS:
+1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1
+2. Check recent runs: job_ids=[], component_id="...", limit=10 → see latest executions
+3. Monitor specific job: job_ids=["123"] → poll for status and results
+4. Troubleshoot config: job_ids=[], config_id="...", status="error" → find which runs failed
 
 EXAMPLES:
-- If job_id = "123", then the details of the job with id "123" will be retrieved.
+
+MODE 1 - Get full details:
+- job_ids=["12345"] → detailed info for job 12345
+- job_ids=["12345", "67890"] → detailed info for multiple jobs
+
+MODE 2 - List/search jobs:
+- job_ids=[] → list latest 100 jobs (default)
+- job_ids=[], status="error" → list only failed jobs
+- job_ids=[], status="processing" → list currently running jobs
+- job_ids=[], component_id="keboola.ex-aws-s3" → list jobs for S3 extractor
+- job_ids=[], config_id="12345" → list jobs for specific configuration
+- job_ids=[], limit=50, offset=100 → pagination (skip first 100, get next 50)
+- job_ids=[], sort_by="endTime", sort_order="asc" → oldest completed first
+- job_ids=[], sort_by="durationSeconds", sort_order="desc" → longest running first
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "job_id": {
-      "description": "The unique identifier of the job whose details should be retrieved.",
-      "type": "string"
-    }
-  },
-  "required": [
-    "job_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="list_jobs"></a>
-## list_jobs
-**Annotations**: `read-only`
-
-**Tags**: `jobs`
-
-**Description**:
-
-Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
-filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
-
-USAGE:
-- Use when you want to list jobs for a given component_id and optionally for given config_id.
-- Use when you want to list all jobs in the project or filter them by status.
-
-EXAMPLES:
-- If status = "error", only jobs with status "error" will be listed.
-- If status = None, then all jobs with arbitrary status will be listed.
-- If component_id = "123" and config_id = "456", then the jobs for the component with id "123" and configuration
-  with id "456" will be listed.
-- If limit = 100 and offset = 0, the first 100 jobs will be listed.
-- If limit = 100 and offset = 100, the second 100 jobs will be listed.
-- If sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
+    "job_ids": {
+      "default": [],
+      "description": "IDs of jobs to retrieve full details for. When provided (non-empty), returns full job details including status, parameters, results, and metadata. When empty [], lists jobs in the project as summaries with optional filtering.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "status": {
       "default": null,
-      "description": "The optional status of the jobs to filter by, if None then default all.",
+      "description": "The optional status of the jobs to filter by when listing (ignored if job_ids is provided). If None then all statuses are included.",
       "enum": [
         "waiting",
         "processing",
@@ -2222,30 +2227,30 @@ EXAMPLES:
     },
     "component_id": {
       "default": null,
-      "description": "The optional ID of the component whose jobs you want to list, default = None.",
+      "description": "The optional ID of the component whose jobs you want to list (ignored if job_ids is provided). Default = None.",
       "type": "string"
     },
     "config_id": {
       "default": null,
-      "description": "The optional ID of the component configuration whose jobs you want to list, default = None.",
+      "description": "The optional ID of the component configuration whose jobs you want to list (ignored if job_ids is provided). Default = None.",
       "type": "string"
     },
     "limit": {
       "default": 100,
-      "description": "The number of jobs to list, default = 100, max = 500.",
+      "description": "The number of jobs to list when listing (ignored if job_ids is provided), default = 100, max = 500.",
       "maximum": 500,
       "minimum": 1,
       "type": "integer"
     },
     "offset": {
       "default": 0,
-      "description": "The offset of the jobs to list, default = 0.",
+      "description": "The offset of the jobs to list when listing (ignored if job_ids is provided), default = 0.",
       "minimum": 0,
       "type": "integer"
     },
     "sort_by": {
       "default": "startTime",
-      "description": "The field to sort the jobs by, default = \"startTime\".",
+      "description": "The field to sort the jobs by when listing (ignored if job_ids is provided), default = \"startTime\".",
       "enum": [
         "startTime",
         "endTime",
@@ -2257,7 +2262,7 @@ EXAMPLES:
     },
     "sort_order": {
       "default": "desc",
-      "description": "The order to sort the jobs by, default = \"desc\".",
+      "description": "The order to sort the jobs by when listing (ignored if job_ids is provided), default = \"desc\".",
       "enum": [
         "asc",
         "desc"
