@@ -64,7 +64,7 @@ async def _wait_for_job_in_list(
 
 
 @pytest.mark.asyncio
-async def test_get_job_listing_with_component_and_config_filter(mcp_context: Context, configs: list[ConfigDef]):
+async def test_get_jobs_listing_with_component_and_config_filter(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `get_jobs` works with component and config filtering when listing."""
 
     # Use first config to create jobs for testing

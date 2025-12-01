@@ -162,7 +162,7 @@ async def test_get_jobs_detail(
 
 
 @pytest.mark.asyncio
-async def test_get_job_listing_with_component_and_config_id(
+async def test_get_jobs_listing_with_component_and_config_id(
     mocker: MockerFixture, mcp_context_client: Context, mock_jobs: list[dict[str, Any]]
 ):
     """
@@ -192,7 +192,7 @@ async def test_get_job_listing_with_component_and_config_id(
 
 
 @pytest.mark.asyncio
-async def test_get_job_listing_with_component_id_without_config_id(
+async def test_get_jobs_listing_with_component_id_without_config_id(
     mocker: MockerFixture, mcp_context_client: Context, mock_jobs: list[dict[str, Any]]
 ):
     """Tests get_jobs tool with component_id and without config_id.
