@@ -1999,13 +1999,9 @@ Returns:
 - When flow_ids is empty: List of flow summaries (all flows in project)
 - When flow_ids is provided: Full flow details including phases, tasks, and configuration
 
-PARAMETER BEHAVIOR:
-- If flow_ids is provided (non-empty): Returns FULL details for those flows.
-- Else: Lists all flow summaries in the project.
-
 WHEN TO USE:
 - For listing all flows: Use with empty flow_ids=[].
-- For details: Use flow_ids with specific IDs.
+- For flow details: Use flow_ids with specific IDs.
 
 EXAMPLES:
 - List all flows (summaries): flow_ids=[]
@@ -2172,7 +2168,6 @@ DECISION GUIDE:
 - Start with MODE 2 (list) to find jobs → then use MODE 1 (details) if you need full information
 - If you already know job IDs → use MODE 1 directly
 - For monitoring/browsing → use MODE 2 with filters
-- For troubleshooting specific jobs → use MODE 1 with known job IDs
 
 COMMON WORKFLOWS:
 1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1

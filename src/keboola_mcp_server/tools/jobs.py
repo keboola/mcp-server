@@ -275,7 +275,6 @@ async def get_jobs(
     - Start with MODE 2 (list) to find jobs → then use MODE 1 (details) if you need full information
     - If you already know job IDs → use MODE 1 directly
     - For monitoring/browsing → use MODE 2 with filters
-    - For troubleshooting specific jobs → use MODE 1 with known job IDs
 
     COMMON WORKFLOWS:
     1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1
