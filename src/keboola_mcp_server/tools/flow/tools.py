@@ -22,7 +22,7 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import toon_serializer
+from keboola_mcp_server.mcp import process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     Flow,
@@ -434,15 +434,17 @@ async def get_flows(
 
     # Case 1: flow_ids provided - return full details for those flows
     if flow_ids:
-        flows = []
-        for flow_id in flow_ids:
+
+        async def fetch_flow_detail(flow_id: str) -> Flow:
             api_flow, found_type = await resolve_flow_by_id(client, flow_id)
             LOG.info(f'Found flow {flow_id} under flow type {found_type}.')
             links = links_manager.get_flow_links(
                 api_flow.configuration_id, flow_name=api_flow.name, flow_type=found_type
             )
-            flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
-            flows.append(flow)
+            return Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
+
+        results = await process_concurrently(flow_ids, fetch_flow_detail)
+        flows = unwrap_results(results, 'Failed to fetch one or more flows')
 
         LOG.info(f'Retrieved full details for {len(flows)} flows.')
         return GetFlowsDetailOutput(flows=flows)

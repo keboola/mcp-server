@@ -13,7 +13,7 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import CONVERSATION_ID
+from keboola_mcp_server.mcp import CONVERSATION_ID, AggregateError
 from keboola_mcp_server.tools.doc import docs_query
 from keboola_mcp_server.tools.jobs import get_jobs
 from keboola_mcp_server.tools.sql import query_data
@@ -43,8 +43,14 @@ class TestHttpErrors:
             r'When contacting Keboola support please provide the exception ID\.',
             re.IGNORECASE,
         )
-        with pytest.raises(httpx.HTTPStatusError, match=match):
+        with pytest.raises(AggregateError) as exc_info:
             await get_jobs(ctx=mcp_context, job_ids=('999999999',))
+
+        # Verify AggregateError contains the HTTPStatusError
+        err = exc_info.value
+        assert len(err.exceptions) == 1
+        assert isinstance(err.exceptions[0], httpx.HTTPStatusError)
+        assert match.search(str(err.exceptions[0])) is not None
 
     @pytest.mark.asyncio
     async def test_docs_api_empty_query_error(self, mcp_context: Context):

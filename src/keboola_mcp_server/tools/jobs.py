@@ -10,7 +10,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, toon_serializer
+from keboola_mcp_server.mcp import KeboolaMcpServer, process_concurrently, toon_serializer, unwrap_results
 
 LOG = logging.getLogger(__name__)
 
@@ -304,13 +304,15 @@ async def get_jobs(
 
     # Case 1: job_ids provided - return full details for those jobs
     if job_ids:
-        jobs = []
-        for job_id in job_ids:
+
+        async def fetch_job_detail(job_id: str) -> JobDetail:
             raw_job = await client.jobs_queue_client.get_job_detail(job_id)
             links = links_manager.get_job_links(job_id)
             LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
-            job = JobDetail.model_validate(raw_job | {'links': links})
-            jobs.append(job)
+            return JobDetail.model_validate(raw_job | {'links': links})
+
+        results = await process_concurrently(job_ids, fetch_job_detail)
+        jobs = unwrap_results(results, 'Failed to fetch one or more jobs')
 
         LOG.info(f'Retrieved full details for {len(jobs)} jobs.')
         return GetJobsDetailOutput(jobs=jobs)
