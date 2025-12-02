@@ -24,7 +24,6 @@ component-related operations in the MCP server.
 - `update_sql_transformation`: Update existing SQL transformation configurations
 """
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -40,7 +39,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse, JsonDict
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, toon_serializer
+from keboola_mcp_server.mcp import KeboolaMcpServer, process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentSummary,
@@ -239,50 +238,49 @@ async def get_configs(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    # Case 1: specific_configs provided - return full details for those configs
+    # Case 1: specific configs provided - return full details for those configs
     if configs:
-        semaphore = asyncio.Semaphore(10)
 
         async def fetch_config_detail(spec: FullConfigId) -> Configuration:
-            async with semaphore:
-                component_id = spec.component_id
-                configuration_id = spec.configuration_id
+            component_id = spec.component_id
+            configuration_id = spec.configuration_id
 
-                raw_configuration = cast(
-                    JsonDict,
-                    await client.storage_client.configuration_detail(
-                        component_id=component_id, configuration_id=configuration_id
-                    ),
+            raw_configuration = cast(
+                JsonDict,
+                await client.storage_client.configuration_detail(
+                    component_id=component_id, configuration_id=configuration_id
+                ),
+            )
+
+            api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': component_id})
+            api_component = await fetch_component(client=client, component_id=component_id)
+            component_summary = ComponentSummary.from_api_response(api_component)
+
+            links = links_manager.get_configuration_links(
+                component_id=component_id,
+                configuration_id=configuration_id,
+                configuration_name=str(raw_configuration.get('name', '')),
+            )
+
+            configuration = Configuration.from_api_response(
+                api_config=api_config,
+                component=component_summary,
+                links=links,
+            )
+
+            # Handle transformation simplification
+            if component_id in (SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID):
+                original_parameters = TransformationConfiguration.Parameters.model_validate(
+                    configuration.configuration_root.parameters
                 )
+                simplified_parameters: SimplifiedTfBlocks = await original_parameters.to_simplified_parameters()
+                configuration.configuration_root.parameters = add_ids(simplified_parameters.model_dump())
 
-                api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': component_id})
-                api_component = await fetch_component(client=client, component_id=component_id)
-                component_summary = ComponentSummary.from_api_response(api_component)
+            return configuration
 
-                links = links_manager.get_configuration_links(
-                    component_id=component_id,
-                    configuration_id=configuration_id,
-                    configuration_name=str(raw_configuration.get('name', '')),
-                )
-
-                configuration = Configuration.from_api_response(
-                    api_config=api_config,
-                    component=component_summary,
-                    links=links,
-                )
-
-                # Handle transformation simplification
-                if component_id in (SNOWFLAKE_TRANSFORMATION_ID, BIGQUERY_TRANSFORMATION_ID):
-                    original_parameters = TransformationConfiguration.Parameters.model_validate(
-                        configuration.configuration_root.parameters
-                    )
-                    simplified_parameters: SimplifiedTfBlocks = await original_parameters.to_simplified_parameters()
-                    configuration.configuration_root.parameters = add_ids(simplified_parameters.model_dump())
-
-                return configuration
-
-        fetched_configs = await asyncio.gather(*[fetch_config_detail(spec) for spec in configs])
-        return GetConfigsDetailOutput(configs=list(fetched_configs))
+        results = await process_concurrently(configs, fetch_config_detail)
+        fetched_configs = unwrap_results(results, 'Failed to fetch one or more configurations')
+        return GetConfigsDetailOutput(configs=fetched_configs)
 
     # Case 2: component_ids provided - list summaries by IDs
     if component_ids:
@@ -332,21 +330,17 @@ async def get_components(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    semaphore = asyncio.Semaphore(10)
+    async def fetch_component_with_links(component_id: str) -> Component:
+        api_component = await fetch_component(client=client, component_id=component_id)
+        component = Component.from_api_response(api_component)
+        component.links.append(
+            links_manager.get_config_dashboard_link(component_id=component_id, component_name=component.component_name)
+        )
+        return component
 
-    async def fetch_with_limit(component_id: str) -> Component:
-        async with semaphore:
-            api_component = await fetch_component(client=client, component_id=component_id)
-            component = Component.from_api_response(api_component)
-            component.links.append(
-                links_manager.get_config_dashboard_link(
-                    component_id=component_id, component_name=component.component_name
-                )
-            )
-            return component
-
-    components = await asyncio.gather(*[fetch_with_limit(cid) for cid in component_ids])
-    return GetComponentsOutput(components=list(components), links=[links_manager.get_used_components_link()])
+    results = await process_concurrently(component_ids, fetch_component_with_links)
+    components = unwrap_results(results, 'Failed to fetch one or more components')
+    return GetComponentsOutput(components=components, links=[links_manager.get_used_components_link()])
 
 
 # ============================================================================
