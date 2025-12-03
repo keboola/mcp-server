@@ -227,7 +227,6 @@ async def get_configs(
     WHEN TO USE:
     - For listing: Use component_types/component_ids (like old list_configs).
     - For details: Use configs (can handle multiple).
-    - Replaces get_config: Use configs with one entry for single config details.
 
     EXAMPLES:
     - List all configs (summaries): component_types=[], component_ids=[]

@@ -280,7 +280,7 @@ async def get_jobs(
     1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1
     2. Check recent runs: job_ids=[], component_id="...", limit=10 → see latest executions
     3. Monitor specific job: job_ids=["123"] → poll for status and results
-    4. Troubleshoot config: job_ids=[], config_id="...", status="error" → find which runs failed
+    4. Troubleshoot config: job_ids=[], component_id="...", config_id="...", status="error" → find which runs failed
 
     EXAMPLES:
 
@@ -293,7 +293,7 @@ async def get_jobs(
     - job_ids=[], status="error" → list only failed jobs
     - job_ids=[], status="processing" → list currently running jobs
     - job_ids=[], component_id="keboola.ex-aws-s3" → list jobs for S3 extractor
-    - job_ids=[], config_id="12345" → list jobs for specific configuration
+    - job_ids=[], component_id="keboola.ex-aws-s3", config_id="12345" → list jobs for specific configuration
     - job_ids=[], limit=50, offset=100 → pagination (skip first 100, get next 50)
     - job_ids=[], sort_by="endTime", sort_order="asc" → oldest completed first
     - job_ids=[], sort_by="durationSeconds", sort_order="desc" → longest running first
