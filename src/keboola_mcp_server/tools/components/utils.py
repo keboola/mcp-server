@@ -86,7 +86,7 @@ async def list_configs_by_types(
     Retrieves components with their configurations filtered by component types.
 
     Used by:
-    - list_configs tool
+    - get_configs tool (when component types are requested)
 
     :param client: Authenticated Keboola client instance
     :param component_types: Types of components to retrieve (extractor, writer, application, transformation)
@@ -136,7 +136,7 @@ async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str
     Retrieves components with their configurations filtered by specific component IDs.
 
     Used by:
-    - list_configs tool (when specific component IDs are requested)
+    - get_configs tool (when specific component IDs are requested)
 
     :param client: Authenticated Keboola client instance
     :param component_ids: Specific component IDs to retrieve

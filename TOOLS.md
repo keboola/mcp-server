@@ -440,7 +440,7 @@ PARAMETER BEHAVIOR:
 - Else: Lists configs based on component_types (all types if empty).
 
 WHEN TO USE:
-- For listing: Use component_types/component_ids (like old list_configs).
+- For listing: Use component_types/component_ids.
 - For details: Use configs (can handle multiple).
 
 EXAMPLES:

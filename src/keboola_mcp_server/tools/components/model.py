@@ -25,7 +25,9 @@ from individual tasks:
 
 ## Tool Output Models
 - ConfigToolOutput: Standard response for config create/update operations
-- ListConfigsOutput: Response for list_configs tool
+- GetConfigsListOutput: Response for get_configs tool (list mode)
+- GetConfigsDetailOutput: Response for get_configs tool (detail mode)
+- GetConfigsOutput: Union of list and detail output for get_configs tool
 
 ## Legacy Models
 - ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
@@ -780,17 +782,6 @@ class ConfigToolOutput(BaseModel):
     change_summary: Optional[str] = Field(
         description="Optional summary of the change to update the agent's context.",
         default=None,
-    )
-
-
-class ListConfigsOutput(BaseModel):
-    """Response model for list_configs tool."""
-
-    components_with_configurations: list[ComponentWithConfigs] = Field(
-        description='The groupings of components and their respective configurations.'
-    )
-    links: list[Link] = Field(
-        description='The list of links relevant to the listing of components with configurations.',
     )
 
 
