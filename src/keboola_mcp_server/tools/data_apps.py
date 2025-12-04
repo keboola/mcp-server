@@ -1,4 +1,3 @@
-import asyncio
 import importlib.resources as resources
 import logging
 import re
@@ -15,7 +14,7 @@ from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppRespon
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import toon_serializer
+from keboola_mcp_server.mcp import process_concurrently, toon_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -403,18 +402,10 @@ async def get_data_apps(
     if configuration_ids:
         # Get details of the data apps by their configuration IDs using 10 parallel requests at a time to not overload
         # the API
-        data_app_details: list[DataApp | str] = []
-        batch_size = 10  # fetching 10 data apps details at a time to not overload the API
-        for current_batch in range(0, len(configuration_ids), batch_size):
-            batch_ids = configuration_ids[current_batch : current_batch + batch_size]
-            data_app_details.extend(
-                await asyncio.gather(
-                    *(
-                        _fetch_data_app_details_task(client, links_manager, configuration_id)
-                        for configuration_id in batch_ids
-                    )
-                )
-            )
+        async def fetch_data_app_detail(configuration_id: str) -> DataApp | str:
+            return await _fetch_data_app_details_task(client, links_manager, configuration_id)
+
+        data_app_details = await process_concurrently(configuration_ids, fetch_data_app_detail, max_concurrency=10)
         found_data_apps: list[DataApp] = [dap for dap in data_app_details if isinstance(dap, DataApp)]
         not_found_ids: list[str] = [dap for dap in data_app_details if isinstance(dap, str)]
         if not_found_ids:
