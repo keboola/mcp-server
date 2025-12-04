@@ -1,14 +1,17 @@
 """
 This module overrides FastMCP.add_tool() to improve conversion of tool function docstrings
 into tool descriptions.
-It also provides a decorator that MCP tool functions can use to inject session state into their Context parameter.
+It also provides a decorator that MCP tool functions can use to inject session state into their Context parameter
+and other utilities for the MCP server.
 """
 
+import asyncio
 import dataclasses
 import logging
 import textwrap
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 from unittest.mock import MagicMock
 
 import toon_format
@@ -32,6 +35,11 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+
+R = TypeVar('R')
+T = TypeVar('T')
+
+DEFAULT_CONCURRENCY = 10
 
 
 @dataclass(frozen=True)
@@ -314,3 +322,68 @@ def _exclude_none_serializer(data: Any) -> str:
 
 def toon_serializer(data: Any) -> str:
     return toon_format.encode(_to_python(data, exclude_none=False))
+
+
+async def process_concurrently(
+    items: Iterable[T],
+    afunc: Callable[[T], Awaitable[R]],
+    max_concurrency: int = DEFAULT_CONCURRENCY,
+) -> list[R | BaseException]:
+    """
+    Asynchronously process a collection of items with a specified concurrency limit.
+
+    :param items: The collection of items to process.
+    :param afunc: An asynchronous function to apply to each item.
+    :param max_concurrency: The maximum number of concurrent executions allowed.
+    :return: A list of results or exceptions from processing each item.
+             The order of results corresponds to the order of the input items.
+    """
+    if max_concurrency <= 0:
+        raise ValueError('max_concurrency must be a positive integer.')
+
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def process_item_with_semaphore(item: T) -> R:
+        async with semaphore:
+            return await afunc(item)
+
+    tasks = [asyncio.create_task(process_item_with_semaphore(item)) for item in items]
+
+    return await asyncio.gather(*tasks, return_exceptions=True)
+
+
+class AggregateError(Exception):
+    """Exception that aggregates multiple exceptions (Python 3.10 compatible alternative to ExceptionGroup)."""
+
+    def __init__(self, message: str, exceptions: Iterable[BaseException]):
+        self.message = message
+        self.exceptions = list(exceptions)
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        error_details = '; '.join(f'{type(e).__name__}: {e}' for e in self.exceptions)
+        return f'{self.message} ({len(self.exceptions)} errors): {error_details}'
+
+
+def unwrap_results(results: Iterable[R | BaseException], message: str = 'Multiple errors occurred') -> list[R]:
+    """
+    Unwrap results from process_concurrently, raising an AggregateError if any exceptions occurred.
+
+    :param results: List of results or exceptions from process_concurrently.
+    :param message: Message for the AggregateError if exceptions are present.
+    :return: List of successful results.
+    :raises AggregateError: If any results are exceptions.
+    """
+    successes: list[R] = []
+    exceptions: list[BaseException] = []
+
+    for result in results:
+        if isinstance(result, BaseException):
+            exceptions.append(result)
+        else:
+            successes.append(result)
+
+    if exceptions:
+        raise AggregateError(message, exceptions)
+
+    return successes

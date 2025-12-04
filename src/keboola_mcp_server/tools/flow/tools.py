@@ -22,17 +22,18 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import toon_serializer
+from keboola_mcp_server.mcp import process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowToolOutput,
-    ListFlowsOutput,
+    GetFlowsDetailOutput,
+    GetFlowsListOutput,
+    GetFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.utils import (
     get_all_flows,
     get_flow_configuration,
-    get_flows_by_ids,
     get_schema_as_markdown,
     resolve_flow_by_id,
     validate_flow_structure,
@@ -63,7 +64,7 @@ def add_flow_tools(mcp: FastMCP) -> None:
     )
     mcp.add_tool(
         FunctionTool.from_function(
-            list_flows,
+            get_flows,
             annotations=ToolAnnotations(readOnlyHint=True),
             serializer=toon_serializer,
             tags={FLOW_TOOLS_TAG},
@@ -73,13 +74,6 @@ def add_flow_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             update_flow,
             annotations=ToolAnnotations(destructiveHint=True),
-            tags={FLOW_TOOLS_TAG},
-        )
-    )
-    mcp.add_tool(
-        FunctionTool.from_function(
-            get_flow,
-            annotations=ToolAnnotations(readOnlyHint=True),
             tags={FLOW_TOOLS_TAG},
         )
     )
@@ -309,7 +303,7 @@ async def update_flow(
 
     PREREQUISITES:
     - The flow specified by `configuration_id` must already exist in the project
-    - Use `get_flow` to retrieve the current flow configuration and determine its type
+    - Use `get_flows` to retrieve the current flow configuration and determine its type
     - Use `get_flow_schema` with the correct flow type to understand the required structure
     - Ensure all referenced component configurations exist in the project
 
@@ -329,7 +323,7 @@ async def update_flow(
 
     EXAMPLES:
     - user_input: "Add a new transformation phase to my existing flow"
-        - First use `get_flow` to retrieve the current flow configuration
+        - First use `get_flows` to retrieve the current flow configuration
         - Determine the flow type from the response
         - Use `get_flow_schema` with the correct flow type
         - Update the phases and tasks arrays with the new transformation
@@ -401,48 +395,65 @@ async def update_flow(
 
 
 @tool_errors()
-async def list_flows(
+async def get_flows(
     ctx: Context,
-    flow_ids: Annotated[Sequence[str], Field(description='IDs of the flows to retrieve.')] = tuple(),
-) -> ListFlowsOutput:
-    """Retrieves flow configurations from the project. Optionally filtered by IDs."""
+    flow_ids: Annotated[
+        Sequence[str],
+        Field(
+            description=(
+                'IDs of flows to retrieve full details for. '
+                'When provided (non-empty), returns full flow configurations including phases and tasks. '
+                'When empty [], lists all flows in the project as summaries.'
+            )
+        ),
+    ] = tuple(),
+) -> GetFlowsOutput:
+    """
+    Retrieves flow configurations from the project.
 
+    Can list summaries of all flows or retrieve full details for specific flows.
+
+    Returns:
+    - When flow_ids is empty: List of flow summaries (all flows in project)
+    - When flow_ids is provided: Full flow details including phases, tasks, and configuration
+
+    WHEN TO USE:
+    - For listing all flows: Use with empty flow_ids=[].
+    - For flow details: Use flow_ids with specific IDs.
+
+    EXAMPLES:
+    - List all flows (summaries): flow_ids=[]
+    - Get full details for specific flows: flow_ids=["12345", "67890"]
+    """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
+    # Case 1: flow_ids provided - return full details for those flows
     if flow_ids:
-        flows = await get_flows_by_ids(client, flow_ids)
-        LOG.info(f'Retrieved {len(flows)} flows by ID.')
-    else:
-        flows = await get_all_flows(client)
-        LOG.info(f'Retrieved {len(flows)} flows.')
 
-    # For list_flows, we don't know the specific flow types, so we'll use both flow types
+        async def fetch_flow_detail(flow_id: str) -> Flow:
+            api_flow, found_type = await resolve_flow_by_id(client, flow_id)
+            LOG.info(f'Found flow {flow_id} under flow type {found_type}.')
+            links = links_manager.get_flow_links(
+                api_flow.configuration_id, flow_name=api_flow.name, flow_type=found_type
+            )
+            return Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
+
+        results = await process_concurrently(flow_ids, fetch_flow_detail)
+        flows = unwrap_results(results, 'Failed to fetch one or more flows')
+
+        LOG.info(f'Retrieved full details for {len(flows)} flows.')
+        return GetFlowsDetailOutput(flows=flows)
+
+    # Case 2: no flow_ids - list all flows as summaries
+    flows = await get_all_flows(client)
+    LOG.info(f'Retrieved {len(flows)} flows.')
+
     links = [
         links_manager.get_flows_dashboard_link(ORCHESTRATOR_COMPONENT_ID),
         links_manager.get_flows_dashboard_link(CONDITIONAL_FLOW_COMPONENT_ID),
     ]
-    return ListFlowsOutput(flows=flows, links=links)
-
-
-@tool_errors()
-async def get_flow(
-    ctx: Context,
-    configuration_id: Annotated[str, Field(description='ID of the flow to retrieve.')],
-) -> Flow:
-    """Gets detailed information about a specific flow configuration."""
-
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-
-    api_flow, found_type = await resolve_flow_by_id(client, configuration_id)
-    LOG.info(f'Found flow {configuration_id} under flow type {found_type}.')
-
-    links = links_manager.get_flow_links(api_flow.configuration_id, flow_name=api_flow.name, flow_type=found_type)
-    flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
-
-    LOG.info(f'Retrieved flow details for configuration: {configuration_id} (type: {found_type})')
-    return flow
+    return GetFlowsListOutput(flows=flows, links=links)
 
 
 @tool_errors()

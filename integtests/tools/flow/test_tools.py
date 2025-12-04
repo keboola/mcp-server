@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -22,15 +22,13 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.tools.flow.model import Flow
+from keboola_mcp_server.tools.flow.model import Flow, GetFlowsDetailOutput, GetFlowsListOutput
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolOutput,
-    ListFlowsOutput,
     create_conditional_flow,
     create_flow,
-    get_flow,
     get_flow_schema,
-    list_flows,
+    get_flows,
 )
 from keboola_mcp_server.tools.project import get_project_info
 
@@ -40,7 +38,7 @@ LOG = logging.getLogger(__name__)
 @pytest.mark.asyncio
 async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
-    Create a flow and retrieve it using list_flows.
+    Create a flow and retrieve it using get_flows.
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
     """
@@ -96,11 +94,14 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
         assert set(created.links) == set(expected_links)
         assert created.version is not None
 
-        # Verify the flow is listed in the list_flows tool
-        result = await list_flows(mcp_context)
+        # Verify the flow is listed in the get_flows tool
+        result = await get_flows(mcp_context)
+        assert isinstance(result, GetFlowsListOutput)
         assert any(f.name == flow_name for f in result.flows)
         found = [f for f in result.flows if f.configuration_id == flow_id][0]
-        flow = await get_flow(mcp_context, configuration_id=found.configuration_id)
+        flow_detail_result = await get_flows(mcp_context, flow_ids=[found.configuration_id])
+        assert isinstance(flow_detail_result, GetFlowsDetailOutput)
+        flow = flow_detail_result.flows[0]
 
         assert isinstance(flow, Flow)
         assert flow.component_id == ORCHESTRATOR_COMPONENT_ID
@@ -132,7 +133,7 @@ async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[Conf
 @pytest.mark.asyncio
 async def test_create_and_retrieve_conditional_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
-    Create a conditional flow and retrieve it using list_flows.
+    Create a conditional flow and retrieve it using get_flows.
     :param mcp_context: The test context fixture.
     :param configs: List of real configuration definitions.
     """
@@ -204,11 +205,14 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
         assert set(created.links) == set(expected_links)
         assert created.version is not None
 
-        # Verify the flow is listed in the list_flows tool
-        result = await list_flows(mcp_context)
+        # Verify the flow is listed in the get_flows tool
+        result = await get_flows(mcp_context)
+        assert isinstance(result, GetFlowsListOutput)
         assert any(f.name == flow_name for f in result.flows)
         found = [f for f in result.flows if f.configuration_id == flow_id][0]
-        flow = await get_flow(mcp_context, configuration_id=found.configuration_id)
+        flow_detail_result = await get_flows(mcp_context, flow_ids=[found.configuration_id])
+        assert isinstance(flow_detail_result, GetFlowsDetailOutput)
+        flow = flow_detail_result.flows[0]
 
         assert isinstance(flow, Flow)
         assert flow.component_id == CONDITIONAL_FLOW_COMPONENT_ID
@@ -515,8 +519,10 @@ async def test_update_flow(
 ) -> None:
     """Tests that 'update_flow' tool works as expected."""
     flow_id = initial_lf.configuration_id if flow_type == ORCHESTRATOR_COMPONENT_ID else initial_cf.configuration_id
-    raw_initial_flow = await mcp_client.call_tool(name='get_flow', arguments={'configuration_id': flow_id})
-    initial_flow = Flow.model_validate(raw_initial_flow.structured_content)
+    tool_call_result = await mcp_client.call_tool(name='get_flows', arguments={'flow_ids': [flow_id]})
+    struct_call_result = cast(dict[str, Any], tool_call_result.structured_content)
+    initial_flow_result = GetFlowsDetailOutput.model_validate(struct_call_result['result'])
+    initial_flow = initial_flow_result.flows[0]
 
     project_id = keboola_project.project_id
     tool_result = await mcp_client.call_tool(
@@ -563,8 +569,10 @@ async def test_update_flow(
     )
 
     # Verify the configuration was updated
-    raw_updated_flow = await mcp_client.call_tool(name='get_flow', arguments={'configuration_id': flow_id})
-    flow_detail = Flow.model_validate(raw_updated_flow.structured_content)
+    tool_call_result = await mcp_client.call_tool(name='get_flows', arguments={'flow_ids': [flow_id]})
+    struct_call_result = cast(dict[str, Any], tool_call_result.structured_content)
+    flow_detail_result = GetFlowsDetailOutput.model_validate(struct_call_result['result'])
+    flow_detail = flow_detail_result.flows[0]
 
     assert flow_detail.name == expected_name
     assert flow_detail.description == expected_description
@@ -621,22 +629,24 @@ async def test_update_flow(
 
 
 @pytest.mark.asyncio
-async def test_list_flows_empty(mcp_context: Context) -> None:
+async def test_get_flows_empty(mcp_context: Context) -> None:
     """
     Retrieve flows when none exist (should not error, may return empty list).
     :param mcp_context: The test context fixture.
     """
-    flows = await list_flows(mcp_context)
-    assert isinstance(flows, ListFlowsOutput)
+    flows = await get_flows(mcp_context)
+    assert isinstance(flows, GetFlowsListOutput)
+    assert len(flows.flows) == 0
 
 
 @pytest.mark.asyncio
-async def test_list_flows(
+async def test_get_flows_list(
     keboola_project: ProjectDef, mcp_client: Client, initial_lf: FlowToolOutput, initial_cf: FlowToolOutput
 ) -> None:
-    """Tests that `list_flows` tool works as expected."""
-    tool_result = await mcp_client.call_tool(name='list_flows', arguments={})
-    flows = ListFlowsOutput.model_validate(tool_result.structured_content)
+    """Tests that `get_flows` tool works as expected when listing all flows."""
+    tool_call_result = await mcp_client.call_tool(name='get_flows', arguments={})
+    struct_call_result = cast(dict[str, Any], tool_call_result.structured_content)
+    flows = GetFlowsListOutput.model_validate(struct_call_result['result'])
     assert len(flows.flows) == 2
     assert frozenset(flows.links) == frozenset(
         [
@@ -654,11 +664,11 @@ async def test_list_flows(
     )
     assert flows.flows[0].configuration_id == initial_cf.configuration_id
     assert flows.flows[1].configuration_id == initial_lf.configuration_id
-    assert tool_result.content is not None
-    assert len(tool_result.content) == 1
-    assert tool_result.content[0].type == 'text'
-    toon_decoded = toon_format.decode(tool_result.content[0].text)
-    assert ListFlowsOutput.model_validate(toon_decoded) == flows
+    assert tool_call_result.content is not None
+    assert len(tool_call_result.content) == 1
+    assert tool_call_result.content[0].type == 'text'
+    toon_decoded = toon_format.decode(tool_call_result.content[0].text)
+    assert GetFlowsListOutput.model_validate(toon_decoded) == flows
 
 
 @pytest.mark.asyncio
@@ -871,7 +881,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
         ),
     ],
 )
-async def test_create_conditional_flow_sematnically_invalid_structure(
+async def test_create_conditional_flow_semantically_invalid_structure(
     mcp_context: Context, new_config: dict[str, list[dict]], expected_error_message: str
 ) -> None:
     # Test invalid conditional flow structure - missing required fields and invalid types
@@ -1008,7 +1018,9 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
 
     # Step 3: Get individual flows
     for flow_type, flow_id in created_flows:
-        flow = await get_flow(mcp_context, configuration_id=flow_id)
+        flow_result = await get_flows(mcp_context, flow_ids=[flow_id])
+        assert isinstance(flow_result, GetFlowsDetailOutput)
+        flow = flow_result.flows[0]
 
         assert isinstance(flow, Flow)
         assert flow.configuration_id == flow_id
@@ -1029,9 +1041,9 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
             assert flow.configuration.phases[1].name == 'Load'
 
     # Step 4: List all flows and verify our created flows are there
-    flows_list = await list_flows(mcp_context)
+    flows_list = await get_flows(mcp_context)
 
-    assert isinstance(flows_list, ListFlowsOutput)
+    assert isinstance(flows_list, GetFlowsListOutput)
     assert len(flows_list.flows) >= len(created_flows)
 
     # Verify our created flows are in the list

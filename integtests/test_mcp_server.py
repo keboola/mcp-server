@@ -1,11 +1,10 @@
-import json
 import logging
 import os
 import random
 import subprocess
 import time
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Iterable, Literal
+from typing import Any, AsyncGenerator, Iterable, Literal, cast
 
 import pytest
 from fastmcp import Client
@@ -18,7 +17,7 @@ from integtests.conftest import (
     DEV_WORKSPACE_SCHEMA_ENV_VAR,
     ConfigDef,
 )
-from keboola_mcp_server.tools.components.model import Configuration
+from keboola_mcp_server.tools.components.model import GetConfigsDetailOutput
 from keboola_mcp_server.tools.project import ProjectInfo
 
 LOG = logging.getLogger(__name__)
@@ -164,20 +163,17 @@ async def _assert_basic_setup(client: Client):
         'docs_query',
         'find_component_id',
         'get_bucket',
-        'get_component',
-        'get_config',
+        'get_components',
         'get_config_examples',
+        'get_configs',
         'get_data_apps',
-        'get_flow',
         'get_flow_examples',
         'get_flow_schema',
-        'get_job',
+        'get_flows',
+        'get_jobs',
         'get_project_info',
         'get_table',
         'list_buckets',
-        'list_configs',
-        'list_flows',
-        'list_jobs',
         'list_tables',
         'modify_data_app',
         'query_data',
@@ -212,19 +208,20 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     assert config.configuration_id is not None
 
     tool_result = await client.call_tool(
-        'get_config',
-        {'configuration_id': config.configuration_id, 'component_id': config.component_id},
+        'get_configs',
+        {'configs': [{'configuration_id': config.configuration_id, 'component_id': config.component_id}]},
     )
 
     assert tool_result is not None
     assert len(tool_result.content) == 1
     tool_result_content = tool_result.content[0]
     assert isinstance(tool_result_content, TextContent)  # only one tool call is executed
-    component_str = tool_result_content.text
-    component_json = json.loads(component_str)
 
-    component_config = Configuration.model_validate(component_json)
-    assert isinstance(component_config, Configuration)
+    component_configs = GetConfigsDetailOutput.model_validate(
+        cast(dict[str, Any], tool_result.structured_content)['result']
+    )
+    assert len(component_configs.configs) == 1
+    component_config = component_configs.configs[0]
     assert component_config.component is not None
     assert component_config.component.component_id == config.component_id
     assert component_config.component.component_type is not None
