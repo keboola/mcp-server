@@ -226,7 +226,7 @@ async def create_conditional_flow(
     - Only add conditions/retry logic when user explicitly requests branching or error handling
     - All phases must be connected: no dangling phases are allowed
     - The flow must have exactly one entry point (one phase with no incoming transitions)
-    - Every phase must either transition to another phase or end the flow
+    - Every phase must either transition to another phase or end the flow by having empty next array field.
 
     WHEN TO USE:
     - User asks to "create a flow" (conditional flows are the default flow type)
