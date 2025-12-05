@@ -112,13 +112,33 @@ class TestConditionalFlowPhase:
         serialized_excluding_unset = phase.model_dump(exclude_unset=True)
         assert serialized_excluding_unset['next'][0]['goto'] == 'phase-2'
 
-    def test_model_dump_keeps_non_empty_next_with_goto_none(self):
-        """Non-empty next array with goto None should always be serialized and goto None should be preserved."""
+    def test_model_dump_excludes_single_null_goto_transition(self):
+        """Single transition with goto=None should be excluded when exclude_unset=True to prevent UI damage."""
         transition = ConditionalFlowTransition(id='t1', name='Go to end', goto=None)
         phase = ConditionalFlowPhase(id='phase-1', name='Phase 1', next=[transition])
 
+        # Without exclude_unset, the next array should be serialized
         serialized_default = phase.model_dump()
+        assert 'next' in serialized_default
         assert serialized_default['next'][0]['id'] == 't1'
+        assert serialized_default['next'][0]['goto'] is None
+
+        # With exclude_unset=True, the next array should be excluded
+        serialized_excluding_unset = phase.model_dump(exclude_unset=True)
+        assert 'next' not in serialized_excluding_unset
+
+    def test_model_dump_keeps_multiple_transitions_with_null_goto(self):
+        """Multiple transitions should be kept even if one has goto=None."""
+        transition1 = ConditionalFlowTransition(id='t1', name='Go to phase 2', goto='phase-2')
+        transition2 = ConditionalFlowTransition(id='t2', name='Go to end', goto=None)
+        phase = ConditionalFlowPhase(id='phase-1', name='Phase 1', next=[transition1, transition2])
+
+        serialized_default = phase.model_dump()
+        assert 'next' in serialized_default
+        assert len(serialized_default['next']) == 2
 
         serialized_excluding_unset = phase.model_dump(exclude_unset=True)
-        assert serialized_excluding_unset['next'][0]['goto'] is None
+        assert 'next' in serialized_excluding_unset
+        assert len(serialized_excluding_unset['next']) == 2
+        assert serialized_excluding_unset['next'][0]['goto'] == 'phase-2'
+        assert serialized_excluding_unset['next'][1]['goto'] is None

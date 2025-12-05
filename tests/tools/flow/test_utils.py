@@ -234,7 +234,7 @@ class TestFlowConfigurationBuilder:
         assert 'continueOnFailure' in task
 
     def test_get_flow_configuration_conditional_excludes_unset_fields(self):
-        """Conditional builder should drop unset optional fields but goto=null remains."""
+        """Conditional builder should drop unset optional fields including single goto=null transitions."""
         flow_configuration = get_flow_configuration(
             phases=[
                 {
@@ -251,8 +251,8 @@ class TestFlowConfigurationBuilder:
         task = flow_configuration['tasks'][0]
 
         assert 'description' not in phase
-        assert phase['next'][0]['id'] == 'transition1'
-        assert phase['next'][0]['goto'] is None
+        # Single transition with goto=None should be dropped entirely
+        assert 'next' not in phase
         assert 'enabled' not in task
 
 
