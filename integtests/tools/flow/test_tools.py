@@ -582,10 +582,13 @@ async def test_update_flow(
     # Check that ids, names, and transitions match for phases using assert all
     if updates.get('phases'):
         # Convert the phases to get the expected format.
-        expected_phases = [
-            ConditionalFlowPhase.model_validate(phase).model_dump(exclude_unset=True, by_alias=True)
-            for phase in updates['phases']
-        ]
+        if flow_type == ORCHESTRATOR_COMPONENT_ID:
+            expected_phases = updates['phases']
+        else:
+            expected_phases = [
+                ConditionalFlowPhase.model_validate(phase).model_dump(exclude_unset=True, by_alias=True)
+                for phase in updates['phases']
+            ]
     else:
         expected_phases = [
             phase.model_dump(exclude_unset=True, by_alias=True) for phase in initial_flow.configuration.phases
