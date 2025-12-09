@@ -23,8 +23,8 @@ description, and a list of created table names.
 - [create_conditional_flow](#create_conditional_flow): Creates a new conditional flow configuration using `keboola.
 - [create_flow](#create_flow): Creates a new legacy (non-conditional) flow using `keboola.
 - [get_flow_examples](#get_flow_examples): Retrieves examples of valid flow configurations.
-- [get_flow_schema](#get_flow_schema): Returns the JSON schema for the given flow type in markdown format.
-- [get_flows](#get_flows): Retrieves flow configurations from the project.
+- [get_flow_schema](#get_flow_schema): Returns the JSON schema for the given flow type (markdown).
+- [get_flows](#get_flows): Lists flows or retrieves full details for specific flows.
 - [update_flow](#update_flow): Updates an existing flow configuration (either legacy `keboola.
 
 ### Jobs Tools
@@ -1897,10 +1897,13 @@ WHEN TO USE:
 
 Retrieves examples of valid flow configurations.
 
-CONSIDERATIONS:
-- If the project has conditional flows disabled, this tool will fail when requesting conditional flow examples.
-- Projects with conditional flows enabled can fetch examples for both flow types.
-- Projects with conditional flows disabled should use `keboola.orchestrator` for legacy flow examples.
+PRE-REQUISITES:
+- Unknown examples for the target flow type: `keboola.flow` (conditional) or `keboola.orchestrator` (legacy) to help
+build the specific flow configuration by mirroring the structure/fields.
+
+RULES:
+- Conditional-flow examples require conditional flows to be enabled; otherwise use legacy orchestrator examples
+- Present the examples or cite unavailability to the user
 
 
 **Input JSON Schema**:
@@ -1932,16 +1935,14 @@ CONSIDERATIONS:
 
 **Description**:
 
-Returns the JSON schema for the given flow type in markdown format.
-`keboola.flow` = conditional flows
-`keboola.orchestrator` = legacy flows
+Returns the JSON schema for the given flow type (markdown).
 
-CONSIDERATIONS:
-- If the project has conditional flows disabled, this tool will fail when requesting conditional flow schema.
-- Otherwise, the returned schema matches the requested flow type.
+PRE-REQUISITES:
+- Unknown schema for the target flow type: `keboola.flow` (conditional) or `keboola.orchestrator` (legacy)
 
-Usage:
-    Use this tool to inspect the required structure of phases and tasks for `create_flow` or `update_flow`.
+RULES:
+- Projects without conditional flows enabled cannot request `keboola.flow` schema
+- Use the returned schema to shape `phases` and `tasks` for `create_flow` / `create_conditional_flow` / `update_flow`
 
 
 **Input JSON Schema**:
@@ -1973,21 +1974,11 @@ Usage:
 
 **Description**:
 
-Retrieves flow configurations from the project.
+Lists flows or retrieves full details for specific flows.
 
-Can list summaries of all flows or retrieve full details for specific flows.
-
-Returns:
-- When flow_ids is empty: List of flow summaries (all flows in project)
-- When flow_ids is provided: Full flow details including phases, tasks, and configuration
-
-WHEN TO USE:
-- For listing all flows: Use with empty flow_ids=[].
-- For flow details: Use flow_ids with specific IDs.
-
-EXAMPLES:
-- List all flows (summaries): flow_ids=[]
-- Get full details for specific flows: flow_ids=["12345", "67890"]
+OPTIONS:
+- `flow_ids=[]` → summaries of all flows in the project
+- `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows
 
 
 **Input JSON Schema**:
