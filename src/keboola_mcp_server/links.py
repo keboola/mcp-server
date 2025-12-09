@@ -87,7 +87,8 @@ class ProjectLinksManager:
             title=f'Configuration: {configuration_name}', url=self._url(f'components/{component_id}/{configuration_id}')
         )
 
-    def get_config_dashboard_link(self, component_id: str, component_name: str) -> Link:
+    def get_config_dashboard_link(self, component_id: str, component_name: str | None) -> Link:
+        component_name = f'{component_name}' if component_name else f'Component "{component_id}"'
         return Link.dashboard(
             title=f'{component_name} Configurations Dashboard', url=self._url(f'components/{component_id}')
         )
@@ -100,7 +101,7 @@ class ProjectLinksManager:
             self.get_component_config_link(
                 component_id=component_id, configuration_id=configuration_id, configuration_name=configuration_name
             ),
-            self.get_config_dashboard_link(component_id=component_id, component_name=component_id),
+            self.get_config_dashboard_link(component_id=component_id, component_name=None),
         ]
 
     # --- Data Apps ---
@@ -143,6 +144,22 @@ class ProjectLinksManager:
     def get_transformations_dashboard_link(self) -> Link:
         return Link.dashboard(title='Transformations dashboard', url=self._url('transformations-v2'))
 
+    def get_transformation_config_link(
+        self, transformation_type: str, transformation_id: str, transformation_name: str
+    ) -> Link:
+        return Link.detail(
+            title=f'Transformation: {transformation_name}',
+            url=self._url(f'transformations-v2/{transformation_type}/{transformation_id}'),
+        )
+
+    def get_transformation_links(
+        self, transformation_type: str, transformation_id: str, transformation_name: str
+    ) -> Link:
+        return [
+            self.get_transformation_config_link(transformation_type, transformation_id, transformation_name),
+            self.get_transformations_dashboard_link(),
+        ]
+
     # --- Jobs ---
     def get_job_detail_link(self, job_id: str) -> Link:
         return Link.detail(title=f'Job: {job_id}', url=self._url(f'queue/{job_id}'))
@@ -169,6 +186,11 @@ class ProjectLinksManager:
     # --- Tables ---
     def get_table_detail_link(self, bucket_id: str, table_name: str) -> Link:
         return Link.detail(title=f'Table: {table_name}', url=self._url(f'storage/{bucket_id}/table/{table_name}'))
+
+    def get_table_detail_link_from_table_id(self, table_id: str) -> Link:
+        table_name = table_id.split('.')[-1]
+        bucket_id = '.'.join(table_id.split('.')[:-1])
+        return self.get_table_detail_link(bucket_id=bucket_id, table_name=table_name)
 
     def get_table_links(self, bucket_id: str, bucket_name: str, table_name: str) -> list[Link]:
         return [
