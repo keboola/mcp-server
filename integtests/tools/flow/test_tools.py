@@ -22,7 +22,7 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.tools.flow.model import Flow, GetFlowsDetailOutput, GetFlowsListOutput
+from keboola_mcp_server.tools.flow.model import ConditionalFlowPhase, Flow, GetFlowsDetailOutput, GetFlowsListOutput
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolOutput,
     create_conditional_flow,
@@ -581,7 +581,14 @@ async def test_update_flow(
 
     # Check that ids, names, and transitions match for phases using assert all
     if updates.get('phases'):
-        expected_phases = updates['phases']
+        # Convert the phases to get the expected format.
+        if flow_type == ORCHESTRATOR_COMPONENT_ID:
+            expected_phases = updates['phases']
+        else:
+            expected_phases = [
+                ConditionalFlowPhase.model_validate(phase).model_dump(exclude_unset=True, by_alias=True)
+                for phase in updates['phases']
+            ]
     else:
         expected_phases = [
             phase.model_dump(exclude_unset=True, by_alias=True) for phase in initial_flow.configuration.phases
