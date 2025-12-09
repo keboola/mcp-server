@@ -100,6 +100,7 @@ class ComponentSummary(BaseModel):
     component_name: str = Field(description='Component name')
     component_type: str = Field(description='Component type')
     capabilities: ComponentCapabilities = Field(description='Component capabilities')
+    links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
 
     @classmethod
     def from_api_response(cls, api_response: ComponentAPIResponse) -> 'ComponentSummary':
@@ -383,6 +384,7 @@ class ConfigSummary(BaseModel):
     configuration_rows: Optional[list[ConfigurationRowSummary]] = Field(
         default=None, description='The configuration row summaries'
     )
+    links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
 
     @classmethod
     def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigSummary':
