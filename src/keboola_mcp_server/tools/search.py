@@ -469,7 +469,7 @@ class FindComponentOutput(BaseModel):
 async def find_component_id(
     ctx: Context,
     query: Annotated[str, Field(description='Natural language query to find the requested component.')],
-) -> list[SuggestedComponent]:
+) -> FindComponentOutput:
     """
     Returns list of component IDs that match the given query.
 
@@ -480,9 +480,13 @@ async def find_component_id(
     - user_input: `I am looking for a salesforce extractor component`
         - returns a list of component IDs that match the query, ordered by relevance/best match.
     """
+    LOG.info(f'Finding component ID for query: {query}')
     client = KeboolaClient.from_state(ctx.session.state)
+    LOG.info(f'Client: {client}')
     links_manager = await ProjectLinksManager.from_client(client)
+    LOG.info(f'Links manager: {links_manager}')
     suggestion_response = await client.ai_service_client.suggest_component(query)
+    LOG.info(f'Suggestion response: {suggestion_response}')
 
     components = []
     for component in suggestion_response.components:
