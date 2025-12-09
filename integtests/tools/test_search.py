@@ -87,7 +87,7 @@ async def test_find_component_id(mcp_client: Client):
     """Tests that `find_component_id` returns relevant component IDs for a query."""
     query = 'generic extractor - extract data from many APIs'
     generic_extractor_id = 'ex-generic-v2'
-    
+
     full_result = await mcp_client.call_tool('find_component_id', {'query': query})
 
     assert full_result.structured_content is not None
