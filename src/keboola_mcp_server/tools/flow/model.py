@@ -313,13 +313,18 @@ class ConditionalFlowPhase(BaseModel):
     )
 
     def model_dump(self, *, exclude_unset: bool = False, **kwargs):
-        # When exclude_unset=True, also exclude "next" if next is an empty list.
+        # When exclude_unset=True, also exclude "next" if:
+        # 1. next is an empty list, OR
+        # 2. next contains only one transition with goto=null
         # This allows us to modify the ending phases without specified transitions in the UI of conditional flows in
-        # Keboola Designer.
+        # Keboola Designer, and prevents UI damage from single null transitions.
         data = super().model_dump(exclude_unset=exclude_unset, **kwargs)
         if exclude_unset:
-            if 'next' in data and isinstance(data['next'], list) and len(data['next']) == 0:
-                data.pop('next')
+            if 'next' in data and isinstance(data['next'], list):
+                if len(data['next']) == 0:
+                    data.pop('next')
+                elif len(data['next']) == 1 and data['next'][0].get('goto') is None:
+                    data.pop('next')
         return data
 
 
