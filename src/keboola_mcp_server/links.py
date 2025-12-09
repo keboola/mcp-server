@@ -154,7 +154,7 @@ class ProjectLinksManager:
 
     def get_transformation_links(
         self, transformation_type: str, transformation_id: str, transformation_name: str
-    ) -> Link:
+    ) -> list[Link]:
         return [
             self.get_transformation_config_link(transformation_type, transformation_id, transformation_name),
             self.get_transformations_dashboard_link(),
