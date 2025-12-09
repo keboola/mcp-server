@@ -135,34 +135,21 @@ async def create_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
 ) -> FlowToolOutput:
     """
-    Creates a new flow configuration in Keboola.
-    A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
-    how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
-    Each flow is composed of:
-    - Tasks: individual component configurations (e.g., extractors, writers, transformations).
-    - Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
+    Creates a new legacy (non-conditional) flow using `keboola.orchestrator`.
 
-    If you haven't already called it, always use the `get_flow_schema` tool using `keboola.orchestrator` flow type
-    to see the latest schema for flows and also look at the examples under `get_flow_examples` tool.
+    PRE-REQUISITES:
+    - Always use `get_flow_schema` with flow_type="keboola.orchestrator" and review `get_flow_examples` if unknown
+    - Collect component configuration IDs for every task you include
 
-    CONSIDERATIONS:
-    - The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
-    - Each task and phase must include at least: `id` and `name`.
-    - Each task must reference an existing component configuration in the project.
-    - Items in the `dependsOn` phase field reference ids of other phases.
-    - Links contained in the response should ALWAYS be presented to the user
+    RULES:
+    - `phases` and `tasks` must follow the orchestrator schema; each entry must include `id` and `name`
+    - Phases run sequentially; tasks inside a phase run in parallel
+    - Use `dependsOn` on phases to sequence them; reference other phase ids
+    - Always share the returned links with the user
 
-    USAGE:
-    Use this tool to automate multi-step data workflows. This is ideal for:
-    - Creating ETL/ELT orchestration.
-    - Coordinating dependencies between components.
-    - Structuring parallel and sequential task execution.
-
-    EXAMPLES:
-    - user_input: Orchestrate all my JIRA extractors.
-        - fill `tasks` parameter with the tasks for the JIRA extractors
-        - determine dependencies between the JIRA extractors
-        - fill `phases` parameter by grouping tasks into phases
+    WHEN TO USE:
+    - Simple/linear orchestrations without branching or conditions
+    - ETL/ELT pipelines where phases just need ordering and parallel task groups
     """
     flow_type = ORCHESTRATOR_COMPONENT_ID
     flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
@@ -212,26 +199,22 @@ async def create_conditional_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
 ) -> FlowToolOutput:
     """
-    Creates a new conditional flow configuration in Keboola.
+    Creates a new conditional flow configuration using `keboola.flow`.
 
-    BEFORE USING THIS TOOL:
-    - Call `get_flow_schema` with flow_type='keboola.flow' to see the required schema structure
-    - Call `get_flow_examples` with flow_type='keboola.flow' to see working examples
+    PRE-REQUISITES:
+    - Always use `get_flow_schema` with flow_type="keboola.flow" and review `get_flow_examples` if unknown
+    - Gather component configuration IDs for all tasks you include
 
-    REQUIREMENTS:
-    - All phase and task IDs must be unique strings
-    - The `phases` list cannot be empty
-    - The `phases` and `tasks` parameters must match the keboola.flow JSON schema structure
-    - Phase/task failures automatically end the flow - do NOT create failure conditions
-    - Only add conditions/retry logic when user explicitly requests branching or error handling
-    - All phases must be connected: no dangling phases are allowed
-    - The flow must have exactly one entry point (one phase with no incoming transitions)
-    - Every phase must either transition to another phase or end the flow by having empty next array field.
+    RULES:
+    - `phases` and `tasks` must follow the keboola.flow schema; each entry needs `id` and `name`
+    - Exactly one entry phase (no incoming transitions); all phases must be reachable
+    - Connect phases via `next` transitions; no cycles or dangling phases; empty `next` means flow end
+    - Task/phase failures already stop the flow; add retries/conditions only if the user requests them
+    - Always share the returned links with the user
 
     WHEN TO USE:
-    - User asks to "create a flow" (conditional flows are the default flow type)
-    - User requests conditional logic, retry mechanisms, or error handling
-    - User needs a data pipeline with sophisticated branching or notifications
+    - Flows needing branching, conditions, retries, or notifications
+    - Default choice when user simply says “create a flow,” unless they explicitly want legacy orchestrator behavior
     """
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
     flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
@@ -293,45 +276,29 @@ async def update_flow(
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
 ) -> FlowToolOutput:
     """
-    Updates an existing flow configuration in Keboola.
+    Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
 
-    A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
-    how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
-    Each flow is composed of:
-    - Tasks: individual component configurations (e.g., extractors, writers, transformations).
-    - Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
+    PRE-REQUISITES:
+    - Always use `get_flow_schema` (and `get_flow_examples`) for that flow type you want to update to follow the
+    required structure and see the examples if unknown
+    - Only pass `phases`/`tasks` when you want to replace them; omit to keep the existing ones unchanged
 
-    PREREQUISITES:
-    - The flow specified by `configuration_id` must already exist in the project
-    - Use `get_flows` to retrieve the current flow configuration and determine its type
-    - Use `get_flow_schema` with the correct flow type to understand the required structure
-    - Ensure all referenced component configurations exist in the project
+    RULES (ALL FLOWS):
+    - `flow_type` must match the stored component id of the flow; do not switch flow types during update
+    - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
+    - Tasks must reference existing component configurations; keep dependencies consistent
+    - Always provide a clear `change_description` and surface any links returned in the response to the user
 
-    CONSIDERATIONS:
-    - The `flow_type` parameter **MUST** match the actual type of the flow being updated
-    - The `phases` and `tasks` parameters must conform to the appropriate JSON schema
-    - Each task and phase must include at least: `id` and `name`
-    - Each task must reference an existing component configuration in the project
-    - Items in the `dependsOn` phase field reference ids of other phases
-    - If the project has conditional flows disabled, this tool will fail when trying to update conditional flows
-    - Links contained in the response should ALWAYS be presented to the user
+    CONDITIONAL FLOWS (`keboola.flow`):
+    - Maintain a single entry phase and ensure every phase is reachable; connect phases via `next` transitions
+    - No cycles or dangling phases; failed tasks already stop the flow, so only add retries/conditions if requested
 
-    USAGE:
-    Use this tool to update an existing flow. You must specify the correct flow_type:
-    - Use `"keboola.flow"` for conditional flows
-    - Use `"keboola.orchestrator"` for legacy flows
+    LEGACY FLOWS (`keboola.orchestrator`):
+    - Phases run sequentially; tasks inside a phase run in parallel; `dependsOn` references other phase ids
+    - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
-    EXAMPLES:
-    - user_input: "Add a new transformation phase to my existing flow"
-        - First use `get_flows` to retrieve the current flow configuration
-        - Determine the flow type from the response
-        - Use `get_flow_schema` with the correct flow type
-        - Update the phases and tasks arrays with the new transformation
-        - Set `flow_type` to match the existing flow type
-    - user_input: "Update my flow to include error handling"
-        - For conditional flows: add retry configurations and error conditions
-        - For legacy flows: adjust `continueOnFailure` settings
-        - Ensure the `flow_type` matches the existing flow
+    WHEN TO USE:
+    - Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
     """
 
     project_info = await get_project_info(ctx)

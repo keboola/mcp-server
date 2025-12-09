@@ -1,3 +1,8 @@
+### When Creating Configurations
+- Before generating any component configuration: fetch details via `get_components` to pull `configuration_schema` / `configuration_row_schema`, and review `get_config_examples` if both unkown to you. Keep generated parameters aligned to the retrieved schema.
+- Before generating any legacy flow or conditional flow configuration: fetch the correct schema with `get_flow_schema` (use the matching flow type) and review `get_flow_examples` so phases/tasks follow the required structure if both unknown to you.
+- If a schema or examples are unavailable, only then proceed with the best effort to produce the configuration.
+
 ### Transformations
 
 **Transformations** allow you to manipulate data in your project. Their purpose is to transform data existing in Storage
