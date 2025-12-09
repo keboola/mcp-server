@@ -697,7 +697,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
                 ),
                 Link(
                     type='ui-dashboard',
-                    title=f'Transformations dashboard',
+                    title='Transformations dashboard',
                     url=(f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2'),
                 ),
             ]
@@ -932,7 +932,7 @@ async def test_update_sql_transformation(
             ),
             Link(
                 type='ui-dashboard',
-                title=f'Transformations dashboard',
+                title='Transformations dashboard',
                 url=f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2',
             ),
         ]

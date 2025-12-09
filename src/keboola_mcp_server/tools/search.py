@@ -8,7 +8,6 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, model_validator
 
-from keboola_mcp_server.clients.ai_service import SuggestedComponent
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import ItemType
