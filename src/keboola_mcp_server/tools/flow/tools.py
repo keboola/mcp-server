@@ -108,7 +108,8 @@ async def get_flow_schema(
 
     RULES:
     - Projects without conditional flows enabled cannot request `keboola.flow` schema
-    - Use the returned schema to shape `phases` and `tasks` for `create_flow` / `create_conditional_flow` / `update_flow`
+    - Use the returned schema to shape `phases` and `tasks` for `create_flow` / `create_conditional_flow` /
+    `update_flow`
     """
     project_info = await get_project_info(ctx)
 
