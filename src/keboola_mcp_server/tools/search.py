@@ -262,6 +262,7 @@ async def _fetch_configs(
 
 
 def _get_links(hit: SearchHit, links_manager: ProjectLinksManager) -> list[Link]:
+    """Gets the links for a search hit based on the item type."""
     links = []
     if hit.item_type == 'bucket' and hit.bucket_id:
         links.append(links_manager.get_bucket_detail_link(bucket_id=hit.bucket_id, bucket_name=hit.name or ''))

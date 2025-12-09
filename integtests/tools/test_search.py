@@ -90,7 +90,7 @@ async def test_find_component_id(mcp_client: Client):
     full_result = await mcp_client.call_tool('find_component_id', {'query': query})
 
     assert full_result.structured_content is not None
-    result = FindComponentOutput.model_validate(full_result.structured_content['result'])
+    result = FindComponentOutput.model_validate(full_result.structured_content)
 
     assert isinstance(result.components, list)
     assert len(result.components) > 0
