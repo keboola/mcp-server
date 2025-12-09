@@ -14,6 +14,7 @@ from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_proper
 from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import toon_serializer
 from keboola_mcp_server.tools.components.utils import get_nested
 
@@ -72,6 +73,7 @@ class SearchHit(BaseModel):
     name: str | None = Field(default=None, description='Name of the item.')
     display_name: str | None = Field(default=None, description='Display name of the item.')
     description: str | None = Field(default=None, description='Description of the item.')
+    links: list[Link] = Field(default_factory=list, description='Links to the item.')
 
     @model_validator(mode='after')
     def check_id_fields(self) -> 'SearchHit':
@@ -260,6 +262,45 @@ async def _fetch_configs(
                     )
 
 
+def _get_links(hit: SearchHit, links_manager: ProjectLinksManager) -> list[Link]:
+    links = []
+    if hit.item_type == 'bucket' and hit.bucket_id:
+        links.append(links_manager.get_bucket_detail_link(bucket_id=hit.bucket_id, bucket_name=hit.name or ''))
+    elif hit.item_type == 'table' and hit.table_id:
+        links.append(links_manager.get_table_detail_link_from_table_id(table_id=hit.table_id))
+    elif hit.item_type == 'configuration' and hit.component_id and hit.configuration_id:
+        links.append(
+            links_manager.get_component_config_link(
+                component_id=hit.component_id, configuration_id=hit.configuration_id, configuration_name=hit.name or ''
+            )
+        )
+    elif hit.item_type == 'configuration' and hit.component_id:
+        links.append(
+            links_manager.get_config_dashboard_link(component_id=hit.component_id, component_name=hit.name or '')
+        )
+    elif hit.item_type == 'transformation' and hit.component_id and hit.configuration_id:
+        links.append(
+            links_manager.get_transformation_config_link(
+                transformation_type=hit.component_id,
+                transformation_id=hit.configuration_id,
+                transformation_name=hit.name or '',
+            )
+        )
+    elif hit.item_type == 'flow' and hit.configuration_id and hit.component_id:
+        links.append(
+            links_manager.get_flow_detail_link(
+                flow_id=hit.configuration_id, flow_name=hit.name or '', flow_type=hit.component_id
+            )
+        )
+    elif hit.item_type == 'configuration-row' and hit.component_id and hit.configuration_id:
+        links.append(
+            links_manager.get_component_config_link(
+                component_id=hit.component_id, configuration_id=hit.configuration_id, configuration_name=hit.name or ''
+            )
+        )
+    return links
+
+
 @tool_errors()
 async def search(
     ctx: Context,
@@ -399,8 +440,29 @@ async def search(
     )
     paginated_hits = all_hits[offset : offset + limit]
 
+    # Get links for the hits
+    links_manager = await ProjectLinksManager.from_client(client)
+    for hit in paginated_hits:
+        hit.links.extend(_get_links(hit, links_manager))
+
     # TODO: Should we report the total number of hits?
     return paginated_hits
+
+
+class SuggestedComponentOutput(BaseModel):
+    """Output of find_component_id tool."""
+
+    component_id: str = Field(description='The component ID.')
+    score: float = Field(description='Score of the component suggestion.')
+    links: list[Link] = Field(description='Links to the component.', default_factory=list)
+
+
+class FindComponentOutput(BaseModel):
+    """Output of find_component_id tool."""
+
+    components: list[SuggestedComponentOutput] = Field(
+        description='List of suggested components.', default_factory=list
+    )
 
 
 @tool_errors()
@@ -419,5 +481,13 @@ async def find_component_id(
         - returns a list of component IDs that match the query, ordered by relevance/best match.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     suggestion_response = await client.ai_service_client.suggest_component(query)
-    return suggestion_response.components
+
+    components = []
+    for component in suggestion_response.components:
+        links = [links_manager.get_config_dashboard_link(component_id=component.component_id, component_name=None)]
+        components.append(
+            SuggestedComponentOutput(component_id=component.component_id, score=component.score, links=links)
+        )
+    return FindComponentOutput(components=components)
