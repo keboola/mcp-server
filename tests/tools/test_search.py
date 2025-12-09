@@ -10,7 +10,14 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.tools.search import SearchHit, find_component_id, search
+from keboola_mcp_server.links import Link
+from keboola_mcp_server.tools.search import (
+    FindComponentOutput,
+    SearchHit,
+    SuggestedComponentOutput,
+    find_component_id,
+    search,
+)
 
 
 class TestSearch:
@@ -28,6 +35,7 @@ class TestSearch:
     async def test_search_success(self, mocker: MockerFixture, mcp_context_client: Context):
         """Test successful search with regex patterns."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        project_id = await keboola_client.storage_client.project_id()
 
         # Mock bucket_list
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(
@@ -87,12 +95,32 @@ class TestSearch:
                 item_type='configuration',
                 updated='2024-01-02T00:00:00Z',
                 name='Test MySQL Config',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Configuration: Test MySQL Config',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/components/keboola.ex-db-mysql/test-config'
+                        ),
+                    )
+                ],
             ),
             SearchHit(
                 table_id='in.c-test-bucket.test-table',
                 item_type='table',
                 updated='2024-01-01T00:00:00Z',
                 name='test-table',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Table: test-table',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/storage/in.c-test-bucket/table/test-table'
+                        ),
+                    )
+                ],
             ),
         ]
 
@@ -100,6 +128,7 @@ class TestSearch:
     async def test_search_with_regex_pattern(self, mocker: MockerFixture, mcp_context_client: Context):
         """Test search with regex patterns."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        project_id = await keboola_client.storage_client.project_id()
 
         # Mock bucket_list
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(
@@ -123,6 +152,16 @@ class TestSearch:
                 item_type='bucket',
                 updated='2024-01-01T00:00:00Z',
                 name='customer-data',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: customer-data',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/storage/in.c-customer-data'
+                        ),
+                    )
+                ],
             ),
         ]
 
@@ -236,6 +275,7 @@ class TestSearch:
     async def test_search_pagination(self, mocker: MockerFixture, mcp_context_client: Context):
         """Test search with pagination."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        project_id = await keboola_client.storage_client.project_id()
 
         # Mock bucket_list with multiple items
         buckets = [
@@ -253,17 +293,53 @@ class TestSearch:
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=2, offset=0)
         assert result == [
             SearchHit(
-                bucket_id='in.c-bucket-10', item_type='bucket', updated='2024-01-10T00:00:00Z', name='test-bucket-10'
+                bucket_id='in.c-bucket-10',
+                item_type='bucket',
+                updated='2024-01-10T00:00:00Z',
+                name='test-bucket-10',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: test-bucket-10',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}' '/storage/in.c-bucket-10'
+                        ),
+                    )
+                ],
             ),
             SearchHit(
-                bucket_id='in.c-bucket-9', item_type='bucket', updated='2024-01-09T00:00:00Z', name='test-bucket-9'
+                bucket_id='in.c-bucket-9',
+                item_type='bucket',
+                updated='2024-01-09T00:00:00Z',
+                name='test-bucket-9',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: test-bucket-9',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}' '/storage/in.c-bucket-9'
+                        ),
+                    )
+                ],
             ),
         ]
 
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=1, offset=2)
         assert result == [
             SearchHit(
-                bucket_id='in.c-bucket-8', item_type='bucket', updated='2024-01-08T00:00:00Z', name='test-bucket-8'
+                bucket_id='in.c-bucket-8',
+                item_type='bucket',
+                updated='2024-01-08T00:00:00Z',
+                name='test-bucket-8',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: test-bucket-8',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}' '/storage/in.c-bucket-8'
+                        ),
+                    )
+                ],
             )
         ]
 
@@ -271,6 +347,7 @@ class TestSearch:
     async def test_search_matches_description(self, mocker: MockerFixture, mcp_context_client: Context):
         """Test search matches description field."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        project_id = await keboola_client.storage_client.project_id()
 
         # Mock bucket_list with description
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(
@@ -299,12 +376,23 @@ class TestSearch:
                 updated='2024-01-01T00:00:00Z',
                 name='my-bucket',
                 description='This contains test data',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: my-bucket',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}' '/storage/in.c-my-bucket'
+                        ),
+                    )
+                ],
             )
         ]
 
     @pytest.mark.asyncio
     async def test_search_hits_sorting(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Test search hits sorting."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        project_id = await keboola_client.storage_client.project_id()
 
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(
             return_value=[
@@ -381,6 +469,16 @@ class TestSearch:
                 item_type='configuration',
                 updated='2024-01-04T00:00:00Z',
                 name='Test MySQL Config B',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Configuration: Test MySQL Config B',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/components/keboola.ex-db-mysql/test-config-b'
+                        ),
+                    )
+                ],
             ),
             SearchHit(
                 component_id='keboola.ex-db-mysql',
@@ -388,36 +486,96 @@ class TestSearch:
                 item_type='configuration',
                 updated='2024-01-03T00:00:00Z',
                 name='Test MySQL Config A',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Configuration: Test MySQL Config A',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/components/keboola.ex-db-mysql/test-config-a'
+                        ),
+                    )
+                ],
             ),
             SearchHit(
                 table_id='in.c-test-bucket-b.test-table',
                 item_type='table',
                 updated='2024-01-02T00:00:00Z',
                 name='test-table',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Table: test-table',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/storage/in.c-test-bucket-b/table/test-table'
+                        ),
+                    )
+                ],
             ),
             SearchHit(
                 bucket_id='in.c-test-bucket-b',
                 item_type='bucket',
                 updated='2024-01-02T00:00:00Z',
                 name='test-bucket-b',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: test-bucket-b',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/storage/in.c-test-bucket-b'
+                        ),
+                    )
+                ],
             ),
             SearchHit(
                 table_id='in.c-test-bucket-a.test-table',
                 item_type='table',
                 updated='2024-01-01T00:00:00Z',
                 name='test-table',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Table: test-table',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/storage/in.c-test-bucket-a/table/test-table'
+                        ),
+                    )
+                ],
             ),
             SearchHit(
                 bucket_id='in.c-test-bucket-a',
                 item_type='bucket',
                 updated='2024-01-01T00:00:00Z',
                 name='test-bucket-a',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: test-bucket-a',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/storage/in.c-test-bucket-a'
+                        ),
+                    )
+                ],
             ),
             SearchHit(
                 bucket_id='in.c-test-bucket-c',
                 item_type='bucket',
                 updated='',
                 name='test-bucket-c',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: test-bucket-c',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/storage/in.c-test-bucket-c'
+                        ),
+                    )
+                ],
             ),
         ]
 
@@ -437,6 +595,7 @@ class TestSearch:
 async def test_find_component_id(mocker: MockerFixture, mcp_context_client: Context):
     """Test find_component_id returns suggested components."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    project_id = await keboola_client.storage_client.project_id()
 
     # Mock suggest_component to return a list of suggested components
     expected_component_1 = SuggestedComponent(component_id='keboola.ex-salesforce', score=0.95, source='ai')
@@ -447,5 +606,35 @@ async def test_find_component_id(mocker: MockerFixture, mcp_context_client: Cont
     query = 'I am looking for a salesforce extractor component'
     result = await find_component_id(ctx=mcp_context_client, query=query)
 
-    assert result == [expected_component_1, expected_component_2]
+    assert isinstance(result, FindComponentOutput)
+    assert result.components == [
+        SuggestedComponentOutput(
+            component_id='keboola.ex-salesforce',
+            score=0.95,
+            links=[
+                Link(
+                    type='ui-dashboard',
+                    title='Component "keboola.ex-salesforce" Configurations Dashboard',
+                    url=(
+                        f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                        '/components/keboola.ex-salesforce'
+                    ),
+                )
+            ],
+        ),
+        SuggestedComponentOutput(
+            component_id='keboola.ex-db-mysql',
+            score=0.85,
+            links=[
+                Link(
+                    type='ui-dashboard',
+                    title='Component "keboola.ex-db-mysql" Configurations Dashboard',
+                    url=(
+                        f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                        '/components/keboola.ex-db-mysql'
+                    ),
+                )
+            ],
+        ),
+    ]
     keboola_client.ai_service_client.suggest_component.assert_called_once_with(query)
