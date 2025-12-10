@@ -11,7 +11,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.storage import (
     BucketDetail,
     DescriptionUpdate,
-    ListBucketsOutput,
+    GetBucketsOutput,
     ListTablesOutput,
     TableDetail,
     UpdateDescriptionsOutput,
@@ -30,7 +30,7 @@ async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that `list_buckets` returns a list of `BucketDetail` instances."""
     result = await list_buckets(mcp_context)
 
-    assert isinstance(result, ListBucketsOutput)
+    assert isinstance(result, GetBucketsOutput)
     for item in result.buckets:
         assert isinstance(item, BucketDetail)
 
@@ -58,7 +58,7 @@ async def test_list_buckets_output_format(mcp_client: Client, buckets: list[Buck
     assert len(result.content) == 1
     assert result.content[0].type == 'text'
     result_text = result.content[0].text
-    assert ListBucketsOutput.model_validate(toon_format.decode(result_text)) == ListBucketsOutput.model_validate(
+    assert GetBucketsOutput.model_validate(toon_format.decode(result_text)) == GetBucketsOutput.model_validate(
         result.structured_content
     )
     # check that the tables are presented in tabular format

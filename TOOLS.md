@@ -54,10 +54,9 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.
 
 ### Storage Tools
-- [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
+- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets.
 - [get_table](#get_table): Gets detailed information about a specific Keboola table, including fully qualified database name,
 column definitions, and metadata.
-- [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
 - [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
@@ -2588,29 +2587,34 @@ DATA VALIDATION:
 ---
 
 # Storage Tools
-<a name="get_bucket"></a>
-## get_bucket
+<a name="get_buckets"></a>
+## get_buckets
 **Annotations**: `read-only`
 
 **Tags**: `storage`
 
 **Description**:
 
-Gets detailed information about a specific bucket.
+Lists buckets or retrieves full details of specific buckets.
+
+EXAMPLES:
+- `bucket_ids=[]` → summaries of all buckets in the project
+- `bucket_ids=["id1", ...]` → full details of the buckets with the specified IDs
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "type": "string"
+    "bucket_ids": {
+      "default": [],
+      "description": "Filter by specific bucket IDs.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
-  "required": [
-    "bucket_id"
-  ],
   "type": "object"
 }
 ```
@@ -2662,26 +2666,6 @@ USE WHEN:
   "required": [
     "table_id"
   ],
-  "type": "object"
-}
-```
-
----
-<a name="list_buckets"></a>
-## list_buckets
-**Annotations**: `read-only`
-
-**Tags**: `storage`
-
-**Description**:
-
-Retrieves information about all buckets in the project.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
   "type": "object"
 }
 ```

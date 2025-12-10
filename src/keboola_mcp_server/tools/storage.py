@@ -3,7 +3,7 @@
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Annotated, Any, Literal, Optional, cast
+from typing import Annotated, Any, Literal, Sequence, cast
 
 import httpx
 from fastmcp import Context
@@ -17,7 +17,7 @@ from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_proper
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, toon_serializer
+from keboola_mcp_server.mcp import KeboolaMcpServer, process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -34,14 +34,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
     mcp.add_tool(
         FunctionTool.from_function(
-            get_bucket,
-            annotations=ToolAnnotations(readOnlyHint=True),
-            tags={STORAGE_TOOLS_TAG},
-        )
-    )
-    mcp.add_tool(
-        FunctionTool.from_function(
-            list_buckets,
+            get_buckets,
             annotations=ToolAnnotations(readOnlyHint=True),
             serializer=toon_serializer,
             tags={STORAGE_TOOLS_TAG},
@@ -81,7 +74,7 @@ def _sum(a: int | None, b: int | None) -> int | None:
         return (a or 0) + (b or 0)
 
 
-def _extract_description(values: dict[str, Any]) -> Optional[str]:
+def _extract_description(values: dict[str, Any]) -> str | None:
     """Extracts the description from values or metadata."""
     if not (description := values.get('description')):
         description = get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
@@ -96,30 +89,28 @@ class BucketDetail(BaseModel):
         validation_alias=AliasChoices('displayName', 'display_name', 'display-name'),
         serialization_alias='displayName',
     )
-    description: Optional[str] = Field(None, description='Description of the bucket.')
+    description: str | None = Field(None, description='Description of the bucket.')
     stage: str = Field(description='Stage of the bucket (in for input stage, out for output stage).')
     created: str = Field(description='Creation timestamp of the bucket.')
-    data_size_bytes: Optional[int] = Field(
+    data_size_bytes: int | None = Field(
         None,
         description='Total data size of the bucket in bytes.',
         validation_alias=AliasChoices('dataSizeBytes', 'data_size_bytes', 'data-size-bytes'),
         serialization_alias='dataSizeBytes',
     )
-    tables_count: Optional[int] = Field(
+    tables_count: int | None = Field(
         default=None,
         description='Number of tables in the bucket.',
         validation_alias=AliasChoices('tablesCount', 'tables_count', 'tables-count'),
         serialization_alias='tablesCount',
     )
-    links: Optional[list[Link]] = Field(default=None, description='The links relevant to the bucket.')
+    links: list[Link] | None = Field(default=None, description='The links relevant to the bucket.')
     source_project: str | None = Field(
         default=None, description='The source Keboola project of the linked bucket, None otherwise.'
     )
 
     # these are internal fields not meant to be exposed to LLMs
-    branch_id: Optional[str] = Field(
-        default=None, exclude=True, description='The ID of the branch the bucket belongs to.'
-    )
+    branch_id: str | None = Field(default=None, exclude=True, description='The ID of the branch the bucket belongs to.')
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
     # TODO: add prod_name too to strip the '{branch_id}-' prefix from the name'
 
@@ -149,8 +140,8 @@ class BucketDetail(BaseModel):
             'data_size_bytes': _sum(self.data_size_bytes, other.data_size_bytes),
             'tables_count': _sum(self.tables_count, other.tables_count),
         }
-        if links:
-            changes['links'] = links
+        if links is not None:
+            changes['links'] = links if links else None
         return self.model_copy(update=changes)
 
     @model_validator(mode='before')
@@ -189,15 +180,15 @@ class BucketDetail(BaseModel):
 
 
 class BucketCounts(BaseModel):
-    total_buckets: int = Field(..., description='Total number of buckets.')
-    input_buckets: int = Field(..., description='Number of input stage buckets.')
-    output_buckets: int = Field(..., description='Number of output stage buckets.')
+    total_buckets: int = Field(description='Total number of buckets.')
+    input_buckets: int = Field(description='Number of input stage buckets.')
+    output_buckets: int = Field(description='Number of output stage buckets.')
 
 
-class ListBucketsOutput(BaseModel):
-    buckets: list[BucketDetail] = Field(..., description='List of buckets.')
-    bucket_counts: BucketCounts = Field(..., description='Bucket counts by stage.')
-    links: list[Link] = Field(..., description='Links relevant to the bucket listing.')
+class GetBucketsOutput(BaseModel):
+    buckets: list[BucketDetail] = Field(description='List of buckets.')
+    links: list[Link] = Field(description='Links relevant to the bucket listing.')
+    bucket_counts: BucketCounts | None = Field(default=None, description='Bucket counts by stage.')
 
 
 class TableColumnInfo(BaseModel):
@@ -257,9 +248,7 @@ class TableDetail(BaseModel):
     )
 
     # these are internal fields not meant to be exposed to LLMs
-    branch_id: Optional[str] = Field(
-        default=None, exclude=True, description='The ID of the branch the bucket belongs to.'
-    )
+    branch_id: str | None = Field(default=None, exclude=True, description='The ID of the branch the bucket belongs to.')
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
 
     @model_validator(mode='before')
@@ -302,8 +291,8 @@ class ListTablesOutput(BaseModel):
 class UpdateItemResult(BaseModel):
     item_id: str = Field(description='The storage item identifier that was updated.')
     success: bool = Field(description='Whether the update succeeded.')
-    error: Optional[str] = Field(None, description='Error message if the update failed.')
-    timestamp: Optional[datetime] = Field(None, description='Timestamp of the update if successful.')
+    error: str | None = Field(default=None, description='Error message if the update failed.')
+    timestamp: datetime | None = Field(default=None, description='Timestamp of the update if successful.')
 
 
 class UpdateDescriptionsOutput(BaseModel):
@@ -326,9 +315,9 @@ class StorageItemId(BaseModel):
     """Represents a parsed storage item ID."""
 
     item_type: Literal['bucket', 'table', 'column'] = Field(description='Type of storage item.')
-    bucket_id: Optional[str] = Field(default=None, description='Bucket identifier.')
-    table_id: Optional[str] = Field(default=None, description='Table identifier.')
-    column_name: Optional[str] = Field(default=None, description='Column name.')
+    bucket_id: str | None = Field(default=None, description='Bucket identifier.')
+    table_id: str | None = Field(default=None, description='Table identifier.')
+    column_name: str | None = Field(default=None, description='Column name.')
 
 
 class DescriptionUpdateGroups(BaseModel):
@@ -388,20 +377,25 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
 
 async def _combine_buckets(
     client: KeboolaClient,
-    links_manager: ProjectLinksManager,
+    links_manager: ProjectLinksManager | None,
     prod_bucket: BucketDetail | None,
     dev_bucket: BucketDetail | None,
 ) -> BucketDetail:
+    def _links(_id: str, name: str) -> list[Link] | None:
+        if links_manager:
+            return [links_manager.get_bucket_detail_link(_id, name)]
+        else:
+            return None
 
     if prod_bucket and dev_bucket:
         # generate a URL link to the dev bucket but with the prod bucket's name
-        links = links_manager.get_bucket_links(dev_bucket.id, prod_bucket.name or prod_bucket.id)
-        bucket = prod_bucket.shade_by(dev_bucket, client.branch_id, links)
+        links = _links(dev_bucket.id, prod_bucket.name or prod_bucket.id)
+        bucket = prod_bucket.shade_by(dev_bucket, client.branch_id, links or [])
     elif prod_bucket:
-        links = links_manager.get_bucket_links(prod_bucket.id, prod_bucket.name or prod_bucket.id)
+        links = _links(prod_bucket.id, prod_bucket.name or prod_bucket.id)
         bucket = prod_bucket.model_copy(update={'links': links})
     elif dev_bucket:
-        links = links_manager.get_bucket_links(dev_bucket.id, dev_bucket.name or dev_bucket.id)
+        links = _links(dev_bucket.id, dev_bucket.name or dev_bucket.id)
         bucket = dev_bucket.model_copy(update={'id': dev_bucket.prod_id, 'branch_id': None, 'links': links})
     else:
         raise ValueError('No buckets specified.')
@@ -410,26 +404,39 @@ async def _combine_buckets(
 
 
 @tool_errors()
-async def get_bucket(
-    bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
-) -> BucketDetail:
-    """Gets detailed information about a specific bucket."""
+async def get_buckets(
+    ctx: Context, bucket_ids: Annotated[Sequence[str], Field(description='Filter by specific bucket IDs.')] = tuple()
+) -> GetBucketsOutput:
+    """
+    Lists buckets or retrieves full details of specific buckets.
+
+    EXAMPLES:
+    - `bucket_ids=[]` → summaries of all buckets in the project
+    - `bucket_ids=["id1", ...]` → full details of the buckets with the specified IDs
+    """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
-    if not prod_bucket and not dev_bucket:
-        raise ValueError(f'Bucket not found: {bucket_id}')
+    if bucket_ids:
+
+        async def _fetch_bucket_detail(bucket_id: str) -> BucketDetail:
+            prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
+            if prod_bucket or dev_bucket:
+                return await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
+            else:
+                # TODO: propagate the "bucket not found" info to the tool results without rising the exception
+                raise ValueError(f'Bucket not found: {bucket_id}')
+
+        results = await process_concurrently(bucket_ids, _fetch_bucket_detail)
+        buckets = unwrap_results(results, 'Failed to fetch one or more buckets')
+        return GetBucketsOutput(buckets=buckets, links=[links_manager.get_bucket_dashboard_link()])
+
     else:
-        return await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
+        return await _list_buckets(client, links_manager)
 
 
-@tool_errors()
-async def list_buckets(ctx: Context) -> ListBucketsOutput:
+async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManager) -> GetBucketsOutput:
     """Retrieves information about all buckets in the project."""
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-
     raw_bucket_data = await client.storage_client.bucket_list(include=['metadata'])
 
     # group buckets by their ID as it would appear on the production branch
@@ -456,8 +463,8 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
             raise Exception(f'No buckets in the group: prod_id={prod_id}')
 
         else:
-            bucket = await _combine_buckets(client, links_manager, prod_bucket, next(iter(dev_buckets), None))
-            buckets.append(bucket.model_copy(update={'links': None}))  # no links when listing buckets
+            bucket = await _combine_buckets(client, None, prod_bucket, next(iter(dev_buckets), None))
+            buckets.append(bucket)
 
     # Count buckets by stage (only count input, derive output)
     total_count = len(buckets)
@@ -466,7 +473,7 @@ async def list_buckets(ctx: Context) -> ListBucketsOutput:
 
     bucket_counts = BucketCounts(total_buckets=total_count, input_buckets=input_count, output_buckets=output_count)
 
-    return ListBucketsOutput(
+    return GetBucketsOutput(
         buckets=buckets, bucket_counts=bucket_counts, links=[links_manager.get_bucket_dashboard_link()]
     )
 
@@ -567,7 +574,7 @@ async def get_table(
     bucket_info = cast(dict[str, Any], raw_table.get('bucket', {}))
     bucket_id = cast(str, bucket_info.get('id', ''))
     prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
-    bucket = await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
+    bucket = await _combine_buckets(client, None, prod_bucket, dev_bucket)
 
     table_name = cast(str, raw_table.get('name', ''))
     links = links_manager.get_table_links(bucket_id, bucket.name, table_name)
@@ -610,7 +617,10 @@ async def list_tables(
             tables_by_prod_id[table.prod_id] = table.model_copy(update={'id': table.prod_id, 'branch_id': None})
 
     bucket = await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
-    return ListTablesOutput(tables=list(tables_by_prod_id.values()), links=bucket.links or [])
+    return ListTablesOutput(
+        tables=list(tables_by_prod_id.values()),
+        links=(bucket.links or []) + [links_manager.get_bucket_dashboard_link()],
+    )
 
 
 def _parse_item_id(item_id: str) -> StorageItemId:
