@@ -188,6 +188,7 @@ class BucketCounts(BaseModel):
 class GetBucketsOutput(BaseModel):
     buckets: list[BucketDetail] = Field(description='List of buckets.')
     links: list[Link] = Field(description='Links relevant to the bucket listing.')
+    buckets_not_found: list[str] | None = Field(default=None, description='List of bucket IDs that were not found.')
     bucket_counts: BucketCounts | None = Field(default=None, description='Bucket counts by stage.')
 
 
@@ -419,17 +420,28 @@ async def get_buckets(
 
     if bucket_ids:
 
-        async def _fetch_bucket_detail(bucket_id: str) -> BucketDetail:
+        async def _fetch_bucket_detail(bucket_id: str) -> BucketDetail | str:
             prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
             if prod_bucket or dev_bucket:
                 return await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
             else:
-                # TODO: propagate the "bucket not found" info to the tool results without rising the exception
-                raise ValueError(f'Bucket not found: {bucket_id}')
+                return bucket_id
 
         results = await process_concurrently(bucket_ids, _fetch_bucket_detail)
-        buckets = unwrap_results(results, 'Failed to fetch one or more buckets')
-        return GetBucketsOutput(buckets=buckets, links=[links_manager.get_bucket_dashboard_link()])
+        buckets: list[BucketDetail] = []
+        missing_ids: list[str] = []
+
+        for bucket_detail_or_id in unwrap_results(results, 'Failed to fetch one or more buckets'):
+            if isinstance(bucket_detail_or_id, BucketDetail):
+                buckets.append(bucket_detail_or_id)
+            elif isinstance(bucket_detail_or_id, str):
+                missing_ids.append(bucket_detail_or_id)
+
+        return GetBucketsOutput(
+            buckets=buckets,
+            buckets_not_found=missing_ids if missing_ids else None,
+            links=[links_manager.get_bucket_dashboard_link()],
+        )
 
     else:
         return await _list_buckets(client, links_manager)

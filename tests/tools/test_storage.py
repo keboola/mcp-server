@@ -562,12 +562,13 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                 ],
             ),
         ),
+        (None, 'in.c-not-existing', None),
     ],
 )
 async def test_get_bucket(
     branch_id: str | None,
     bucket_id: str,
-    expected_bucket: BucketDetail,
+    expected_bucket: BucketDetail | None,
     mocker: MockerFixture,
     mcp_context_client: Context,
 ):
@@ -588,16 +589,29 @@ async def test_get_bucket(
         dashboard_url = 'https://connection.test.keboola.com/admin/projects/69420/storage'
 
     assert isinstance(result, GetBucketsOutput)
-    assert result == GetBucketsOutput(
-        buckets=[expected_bucket],
-        links=[
-            Link(
-                type='ui-dashboard',
-                title='Buckets in the project',
-                url=dashboard_url,
-            )
-        ],
-    )
+    if expected_bucket is not None:
+        assert result == GetBucketsOutput(
+            buckets=[expected_bucket],
+            links=[
+                Link(
+                    type='ui-dashboard',
+                    title='Buckets in the project',
+                    url=dashboard_url,
+                )
+            ],
+        )
+    else:
+        assert result == GetBucketsOutput(
+            buckets=[],
+            buckets_not_found=[bucket_id],
+            links=[
+                Link(
+                    type='ui-dashboard',
+                    title='Buckets in the project',
+                    url=dashboard_url,
+                )
+            ],
+        )
 
 
 @pytest.mark.asyncio
