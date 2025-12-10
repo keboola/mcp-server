@@ -1,12 +1,16 @@
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
+    DATA_APP_COMPONENT_ID,
+    FLOW_TYPES,
     FlowType,
     KeboolaClient,
 )
+from keboola_mcp_server.clients.storage import ItemType
+from keboola_mcp_server.tools.components.model import ComponentType
 
 URLType = Literal['ui-detail', 'ui-dashboard', 'docs']
 
@@ -51,6 +55,65 @@ class ProjectLinksManager:
         parts.append(path)
         return '/'.join(parts)
 
+    def get_links(
+        self,
+        *,
+        bucket_id: str | None = None,
+        table_id: str | None = None,
+        component_id: str | None = None,
+        configuration_id: str | None = None,
+        name: str | None = None,
+        component_type: ItemType | ComponentType | None = None,
+        **kwargs: Any,
+    ) -> list[Link]:
+        """
+        Get the most relevant links for a resource based on the provided identifiers.
+
+        The function infers the type of the resource from the supplied IDs. For example,
+        a `component_id` matching flow component IDs is treated as a flow, while component
+        IDs containing "transformation" are treated as transformations.
+        """
+        if table_id:
+            return [self.get_table_detail_link_from_table_id(table_id=table_id)]
+
+        if bucket_id:
+            return [self.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=name or '')]
+
+        if component_id and configuration_id:
+            # Transformations
+            if component_type == 'transformation':
+                return [
+                    self.get_transformation_config_link(
+                        transformation_type=component_type,
+                        transformation_id=configuration_id,
+                        transformation_name=name or '',
+                    )
+                ]
+            # Flows
+            if component_id in FLOW_TYPES:
+                flow_type = cast(FlowType, component_id)
+                return [self.get_flow_detail_link(flow_id=configuration_id, flow_name=name or '', flow_type=flow_type)]
+            # Data Apps
+            if component_id == DATA_APP_COMPONENT_ID:
+                return [
+                    self.get_data_app_config_link(
+                        configuration_id=configuration_id,
+                        configuration_name=name or '',
+                        uses_basic_authentication=False,
+                    )
+                ]
+            # Other components
+            return [
+                self.get_component_config_link(
+                    component_id=component_id, configuration_id=configuration_id, configuration_name=name or ''
+                )
+            ]
+
+        if component_id:
+            return [self.get_config_dashboard_link(component_id=component_id, component_name=name or '')]
+
+        return []
+
     # --- Project ---
     def get_project_detail_link(self) -> Link:
         return Link.detail(title='Project Dashboard', url=self._url(''))
@@ -82,7 +145,31 @@ class ProjectLinksManager:
         ]
 
     # --- Components ---
-    def get_component_config_link(self, component_id: str, configuration_id: str, configuration_name: str) -> Link:
+    def get_component_config_link(
+        self,
+        component_id: str,
+        configuration_id: str,
+        configuration_name: str,
+        component_type: ComponentType | ItemType | None = None,
+    ) -> Link:
+        if component_type == 'transformation':
+            self.get_transformation_config_link(
+                transformation_type=component_type,
+                transformation_id=configuration_id,
+                transformation_name=configuration_name,
+            )
+        if component_type == 'application':
+            return self.get_data_app_config_link(
+                configuration_id=configuration_id,
+                configuration_name=configuration_name,
+                uses_basic_authentication=False,
+            )
+        if component_type == 'flow':
+            return self.get_flow_detail_link(
+                flow_id=component_id,
+                flow_name=configuration_name,
+                flow_type=component_type,
+            )
         return Link.detail(
             title=f'Configuration: {configuration_name}', url=self._url(f'components/{component_id}/{configuration_id}')
         )

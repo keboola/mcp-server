@@ -261,46 +261,6 @@ async def _fetch_configs(
                     )
 
 
-def _get_links(hit: SearchHit, links_manager: ProjectLinksManager) -> list[Link]:
-    """Gets the links for a search hit based on the item type."""
-    links = []
-    if hit.item_type == 'bucket' and hit.bucket_id:
-        links.append(links_manager.get_bucket_detail_link(bucket_id=hit.bucket_id, bucket_name=hit.name or ''))
-    elif hit.item_type == 'table' and hit.table_id:
-        links.append(links_manager.get_table_detail_link_from_table_id(table_id=hit.table_id))
-    elif hit.item_type == 'configuration' and hit.component_id and hit.configuration_id:
-        links.append(
-            links_manager.get_component_config_link(
-                component_id=hit.component_id, configuration_id=hit.configuration_id, configuration_name=hit.name or ''
-            )
-        )
-    elif hit.item_type == 'configuration' and hit.component_id:
-        links.append(
-            links_manager.get_config_dashboard_link(component_id=hit.component_id, component_name=hit.name or '')
-        )
-    elif hit.item_type == 'transformation' and hit.component_id and hit.configuration_id:
-        links.append(
-            links_manager.get_transformation_config_link(
-                transformation_type=hit.component_id,
-                transformation_id=hit.configuration_id,
-                transformation_name=hit.name or '',
-            )
-        )
-    elif hit.item_type == 'flow' and hit.configuration_id and hit.component_id:
-        links.append(
-            links_manager.get_flow_detail_link(
-                flow_id=hit.configuration_id, flow_name=hit.name or '', flow_type=hit.component_id
-            )
-        )
-    elif hit.item_type == 'configuration-row' and hit.component_id and hit.configuration_id:
-        links.append(
-            links_manager.get_component_config_link(
-                component_id=hit.component_id, configuration_id=hit.configuration_id, configuration_name=hit.name or ''
-            )
-        )
-    return links
-
-
 @tool_errors()
 async def search(
     ctx: Context,
@@ -443,7 +403,17 @@ async def search(
     # Get links for the hits
     links_manager = await ProjectLinksManager.from_client(client)
     for hit in paginated_hits:
-        hit.links.extend(_get_links(hit, links_manager))
+        hit.links.extend(
+            links_manager.get_links(
+                component_type=hit.item_type,
+                bucket_id=hit.bucket_id,
+                table_id=hit.table_id,
+                component_id=hit.component_id,
+                configuration_id=hit.configuration_id,
+                configuration_row_id=hit.configuration_row_id,
+                name=hit.name,
+            )
+        )
 
     # TODO: Should we report the total number of hits?
     return paginated_hits
@@ -457,28 +427,20 @@ class SuggestedComponentOutput(BaseModel):
     links: list[Link] = Field(description='Links to the component.', default_factory=list)
 
 
-class FindComponentOutput(BaseModel):
-    """Output of find_component_id tool."""
-
-    components: list[SuggestedComponentOutput] = Field(
-        description='List of suggested components.', default_factory=list
-    )
-
-
 @tool_errors()
 async def find_component_id(
     ctx: Context,
     query: Annotated[str, Field(description='Natural language query to find the requested component.')],
-) -> FindComponentOutput:
+) -> list[SuggestedComponentOutput]:
     """
     Returns list of component IDs that match the given query.
 
-    USAGE:
+    WHEN TO USE:
     - Use when you want to find the component for a specific purpose.
 
-    EXAMPLES:
-    - user_input: `I am looking for a salesforce extractor component`
-        - returns a list of component IDs that match the query, ordered by relevance/best match.
+    USAGE EXAMPLES:
+    - user_input: "I am looking for a salesforce extractor component"
+      → Returns a list of component IDs that match the query, ordered by relevance/best match.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -490,4 +452,4 @@ async def find_component_id(
         components.append(
             SuggestedComponentOutput(component_id=component.component_id, score=component.score, links=links)
         )
-    return FindComponentOutput(components=components)
+    return components

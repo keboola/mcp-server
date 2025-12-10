@@ -12,7 +12,6 @@ from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.search import (
-    FindComponentOutput,
     SearchHit,
     SuggestedComponentOutput,
     find_component_id,
@@ -606,8 +605,8 @@ async def test_find_component_id(mocker: MockerFixture, mcp_context_client: Cont
     query = 'I am looking for a salesforce extractor component'
     result = await find_component_id(ctx=mcp_context_client, query=query)
 
-    assert isinstance(result, FindComponentOutput)
-    assert result.components == [
+    assert isinstance(result, list)
+    assert result == [
         SuggestedComponentOutput(
             component_id='keboola.ex-salesforce',
             score=0.95,

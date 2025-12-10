@@ -113,22 +113,14 @@ async def list_configs_by_types(
             for api_config in raw_configuration_responses:
                 cfg_summary = ConfigSummary.from_api_response(api_config)
                 cfg_root = cfg_summary.configuration_root
-                if comp_type == 'transformation':
-                    cfg_summary.links.append(
-                        links_manager.get_transformation_config_link(
-                            transformation_type=cfg_root.component_id,
-                            transformation_id=cfg_root.configuration_id,
-                            transformation_name=cfg_root.name,
-                        )
+                cfg_summary.links.append(
+                    links_manager.get_component_config_link(
+                        component_id=cfg_root.component_id,
+                        configuration_id=cfg_root.configuration_id,
+                        configuration_name=cfg_root.name,
+                        component_type=comp_type,
                     )
-                else:
-                    cfg_summary.links.append(
-                        links_manager.get_component_config_link(
-                            component_id=cfg_root.component_id,
-                            configuration_id=cfg_root.configuration_id,
-                            configuration_name=cfg_root.name,
-                        )
-                    )
+                )
                 configuration_summaries.append(cfg_summary)
 
             # Process component
@@ -190,22 +182,14 @@ async def list_configs_by_ids(
         configuration_summaries = []
         for api_config in raw_configuration_responses:
             cfg_summary = ConfigSummary.from_api_response(api_config)
-            if domain_component.component_type == 'transformation':
-                cfg_summary.links.append(
-                    links_manager.get_transformation_config_link(
-                        transformation_type=cfg_summary.configuration_root.component_id,
-                        transformation_id=cfg_summary.configuration_root.configuration_id,
-                        transformation_name=cfg_summary.configuration_root.name,
-                    )
+            cfg_summary.links.append(
+                links_manager.get_component_config_link(
+                    component_id=cfg_summary.configuration_root.component_id,
+                    configuration_id=cfg_summary.configuration_root.configuration_id,
+                    configuration_name=cfg_summary.configuration_root.name,
+                    component_type=domain_component.component_type,
                 )
-            else:
-                cfg_summary.links.append(
-                    links_manager.get_component_config_link(
-                        component_id=cfg_summary.configuration_root.component_id,
-                        configuration_id=cfg_summary.configuration_root.configuration_id,
-                        configuration_name=cfg_summary.configuration_root.name,
-                    )
-                )
+            )
             configuration_summaries.append(cfg_summary)
 
         components_with_configurations.append(

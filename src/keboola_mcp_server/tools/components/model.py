@@ -39,14 +39,13 @@ from typing import Annotated, Any, Literal, Optional, Sequence, Union, get_args
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
-from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
+from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
 
 # ============================================================================
 # TYPE DEFINITIONS
 # ============================================================================
 
-ComponentType = Literal['application', 'extractor', 'transformation', 'writer']
 ALL_COMPONENT_TYPES = tuple(component_type for component_type in get_args(ComponentType))
 
 

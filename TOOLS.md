@@ -2341,12 +2341,12 @@ to establish the project context before using other tools.
 
 Returns list of component IDs that match the given query.
 
-USAGE:
+WHEN TO USE:
 - Use when you want to find the component for a specific purpose.
 
-EXAMPLES:
-- user_input: `I am looking for a salesforce extractor component`
-    - returns a list of component IDs that match the query, ordered by relevance/best match.
+USAGE EXAMPLES:
+- user_input: "I am looking for a salesforce extractor component"
+  → Returns a list of component IDs that match the query, ordered by relevance/best match.
 
 
 **Input JSON Schema**:
