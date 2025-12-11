@@ -1,5 +1,6 @@
 import csv
 import logging
+from typing import Any, cast
 
 import pytest
 import toon_format
@@ -12,13 +13,11 @@ from keboola_mcp_server.tools.storage import (
     BucketDetail,
     DescriptionUpdate,
     GetBucketsOutput,
-    ListTablesOutput,
+    GetTablesOutput,
     TableDetail,
     UpdateDescriptionsOutput,
-    get_bucket,
-    get_table,
-    list_buckets,
-    list_tables,
+    get_buckets,
+    get_tables,
     update_descriptions,
 )
 
@@ -26,9 +25,9 @@ LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
-    """Tests that `list_buckets` returns a list of `BucketDetail` instances."""
-    result = await list_buckets(mcp_context)
+async def test_get_buckets(mcp_context: Context, buckets: list[BucketDef]):
+    """Tests that `get_buckets` returns a list of `BucketDetail` instances."""
+    result = await get_buckets(mcp_context)
 
     assert isinstance(result, GetBucketsOutput)
     for item in result.buckets:
@@ -52,9 +51,9 @@ async def test_list_buckets(mcp_context: Context, buckets: list[BucketDef]):
 
 
 @pytest.mark.asyncio
-async def test_list_buckets_output_format(mcp_client: Client, buckets: list[BucketDef]):
-    """Tests that `list_buckets` returns the tool output in TOON format."""
-    result = await mcp_client.call_tool('list_buckets')
+async def test_get_buckets_output_format(mcp_client: Client, buckets: list[BucketDef]):
+    """Tests that `get_buckets` returns the tool output in TOON format."""
+    result = await mcp_client.call_tool('get_buckets')
     assert len(result.content) == 1
     assert result.content[0].type == 'text'
     result_text = result.content[0].text
@@ -72,63 +71,67 @@ async def test_list_buckets_output_format(mcp_client: Client, buckets: list[Buck
 async def test_get_bucket(mcp_context: Context, buckets: list[BucketDef]):
     """Tests that for each test bucket, `get_bucket` returns a `BucketDetail` instance."""
     for bucket in buckets:
-        result = await get_bucket(bucket.bucket_id, mcp_context)
-        assert isinstance(result, BucketDetail)
-        assert result.id == bucket.bucket_id
+        result = await get_buckets(mcp_context, [bucket.bucket_id])
+        assert isinstance(result, GetBucketsOutput)
+        assert len(result.buckets) == 1
+        assert result.buckets[0].id == bucket.bucket_id
 
 
 @pytest.mark.asyncio
 async def test_get_table(mcp_context: Context, tables: list[TableDef]):
     """Tests that for each test table, `get_table` returns a `TableDetail` instance with correct fields."""
 
-    for table in tables:
-        with table.file_path.open('r', encoding='utf-8') as f:
+    for table_def in tables:
+        with table_def.file_path.open('r', encoding='utf-8') as f:
             reader = csv.reader(f)
-            columns = frozenset(next(reader))
+            col_names = frozenset(next(reader))
 
-        result = await get_table(table.table_id, mcp_context)
-        assert isinstance(result, TableDetail)
-        assert result.id == table.table_id
-        assert result.name == table.table_name
-        assert result.columns is not None
-        assert {col.name for col in result.columns} == columns
+        result = await get_tables(mcp_context, table_ids=[table_def.table_id])
+        assert isinstance(result, GetTablesOutput)
+        assert len(result.tables) == 1
+        assert result.tables[0].id == table_def.table_id
+        assert result.tables[0].name == table_def.table_name
+        assert result.tables[0].columns is not None
+        assert {col.name for col in result.tables[0].columns} == col_names
 
 
 @pytest.mark.asyncio
-async def test_list_tables(mcp_context: Context, tables: list[TableDef], buckets: list[BucketDef]):
-    """Tests that `list_tables` returns the correct tables for each bucket."""
+async def test_get_tables(mcp_context: Context, tables: list[TableDef], buckets: list[BucketDef]):
+    """Tests that `get_tables` returns the correct tables for each bucket."""
     # Group tables by bucket to verify counts
-    tables_by_bucket = {}
-    for table in tables:
-        if table.bucket_id not in tables_by_bucket:
-            tables_by_bucket[table.bucket_id] = []
-        tables_by_bucket[table.bucket_id].append(table)
+    tables_by_bucket: dict[str, list[TableDef]] = {}
+    for table_def in tables:
+        if table_def.bucket_id not in tables_by_bucket:
+            tables_by_bucket[table_def.bucket_id] = []
+        tables_by_bucket[table_def.bucket_id].append(table_def)
 
     for bucket in buckets:
-        result = await list_tables(bucket.bucket_id, mcp_context)
+        result = await get_tables(mcp_context, [bucket.bucket_id])
 
-        assert isinstance(result, ListTablesOutput)
-        for item in result.tables:
-            assert isinstance(item, TableDetail)
+        assert isinstance(result, GetTablesOutput)
+        for table in result.tables:
+            assert isinstance(table, TableDetail)
 
         # Verify the count matches expected tables for this bucket
         expected_tables = tables_by_bucket.get(bucket.bucket_id, [])
         assert len(result.tables) == len(expected_tables)
 
         # Verify table IDs match
-        result_table_ids = {table.id for table in result.tables}
-        expected_table_ids = {table.table_id for table in expected_tables}
+        result_table_ids = {table.id for table in cast(list[TableDetail], result.tables)}
+        expected_table_ids = {table_def.table_id for table_def in expected_tables}
         assert result_table_ids == expected_table_ids
 
 
 @pytest.mark.asyncio
-async def test_list_tables_output_format(mcp_client: Client, tables: list[TableDef], buckets: list[BucketDef]):
-    """Tests that `list_tables` returns the tool output in TOON format."""
-    result = await mcp_client.call_tool('list_tables', {'bucket_id': buckets[0].bucket_id})
+async def test_get_tables_output_format(mcp_client: Client, tables: list[TableDef], buckets: list[BucketDef]):
+    """Tests that `get_tables` returns the tool output in TOON format."""
+    result = await mcp_client.call_tool('get_tables', {'bucket_ids': [buckets[0].bucket_id]})
     assert len(result.content) == 1
     assert result.content[0].type == 'text'
     result_text = result.content[0].text
-    assert toon_format.decode(result_text)
+    assert GetTablesOutput.model_validate(toon_format.decode(result_text)) == GetTablesOutput.model_validate(
+        result.structured_content
+    )
     assert result_text.startswith(
         'tables[1]{id,name,display_name,description,primary_key,created,rows_count,'
         'data_size_bytes,columns,fully_qualified_name,links,source_project}:'
@@ -210,8 +213,8 @@ async def test_update_descriptions_table_column(mcp_context: Context, tables: li
 
     with table.file_path.open('r', encoding='utf-8') as f:
         reader = csv.reader(f)
-        columns = next(reader)
-    column_name = columns[0]
+        col_names = next(reader)
+    column_name = col_names[0]
 
     column_id = f'{table.table_id}.{column_name}'
     result = await update_descriptions(
@@ -232,7 +235,10 @@ async def test_update_descriptions_table_column(mcp_context: Context, tables: li
     assert column_result.timestamp is not None
 
     # Verify the description is available in the table detail
-    table_detail = await get_table(table.table_id, mcp_context)
+    tables_output = await get_tables(mcp_context, table_ids=[table.table_id])
+    assert isinstance(tables_output, GetTablesOutput)
+    assert len(tables_output.tables) == 1
+    table_detail = tables_output.tables[0]
     assert table_detail.columns is not None
     column_detail = next((col for col in table_detail.columns if col.name == column_name), None)
     assert column_detail is not None
@@ -251,7 +257,7 @@ async def test_update_descriptions_mixed_types(mcp_context: Context, buckets: li
         columns = next(reader)
     column_name = columns[0]
 
-    md_ids: list[str] = []
+    md_ids: list[tuple[str, str, str]] = []
     client = KeboolaClient.from_state(mcp_context.session.state)
     try:
         result = await update_descriptions(
@@ -292,7 +298,7 @@ async def test_update_descriptions_mixed_types(mcp_context: Context, buckets: li
         # Verify column description was updated
         table_detail = await client.storage_client.table_detail(table.table_id)
         assert 'columnMetadata' in table_detail
-        column_metadata = table_detail['columnMetadata']
+        column_metadata = cast(dict[str, list[dict[str, Any]]], table_detail['columnMetadata'])
         assert column_name in column_metadata
         column_entry = next(
             (entry for entry in column_metadata[column_name] if entry.get('key') == MetadataField.DESCRIPTION), None
