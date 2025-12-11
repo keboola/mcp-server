@@ -3,7 +3,7 @@
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Annotated, Any, Literal, Sequence, cast
+from typing import Annotated, Any, Iterable, Literal, Sequence, cast
 
 import httpx
 from fastmcp import Context
@@ -42,14 +42,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     )
     mcp.add_tool(
         FunctionTool.from_function(
-            get_table,
-            annotations=ToolAnnotations(readOnlyHint=True),
-            tags={STORAGE_TOOLS_TAG},
-        )
-    )
-    mcp.add_tool(
-        FunctionTool.from_function(
-            list_tables,
+            get_tables,
             annotations=ToolAnnotations(readOnlyHint=True),
             serializer=toon_serializer,
             tags={STORAGE_TOOLS_TAG},
@@ -191,6 +184,17 @@ class GetBucketsOutput(BaseModel):
     buckets_not_found: list[str] | None = Field(default=None, description='List of bucket IDs that were not found.')
     bucket_counts: BucketCounts | None = Field(default=None, description='Bucket counts by stage.')
 
+    def pack_links(self) -> 'GetBucketsOutput':
+        """Move links from particular BucketDetail objects to GetBucketsOutput object to optimize TOON serialization."""
+        buckets: list[BucketDetail] = []
+        links: set[Link] = set()
+        for bucket in self.buckets:
+            links.update(bucket.links or [])
+            buckets.append(bucket.model_copy(update={'links': None}))
+        links.update(self.links)
+
+        return self.model_copy(update={'buckets': buckets, 'links': sorted(links, key=lambda x: (x.type, x.title))})
+
 
 class TableColumnInfo(BaseModel):
     name: str = Field(description='Plain name of the column.')
@@ -284,9 +288,20 @@ class TableDetail(BaseModel):
         return '|'.join(primary_key) if primary_key else None
 
 
-class ListTablesOutput(BaseModel):
+class GetTablesOutput(BaseModel):
     tables: list[TableDetail] = Field(description='List of tables.')
     links: list[Link] = Field(description='Links relevant to the table listing.')
+
+    def pack_links(self) -> 'GetTablesOutput':
+        """Move links from particular TableDetail objects to GetTablesOutput object to optimize TOON serialization."""
+        tables: list[TableDetail] = []
+        links: set[Link] = set()
+        for table in self.tables:
+            links.update(table.links or [])
+            tables.append(table.model_copy(update={'links': None}))
+        links.update(self.links)
+
+        return GetTablesOutput(tables=tables, links=sorted(links, key=lambda x: (x.type, x.title)))
 
 
 class UpdateItemResult(BaseModel):
@@ -437,14 +452,16 @@ async def get_buckets(
             elif isinstance(bucket_detail_or_id, str):
                 missing_ids.append(bucket_detail_or_id)
 
-        return GetBucketsOutput(
+        output = GetBucketsOutput(
             buckets=buckets,
             buckets_not_found=missing_ids if missing_ids else None,
             links=[links_manager.get_bucket_dashboard_link()],
         )
 
     else:
-        return await _list_buckets(client, links_manager)
+        output = await _list_buckets(client, links_manager)
+
+    return output.pack_links()
 
 
 async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManager) -> GetBucketsOutput:
@@ -475,7 +492,7 @@ async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManage
             raise Exception(f'No buckets in the group: prod_id={prod_id}')
 
         else:
-            bucket = await _combine_buckets(client, None, prod_bucket, next(iter(dev_buckets), None))
+            bucket = await _combine_buckets(client, links_manager, prod_bucket, next(iter(dev_buckets), None))
             buckets.append(bucket)
 
     # Count buckets by stage (only count input, derive output)
@@ -491,23 +508,20 @@ async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManage
 
 
 @tool_errors()
-async def get_table(
-    table_id: Annotated[str, Field(description='Unique ID of the table.')], ctx: Context
-) -> TableDetail:
+async def get_tables(
+    ctx: Context,
+    bucket_ids: Annotated[Sequence[str], Field(description='Filter by specific bucket IDs.')] = tuple(),
+    table_ids: Annotated[Sequence[str], Field(description='Filter by specific table IDs.')] = tuple(),
+) -> GetTablesOutput:
     """
-    Gets detailed information about a specific Keboola table, including fully qualified database name,
+    Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
     column definitions, and metadata.
 
     RETURNS:
-    - Table metadata: ID, name, description, primary key column names, storage backend details
-    - Column information for each column:
-      - name: Column name
-      - database_native_type: Backend-specific type (e.g., VARCHAR(255), TIMESTAMP_NTZ, DECIMAL(20,2))
-      - keboola_base_type: Storage-agnostic type (STRING, INTEGER, NUMERIC, FLOAT, BOOLEAN, DATE, TIMESTAMP)
-      - nullable: Whether the column accepts NULL values
-    - Fully qualified database identifier for use in SQL queries
+    - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
+    - With `table_ids`: Full details including columns, data types, and fully qualified database names.
 
-    DATA TYPE FIELDS:
+    COLUMN DATA TYPES:
     - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
       with precision, scale, and other implementation details
     - keboola_base_type: Standardized type indicating the semantic data type. May not always be
@@ -515,13 +529,41 @@ async def get_table(
       a column with database_native_type VARCHAR might have keboola_base_type INTEGER, indicating
       it stores integer values despite being stored as text in the backend.
 
-    USE WHEN:
-    - You need column names and data types for writing SQL queries
-    - You need the fully qualified table name for database operations
-    - You want to understand the table schema before creating transformations or components
+    EXAMPLES:
+    - `bucket_ids=["id1", ...]` → summary info of the tables in the buckets with the specified IDs
+    - `table_ids=["id1", ...]` → detailed info of the tables specified by their IDs
+    - `bucket_ids=[]` and `table_ids=[]` → empty list; you have to specify at least one filter
+
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
 
+    tables_by_id: dict[str, TableDetail] = {}
+
+    if bucket_ids:
+        for table in await _list_tables(bucket_ids, client, links_manager):
+            tables_by_id[table.id] = table
+
+    if table_ids:
+
+        async def _fetch_table_detail(_table_id: str) -> TableDetail:
+            return await _get_table(_table_id, client, workspace_manager, links_manager)
+
+        results = await process_concurrently(table_ids, _fetch_table_detail)
+        tables = unwrap_results(results, 'Failed to fetch one or more tables')
+
+        for table in tables:
+            tables_by_id[table.id] = table
+
+    return GetTablesOutput(
+        tables=list(tables_by_id.values()), links=[links_manager.get_bucket_dashboard_link()]
+    ).pack_links()
+
+
+async def _get_table(
+    table_id: str, client: KeboolaClient, workspace_manager: WorkspaceManager, links_manager: ProjectLinksManager
+) -> TableDetail:
     prod_table: JsonDict | None = await _get_table_detail(client.storage_client, table_id)
     if prod_table:
         branch_id = get_metadata_property(prod_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
@@ -541,13 +583,13 @@ async def get_table(
 
     raw_table = dev_table or prod_table
     if not raw_table:
+        # TODO: propagate the "table not found" info into the results without raising an exception
         raise ValueError(f'Table not found: {table_id}')
 
     raw_columns = cast(list[str], raw_table.get('columns', []))
     raw_column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))
     raw_primary_key = cast(list[str], raw_table.get('primaryKey', []))
 
-    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     sql_dialect = await workspace_manager.get_sql_dialect()
     db_table_info = await workspace_manager.get_table_info(raw_table)
 
@@ -581,15 +623,11 @@ async def get_table(
             )
         )
 
-    links_manager = await ProjectLinksManager.from_client(client)
-
     bucket_info = cast(dict[str, Any], raw_table.get('bucket', {}))
     bucket_id = cast(str, bucket_info.get('id', ''))
-    prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
-    bucket = await _combine_buckets(client, None, prod_bucket, dev_bucket)
 
     table_name = cast(str, raw_table.get('name', ''))
-    links = links_manager.get_table_links(bucket_id, bucket.name, table_name)
+    links = [links_manager.get_table_detail_link(bucket_id, table_name)]
 
     table = TableDetail.model_validate(
         raw_table
@@ -602,37 +640,45 @@ async def get_table(
     return table.model_copy(update={'id': table.prod_id, 'branch_id': None})
 
 
-@tool_errors()
-async def list_tables(
-    bucket_id: Annotated[str, Field(description='Unique ID of the bucket.')], ctx: Context
-) -> ListTablesOutput:
+async def _list_tables(
+    bucket_ids: Sequence[str],
+    client: KeboolaClient,
+    links_manager: ProjectLinksManager,
+) -> Iterable[TableDetail]:
     """Retrieves all tables in a specific bucket with their basic information."""
-    client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
-    prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
-
-    # TODO: requesting "metadata" to get the table description;
-    #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN and columns' quoted names.
-    #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
-
     tables_by_prod_id: dict[str, TableDetail] = {}
-    if prod_bucket:
-        raw_table_data = await client.storage_client.bucket_table_list(prod_bucket.id, include=['metadata'])
-        for raw in raw_table_data:
-            table = TableDetail.model_validate(raw)
-            tables_by_prod_id[table.prod_id] = table
 
-    if dev_bucket:
-        raw_table_data = await client.storage_client.bucket_table_list(dev_bucket.id, include=['metadata'])
-        for raw in raw_table_data:
-            table = TableDetail.model_validate(raw)
-            tables_by_prod_id[table.prod_id] = table.model_copy(update={'id': table.prod_id, 'branch_id': None})
+    for bucket_id in bucket_ids:
+        prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
 
-    bucket = await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
-    return ListTablesOutput(
-        tables=list(tables_by_prod_id.values()),
-        links=(bucket.links or []) + [links_manager.get_bucket_dashboard_link()],
-    )
+        # TODO: requesting "metadata" to get the table description;
+        #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN
+        #  and columns' quoted names.
+        #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
+
+        if prod_bucket:
+            raw_table_data = await client.storage_client.bucket_table_list(prod_bucket.id, include=['metadata'])
+            for raw in raw_table_data:
+                table_name = cast(str, raw.get('name', ''))
+                table = TableDetail.model_validate(
+                    raw | {'links': [links_manager.get_table_detail_link(prod_bucket.id, table_name)]}
+                )
+                assert table.id == table.prod_id, f'Table ID mismatch: {table.id} != {table.prod_id}'
+                tables_by_prod_id[table.id] = table
+
+        if dev_bucket:
+            raw_table_data = await client.storage_client.bucket_table_list(dev_bucket.id, include=['metadata'])
+            for raw in raw_table_data:
+                table = TableDetail.model_validate(raw)
+                tables_by_prod_id[table.prod_id] = table.model_copy(
+                    update={
+                        'id': table.prod_id,
+                        'branch_id': None,
+                        'links': [links_manager.get_table_detail_link(dev_bucket.id, table.name)],
+                    }
+                )
+
+    return tables_by_prod_id.values()
 
 
 def _parse_item_id(item_id: str) -> StorageItemId:

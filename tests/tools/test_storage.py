@@ -13,20 +13,20 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
-from keboola_mcp_server.links import Link
+from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import AggregateError
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage import (
     BucketCounts,
     BucketDetail,
     DescriptionUpdate,
     GetBucketsOutput,
-    ListTablesOutput,
+    GetTablesOutput,
     TableColumnInfo,
     TableDetail,
     UpdateDescriptionsOutput,
     get_buckets,
-    get_table,
-    list_tables,
+    get_tables,
     update_descriptions,
 )
 from keboola_mcp_server.workspace import DbColumnInfo, DbTableInfo, TableFqn, WorkspaceManager
@@ -590,15 +590,18 @@ async def test_get_bucket(
 
     assert isinstance(result, GetBucketsOutput)
     if expected_bucket is not None:
-        assert result == GetBucketsOutput(
-            buckets=[expected_bucket],
-            links=[
-                Link(
-                    type='ui-dashboard',
-                    title='Buckets in the project',
-                    url=dashboard_url,
-                )
-            ],
+        assert (
+            result
+            == GetBucketsOutput(
+                buckets=[expected_bucket],
+                links=[
+                    Link(
+                        type='ui-dashboard',
+                        title='Buckets in the project',
+                        url=dashboard_url,
+                    )
+                ],
+            ).pack_links()
         )
     else:
         assert result == GetBucketsOutput(
@@ -745,11 +748,6 @@ async def test_list_buckets(
                         title='Table: users',
                         url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-foo/table/users',
                     ),
-                    Link(
-                        type='ui-detail',
-                        title='Bucket: c-foo',
-                        url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-foo',
-                    ),
                 ],
             ),
         ),
@@ -795,11 +793,6 @@ async def test_list_buckets(
                         url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948/storage/in.c-foo'
                         '/table/users',
                     ),
-                    Link(
-                        type='ui-detail',
-                        title='Bucket: c-foo',
-                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948/storage/in.c-foo',
-                    ),
                 ],
             ),
         ),
@@ -835,11 +828,6 @@ async def test_list_buckets(
                         type='ui-detail',
                         title='Table: emails',
                         url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-foo/table/emails',
-                    ),
-                    Link(
-                        type='ui-detail',
-                        title='Bucket: c-foo',
-                        url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-foo',
                     ),
                 ],
             ),
@@ -878,12 +866,6 @@ async def test_list_buckets(
                         url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
                         '/storage/in.c-1246948-foo/table/emails',
                     ),
-                    Link(
-                        type='ui-detail',
-                        title='Bucket: c-foo',
-                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
-                        '/storage/in.c-1246948-foo',
-                    ),
                 ],
             ),
         ),
@@ -913,12 +895,6 @@ async def test_list_buckets(
                         title='Table: assets',
                         url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
                         '/storage/in.c-1246948-foo/table/assets',
-                    ),
-                    Link(
-                        type='ui-detail',
-                        title='Bucket: c-foo',
-                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
-                        '/storage/in.c-1246948-foo',
                     ),
                 ],
                 source_project='Source Project (ID: 1234)',
@@ -964,16 +940,27 @@ async def test_get_table(
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='test-sql-dialect')
 
     if expected_table:
-        result = await get_table(table_id, mcp_context_client)
-        assert isinstance(result, TableDetail)
-        assert result == expected_table
+        result = await get_tables(mcp_context_client, table_ids=[table_id])
+        assert isinstance(result, GetTablesOutput)
+
+        if branch_id:
+            dashboard_url = f'https://connection.test.keboola.com/admin/projects/69420/branch/{branch_id}/storage'
+        else:
+            dashboard_url = 'https://connection.test.keboola.com/admin/projects/69420/storage'
+        assert (
+            result
+            == GetTablesOutput(
+                tables=[expected_table],
+                links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
+            ).pack_links()
+        )
         workspace_manager.get_sql_dialect.assert_called_once()
         workspace_manager.get_table_info.assert_called_once()
         workspace_manager.get_quoted_name.assert_has_calls([call(col_info.name) for col_info in expected_table.columns])
 
     else:
-        with pytest.raises(ValueError, match=f'Table not found: {table_id}'):
-            await get_table(table_id, mcp_context_client)
+        with pytest.raises(AggregateError, match=f'Table not found: {table_id}'):
+            await get_tables(mcp_context_client, table_ids=[table_id])
 
     if branch_id:
         keboola_client.storage_client.table_detail.assert_has_calls(
@@ -999,6 +986,13 @@ async def test_get_table(
                     created='2025-08-17T07:39:18+0200',
                     rows_count=10,
                     data_size_bytes=10240,
+                    links=[
+                        Link(
+                            type='ui-detail',
+                            title='Table: users',
+                            url='https://connection.test.keboola.com/admin/projects/69420/storage/in.c-foo/table/users',
+                        )
+                    ],
                 ),
                 TableDetail(
                     id='in.c-foo.emails',
@@ -1008,6 +1002,14 @@ async def test_get_table(
                     created='2025-08-17T07:39:18+0200',
                     rows_count=33,
                     data_size_bytes=332211,
+                    links=[
+                        Link(
+                            type='ui-detail',
+                            title='Table: emails',
+                            url='https://connection.test.keboola.com/admin/projects/69420'
+                            '/storage/in.c-foo/table/emails',
+                        )
+                    ],
                 ),
             ],
         ),
@@ -1023,6 +1025,14 @@ async def test_get_table(
                     created='2025-08-17T07:39:18+0200',
                     rows_count=10,
                     data_size_bytes=10240,
+                    links=[
+                        Link(
+                            type='ui-detail',
+                            title='Table: users',
+                            url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
+                            '/storage/in.c-foo/table/users',
+                        )
+                    ],
                 ),
                 # in.c-foo.emails comes from in.c-1246948-foo bucket
                 TableDetail(
@@ -1033,6 +1043,14 @@ async def test_get_table(
                     created='2025-08-21T01:02:03+0400',
                     rows_count=22,
                     data_size_bytes=2211,
+                    links=[
+                        Link(
+                            type='ui-detail',
+                            title='Table: emails',
+                            url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
+                            '/storage/in.c-1246948-foo/table/emails',
+                        )
+                    ],
                 ),
                 TableDetail(
                     id='in.c-foo.assets',
@@ -1043,6 +1061,14 @@ async def test_get_table(
                     rows_count=123,
                     data_size_bytes=123456,
                     source_project='Source Project (ID: 1234)',
+                    links=[
+                        Link(
+                            type='ui-detail',
+                            title='Table: assets',
+                            url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
+                            '/storage/in.c-1246948-foo/table/assets',
+                        )
+                    ],
                 ),
             ],
         ),
@@ -1060,11 +1086,16 @@ async def test_list_tables(
     keboola_client.branch_id = branch_id
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
     keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(side_effect=_bucket_table_list_side_effect)
+    links_manager = await ProjectLinksManager.from_client(keboola_client)
 
-    result = await list_tables(bucket_id, mcp_context_client)
+    result = await get_tables(mcp_context_client, [bucket_id])
+    assert isinstance(result, GetTablesOutput)
 
-    assert isinstance(result, ListTablesOutput)
-    assert result.tables == expected_tables
+    expected_result = GetTablesOutput(
+        tables=expected_tables, links=[links_manager.get_bucket_dashboard_link()]
+    ).pack_links()
+    assert result == expected_result
+
     if branch_id:
         keboola_client.storage_client.bucket_detail.assert_has_calls(
             [call(bucket_id), call(bucket_id.replace('c-', f'c-{branch_id}-'))]

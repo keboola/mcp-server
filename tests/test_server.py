@@ -55,8 +55,7 @@ class TestServer:
             'get_flows',
             'get_jobs',
             'get_project_info',
-            'get_table',
-            'list_tables',
+            'get_tables',
             'modify_data_app',
             'query_data',
             'run_job',
@@ -305,8 +304,7 @@ async def test_tool_annotations_and_tags():
         ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG}),
         # storage
         ('get_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('get_table', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('list_tables', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('get_tables', True, None, None, {STORAGE_TOOLS_TAG}),
         ('update_descriptions', None, True, None, {STORAGE_TOOLS_TAG}),
         # flows
         ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
