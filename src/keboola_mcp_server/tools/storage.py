@@ -291,6 +291,7 @@ class TableDetail(BaseModel):
 class GetTablesOutput(BaseModel):
     tables: list[TableDetail] = Field(description='List of tables.')
     links: list[Link] = Field(description='Links relevant to the table listing.')
+    tables_not_found: list[str] | None = Field(default=None, description='List of table IDs that were not found.')
 
     def pack_links(self) -> 'GetTablesOutput':
         """Move links from particular TableDetail objects to GetTablesOutput object to optimize TOON serialization."""
@@ -301,7 +302,7 @@ class GetTablesOutput(BaseModel):
             tables.append(table.model_copy(update={'links': None}))
         links.update(self.links)
 
-        return GetTablesOutput(tables=tables, links=sorted(links, key=lambda x: (x.type, x.title)))
+        return self.model_copy(update={'tables': tables, 'links': sorted(links, key=lambda x: (x.type, x.title))})
 
 
 class UpdateItemResult(BaseModel):
@@ -540,6 +541,7 @@ async def get_tables(
     links_manager = await ProjectLinksManager.from_client(client)
 
     tables_by_id: dict[str, TableDetail] = {}
+    missing_ids: list[str] = []
 
     if bucket_ids:
         for table in await _list_tables(bucket_ids, client, links_manager):
@@ -547,23 +549,30 @@ async def get_tables(
 
     if table_ids:
 
-        async def _fetch_table_detail(_table_id: str) -> TableDetail:
-            return await _get_table(_table_id, client, workspace_manager, links_manager)
+        async def _fetch_table_detail(_table_id: str) -> TableDetail | str:
+            if _table := await _get_table(_table_id, client, workspace_manager, links_manager):
+                return _table
+            else:
+                return _table_id
 
         results = await process_concurrently(table_ids, _fetch_table_detail)
-        tables = unwrap_results(results, 'Failed to fetch one or more tables')
 
-        for table in tables:
-            tables_by_id[table.id] = table
+        for table_detail_or_id in unwrap_results(results, 'Failed to fetch one or more tables'):
+            if isinstance(table_detail_or_id, TableDetail):
+                tables_by_id[table_detail_or_id.id] = table_detail_or_id
+            elif isinstance(table_detail_or_id, str):
+                missing_ids.append(table_detail_or_id)
 
     return GetTablesOutput(
-        tables=list(tables_by_id.values()), links=[links_manager.get_bucket_dashboard_link()]
+        tables=list(tables_by_id.values()),
+        tables_not_found=missing_ids if missing_ids else None,
+        links=[links_manager.get_bucket_dashboard_link()],
     ).pack_links()
 
 
 async def _get_table(
     table_id: str, client: KeboolaClient, workspace_manager: WorkspaceManager, links_manager: ProjectLinksManager
-) -> TableDetail:
+) -> TableDetail | None:
     prod_table: JsonDict | None = await _get_table_detail(client.storage_client, table_id)
     if prod_table:
         branch_id = get_metadata_property(prod_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
@@ -583,8 +592,7 @@ async def _get_table(
 
     raw_table = dev_table or prod_table
     if not raw_table:
-        # TODO: propagate the "table not found" info into the results without raising an exception
-        raise ValueError(f'Table not found: {table_id}')
+        return None
 
     raw_columns = cast(list[str], raw_table.get('columns', []))
     raw_column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))

@@ -14,7 +14,6 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import AggregateError
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage import (
     BucketCounts,
@@ -590,31 +589,18 @@ async def test_get_bucket(
 
     assert isinstance(result, GetBucketsOutput)
     if expected_bucket is not None:
-        assert (
-            result
-            == GetBucketsOutput(
-                buckets=[expected_bucket],
-                links=[
-                    Link(
-                        type='ui-dashboard',
-                        title='Buckets in the project',
-                        url=dashboard_url,
-                    )
-                ],
-            ).pack_links()
-        )
+        expected_result = GetBucketsOutput(
+            buckets=[expected_bucket],
+            links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
+        ).pack_links()
+        assert result == expected_result
     else:
-        assert result == GetBucketsOutput(
+        expectd_result = GetBucketsOutput(
             buckets=[],
             buckets_not_found=[bucket_id],
-            links=[
-                Link(
-                    type='ui-dashboard',
-                    title='Buckets in the project',
-                    url=dashboard_url,
-                )
-            ],
+            links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
         )
+        assert result == expectd_result
 
 
 @pytest.mark.asyncio
@@ -939,35 +925,38 @@ async def test_get_table(
     workspace_manager.get_quoted_name = mocker.AsyncMock(side_effect=lambda name: f'#{name}#')
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='test-sql-dialect')
 
-    if expected_table:
-        result = await get_tables(mcp_context_client, table_ids=[table_id])
-        assert isinstance(result, GetTablesOutput)
-
-        if branch_id:
-            dashboard_url = f'https://connection.test.keboola.com/admin/projects/69420/branch/{branch_id}/storage'
-        else:
-            dashboard_url = 'https://connection.test.keboola.com/admin/projects/69420/storage'
-        assert (
-            result
-            == GetTablesOutput(
-                tables=[expected_table],
-                links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
-            ).pack_links()
-        )
-        workspace_manager.get_sql_dialect.assert_called_once()
-        workspace_manager.get_table_info.assert_called_once()
-        workspace_manager.get_quoted_name.assert_has_calls([call(col_info.name) for col_info in expected_table.columns])
-
-    else:
-        with pytest.raises(AggregateError, match=f'Table not found: {table_id}'):
-            await get_tables(mcp_context_client, table_ids=[table_id])
+    result = await get_tables(mcp_context_client, table_ids=[table_id])
+    assert isinstance(result, GetTablesOutput)
 
     if branch_id:
         keboola_client.storage_client.table_detail.assert_has_calls(
             [call(table_id), call(table_id.replace('c-', f'c-{branch_id}-'))]
         )
+        dashboard_url = f'https://connection.test.keboola.com/admin/projects/69420/branch/{branch_id}/storage'
     else:
         keboola_client.storage_client.table_detail.assert_called_once_with(table_id)
+        dashboard_url = 'https://connection.test.keboola.com/admin/projects/69420/storage'
+
+    if expected_table:
+        expected_result = GetTablesOutput(
+            tables=[expected_table],
+            links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
+        ).pack_links()
+        assert result == expected_result
+        workspace_manager.get_sql_dialect.assert_called_once()
+        workspace_manager.get_table_info.assert_called_once()
+        workspace_manager.get_quoted_name.assert_has_calls([call(col_info.name) for col_info in expected_table.columns])
+
+    else:
+        expected_result = GetTablesOutput(
+            tables=[],
+            tables_not_found=[table_id],
+            links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
+        ).pack_links()
+        assert result == expected_result
+        workspace_manager.get_sql_dialect.assert_not_called()
+        workspace_manager.get_table_info.assert_not_called()
+        workspace_manager.get_quoted_name.assert_not_called()
 
 
 @pytest.mark.asyncio
