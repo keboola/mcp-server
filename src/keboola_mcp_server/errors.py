@@ -5,6 +5,7 @@ import time
 from functools import wraps
 from typing import Any, Callable, Mapping, Optional, Type, TypeVar, cast
 
+import yaml
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from fastmcp.server import middleware as fmw
@@ -172,80 +173,22 @@ def tool_errors(
     return decorator
 
 
-def _format_value_as_yaml(value: Any, indent: int = 0) -> str:
+def _format_validation_errors(errors: list[dict[str, Any]]) -> dict[str, Any]:
     """
-    Formats a value as YAML string with proper indentation.
-
-    :param value: The value to format
-    :param indent: Current indentation level
-    :return: YAML-formatted string
-    """
-    prefix = '  ' * indent
-    if value is None:
-        return 'null'
-    elif isinstance(value, bool):
-        return 'true' if value else 'false'
-    elif isinstance(value, (int, float)):
-        return str(value)
-    elif isinstance(value, str):
-        if '\n' in value or ':' in value or '#' in value or value.startswith('{') or value.startswith('['):
-            escaped = value.replace('\\', '\\\\').replace('"', '\\"')
-            return f'"{escaped}"'
-        return value
-    elif isinstance(value, dict):
-        if not value:
-            return '{}'
-        lines = []
-        for k, v in value.items():
-            formatted_value = _format_value_as_yaml(v, indent + 1)
-            if isinstance(v, (dict, list)) and v:
-                lines.append(f'{prefix}  {k}:\n{formatted_value}')
-            else:
-                lines.append(f'{prefix}  {k}: {formatted_value}')
-        return '\n'.join(lines)
-    elif isinstance(value, (list, tuple)):
-        if not value:
-            return '[]'
-        lines = []
-        for item in value:
-            formatted_item = _format_value_as_yaml(item, indent + 1)
-            if isinstance(item, dict) and item:
-                first_line, *rest = formatted_item.strip().split('\n')
-                lines.append(f'{prefix}  - {first_line.strip()}')
-                for line in rest:
-                    lines.append(f'{prefix}    {line.strip()}')
-            else:
-                lines.append(f'{prefix}  - {formatted_item}')
-        return '\n'.join(lines)
-    else:
-        return str(value)
-
-
-def _format_validation_errors_as_yaml(errors: list[dict[str, Any]]) -> str:
-    """
-    Formats Pydantic validation errors as a YAML string.
+    Formats Pydantic validation errors into a structured dictionary.
 
     :param errors: List of error dictionaries from ValidationError.errors()
-    :return: YAML-formatted string with errors including field, message, and extra fields
+    :return: Dictionary with formatted errors including field, message, and extra fields
     """
-    lines = ['errors:']
+    formatted_errors: list[dict[str, Any]] = []
     for error in errors:
-        field = '.'.join(str(i) for i in error.get('loc', []))
-        message = error.get('msg', 'Validation error')
-        extra = {key: value for key, value in error.items() if key not in {'loc', 'msg'}}
-
-        lines.append(f'  - field: {field}')
-        lines.append(f'    message: {message}')
-        if extra:
-            lines.append('    extra:')
-            for key, value in extra.items():
-                formatted_value = _format_value_as_yaml(value, 3)
-                if isinstance(value, (dict, list)) and value:
-                    lines.append(f'      {key}:\n{formatted_value}')
-                else:
-                    lines.append(f'      {key}: {formatted_value}')
-
-    return '\n'.join(lines)
+        error_dict: dict[str, Any] = {
+            'field': '.'.join(str(i) for i in error.get('loc', [])),
+            'message': error.get('msg', 'Validation error'),
+            'extra': {key: value for key, value in error.items() if key not in {'loc', 'msg'}},
+        }
+        formatted_errors.append(error_dict)
+    return {'errors': formatted_errors}
 
 
 def prettify_validation_error(error: ValidationError) -> str:
@@ -258,8 +201,9 @@ def prettify_validation_error(error: ValidationError) -> str:
     error_count = len(error.errors())
     model_name = getattr(error, 'title', 'unknown')
     header = f'Found {error_count} validation error(s) for {model_name}'
-    formatted = _format_validation_errors_as_yaml(error.errors())
-    return f'{header}\n{formatted}'
+    formatted = _format_validation_errors(error.errors())
+    yaml_str = yaml.dump(formatted, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    return f'{header}\n{yaml_str}'
 
 
 class ValidationErrorMiddleware(fmw.Middleware):
