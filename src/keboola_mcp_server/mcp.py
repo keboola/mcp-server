@@ -23,7 +23,7 @@ from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.tools import Tool
 from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from pydantic_core import to_json
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -280,116 +280,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                 )
 
         return await call_next(context)
-
-
-def _format_value_as_yaml(value: Any, indent: int = 0) -> str:
-    """
-    Formats a value as YAML string with proper indentation.
-
-    :param value: The value to format
-    :param indent: Current indentation level
-    :return: YAML-formatted string
-    """
-    prefix = '  ' * indent
-    if value is None:
-        return 'null'
-    elif isinstance(value, bool):
-        return 'true' if value else 'false'
-    elif isinstance(value, (int, float)):
-        return str(value)
-    elif isinstance(value, str):
-        if '\n' in value or ':' in value or '#' in value or value.startswith('{') or value.startswith('['):
-            escaped = value.replace('\\', '\\\\').replace('"', '\\"')
-            return f'"{escaped}"'
-        return value
-    elif isinstance(value, dict):
-        if not value:
-            return '{}'
-        lines = []
-        for k, v in value.items():
-            formatted_value = _format_value_as_yaml(v, indent + 1)
-            if isinstance(v, (dict, list)) and v:
-                lines.append(f'{prefix}  {k}:\n{formatted_value}')
-            else:
-                lines.append(f'{prefix}  {k}: {formatted_value}')
-        return '\n'.join(lines)
-    elif isinstance(value, (list, tuple)):
-        if not value:
-            return '[]'
-        lines = []
-        for item in value:
-            formatted_item = _format_value_as_yaml(item, indent + 1)
-            if isinstance(item, dict) and item:
-                first_line, *rest = formatted_item.strip().split('\n')
-                lines.append(f'{prefix}  - {first_line.strip()}')
-                for line in rest:
-                    lines.append(f'{prefix}    {line.strip()}')
-            else:
-                lines.append(f'{prefix}  - {formatted_item}')
-        return '\n'.join(lines)
-    else:
-        return str(value)
-
-
-def _format_validation_errors_as_yaml(errors: list[dict[str, Any]]) -> str:
-    """
-    Formats Pydantic validation errors as a YAML string.
-
-    :param errors: List of error dictionaries from ValidationError.errors()
-    :return: YAML-formatted string with errors including field, message, and extra fields
-    """
-    lines = ['errors:']
-    for error in errors:
-        field = '.'.join(str(i) for i in error.get('loc', []))
-        message = error.get('msg', 'Validation error')
-        extra = {key: value for key, value in error.items() if key not in {'loc', 'msg'}}
-
-        lines.append(f'  - field: {field}')
-        lines.append(f'    message: {message}')
-        if extra:
-            lines.append('    extra:')
-            for key, value in extra.items():
-                formatted_value = _format_value_as_yaml(value, 3)
-                if isinstance(value, (dict, list)) and value:
-                    lines.append(f'      {key}:\n{formatted_value}')
-                else:
-                    lines.append(f'      {key}: {formatted_value}')
-
-    return '\n'.join(lines)
-
-
-def prettify_validation_error(error: ValidationError) -> str:
-    """
-    Formats a Pydantic ValidationError into a human and LLM-readable YAML string.
-
-    :param error: The Pydantic ValidationError to format
-    :return: A formatted YAML string with error details
-    """
-    error_count = len(error.errors())
-    model_name = getattr(error, 'title', 'unknown')
-    header = f'Found {error_count} validation error(s) for {model_name}'
-    formatted = _format_validation_errors_as_yaml(error.errors())
-    return f'{header}\n{formatted}'
-
-
-class ValidationErrorMiddleware(fmw.Middleware):
-    """
-    Middleware that catches Pydantic ValidationError and formats it with explicit field locations.
-
-    This middleware intercepts tool calls and catches any Pydantic ValidationError that occurs
-    during argument validation. It then formats the error message to clearly show which fields
-    are missing or invalid, making it easier for both humans and LLMs to understand the issue.
-    """
-
-    async def on_call_tool(
-        self,
-        context: MiddlewareContext[mt.CallToolRequestParams],
-        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
-    ) -> mt.CallToolResult:
-        try:
-            return await call_next(context)
-        except ValidationError as e:
-            raise ToolError(prettify_validation_error(e)) from e
 
 
 def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
