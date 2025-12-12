@@ -261,7 +261,7 @@ async def test_get_configs_detail(
         ),
         Link(
             type='ui-dashboard',
-            title=f'{mock_component["id"]} Configurations Dashboard',
+            title=f'Component "{mock_component["id"]}" Configurations Dashboard',
             url=f'{base_url}/components/{mock_component["id"]}',
         ),
     }

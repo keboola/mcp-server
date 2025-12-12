@@ -283,11 +283,11 @@ async def get_configs(
 
     # Case 2: component_ids provided - list summaries by IDs
     if component_ids:
-        components_with_configs = await list_configs_by_ids(client, component_ids)
+        components_with_configs = await list_configs_by_ids(client, component_ids, links_manager)
     # Case 3: use component_types filtering (or all types if empty)
     else:
         component_types = expand_component_types(component_types)
-        components_with_configs = await list_configs_by_types(client, component_types)
+        components_with_configs = await list_configs_by_types(client, component_types, links_manager)
 
     links = [links_manager.get_used_components_link(), links_manager.get_transformations_dashboard_link()]
     return GetConfigsListOutput(components_with_configs=components_with_configs, links=links)
@@ -448,10 +448,10 @@ async def create_sql_transformation(
 
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
 
-    links = links_manager.get_configuration_links(
-        component_id=component_id,
-        configuration_id=configuration_id,
-        configuration_name=name,
+    links = links_manager.get_transformation_links(
+        transformation_type=component_id,
+        transformation_id=configuration_id,
+        transformation_name=name,
     )
 
     return ConfigToolOutput(
@@ -803,10 +803,10 @@ async def update_sql_transformation(
         configuration_version=updated_raw_configuration.get('version'),
     )
 
-    links = links_manager.get_configuration_links(
-        component_id=sql_transformation_id,
-        configuration_id=configuration_id,
-        configuration_name=updated_raw_configuration.get('name') or '',
+    links = links_manager.get_transformation_links(
+        transformation_type=sql_transformation_id,
+        transformation_id=configuration_id,
+        transformation_name=updated_raw_configuration.get('name') or '',
     )
 
     LOG.info(

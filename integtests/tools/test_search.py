@@ -5,8 +5,7 @@ import toon_format
 from fastmcp import Client
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
-from keboola_mcp_server.clients.ai_service import SuggestedComponent
-from keboola_mcp_server.tools.search import SearchHit
+from keboola_mcp_server.tools.search import SearchHit, SuggestedComponentOutput
 
 LOG = logging.getLogger(__name__)
 
@@ -91,17 +90,16 @@ async def test_find_component_id(mcp_client: Client):
     full_result = await mcp_client.call_tool('find_component_id', {'query': query})
 
     assert full_result.structured_content is not None
-    result = [SuggestedComponent.model_validate(component) for component in full_result.structured_content['result']]
+    result = full_result.structured_content['result']
 
     assert isinstance(result, list)
     assert len(result) > 0
-    assert all(isinstance(component, SuggestedComponent) for component in result)
-    assert generic_extractor_id in [component.component_id for component in result]
+    LOG.info(f'result: {result}')
+    structured_result = [SuggestedComponentOutput.model_validate(component) for component in result]
+    assert generic_extractor_id in [component.component_id for component in structured_result]
 
     # check validity of the TOON formatted unstructured result
     assert len(full_result.content) == 1
     assert full_result.content[0].type == 'text'
     decoded_toon = toon_format.decode(full_result.content[0].text)
-    assert isinstance(decoded_toon, list)
-    toon_result = [SuggestedComponent.model_validate(component) for component in decoded_toon]
-    assert toon_result == result
+    assert decoded_toon == result
