@@ -203,7 +203,7 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
                 ),
                 Link(
                     type='ui-dashboard',
-                    title=f'{component_id} Configurations Dashboard',
+                    title=f'Component "{component_id}" Configurations Dashboard',
                     url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
                 ),
             ]
@@ -343,7 +343,7 @@ async def test_update_config(
             ),
             Link(
                 type='ui-dashboard',
-                title=f'{component_id} Configurations Dashboard',
+                title=f'Component "{component_id}" Configurations Dashboard',
                 url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
             ),
         ]
@@ -453,7 +453,7 @@ async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], ke
                 ),
                 Link(
                     type='ui-dashboard',
-                    title=f'{component_id} Configurations Dashboard',
+                    title=f'Component "{component_id}" Configurations Dashboard',
                     url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
                 ),
             ]
@@ -596,7 +596,7 @@ async def test_update_config_row(
             ),
             Link(
                 type='ui-dashboard',
-                title=f'{component_id} Configurations Dashboard',
+                title=f'Component "{component_id}" Configurations Dashboard',
                 url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
             ),
         ]
@@ -689,19 +689,16 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
             [
                 Link(
                     type='ui-detail',
-                    title=f'Configuration: {test_name}',
+                    title=f'Transformation: {test_name}',
                     url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/'
+                        f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2/'
                         f'{expected_component_id}/{created_transformation.configuration_id}'
                     ),
                 ),
                 Link(
                     type='ui-dashboard',
-                    title=f'{expected_component_id} Configurations Dashboard',
-                    url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/'
-                        f'{expected_component_id}'
-                    ),
+                    title='Transformations dashboard',
+                    url=(f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2'),
                 ),
             ]
         )
@@ -929,14 +926,14 @@ async def test_update_sql_transformation(
         [
             Link(
                 type='ui-detail',
-                title=f'Configuration: {expected_name}',
+                title=f'Transformation: {expected_name}',
                 url='https://connection.keboola.com/admin'
-                f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+                f'/projects/{project_id}/transformations-v2/{component_id}/{configuration_id}',
             ),
             Link(
                 type='ui-dashboard',
-                title=f'{component_id} Configurations Dashboard',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                title='Transformations dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2',
             ),
         ]
     )

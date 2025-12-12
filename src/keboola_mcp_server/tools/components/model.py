@@ -39,14 +39,13 @@ from typing import Annotated, Any, Literal, Optional, Sequence, Union, get_args
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
-from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
+from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
 
 # ============================================================================
 # TYPE DEFINITIONS
 # ============================================================================
 
-ComponentType = Literal['application', 'extractor', 'transformation', 'writer']
 ALL_COMPONENT_TYPES = tuple(component_type for component_type in get_args(ComponentType))
 
 
@@ -100,6 +99,7 @@ class ComponentSummary(BaseModel):
     component_name: str = Field(description='Component name')
     component_type: str = Field(description='Component type')
     capabilities: ComponentCapabilities = Field(description='Component capabilities')
+    links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
 
     @classmethod
     def from_api_response(cls, api_response: ComponentAPIResponse) -> 'ComponentSummary':
@@ -383,6 +383,7 @@ class ConfigSummary(BaseModel):
     configuration_rows: Optional[list[ConfigurationRowSummary]] = Field(
         default=None, description='The configuration row summaries'
     )
+    links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
 
     @classmethod
     def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigSummary':

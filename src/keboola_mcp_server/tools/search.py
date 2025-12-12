@@ -8,12 +8,12 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, model_validator
 
-from keboola_mcp_server.clients.ai_service import SuggestedComponent
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import toon_serializer
 from keboola_mcp_server.tools.components.utils import get_nested
 
@@ -72,6 +72,7 @@ class SearchHit(BaseModel):
     name: str | None = Field(default=None, description='Name of the item.')
     display_name: str | None = Field(default=None, description='Display name of the item.')
     description: str | None = Field(default=None, description='Description of the item.')
+    links: list[Link] = Field(default_factory=list, description='Links to the item.')
 
     @model_validator(mode='after')
     def check_id_fields(self) -> 'SearchHit':
@@ -399,25 +400,54 @@ async def search(
     )
     paginated_hits = all_hits[offset : offset + limit]
 
+    # Get links for the hits
+    links_manager = await ProjectLinksManager.from_client(client)
+    for hit in paginated_hits:
+        hit.links.extend(
+            links_manager.get_links(
+                bucket_id=hit.bucket_id,
+                table_id=hit.table_id,
+                component_id=hit.component_id,
+                configuration_id=hit.configuration_id,
+                name=hit.name,
+            )
+        )
+
     # TODO: Should we report the total number of hits?
     return paginated_hits
+
+
+class SuggestedComponentOutput(BaseModel):
+    """Output of find_component_id tool."""
+
+    component_id: str = Field(description='The component ID.')
+    score: float = Field(description='Score of the component suggestion.')
+    links: list[Link] = Field(description='Links to the component.', default_factory=list)
 
 
 @tool_errors()
 async def find_component_id(
     ctx: Context,
     query: Annotated[str, Field(description='Natural language query to find the requested component.')],
-) -> list[SuggestedComponent]:
+) -> list[SuggestedComponentOutput]:
     """
     Returns list of component IDs that match the given query.
 
-    USAGE:
+    WHEN TO USE:
     - Use when you want to find the component for a specific purpose.
 
-    EXAMPLES:
-    - user_input: `I am looking for a salesforce extractor component`
-        - returns a list of component IDs that match the query, ordered by relevance/best match.
+    USAGE EXAMPLES:
+    - user_input: "I am looking for a salesforce extractor component"
+      → Returns a list of component IDs that match the query, ordered by relevance/best match.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     suggestion_response = await client.ai_service_client.suggest_component(query)
-    return suggestion_response.components
+
+    components = []
+    for component in suggestion_response.components:
+        links = [links_manager.get_config_dashboard_link(component_id=component.component_id, component_name=None)]
+        components.append(
+            SuggestedComponentOutput(component_id=component.component_id, score=component.score, links=links)
+        )
+    return components
