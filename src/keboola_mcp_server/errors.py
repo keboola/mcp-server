@@ -13,8 +13,10 @@ from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.utilities.types import find_kwarg_by_type
 from mcp import types as mt
 from pydantic import BaseModel, ValidationError
+from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
 
 LOG = logging.getLogger(__name__)
@@ -24,13 +26,6 @@ _USER_AGENT_TO_COMPONENT_ID: Mapping[str, str] = {
     'read-only-chat': 'keboola.ai-chat',
     'in-platform-chat': 'keboola.kai-assistant',
 }
-
-
-class ToolException(Exception):
-    """Custom tool exception class that wraps tool execution errors."""
-
-    def __init__(self, original_exception: Exception, recovery_instruction: str):
-        super().__init__(f'{str(original_exception)} | Recovery: {recovery_instruction}')
 
 
 class _JsonWrapper(BaseModel):
@@ -104,10 +99,10 @@ async def _trigger_event(
     }
     if exception:
         message = f'MCP tool "{tool_name}" call failed. {type(exception).__name__}: {exception}'
-        event_type = 'error'
+        event_type: StorageEventType = 'error'
     else:
         message = f'MCP tool "{tool_name}" call succeeded.'
-        event_type = 'success'
+        event_type: StorageEventType = 'success'
 
     client = KeboolaClient.from_state(ctx.session.state)
     resp = await client.storage_client.trigger_event(
@@ -143,8 +138,6 @@ def tool_errors(
             try:
                 return await func(*args, **kwargs)
             except Exception as e:
-                LOG.exception(f'Failed to run tool {func.__name__}: {e}')
-
                 recovery_msg = default_recovery
                 if recovery_instructions:
                     for exc_type, msg in recovery_instructions.items():
@@ -152,12 +145,23 @@ def tool_errors(
                             recovery_msg = msg
                             break
 
-                try:
-                    if not recovery_msg:
-                        raise e
+                error_msg: str | None = None
 
-                    raise ToolException(e, recovery_msg) from e
+                if isinstance(e, ValidationError):
+                    error_msg = prettify_validation_error(e)
+                    if recovery_msg:
+                        error_msg += f'\nRecovery: {recovery_msg}'
+
+                elif recovery_msg:
+                    error_msg = f'{e}\nRecovery: {recovery_msg}'
+
+                try:
+                    if error_msg:
+                        raise ToolError(error_msg) from e
+                    else:
+                        raise e
                 except Exception as e:
+                    LOG.exception(f'MCP tool "{func.__name__}" call failed. {type(e).__name__}: {e}')
                     exception = e
                     raise
 
@@ -165,7 +169,7 @@ def tool_errors(
                 try:
                     await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start)
                 except Exception as e:
-                    LOG.exception(f'Failed to trigger tool event for {func.__name__}: {e}')
+                    LOG.exception(f'Failed to trigger tool event for "{func.__name__}" tool: {e}')
                     raise
 
         return cast(F, wrapped)
@@ -173,7 +177,7 @@ def tool_errors(
     return decorator
 
 
-def _format_validation_errors(errors: list[dict[str, Any]]) -> dict[str, Any]:
+def _format_validation_errors(errors: list[ErrorDetails]) -> dict[str, Any]:
     """
     Formats Pydantic validation errors into a structured dictionary.
 
@@ -185,7 +189,7 @@ def _format_validation_errors(errors: list[dict[str, Any]]) -> dict[str, Any]:
         error_dict: dict[str, Any] = {
             'field': '.'.join(str(i) for i in error.get('loc', [])),
             'message': error.get('msg', 'Validation error'),
-            'extra': {key: value for key, value in error.items() if key not in {'loc', 'msg'}},
+            'extra': {str(key): str(value) for key, value in error.items() if key not in {'loc', 'msg'}},
         }
         formatted_errors.append(error_dict)
     return {'errors': formatted_errors}
@@ -202,7 +206,11 @@ def prettify_validation_error(error: ValidationError) -> str:
     model_name = getattr(error, 'title', 'unknown')
     header = f'Found {error_count} validation error(s) for {model_name}'
     formatted = _format_validation_errors(error.errors())
-    yaml_str = yaml.dump(formatted, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    try:
+        yaml_str = yaml.dump(formatted, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    except Exception:
+        yaml_str = str(formatted)
+
     return f'{header}\n{yaml_str}'
 
 
