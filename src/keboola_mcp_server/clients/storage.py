@@ -29,6 +29,8 @@ ItemType = Literal[
     'state',
 ]
 
+ComponentType = Literal['application', 'extractor', 'transformation', 'writer']
+
 
 class GlobalSearchResponse(BaseModel):
     """The SAPI global search response."""
