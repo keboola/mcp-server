@@ -555,6 +555,9 @@ async def get_tables(
             else:
                 return _table_id
 
+        # Touch the WorkspaceManager to initialize the workspace before launching the concurrent tasks
+        # to prevent race condition and initializing multiple database backend workspaces.
+        _ = workspace_manager.get_workspace_id()
         results = await process_concurrently(table_ids, _fetch_table_detail)
 
         for table_detail_or_id in unwrap_results(results, 'Failed to fetch one or more tables'):
