@@ -405,12 +405,10 @@ async def search(
     for hit in paginated_hits:
         hit.links.extend(
             links_manager.get_links(
-                component_type=hit.item_type,
                 bucket_id=hit.bucket_id,
                 table_id=hit.table_id,
                 component_id=hit.component_id,
                 configuration_id=hit.configuration_id,
-                configuration_row_id=hit.configuration_row_id,
                 name=hit.name,
             )
         )

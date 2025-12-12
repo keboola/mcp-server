@@ -118,7 +118,6 @@ async def list_configs_by_types(
                         component_id=cfg_root.component_id,
                         configuration_id=cfg_root.configuration_id,
                         configuration_name=cfg_root.name,
-                        component_type=comp_type,
                     )
                 )
                 configuration_summaries.append(cfg_summary)
@@ -187,7 +186,6 @@ async def list_configs_by_ids(
                     component_id=cfg_summary.configuration_root.component_id,
                     configuration_id=cfg_summary.configuration_root.configuration_id,
                     configuration_name=cfg_summary.configuration_root.name,
-                    component_type=domain_component.component_type,
                 )
             )
             configuration_summaries.append(cfg_summary)

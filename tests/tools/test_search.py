@@ -300,9 +300,7 @@ class TestSearch:
                     Link(
                         type='ui-detail',
                         title='Bucket: test-bucket-10',
-                        url=(
-                            f'https://connection.test.keboola.com/admin/projects/{project_id}' '/storage/in.c-bucket-10'
-                        ),
+                        url=(f'https://connection.test.keboola.com/admin/projects/{project_id}/storage/in.c-bucket-10'),
                     )
                 ],
             ),
@@ -315,9 +313,7 @@ class TestSearch:
                     Link(
                         type='ui-detail',
                         title='Bucket: test-bucket-9',
-                        url=(
-                            f'https://connection.test.keboola.com/admin/projects/{project_id}' '/storage/in.c-bucket-9'
-                        ),
+                        url=(f'https://connection.test.keboola.com/admin/projects/{project_id}/storage/in.c-bucket-9'),
                     )
                 ],
             ),
@@ -334,9 +330,7 @@ class TestSearch:
                     Link(
                         type='ui-detail',
                         title='Bucket: test-bucket-8',
-                        url=(
-                            f'https://connection.test.keboola.com/admin/projects/{project_id}' '/storage/in.c-bucket-8'
-                        ),
+                        url=(f'https://connection.test.keboola.com/admin/projects/{project_id}/storage/in.c-bucket-8'),
                     )
                 ],
             )
@@ -379,9 +373,7 @@ class TestSearch:
                     Link(
                         type='ui-detail',
                         title='Bucket: my-bucket',
-                        url=(
-                            f'https://connection.test.keboola.com/admin/projects/{project_id}' '/storage/in.c-my-bucket'
-                        ),
+                        url=(f'https://connection.test.keboola.com/admin/projects/{project_id}/storage/in.c-my-bucket'),
                     )
                 ],
             )
