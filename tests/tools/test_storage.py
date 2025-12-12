@@ -666,10 +666,10 @@ async def test_get_bucket(
         ),
     ],
 )
-async def test_list_buckets(
+async def test_get_buckets(
     branch_id: str | None, expected_buckets: list[BucketDetail], mocker: MockerFixture, mcp_context_client: Context
 ) -> None:
-    """Test the list_buckets tool."""
+    """Test the get_buckets tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
     keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=_get_sapi_buckets())
@@ -1063,14 +1063,14 @@ async def test_get_table(
         ),
     ],
 )
-async def test_list_tables(
+async def test_get_tables(
     branch_id: str | None,
     bucket_id: str,
     expected_tables: list[TableDetail],
     mocker: MockerFixture,
     mcp_context_client: Context,
 ) -> None:
-    """Test list_tables tool."""
+    """Test get_tables tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
@@ -1322,9 +1322,9 @@ async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
     assert len(result.results) == 0
 
     @pytest.mark.asyncio
-    async def test_list_buckets_use_serializer(mocker):
+    async def test_get_buckets_use_serializer(mocker):
         # Ideally, we'd test the output of every tool, but the required mocking would be excessive.
-        # Here, we test only the 'list_buckets' tool.
+        # Here, we test only the 'get_buckets' tool.
         # The test_server.TestServer.test_tools_have_serializer() test verifies that the same serializer is used
         # for all tools.
         # Therefore, all tools should produce compact JSON in their unstructured output.
@@ -1401,7 +1401,7 @@ async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
         assert isinstance(server, FastMCP)
 
         async with Client(server) as client:
-            result = await client.call_tool('list_buckets')
+            result = await client.call_tool('get_buckets')
             # check the structured output
             assert GetBucketsOutput.model_validate(result.structured_content) == expected
             # check the unstructured output
