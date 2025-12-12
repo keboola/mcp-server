@@ -17,7 +17,7 @@ from keboola_mcp_server.mcp import CONVERSATION_ID, AggregateError
 from keboola_mcp_server.tools.doc import docs_query
 from keboola_mcp_server.tools.jobs import get_jobs
 from keboola_mcp_server.tools.sql import query_data
-from keboola_mcp_server.tools.storage import get_bucket
+from keboola_mcp_server.tools.storage import GetBucketsOutput, get_buckets
 
 
 class TestHttpErrors:
@@ -25,12 +25,8 @@ class TestHttpErrors:
 
     @pytest.mark.asyncio
     async def test_storage_api_404_error_maintains_standard_behavior(self, mcp_context: Context):
-        match = re.compile(
-            r'Bucket not found: non\.existent\.bucket',
-            re.IGNORECASE,
-        )
-        with pytest.raises(ValueError, match=match):
-            await get_bucket('non.existent.bucket', mcp_context)
+        result = await get_buckets(mcp_context, ['non.existent.bucket'])
+        assert 'non.existent.bucket' in result.buckets_not_found
 
     @pytest.mark.asyncio
     async def test_jobs_api_404_error_(self, mcp_context: Context):
@@ -80,23 +76,17 @@ class TestHttpErrors:
     @pytest.mark.asyncio
     async def test_concurrent_error_handling(self, mcp_context: Context):
         # Run multiple concurrent operations that will trigger 404 errors
-        tasks = [get_bucket(f'non.existent.bucket.{i}', mcp_context) for i in range(5)]
+        tasks = [get_buckets(mcp_context, [f'non.existent.bucket.{i}']) for i in range(5)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Verify all errors are handled consistently
-        match = re.compile(
-            r'Bucket not found: non\.existent\.bucket\.\d+',
-            re.IGNORECASE,
-        )
+        pattern = re.compile(r'non\.existent\.bucket\.\d+', re.IGNORECASE)
 
-        unexpected_errors: list[str] = []
         for result in results:
-            assert isinstance(result, ValueError)
-            error_message = str(result)
-            if not match.fullmatch(error_message):
-                unexpected_errors.append(error_message)
-
-        assert unexpected_errors == []
+            assert isinstance(result, GetBucketsOutput)
+            assert result.buckets_not_found
+            assert len(result.buckets_not_found) == 1
+            assert pattern.fullmatch(result.buckets_not_found[0])
 
 
 class TestStorageEvents:

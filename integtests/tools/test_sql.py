@@ -6,7 +6,7 @@ import pytest
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
-from keboola_mcp_server.tools.storage import get_table, list_buckets, list_tables
+from keboola_mcp_server.tools.storage import get_buckets, get_tables
 
 LOG = logging.getLogger(__name__)
 
@@ -15,10 +15,11 @@ LOG = logging.getLogger(__name__)
 async def test_query_data(mcp_context: Context):
     """Tests basic functionality of SQL tools: get_sql_dialect and query_data."""
 
-    buckets_listing = await list_buckets(ctx=mcp_context)
+    buckets_listing = await get_buckets(ctx=mcp_context)
 
-    tables_listing = await list_tables(bucket_id=buckets_listing.buckets[0].id, ctx=mcp_context)
-    table = await get_table(table_id=tables_listing.tables[0].id, ctx=mcp_context)
+    tables_listing = await get_tables(bucket_ids=[buckets_listing.buckets[0].id], ctx=mcp_context)
+    tables_listing = await get_tables(table_ids=[tables_listing.tables[0].id], ctx=mcp_context)
+    table = tables_listing.tables[0]
 
     assert table.fully_qualified_name is not None, 'Table should have fully qualified name'
 
@@ -35,7 +36,7 @@ async def test_query_data(mcp_context: Context):
     csv_reader = csv.reader(StringIO(result.csv_data))
     rows = list(csv_reader)
 
-    # Should have header and one data row
+    # Should have a header and one data row
     assert len(rows) == 2, 'COUNT query should return header + one data row'
     assert rows[0] == ['ROW_COUNT'], f'Header should be ["row_count"], got {rows[0]}'
 
