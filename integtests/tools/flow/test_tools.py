@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 import toon_format
+import yaml
 from fastmcp import Client, Context, FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import CallNext, MiddlewareContext
 from mcp import types as mt
 from pydantic import ValidationError
@@ -801,7 +803,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
         }
     ]
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ToolError) as exc_info:
         await create_conditional_flow(
             ctx=mcp_context,
             name='Invalid Conditional Flow',
@@ -809,6 +811,36 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
             phases=phases,
             tasks=tasks,
         )
+
+    err = exc_info.value
+    assert isinstance(err.__cause__, ValidationError)
+
+    lines = str(err).splitlines()
+    assert len(lines) > 0, 'Empty error message'
+    assert lines[0] == 'Found 2 validation error(s) for ConditionalFlowPhase'
+    assert yaml.safe_load('\n'.join(lines[1:])) == {
+        'errors': [
+            {
+                'field': 'id',
+                'message': 'Input should be a valid string',
+                'extra': {
+                    'type': 'string_type',
+                    'input': '123',
+                    'url': 'https://errors.pydantic.dev/2.12/v/string_type',
+                },
+            },
+            {
+                'field': 'name',
+                'message': 'String should have at least 1 character',
+                'extra': {
+                    'type': 'string_too_short',
+                    'input': '',
+                    'ctx': "{'min_length': 1}",
+                    'url': 'https://errors.pydantic.dev/2.12/v/string_too_short',
+                },
+            },
+        ]
+    }
 
 
 @pytest.mark.asyncio
