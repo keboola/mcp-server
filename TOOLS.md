@@ -54,11 +54,9 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.
 
 ### Storage Tools
-- [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
-- [get_table](#get_table): Gets detailed information about a specific Keboola table, including fully qualified database name,
+- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets.
+- [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, and metadata.
-- [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
-- [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
@@ -2547,55 +2545,55 @@ DATA VALIDATION:
 ---
 
 # Storage Tools
-<a name="get_bucket"></a>
-## get_bucket
+<a name="get_buckets"></a>
+## get_buckets
 **Annotations**: `read-only`
 
 **Tags**: `storage`
 
 **Description**:
 
-Gets detailed information about a specific bucket.
+Lists buckets or retrieves full details of specific buckets.
+
+EXAMPLES:
+- `bucket_ids=[]` → summaries of all buckets in the project
+- `bucket_ids=["id1", ...]` → full details of the buckets with the specified IDs
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "type": "string"
+    "bucket_ids": {
+      "default": [],
+      "description": "Filter by specific bucket IDs.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
-  "required": [
-    "bucket_id"
-  ],
   "type": "object"
 }
 ```
 
 ---
-<a name="get_table"></a>
-## get_table
+<a name="get_tables"></a>
+## get_tables
 **Annotations**: `read-only`
 
 **Tags**: `storage`
 
 **Description**:
 
-Gets detailed information about a specific Keboola table, including fully qualified database name,
+Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, and metadata.
 
 RETURNS:
-- Table metadata: ID, name, description, primary key column names, storage backend details
-- Column information for each column:
-  - name: Column name
-  - database_native_type: Backend-specific type (e.g., VARCHAR(255), TIMESTAMP_NTZ, DECIMAL(20,2))
-  - keboola_base_type: Storage-agnostic type (STRING, INTEGER, NUMERIC, FLOAT, BOOLEAN, DATE, TIMESTAMP)
-  - nullable: Whether the column accepts NULL values
-- Fully qualified database identifier for use in SQL queries
+- With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
+- With `table_ids`: Full details including columns, data types, and fully qualified database names.
 
-DATA TYPE FIELDS:
+COLUMN DATA TYPES:
 - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
   with precision, scale, and other implementation details
 - keboola_base_type: Standardized type indicating the semantic data type. May not always be
@@ -2603,72 +2601,33 @@ DATA TYPE FIELDS:
   a column with database_native_type VARCHAR might have keboola_base_type INTEGER, indicating
   it stores integer values despite being stored as text in the backend.
 
-USE WHEN:
-- You need column names and data types for writing SQL queries
-- You need the fully qualified table name for database operations
-- You want to understand the table schema before creating transformations or components
+EXAMPLES:
+- `bucket_ids=["id1", ...]` → summary info of the tables in the buckets with the specified IDs
+- `table_ids=["id1", ...]` → detailed info of the tables specified by their IDs
+- `bucket_ids=[]` and `table_ids=[]` → empty list; you have to specify at least one filter
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "table_id": {
-      "description": "Unique ID of the table.",
-      "type": "string"
+    "bucket_ids": {
+      "default": [],
+      "description": "Filter by specific bucket IDs.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "table_ids": {
+      "default": [],
+      "description": "Filter by specific table IDs.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
-  "required": [
-    "table_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="list_buckets"></a>
-## list_buckets
-**Annotations**: `read-only`
-
-**Tags**: `storage`
-
-**Description**:
-
-Retrieves information about all buckets in the project.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
-<a name="list_tables"></a>
-## list_tables
-**Annotations**: `read-only`
-
-**Tags**: `storage`
-
-**Description**:
-
-Retrieves all tables in a specific bucket with their basic information.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "type": "string"
-    }
-  },
-  "required": [
-    "bucket_id"
-  ],
   "type": "object"
 }
 ```
