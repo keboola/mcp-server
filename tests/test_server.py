@@ -45,7 +45,7 @@ class TestServer:
             'deploy_data_app',
             'docs_query',
             'find_component_id',
-            'get_bucket',
+            'get_buckets',
             'get_components',
             'get_config_examples',
             'get_configs',
@@ -55,9 +55,7 @@ class TestServer:
             'get_flows',
             'get_jobs',
             'get_project_info',
-            'get_table',
-            'list_buckets',
-            'list_tables',
+            'get_tables',
             'modify_data_app',
             'query_data',
             'run_job',
@@ -122,7 +120,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info', 'list_buckets']
+        assert missing_properties == ['get_project_info']
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()
@@ -305,10 +303,8 @@ async def test_tool_annotations_and_tags():
         ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG}),
         # storage
-        ('get_bucket', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('list_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('get_table', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('list_tables', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('get_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('get_tables', True, None, None, {STORAGE_TOOLS_TAG}),
         ('update_descriptions', None, True, None, {STORAGE_TOOLS_TAG}),
         # flows
         ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
