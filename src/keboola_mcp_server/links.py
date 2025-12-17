@@ -81,6 +81,11 @@ class ProjectLinksManager:
             self.get_flows_docs_link(),
         ]
 
+    # --- Schedulers ---
+    def get_scheduler_detail_link(self, flow_id: str | int, flow_type: FlowType) -> Link:
+        flow_path = 'flows-v2' if flow_type == CONDITIONAL_FLOW_COMPONENT_ID else 'flows'
+        return Link.detail(title=f'Schedules', url=self._url(f'{flow_path}/{flow_id}/schedules'))
+
     # --- Components ---
     def get_component_config_link(self, component_id: str, configuration_id: str, configuration_name: str) -> Link:
         return Link.detail(
