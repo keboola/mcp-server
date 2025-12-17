@@ -2,9 +2,11 @@
 
 import logging
 
+from pydantic.type_adapter import R
+
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.scheduler import ScheduleModelApiResponse
-from keboola_mcp_server.tools.flow.scheduler_model import SimplifiedCronSchedule
+from keboola_mcp_server.tools.flow.scheduler_model import SimplifiedCronSchedule, ScheduleRequest
 
 LOG = logging.getLogger(__name__)
 
@@ -234,3 +236,54 @@ async def list_schedules_for_config(
     return await client.scheduler_client.list_schedules_by_config_id(
         component_id=component_id, configuration_id=configuration_id
     )
+
+
+async def process_schedule_request(
+    client: KeboolaClient,
+    target_component_id: str,
+    target_configuration_id: str,
+    request: ScheduleRequest,
+) -> ScheduleModelApiResponse:
+    """
+    Process a schedule request and perform the appropriate action.
+
+    :param client: KeboolaClient instance
+    :param target_component_id: The component ID to schedule (e.g., 'keboola.flow')
+    :param target_configuration_id: The configuration ID to schedule
+    :param request: ScheduleUpdateRequest object
+    :param flow_name: Optional name of the flow (used for generating schedule names)
+    :return: ScheduleModelApiResponse for the created/modified schedule
+    """
+
+    action = request.action
+    schedule_id = request.schedule_id
+    schedule = request.schedule
+
+    if action == 'create':
+        schedule_name = f'Schedule for {target_configuration_id}'
+        response = await create_scheduler(
+            client=client,
+            target_component_id=target_component_id,
+            target_configuration_id=target_configuration_id,
+            schedule=schedule,
+            schedule_name=schedule_name,
+            schedule_description=f'Automated schedule for {target_configuration_id}',
+            target_mode='run',
+        )
+        return response
+    elif action == 'modify':
+        return await update_scheduler(
+            client=client,
+            schedule_configuration_id=schedule_id,
+            schedule=schedule,
+            state='enabled',
+            change_description='Schedule modified',
+        )
+    elif action == 'enable':
+        return await enable_schedule(client=client, schedule_configuration_id=schedule_id)
+    elif action == 'disable':
+        return await disable_schedule(client=client, schedule_configuration_id=schedule_id)
+    elif action == 'delete':
+        return await delete_schedule(client=client, schedule_configuration_id=schedule_id)
+    else:
+        raise ValueError(f'Unknown action: {action}')

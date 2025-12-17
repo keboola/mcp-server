@@ -18,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 ScheduleType = Literal['yearly', 'monthly', 'weekly', 'daily', 'hourly']
 
 
-class ScheduleUpdateRequest(BaseModel):
+class ScheduleRequest(BaseModel):
     """Input scheduler model."""
 
     schedule_id: str = Field(
@@ -27,7 +27,7 @@ class ScheduleUpdateRequest(BaseModel):
         validation_alias=AliasChoices('id'),
         default_factory=str,
     )
-    action: Literal['enable', 'disable', 'detele', 'modify', 'create'] = Field(description='Schedule state')
+    action: Literal['enable', 'disable', 'delete', 'modify', 'create'] = Field(description='Schedule state')
     schedule: Optional['SimplifiedCronSchedule'] = Field(description='Cron schedule', default_factory=None)
 
 
