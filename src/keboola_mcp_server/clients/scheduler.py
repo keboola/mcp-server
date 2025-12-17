@@ -33,23 +33,24 @@ class TargetConfiguration(BaseModel):
     tag: str | None = Field(default=None, description='Optional tag version')
 
 
-class SchedulerExecution(BaseModel):
-    """Scheduler execution model."""
+class ScheduleExecution(BaseModel):
+    """Schedule execution model."""
 
     job_id: str = Field(alias='jobId', description='Job ID of the execution')
     execution_time: datetime = Field(alias='executionTime', description='Execution time')
 
 
-class SchedulerModelApiResponse(BaseModel):
-    """Scheduler API response model."""
+class ScheduleModelApiResponse(BaseModel):
+    """Schedule API response model."""
 
-    id: str = Field(description='Scheduler ID (numeric string)')
+    id: str = Field(description='Schedule ID (numeric string)')
     token_id: str = Field(alias='tokenId', description='Token ID used for authentication')
     configuration_id: str = Field(alias='configurationId', description='Configuration ID from Storage API')
     configuration_version_id: str = Field(alias='configurationVersionId', description='Configuration version ID')
     schedule: ScheduleConfiguration = Field(description='Schedule configuration')
     target: TargetConfiguration = Field(description='Target configuration')
-    executions: list[SchedulerExecution] = Field(default_factory=list, description='List of recent executions')
+    executions: list[ScheduleExecution] = Field(default_factory=list, description='List of recent executions')
+
 
 class SchedulerClient(KeboolaServiceClient):
     """Client for interacting with the Keboola Scheduler API."""
@@ -59,7 +60,7 @@ class SchedulerClient(KeboolaServiceClient):
         Creates a SchedulerClient from a RawKeboolaClient.
 
         :param raw_client: The raw client to use
-        :param branch_id: The id of the branch (currently unused for Scheduler API)
+        :param branch_id: The id of the branch
         """
         super().__init__(raw_client=raw_client)
         self._branch_id = branch_id
@@ -90,71 +91,73 @@ class SchedulerClient(KeboolaServiceClient):
             branch_id=branch_id,
         )
 
-    async def activate_scheduler(self, scheduler_id: str) -> SchedulerModelApiResponse:
+    async def activate_schedule(self, schedule_configuration_id: str) -> ScheduleModelApiResponse:
         """
-        Activate a scheduler in the Scheduler API.
+        Activate a schedule in the Scheduler API.
 
-        This is the second step in scheduler creation, after the scheduler configuration
+        This is the second step in schedule creation, after the schedule configuration
         has been created in Storage API.
 
-        :param scheduler_id: The new scheduler configuration ID (keboola.scheduler config ID)
-        :return: The scheduler response with id, schedule, target, etc.
+        :param schedule_configuration_id: The new schedule configuration ID (keboola.scheduler config ID)
+        :return: The schedule response with id, schedule, target, etc.
         """
-        payload = {'configurationId': scheduler_id}
+        payload = {'configurationId': schedule_configuration_id}
         response = await self.post(endpoint='schedules', data=payload)
-        return SchedulerModelApiResponse.model_validate(response)
+        return ScheduleModelApiResponse.model_validate(response)
 
-    async def get_scheduler(self, scheduler_id: str) -> SchedulerModelApiResponse:
+    async def get_schedule(self, schedule_id: str) -> ScheduleModelApiResponse:
         """
-        Get scheduler details by scheduler ID.
+        Get schedule details by schedule ID.
 
-        :param scheduler_id: The scheduler ID (numeric string)
-        :return: The scheduler details
+        :param schedule_id: The schedule ID (numeric string)
+        :return: The schedule details
         """
-        response = await self.get(endpoint=f'schedules/{scheduler_id}')
-        return SchedulerModelApiResponse.model_validate(response)
+        response = await self.get(endpoint=f'schedules/{schedule_id}')
+        return ScheduleModelApiResponse.model_validate(response)
 
-    async def get_schedulers_by_config_id(self, component_id: str, configuration_id: str) -> list[SchedulerModelApiResponse]:
+    async def list_schedules_by_config_id(
+        self, component_id: str, configuration_id: str
+    ) -> list[ScheduleModelApiResponse]:
         """
-        Get scheduler details by Storage API component and configuration ID.
+        Get schedules details by Storage API component and configuration ID.
 
         :param component_id: The Storage API component ID
         :param configuration_id: The Storage API configuration ID
-        :return: The list of scheduler details
+        :return: The list of schedules details
         """
         params = {
             'componentId': component_id,
             'configurationId': configuration_id,
         }
         response = await self.get(endpoint=f'schedules', params=params)
-        return [SchedulerModelApiResponse.model_validate(scheduler) for scheduler in response]
+        return [ScheduleModelApiResponse.model_validate(schedule) for schedule in response]
 
-    async def list_schedulers(self) -> list[SchedulerModelApiResponse]:
+    async def list_schedules(self) -> list[ScheduleModelApiResponse]:
         """
-        List all schedulers for the current project/token.
+        List all schedules for the current project/token.
 
-        :return: The list of scheduler details
+        :return: The list of schedules details
         """
         response = await self.get(endpoint='schedules')
         if isinstance(response, list):
-            return [SchedulerModelApiResponse.model_validate(scheduler) for scheduler in response]
-        return [SchedulerModelApiResponse.model_validate(response)]
+            return [ScheduleModelApiResponse.model_validate(schedule) for schedule in response]
+        return [ScheduleModelApiResponse.model_validate(response)]
 
-    async def deactivate_scheduler(self, scheduler_id: str) -> None:
+    async def deactivate_schedule(self, schedule_id: str) -> None:
         """
-        Deactivate a scheduler by its Scheduler API ID.
+        Deactivate a schedule by its Schedule API ID.
 
-        This is the first step in scheduler deletion. After this, the configuration
+        This is the first step in schedule deletion. After this, the configuration
         should also be deleted from Storage API.
 
-        :param scheduler_id: The Scheduler API ID
+        :param schedule_id: The Schedule API ID
         """
-        await self.delete(endpoint=f'schedules/{scheduler_id}')
+        await self.delete(endpoint=f'schedules/{schedule_id}')
 
-    async def delete_scheduler(self, configuration_id: str) -> None:
+    async def delete_schedule(self, configuration_id: str) -> None:
         """
-        Delete a scheduler by its Storage API configuration ID.
+        Delete a schedule by its Storage API configuration ID.
 
-        :param configuration_id: The Scheduler API configuration ID
+        :param configuration_id: The Schedule API configuration ID
         """
         await self.delete(endpoint=f'configurations/{configuration_id}')

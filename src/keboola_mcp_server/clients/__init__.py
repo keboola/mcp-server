@@ -1,4 +1,5 @@
 from keboola_mcp_server.clients.ai_service import AIServiceClient
+from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.encryption import EncryptionClient
@@ -11,6 +12,7 @@ __all__ = [
     'AsyncStorageClient',
     'AIServiceClient',
     'JobsQueueClient',
+    'SchedulerClient',
     'RawKeboolaClient',
     'KeboolaServiceClient',
 ]
