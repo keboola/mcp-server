@@ -6,14 +6,14 @@ from pydantic.type_adapter import R
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.scheduler import ScheduleModelApiResponse
-from keboola_mcp_server.tools.flow.scheduler_model import SimplifiedCronSchedule, ScheduleRequest
+from keboola_mcp_server.tools.flow.scheduler_model import SimplifiedCronSchedule, ScheduleRequest, Schedule
 
 LOG = logging.getLogger(__name__)
 
 SCHEDULER_COMPONENT_ID = 'keboola.scheduler'
 
 
-async def create_scheduler(
+async def create_schedule(
     client: KeboolaClient,
     target_component_id: str,
     target_configuration_id: str,
@@ -22,7 +22,7 @@ async def create_scheduler(
     schedule_description: str = '',
     target_mode: str = 'run',
     target_tag: str | None = None,
-) -> ScheduleModelApiResponse:
+) -> Schedule:
     """
     Create a scheduler for a component configuration.
 
@@ -38,7 +38,7 @@ async def create_scheduler(
     :param schedule_description: Description for the scheduler configuration
     :param target_mode: Execution mode (default: 'run')
     :param target_tag: Optional tag for the target configuration
-    :return: ScheduleModelApiResponse with the activated scheduler details
+    :return: Schedule with the activated scheduler details
     """
     if schedule_name is None:
         schedule_name = f'Schedule for {target_configuration_id}'
@@ -78,10 +78,10 @@ async def create_scheduler(
     schedule_response = await client.scheduler_client.activate_schedule(schedule_configuration_id)
     LOG.info(f'Activated schedule in Scheduler API: {schedule_response.id}')
 
-    return schedule_response
+    return Schedule.from_api_response(schedule_response)
 
 
-async def update_scheduler(
+async def update_schedule(
     client: KeboolaClient,
     schedule_configuration_id: str,
     schedule: SimplifiedCronSchedule | None = None,
@@ -93,7 +93,7 @@ async def update_scheduler(
     target_tag: str | None = None,
     state: str = 'enabled',
     change_description: str = 'Scheduler updated',
-) -> ScheduleModelApiResponse:
+) -> Schedule:
     """
     Update an existing scheduler.
 
@@ -112,7 +112,7 @@ async def update_scheduler(
     :param target_tag: Optional tag for the target
     :param state: Schedule state ('enabled' or 'disabled')
     :param change_description: Description of the change
-    :return: ScheduleModelApiResponse with updated scheduler details
+    :return: Schedule with updated scheduler details
     """
     LOG.info(f'Updating schedule configuration: {schedule_configuration_id}')
 
@@ -161,7 +161,7 @@ async def update_scheduler(
     scheduler_response = await client.scheduler_client.activate_schedule(schedule_configuration_id)
     LOG.info(f'Reactivated scheduler in Scheduler API: {scheduler_response.id}')
 
-    return scheduler_response
+    return Schedule.from_api_response(scheduler_response)
 
 
 async def delete_schedule(client: KeboolaClient, schedule_configuration_id: str) -> None:
@@ -188,16 +188,16 @@ async def delete_schedule(client: KeboolaClient, schedule_configuration_id: str)
     LOG.info(f'Deleted schedule configuration from Storage API: {schedule_configuration_id}')
 
 
-async def enable_schedule(client: KeboolaClient, schedule_configuration_id: str) -> ScheduleModelApiResponse:
+async def enable_schedule(client: KeboolaClient, schedule_configuration_id: str) -> Schedule:
     """
     Enable a disabled schedule.
 
     :param client: KeboolaClient instance
     :param schedule_configuration_id: The schedule configuration ID in Storage API
-    :return: ScheduleModelApiResponse with updated scheduler details
+    :return: Schedule with updated scheduler details
     """
     LOG.info(f'Enabling schedule: {schedule_configuration_id}')
-    return await update_scheduler(
+    return await update_schedule(
         client=client,
         schedule_configuration_id=schedule_configuration_id,
         state='enabled',
@@ -205,16 +205,16 @@ async def enable_schedule(client: KeboolaClient, schedule_configuration_id: str)
     )
 
 
-async def disable_schedule(client: KeboolaClient, schedule_configuration_id: str) -> ScheduleModelApiResponse:
+async def disable_schedule(client: KeboolaClient, schedule_configuration_id: str) -> Schedule:
     """
     Disable an active schedule.
 
     :param client: KeboolaClient instance
     :param schedule_configuration_id: The schedule configuration ID in Storage API
-    :return: ScheduleModelApiResponse with updated scheduler details
+    :return: Schedule with updated scheduler details
     """
     LOG.info(f'Disabling schedule: {schedule_configuration_id}')
-    return await update_scheduler(
+    return await update_schedule(
         client=client,
         schedule_configuration_id=schedule_configuration_id,
         state='disabled',
@@ -222,20 +222,19 @@ async def disable_schedule(client: KeboolaClient, schedule_configuration_id: str
     )
 
 
-async def list_schedules_for_config(
-    client: KeboolaClient, component_id: str, configuration_id: str
-) -> list[ScheduleModelApiResponse]:
+async def list_schedules_for_config(client: KeboolaClient, component_id: str, configuration_id: str) -> list[Schedule]:
     """
     List all schedules for a configuration.
 
     :param client: KeboolaClient instance
     :param component_id: The component ID
     :param configuration_id: The configuration ID
-    :return: List of ScheduleModelApiResponse
+    :return: List of Schedules
     """
-    return await client.scheduler_client.list_schedules_by_config_id(
+    schedules_api = await client.scheduler_client.list_schedules_by_config_id(
         component_id=component_id, configuration_id=configuration_id
     )
+    return [Schedule.from_api_response(schedule) for schedule in schedules_api]
 
 
 async def process_schedule_request(
@@ -243,7 +242,7 @@ async def process_schedule_request(
     target_component_id: str,
     target_configuration_id: str,
     request: ScheduleRequest,
-) -> ScheduleModelApiResponse:
+) -> Schedule:
     """
     Process a schedule request and perform the appropriate action.
 
@@ -252,7 +251,7 @@ async def process_schedule_request(
     :param target_configuration_id: The configuration ID to schedule
     :param request: ScheduleUpdateRequest object
     :param flow_name: Optional name of the flow (used for generating schedule names)
-    :return: ScheduleModelApiResponse for the created/modified schedule
+    :return: Schedule for the created/modified schedule
     """
 
     action = request.action
@@ -261,7 +260,7 @@ async def process_schedule_request(
 
     if action == 'create':
         schedule_name = f'Schedule for {target_configuration_id}'
-        response = await create_scheduler(
+        return await create_schedule(
             client=client,
             target_component_id=target_component_id,
             target_configuration_id=target_configuration_id,
@@ -270,9 +269,8 @@ async def process_schedule_request(
             schedule_description=f'Automated schedule for {target_configuration_id}',
             target_mode='run',
         )
-        return response
     elif action == 'modify':
-        return await update_scheduler(
+        return await update_schedule(
             client=client,
             schedule_configuration_id=schedule_id,
             schedule=schedule,

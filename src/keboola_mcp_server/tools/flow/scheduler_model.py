@@ -21,13 +21,13 @@ ScheduleType = Literal['yearly', 'monthly', 'weekly', 'daily', 'hourly']
 class ScheduleRequest(BaseModel):
     """Input scheduler model."""
 
+    action: Literal['enable', 'disable', 'delete', 'modify', 'create'] = Field(description='Schedule state')
     schedule_id: str = Field(
-        description='Schedule API ID',
+        description='Schedule configuration ID',
         serialization_alias='scheduleId',
         validation_alias=AliasChoices('id'),
         default_factory=str,
     )
-    action: Literal['enable', 'disable', 'delete', 'modify', 'create'] = Field(description='Schedule state')
     schedule: Optional['SimplifiedCronSchedule'] = Field(description='Cron schedule', default_factory=None)
 
 
@@ -45,7 +45,6 @@ class SimplifiedCronSchedule(BaseModel):
     type: ScheduleType = Field(
         description=('Schedule period type. Depending on the type, only the relevant fields should be defined')
     )
-    timezone: str = Field(description='Timezone', default='UTC')
     in_months: list[int] = Field(description='Months to run (1-12)', default_factory=list)
     on_days: list[int] = Field(
         description='Days of the month to run (1-31 if monthly, 0-6 if weekly)', default_factory=list
@@ -93,7 +92,6 @@ class SimplifiedCronSchedule(BaseModel):
         in_months = elem_to_cron(self.in_months)
 
         if self.type == "weekly":
-            assert all(0 <= day <= 6 for day in on_days), "Days of the week must be between 0 and 6"
             return f'{at_minutes} {at_hour} * * {on_days}'
         else:
             return f'{at_minutes} {at_hour} {on_days} {in_months} *'
@@ -103,8 +101,9 @@ class Schedule(BaseModel):
     """Lightweight schedule summary for flow models."""
 
     schedule_id: str = Field(
-        description='Schedule API ID', serialization_alias='scheduleId', validation_alias=AliasChoices('id')
+        description='Schedule configuration ID', serialization_alias='scheduleId', validation_alias=AliasChoices('id')
     )
+    version: int = Field(description='Schedule version')
     timezone: str = Field(description='Timezone')
     state: Literal['enabled', 'disabled'] = Field(description='Schedule state')
     simplified_schedule: SimplifiedCronSchedule = Field(
@@ -115,13 +114,15 @@ class Schedule(BaseModel):
     executions: list[ScheduleExecution] = Field(default_factory=list, description='List of recent executions')
 
     @classmethod
-    def from_scheduler_response(cls, schedule_api: ScheduleModelApiResponse) -> 'Schedule':
+    def from_api_response(cls, schedule_api: ScheduleModelApiResponse) -> 'Schedule':
         """Create a schedule from a schedule response."""
         return cls.model_construct(
-            scheduler_id=schedule_api.id,
+            scheduler_id=schedule_api.configuration_id,
+            version=schedule_api.configuration_version_id,
             timezone=schedule_api.schedule.timezone,
             state=schedule_api.schedule.state,
             simplified_schedule=SimplifiedCronSchedule.from_cron_tab(schedule_api.schedule.cron_tab),
+            executions=schedule_api.executions,
         )
 
 
