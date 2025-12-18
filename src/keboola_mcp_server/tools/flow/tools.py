@@ -31,6 +31,8 @@ from keboola_mcp_server.tools.flow.model import (
     GetFlowsListOutput,
     GetFlowsOutput,
 )
+from keboola_mcp_server.tools.flow.scheduler import process_schedule_request, fetch_schedules_for_flows, fetch_schedules_for_flow_summaries
+from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest, Schedule
 from keboola_mcp_server.tools.flow.utils import (
     get_all_flows,
     get_flow_configuration,
@@ -273,6 +275,10 @@ async def update_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
     name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
+    schedule: Annotated[
+        ScheduleRequest,
+        Field(description='Optional schedule request to create/modify/deactivate/delete schedule for this flow.'),
+    ] = None,
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
@@ -287,6 +293,10 @@ async def update_flow(
     - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
     - Tasks must reference existing component configurations; keep dependencies consistent
     - Always provide a clear `change_description` and surface any links returned in the response to the user
+    - If requested, you can manage schedules for this flow by including a schedule parameter with the appropriate
+    action. A flow can have multiple schedules. When creating a new schedule, specify the type and the relevant fields.
+    For type = 'weekly', specify days of the week using values 0–6. For type = 'monthly', specify days of the month
+    using values 1–31. When updating an existing schedule, specify the schedule_id and the action to perform.
 
     CONDITIONAL FLOWS (`keboola.flow`):
     - Maintain a single entry phase and ensure every phase is reachable; connect phases via `next` transitions
@@ -329,24 +339,39 @@ async def update_flow(
 
     LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
     links_manager = await ProjectLinksManager.from_client(client)
-    updated_raw_configuration = await client.storage_client.configuration_update(
-        component_id=flow_type,
-        configuration_id=configuration_id,
-        configuration=flow_configuration,
-        change_description=change_description,
-        updated_name=name,
-        updated_description=description,
-    )
-    api_config = CreateConfigurationAPIResponse.model_validate(updated_raw_configuration)
+    api_config: CreateConfigurationAPIResponse | None = None
+    if updated_configuration.get('phases') or updated_configuration.get('tasks') or name or description:
+        updated_raw_configuration = await client.storage_client.configuration_update(
+            component_id=flow_type,
+            configuration_id=configuration_id,
+            configuration=flow_configuration,
+            change_description=change_description,
+            updated_name=name,
+            updated_description=description,
+        )
+        api_config = CreateConfigurationAPIResponse.model_validate(updated_raw_configuration)
 
-    await set_cfg_update_metadata(
-        client,
-        component_id=flow_type,
-        configuration_id=api_config.id,
-        configuration_version=api_config.version,
-    )
+        await set_cfg_update_metadata(
+            client,
+            component_id=flow_type,
+            configuration_id=api_config.id,
+            configuration_version=api_config.version,
+        )
+    else:
+        api_config = current_config
 
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
+    # Process schedule request if provided
+    if schedule is not None:
+        schedule = await process_schedule_request(
+            client=client,
+            target_component_id=flow_type,
+            target_configuration_id=configuration_id,
+            request=schedule,
+        )
+        LOG.info(f'Successfully processed schedule request for flow {configuration_id}')
+        flow_links.append(links_manager.get_scheduler_detail_link(configuration_id, flow_type))
+
     tool_response = FlowToolOutput(
         configuration_id=api_config.id,
         component_id=flow_type,
@@ -399,12 +424,13 @@ async def get_flows(
         flows = unwrap_results(results, 'Failed to fetch one or more flows')
 
         LOG.info(f'Retrieved full details for {len(flows)} flows.')
+        flows = await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=flows)
         return GetFlowsDetailOutput(flows=flows)
 
     # Case 2: no flow_ids - list all flows as summaries
     flows = await get_all_flows(client)
     LOG.info(f'Retrieved {len(flows)} flows.')
-
+    flows = await fetch_schedules_for_flow_summaries(client=client, flow_summaries=flows)
     links = [
         links_manager.get_flows_dashboard_link(ORCHESTRATOR_COMPONENT_ID),
         links_manager.get_flows_dashboard_link(CONDITIONAL_FLOW_COMPONENT_ID),

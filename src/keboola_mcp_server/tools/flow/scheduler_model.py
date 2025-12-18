@@ -108,8 +108,7 @@ class Schedule(BaseModel):
     state: Literal['enabled', 'disabled'] = Field(description='Schedule state')
     simplified_schedule: SimplifiedCronSchedule = Field(
         description='Cron expression',
-        validation_alias=AliasChoices('cron_tab', 'cronTab', 'cron-tab'),
-        serialization_alias='cronTab',
+        alias='schedule',
     )
     executions: list[ScheduleExecution] = Field(default_factory=list, description='List of recent executions')
 

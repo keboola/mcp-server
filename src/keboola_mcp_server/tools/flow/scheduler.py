@@ -7,6 +7,7 @@ from pydantic.type_adapter import R
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.scheduler import ScheduleModelApiResponse
 from keboola_mcp_server.tools.flow.scheduler_model import SimplifiedCronSchedule, ScheduleRequest, Schedule
+from keboola_mcp_server.tools.components.utils import set_cfg_update_metadata, set_cfg_creation_metadata
 
 LOG = logging.getLogger(__name__)
 
@@ -77,6 +78,11 @@ async def create_schedule(
     # Step 2: Activate scheduler in Scheduler API
     schedule_response = await client.scheduler_client.activate_schedule(schedule_configuration_id)
     LOG.info(f'Activated schedule in Scheduler API: {schedule_response.id}')
+    await set_cfg_creation_metadata(
+        client,
+        component_id=SCHEDULER_COMPONENT_ID,
+        configuration_id=schedule_configuration_id,
+    )
 
     return Schedule.from_api_response(schedule_response)
 
@@ -161,6 +167,13 @@ async def update_schedule(
     scheduler_response = await client.scheduler_client.activate_schedule(schedule_configuration_id)
     LOG.info(f'Reactivated scheduler in Scheduler API: {scheduler_response.id}')
 
+    await set_cfg_update_metadata(
+        client,
+        component_id=SCHEDULER_COMPONENT_ID,
+        configuration_id=schedule_configuration_id,
+        configuration_version=schedule_response.version,
+    )
+
     return Schedule.from_api_response(scheduler_response)
 
 
@@ -237,6 +250,42 @@ async def list_schedules_for_config(client: KeboolaClient, component_id: str, co
     return [Schedule.from_api_response(schedule) for schedule in schedules_api]
 
 
+async def fetch_schedules_for_flow_summaries(client: KeboolaClient, flow_summaries: list[FlowSummary]) -> list[FlowSummary]:
+    """
+    Fetch schedules for a list of flow summaries.
+
+    :param client: KeboolaClient instance
+    :param flow_summaries: The list of flow summaries to add the schedule to
+    :return: The list of flow summaries with the schedules added
+    """
+    for flow_summary in flow_summaries:
+        schedules = await list_schedules_for_config(
+            client=client, component_id=flow_summary.component_id, configuration_id=flow_summary.configuration_id
+        )
+        flow_summary.schedules_count = len(schedules)
+    return flow_summaries
+
+
+async def fetch_schedules_for_flows(
+    client: KeboolaClient, links_manager: ProjectLinksManager, list_of_flows: list[Flow]
+) -> list[Flow]:
+    """
+    Fetch schedules for a list of flows.
+
+    :param client: KeboolaClient instance
+    :param links_manager: The links manager to use
+    :param list_of_flows: The list of flows to fetch the schedules for
+    :return: The list of flows with the schedules added
+    """
+    for flow in list_of_flows:
+        schedules = await list_schedules_for_config(
+            client=client, component_id=flow.component_id, configuration_id=flow.configuration_id
+        )
+        link = links_manager.get_scheduler_detail_link(flow.configuration_id, flow.component_id)
+        flow.schedules = SchedulesOutput(schedules=schedules, n_schedules=len(schedules), links=[link])
+    return list_of_flows
+
+
 async def process_schedule_request(
     client: KeboolaClient,
     target_component_id: str,
@@ -282,6 +331,7 @@ async def process_schedule_request(
     elif action == 'disable':
         return await disable_schedule(client=client, schedule_configuration_id=schedule_id)
     elif action == 'delete':
-        return await delete_schedule(client=client, schedule_configuration_id=schedule_id)
+        await delete_schedule(client=client, schedule_configuration_id=schedule_id)
+        return None
     else:
         raise ValueError(f'Unknown action: {action}')
