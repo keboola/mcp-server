@@ -1,9 +1,11 @@
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
+    DATA_APP_COMPONENT_ID,
+    FLOW_TYPES,
     FlowType,
     KeboolaClient,
 )
@@ -51,6 +53,51 @@ class ProjectLinksManager:
         parts.append(path)
         return '/'.join(parts)
 
+    @staticmethod
+    def _flow_type_from_component_id(component_id: str | None) -> FlowType | None:
+        if component_id in FLOW_TYPES:
+            return cast(FlowType, component_id)
+        return None
+
+    @staticmethod
+    def _is_data_app_component(component_id: str | None) -> bool:
+        return component_id == DATA_APP_COMPONENT_ID
+
+    @staticmethod
+    def _is_transformation_component(component_id: str) -> bool:
+        return bool(component_id and 'transformation' in component_id)
+
+    def get_links(
+        self,
+        *,
+        bucket_id: str | None = None,
+        table_id: str | None = None,
+        component_id: str | None = None,
+        configuration_id: str | None = None,
+        name: str | None = None,
+    ) -> list[Link]:
+        """
+        Get the most relevant links for Keboola Objects based on the provided mutually exclusive identifiers.
+        """
+        if component_id and configuration_id:
+            return [
+                self.get_component_config_link(
+                    component_id=component_id,
+                    configuration_id=configuration_id,
+                    configuration_name=name or '',
+                )
+            ]
+
+        if component_id:
+            return [self.get_config_dashboard_link(component_id=component_id, component_name=name or '')]
+
+        if table_id:
+            return [self.get_table_detail_link_from_table_id(table_id=table_id)]
+
+        if bucket_id:
+            return [self.get_bucket_detail_link(bucket_id=bucket_id, bucket_name=name or bucket_id)]
+        return []
+
     # --- Project ---
     def get_project_detail_link(self) -> Link:
         return Link.detail(title='Project Dashboard', url=self._url(''))
@@ -87,12 +134,38 @@ class ProjectLinksManager:
         return Link.detail(title=f'Schedules', url=self._url(f'{flow_path}/{flow_id}/schedules'))
 
     # --- Components ---
-    def get_component_config_link(self, component_id: str, configuration_id: str, configuration_name: str) -> Link:
+    def get_component_config_link(
+        self,
+        component_id: str,
+        configuration_id: str,
+        configuration_name: str,
+    ) -> Link:
+        """
+        Get the link to the configuration of a component based on its type, transformation, data app, flow,
+        or component.
+        """
+        if self._is_transformation_component(component_id):
+            return self.get_transformation_config_link(
+                transformation_type=component_id,
+                transformation_id=configuration_id,
+                transformation_name=configuration_name,
+            )
+        if self._is_data_app_component(component_id):
+            return self.get_data_app_config_link(
+                configuration_id=configuration_id,
+                configuration_name=configuration_name,
+                uses_basic_authentication=False,
+            )
+        if flow_type := self._flow_type_from_component_id(component_id):
+            return self.get_flow_detail_link(
+                flow_id=configuration_id, flow_name=configuration_name, flow_type=flow_type
+            )
         return Link.detail(
             title=f'Configuration: {configuration_name}', url=self._url(f'components/{component_id}/{configuration_id}')
         )
 
-    def get_config_dashboard_link(self, component_id: str, component_name: str) -> Link:
+    def get_config_dashboard_link(self, component_id: str, component_name: str | None) -> Link:
+        component_name = f'{component_name}' if component_name else f'Component "{component_id}"'
         return Link.dashboard(
             title=f'{component_name} Configurations Dashboard', url=self._url(f'components/{component_id}')
         )
@@ -105,7 +178,7 @@ class ProjectLinksManager:
             self.get_component_config_link(
                 component_id=component_id, configuration_id=configuration_id, configuration_name=configuration_name
             ),
-            self.get_config_dashboard_link(component_id=component_id, component_name=component_id),
+            self.get_config_dashboard_link(component_id=component_id, component_name=None),
         ]
 
     # --- Data Apps ---
@@ -148,6 +221,22 @@ class ProjectLinksManager:
     def get_transformations_dashboard_link(self) -> Link:
         return Link.dashboard(title='Transformations dashboard', url=self._url('transformations-v2'))
 
+    def get_transformation_config_link(
+        self, transformation_type: str, transformation_id: str, transformation_name: str
+    ) -> Link:
+        return Link.detail(
+            title=f'Transformation: {transformation_name}',
+            url=self._url(f'transformations-v2/{transformation_type}/{transformation_id}'),
+        )
+
+    def get_transformation_links(
+        self, transformation_type: str, transformation_id: str, transformation_name: str
+    ) -> list[Link]:
+        return [
+            self.get_transformation_config_link(transformation_type, transformation_id, transformation_name),
+            self.get_transformations_dashboard_link(),
+        ]
+
     # --- Jobs ---
     def get_job_detail_link(self, job_id: str) -> Link:
         return Link.detail(title=f'Job: {job_id}', url=self._url(f'queue/{job_id}'))
@@ -174,6 +263,11 @@ class ProjectLinksManager:
     # --- Tables ---
     def get_table_detail_link(self, bucket_id: str, table_name: str) -> Link:
         return Link.detail(title=f'Table: {table_name}', url=self._url(f'storage/{bucket_id}/table/{table_name}'))
+
+    def get_table_detail_link_from_table_id(self, table_id: str) -> Link:
+        table_name = table_id.split('.')[-1]
+        bucket_id = '.'.join(table_id.split('.')[:-1])
+        return self.get_table_detail_link(bucket_id=bucket_id, table_name=table_name)
 
     def get_table_links(self, bucket_id: str, bucket_name: str, table_name: str) -> list[Link]:
         return [

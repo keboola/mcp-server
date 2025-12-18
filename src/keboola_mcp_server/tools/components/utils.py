@@ -33,14 +33,15 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.tools.components import tf_update
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentSummary,
     ComponentType,
-    ComponentWithConfigurations,
+    ComponentWithConfigs,
     ConfigParamUpdate,
-    ConfigurationSummary,
+    ConfigSummary,
     SimplifiedTfBlocks,
     TfParamUpdate,
     TransformationConfiguration,
@@ -80,13 +81,13 @@ def expand_component_types(component_types: Sequence[ComponentType]) -> tuple[Co
 
 
 async def list_configs_by_types(
-    client: KeboolaClient, component_types: Sequence[ComponentType]
-) -> list[ComponentWithConfigurations]:
+    client: KeboolaClient, component_types: Sequence[ComponentType], links_manager: ProjectLinksManager
+) -> list[ComponentWithConfigs]:
     """
     Retrieves components with their configurations filtered by component types.
 
     Used by:
-    - list_configs tool
+    - get_configs tool (when component types are requested)
 
     :param client: Authenticated Keboola client instance
     :param component_types: Types of components to retrieve (extractor, writer, application, transformation)
@@ -107,23 +108,36 @@ async def list_configs_by_types(
                 for raw_configuration in cast(list[JsonDict], raw_component.get('configurations', []))
             ]
 
-            # Convert to domain models
-            configuration_summaries = [
-                ConfigurationSummary.from_api_response(api_config) for api_config in raw_configuration_responses
-            ]
+            # Convert to domain models add links
+            configuration_summaries = []
+            for api_config in raw_configuration_responses:
+                cfg_summary = ConfigSummary.from_api_response(api_config)
+                cfg_root = cfg_summary.configuration_root
+                cfg_summary.links.append(
+                    links_manager.get_component_config_link(
+                        component_id=cfg_root.component_id,
+                        configuration_id=cfg_root.configuration_id,
+                        configuration_name=cfg_root.name,
+                    )
+                )
+                configuration_summaries.append(cfg_summary)
 
             # Process component
             api_component = ComponentAPIResponse.model_validate(raw_component)
             domain_component = ComponentSummary.from_api_response(api_component)
-
+            domain_component.links.append(
+                links_manager.get_config_dashboard_link(
+                    component_id=domain_component.component_id, component_name=domain_component.component_name
+                )
+            )
             components_with_configurations.append(
-                ComponentWithConfigurations(
+                ComponentWithConfigs(
                     component=domain_component,
-                    configurations=configuration_summaries,
+                    configs=configuration_summaries,
                 )
             )
 
-    total_configurations = sum(len(component.configurations) for component in components_with_configurations)
+    total_configurations = sum(len(component.configs) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
         f'for types {component_types}.'
@@ -131,12 +145,14 @@ async def list_configs_by_types(
     return components_with_configurations
 
 
-async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str]) -> list[ComponentWithConfigurations]:
+async def list_configs_by_ids(
+    client: KeboolaClient, component_ids: Sequence[str], links_manager: ProjectLinksManager
+) -> list[ComponentWithConfigs]:
     """
     Retrieves components with their configurations filtered by specific component IDs.
 
     Used by:
-    - list_configs tool (when specific component IDs are requested)
+    - get_configs tool (when specific component IDs are requested)
 
     :param client: Authenticated Keboola client instance
     :param component_ids: Specific component IDs to retrieve
@@ -152,24 +168,36 @@ async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str
         # Process component
         api_component = ComponentAPIResponse.model_validate(raw_component)
         domain_component = ComponentSummary.from_api_response(api_component)
-
+        domain_component.links.append(
+            links_manager.get_config_dashboard_link(
+                component_id=domain_component.component_id, component_name=domain_component.component_name
+            )
+        )
         # Process configurations
         raw_configuration_responses = [
             ConfigurationAPIResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
             for raw_configuration in raw_configurations
         ]
-        configuration_summaries = [
-            ConfigurationSummary.from_api_response(api_config) for api_config in raw_configuration_responses
-        ]
+        configuration_summaries = []
+        for api_config in raw_configuration_responses:
+            cfg_summary = ConfigSummary.from_api_response(api_config)
+            cfg_summary.links.append(
+                links_manager.get_component_config_link(
+                    component_id=cfg_summary.configuration_root.component_id,
+                    configuration_id=cfg_summary.configuration_root.configuration_id,
+                    configuration_name=cfg_summary.configuration_root.name,
+                )
+            )
+            configuration_summaries.append(cfg_summary)
 
         components_with_configurations.append(
-            ComponentWithConfigurations(
+            ComponentWithConfigs(
                 component=domain_component,
-                configurations=configuration_summaries,
+                configs=configuration_summaries,
             )
         )
 
-    total_configurations = sum(len(component.configurations) for component in components_with_configurations)
+    total_configurations = sum(len(component.configs) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
         f'for ids {component_ids}.'
@@ -194,7 +222,7 @@ async def fetch_component(
     Storage API endpoint.
 
     Used by:
-    - get_component tool
+    - get_components tool
     - Configuration creation/update operations that need component schemas
 
     :param client: Authenticated Keboola client instance

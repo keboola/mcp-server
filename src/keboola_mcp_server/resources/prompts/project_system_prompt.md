@@ -1,3 +1,8 @@
+### When Creating Configurations
+- Before generating any component configuration: fetch details via `get_components` to pull `configuration_schema` / `configuration_row_schema`, and review `get_config_examples` if both unknown to you. Keep generated parameters aligned to the retrieved schema.
+- Before generating any legacy flow or conditional flow configuration: fetch the correct schema with `get_flow_schema` (use the matching flow type) and review `get_flow_examples` so phases/tasks follow the required structure if both unknown to you.
+- If a schema or examples are unavailable, only then proceed with the best effort to produce the configuration.
+
 ### Transformations
 
 **Transformations** allow you to manipulate data in your project. Their purpose is to transform data existing in Storage
@@ -58,10 +63,19 @@ Use Custom Python component in cases when:
 - The existing Generic Extractor extraction is too slow and the user complains about its performance.
 - You have already tried Generic Extractor but it's failing. Use Custom Python as a fallback.
 
-When using Custom Python, always look up the documentation using the `get_component` tool.
+When using Custom Python, always look up the documentation using the `get_components` tool.
 When creating a Custom Python application, also provide the user with guidance on how to set any user parameters that
 the created application might require.
 Remember to add dependencies into the created configuration!
+
+CRITICAL: The user_parameters are exposed as normal configuration parameters when using the CommonInterface library in Custom Python. Always retrieve the parameters like this:
+  ```
+  ci = CommonInterface()
+  params = ci.configuration.parameters
+  ```
+  NEVER like this: `params = ci.configuration.parameters.get("user_properties", {})`
+
+ 
 
 ### Processors
 
@@ -72,6 +86,6 @@ IMPORTANT CONSIDERATIONS:
 - There are only a few components that accept processors.
 - Set up processors only when requested by a user or when you know the component supports them.
 - Keep the use of processors to a minimum.
-- If you need to use a processor, always look up the documentation using the `get_component` tool and configuration
+- If you need to use a processor, always look up the documentation using the `get_components` tool and configuration
   examples using the `get_config_examples` tool.
 - The `keboola.processor-decompress` is deprecated. Use `keboola.processor-decompress-v2` instead.

@@ -45,22 +45,17 @@ class TestServer:
             'deploy_data_app',
             'docs_query',
             'find_component_id',
-            'get_bucket',
-            'get_component',
-            'get_config',
+            'get_buckets',
+            'get_components',
             'get_config_examples',
+            'get_configs',
             'get_data_apps',
-            'get_flow',
             'get_flow_examples',
             'get_flow_schema',
-            'get_job',
+            'get_flows',
+            'get_jobs',
             'get_project_info',
-            'get_table',
-            'list_buckets',
-            'list_configs',
-            'list_flows',
-            'list_jobs',
-            'list_tables',
+            'get_tables',
             'modify_data_app',
             'query_data',
             'run_job',
@@ -125,7 +120,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info', 'list_buckets']
+        assert missing_properties == ['get_project_info']
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()
@@ -298,9 +293,8 @@ async def test_tool_annotations_and_tags():
     ('tool_name', 'expected_readonly', 'expected_destructive', 'expected_idempotent', 'tags'),
     [
         # components
-        ('get_component', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('get_config', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('list_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('get_components', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('get_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('get_config_examples', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('create_config', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_config', None, True, None, {COMPONENT_TOOLS_TAG}),
@@ -309,24 +303,20 @@ async def test_tool_annotations_and_tags():
         ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG}),
         # storage
-        ('get_bucket', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('list_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('get_table', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('list_tables', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('get_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('get_tables', True, None, None, {STORAGE_TOOLS_TAG}),
         ('update_descriptions', None, True, None, {STORAGE_TOOLS_TAG}),
         # flows
         ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
         ('create_conditional_flow', None, False, None, {FLOW_TOOLS_TAG}),
-        ('list_flows', True, None, None, {FLOW_TOOLS_TAG}),
+        ('get_flows', True, None, None, {FLOW_TOOLS_TAG}),
         ('update_flow', None, True, None, {FLOW_TOOLS_TAG}),
-        ('get_flow', True, None, None, {FLOW_TOOLS_TAG}),
         ('get_flow_examples', True, None, None, {FLOW_TOOLS_TAG}),
         ('get_flow_schema', True, None, None, {FLOW_TOOLS_TAG}),
         # sql
         ('query_data', True, None, None, {SQL_TOOLS_TAG}),
         # jobs
-        ('get_job', True, None, None, {JOB_TOOLS_TAG}),
-        ('list_jobs', True, None, None, {JOB_TOOLS_TAG}),
+        ('get_jobs', True, None, None, {JOB_TOOLS_TAG}),
         ('run_job', None, True, None, {JOB_TOOLS_TAG}),
         # project/doc/search
         ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
