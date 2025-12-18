@@ -208,7 +208,7 @@ class TestPydanticValidationErrors:
                         'message': 'Missing required argument',
                         'extra': {
                             'type': 'missing_argument',
-                            'input': "{'foo': 'bar', 'ctx': Context()}",
+                            'input': "{'foo': 'bar'}",
                             'url': 'https://errors.pydantic.dev/2.12/v/missing_argument',
                         },
                     },
@@ -217,7 +217,7 @@ class TestPydanticValidationErrors:
                         'message': 'Missing required argument',
                         'extra': {
                             'type': 'missing_argument',
-                            'input': "{'foo': 'bar', 'ctx': Context()}",
+                            'input': "{'foo': 'bar'}",
                             'url': 'https://errors.pydantic.dev/2.12/v/missing_argument',
                         },
                     },
