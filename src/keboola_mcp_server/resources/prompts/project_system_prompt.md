@@ -68,6 +68,15 @@ When creating a Custom Python application, also provide the user with guidance o
 the created application might require.
 Remember to add dependencies into the created configuration!
 
+CRITICAL: The user_parameters are exposed as normal configuration parameters when using the CommonInterface library in Custom Python. Always retrieve the parameters like this:
+  ```
+  ci = CommonInterface()
+  params = ci.configuration.parameters
+  ```
+  NEVER like this: `params = ci.configuration.parameters.get("user_properties", {})`
+
+ 
+
 ### Processors
 
 **Processors** are a special type of component that can be used to pre-process inputs
