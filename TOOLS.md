@@ -2386,6 +2386,7 @@ WHEN TO USE:
 
 HOW IT WORKS:
 - Searches by regex pattern matching against id, name, displayName, and description fields
+- For tables, also searches column names and column descriptions
 - Case-insensitive search
 - Multiple patterns work as OR condition - matches items containing ANY of the patterns
 - Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
@@ -2402,6 +2403,10 @@ USAGE EXAMPLES:
 - user_input: "Find all tables with 'customer' in the name"
   → patterns=["customer"], item_types=["table"]
   → Returns all tables whose id, name, displayName, or description contains "customer"
+
+- user_input: "Find tables with 'email' column"
+  → patterns=["email"], item_types=["table"]
+  → Returns all tables that have a column named "email" or with "email" in column description
 
 - user_input: "Search for the sales transformation"
   → patterns=["sales"], item_types=["transformation"]
