@@ -8,7 +8,13 @@ from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import create_config
-from keboola_mcp_server.tools.jobs import JobDetail, ListJobsOutput, get_job, list_jobs, run_job
+from keboola_mcp_server.tools.jobs import (
+    GetJobsDetailOutput,
+    GetJobsListOutput,
+    JobDetail,
+    get_jobs,
+    run_job,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -20,7 +26,7 @@ async def _wait_for_job_in_list(
     config_id: str | None,
     max_retries: int = 10,
     delay: float = 0.5,
-) -> ListJobsOutput:
+) -> GetJobsListOutput:
     """
     Wait for a job to appear in the job list with retry mechanism.
 
@@ -30,12 +36,13 @@ async def _wait_for_job_in_list(
     :param config_id: Config ID to filter by (can be None)
     :param max_retries: Maximum number of retry attempts
     :param delay: Delay between retries in seconds
-    :return: ListJobsOutput containing the job
+    :return: GetJobsListOutput containing the job
     :raises AssertionError: If job is not found after all retries
     """
     for attempt in range(max_retries):
-        result = await list_jobs(
+        result = await get_jobs(
             ctx=mcp_context,
+            job_ids=tuple(),
             component_id=component_id,
             config_id=config_id,
             limit=10,
@@ -43,6 +50,7 @@ async def _wait_for_job_in_list(
             sort_order='desc',
         )
 
+        assert isinstance(result, GetJobsListOutput)
         job_ids = {job.id for job in result.jobs}
         if job_id in job_ids:
             LOG.info(f'Job {job_id} found in list after {attempt + 1} attempts')
@@ -56,8 +64,8 @@ async def _wait_for_job_in_list(
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_with_component_and_config_filter(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `list_jobs` works with component and config filtering."""
+async def test_get_jobs_listing_with_component_and_config_filter(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_jobs` works with component and config filtering when listing."""
 
     # Use first config to create jobs for testing
     test_config = configs[0]
@@ -74,7 +82,7 @@ async def test_list_jobs_with_component_and_config_filter(mcp_context: Context, 
         config_id=configuration_id,
     )
 
-    assert isinstance(result, ListJobsOutput)
+    assert isinstance(result, GetJobsListOutput)
     assert len(result.jobs) >= 1
 
     # Verify our created jobs appear in the results
@@ -87,8 +95,8 @@ async def test_list_jobs_with_component_and_config_filter(mcp_context: Context, 
 
 
 @pytest.mark.asyncio
-async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
-    """Tests that `run_job` creates a job and `get_job` retrieves its details."""
+async def test_run_job_and_get_jobs(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+    """Tests that `run_job` creates a job and `get_jobs` retrieves its details."""
 
     project_id = keboola_project.project_id
 
@@ -119,9 +127,12 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
         ]
     )
 
-    job_detail = await get_job(job_id=started_job.id, ctx=mcp_context)
+    result = await get_jobs(ctx=mcp_context, job_ids=(started_job.id,))
 
     # Verify the job detail response
+    assert isinstance(result, GetJobsDetailOutput)
+    assert len(result.jobs) == 1
+    job_detail = result.jobs[0]
     assert isinstance(job_detail, JobDetail)
     assert job_detail.id == started_job.id
     assert job_detail.component_id == component_id
@@ -145,8 +156,8 @@ async def test_run_job_and_get_job(mcp_context: Context, configs: list[ConfigDef
 
 
 @pytest.mark.asyncio
-async def test_get_job(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
-    """Tests `get_job` by creating a job and then retrieving its details."""
+async def test_get_jobs_detail(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+    """Tests `get_jobs` by creating a job and then retrieving its details."""
 
     project_id = keboola_project.project_id
 
@@ -155,14 +166,16 @@ async def test_get_job(mcp_context: Context, configs: list[ConfigDef], keboola_p
     component_id = test_config.component_id
     configuration_id = test_config.configuration_id
 
-    # Create a specific job to test get_job with
+    # Create a specific job to test get_jobs with
     created_job = await run_job(ctx=mcp_context, component_id=component_id, configuration_id=configuration_id)
 
-    # Now test get_job on the job we just created
-    job_detail = await get_job(job_id=created_job.id, ctx=mcp_context)
+    # Now test get_jobs on the job we just created
+    result = await get_jobs(ctx=mcp_context, job_ids=(created_job.id,))
 
     # Verify all expected fields are present
-    assert isinstance(job_detail, JobDetail)
+    assert isinstance(result, GetJobsDetailOutput)
+    assert len(result.jobs) == 1
+    job_detail = result.jobs[0]
     assert job_detail.id == created_job.id
     assert job_detail.component_id == component_id
     assert job_detail.config_id == configuration_id
@@ -232,7 +245,10 @@ async def test_run_job_with_newly_created_config(
         )
 
         # Verify job can be retrieved
-        job_detail = await get_job(job_id=started_job.id, ctx=mcp_context)
+        result = await get_jobs(ctx=mcp_context, job_ids=(started_job.id,))
+        assert isinstance(result, GetJobsDetailOutput)
+        assert len(result.jobs) == 1
+        job_detail = result.jobs[0]
         assert isinstance(job_detail, JobDetail)
         assert job_detail.id == started_job.id
         assert job_detail.component_id == component_id
