@@ -145,7 +145,7 @@ class KeboolaClient:
             root_url=encryption_api_url, token=None, headers=self._headers
         )
         self._scheduler_client = SchedulerClient.create(
-            root_url=scheduler_api_url, token=self._token, branch_id=branch_id, headers=self._headers
+            root_url=scheduler_api_url, token=self._token, headers=self._headers
         )
 
     @property
