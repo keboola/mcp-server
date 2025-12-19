@@ -45,7 +45,7 @@ class ScheduleDetail(BaseModel):
     """Schedule model for flow tools."""
 
     schedule_id: str = Field(
-        description='Schedule configuration ID', serialization_alias='scheduleId', validation_alias=AliasChoices('id')
+        description='Schedule configuration ID', serialization_alias='scheduleId', validation_alias=AliasChoices('id', 'schedule_id')
     )
     timezone: str = Field(description='Timezone')
     state: Literal['enabled', 'disabled'] = Field(description='Schedule state')
@@ -55,9 +55,10 @@ class ScheduleDetail(BaseModel):
             'Cron Tab `* * * * *`. Where 1. minutes, 2. hours, 3. days of month, 4. months, 5. days of week.'
             'Example: `15,45 1,13 * * 0`'
         ),
-        alias='cronTab',
+        serialization_alias='cronTab',
+        validation_alias=AliasChoices('cronTab', 'cron_tab'),
     )
-    target_runs: list[TargetJobRun] = Field(default_factory=list, description='List of recent target runs')
+    target_executions: list[TargetExecution] = Field(default_factory=list, description='List of recent target runs')
 
     @classmethod
     def from_api_response(cls, schedule_api: ScheduleApiResponse) -> 'ScheduleDetail':
@@ -67,5 +68,5 @@ class ScheduleDetail(BaseModel):
             timezone=schedule_api.schedule.timezone,
             state=schedule_api.schedule.state,
             cron_tab=schedule_api.schedule.cron_tab,
-            target_runs=schedule_api.executions,
+            target_executions=schedule_api.executions,
         )
