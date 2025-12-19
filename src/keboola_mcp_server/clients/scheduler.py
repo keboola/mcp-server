@@ -5,8 +5,8 @@ This client handles communication with the Scheduler API (scheduler.keboola.com)
 for managing scheduled flow executions.
 """
 
-from datetime import datetime
 import logging
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -33,14 +33,14 @@ class TargetConfiguration(BaseModel):
     tag: str | None = Field(default=None, description='Optional tag version')
 
 
-class ScheduleExecution(BaseModel):
-    """Schedule execution model."""
+class TargetJobRun(BaseModel):
+    """Target job run model."""
 
     job_id: str = Field(alias='jobId', description='Job ID of the execution')
     execution_time: datetime = Field(alias='executionTime', description='Execution time')
 
 
-class ScheduleModelApiResponse(BaseModel):
+class ScheduleApiResponse(BaseModel):
     """Schedule API response model."""
 
     id: str = Field(description='Schedule ID (numeric string)')
@@ -49,7 +49,7 @@ class ScheduleModelApiResponse(BaseModel):
     configuration_version_id: str = Field(alias='configurationVersionId', description='Configuration version ID')
     schedule: ScheduleConfiguration = Field(description='Schedule configuration')
     target: TargetConfiguration = Field(description='Target configuration')
-    executions: list[ScheduleExecution] = Field(default_factory=list, description='List of recent executions')
+    executions: list[TargetJobRun] = Field(default_factory=list, description='List of recent executions')
 
 
 class SchedulerClient(KeboolaServiceClient):
@@ -91,21 +91,21 @@ class SchedulerClient(KeboolaServiceClient):
             branch_id=branch_id,
         )
 
-    async def activate_schedule(self, schedule_configuration_id: str) -> ScheduleModelApiResponse:
+    async def activate_schedule(self, schedule_config_id: str) -> ScheduleApiResponse:
         """
         Activate a schedule in the Scheduler API.
 
         This is the second step in schedule creation, after the schedule configuration
         has been created in Storage API.
 
-        :param schedule_configuration_id: The new schedule configuration ID (keboola.scheduler config ID)
+        :param schedule_config_id: The new schedule configuration ID (keboola.scheduler config ID)
         :return: The schedule response with id, schedule, target, etc.
         """
-        payload = {'configurationId': schedule_configuration_id}
+        payload = {'configurationId': schedule_config_id}
         response = await self.post(endpoint='schedules', data=payload)
-        return ScheduleModelApiResponse.model_validate(response)
+        return ScheduleApiResponse.model_validate(response)
 
-    async def get_schedule(self, schedule_id: str) -> ScheduleModelApiResponse:
+    async def get_schedule(self, schedule_id: str) -> ScheduleApiResponse:
         """
         Get schedule details by schedule ID.
 
@@ -113,11 +113,9 @@ class SchedulerClient(KeboolaServiceClient):
         :return: The schedule details
         """
         response = await self.get(endpoint=f'schedules/{schedule_id}')
-        return ScheduleModelApiResponse.model_validate(response)
+        return ScheduleApiResponse.model_validate(response)
 
-    async def list_schedules_by_config_id(
-        self, component_id: str, configuration_id: str
-    ) -> list[ScheduleModelApiResponse]:
+    async def list_schedules_by_config_id(self, component_id: str, configuration_id: str) -> list[ScheduleApiResponse]:
         """
         Get schedules details by Storage API component and configuration ID.
 
@@ -129,10 +127,10 @@ class SchedulerClient(KeboolaServiceClient):
             'componentId': component_id,
             'configurationId': configuration_id,
         }
-        response = await self.get(endpoint=f'schedules', params=params)
-        return [ScheduleModelApiResponse.model_validate(schedule) for schedule in response]
+        response = await self.get(endpoint='schedules', params=params)
+        return [ScheduleApiResponse.model_validate(schedule) for schedule in response]
 
-    async def list_schedules(self) -> list[ScheduleModelApiResponse]:
+    async def list_schedules(self) -> list[ScheduleApiResponse]:
         """
         List all schedules for the current project/token.
 
@@ -140,24 +138,13 @@ class SchedulerClient(KeboolaServiceClient):
         """
         response = await self.get(endpoint='schedules')
         if isinstance(response, list):
-            return [ScheduleModelApiResponse.model_validate(schedule) for schedule in response]
-        return [ScheduleModelApiResponse.model_validate(response)]
+            return [ScheduleApiResponse.model_validate(schedule) for schedule in response]
+        return [ScheduleApiResponse.model_validate(response)]
 
-    async def deactivate_schedule(self, schedule_id: str) -> None:
-        """
-        Deactivate a schedule by its Schedule API ID.
-
-        This is the first step in schedule deletion. After this, the configuration
-        should also be deleted from Storage API.
-
-        :param schedule_id: The Schedule API ID
-        """
-        await self.delete(endpoint=f'schedules/{schedule_id}')
-
-    async def delete_schedule(self, configuration_id: str) -> None:
+    async def delete_schedule(self, schedule_config_id: str) -> None:
         """
         Delete a schedule by its Storage API configuration ID.
 
-        :param configuration_id: The Schedule API configuration ID
+        :param schedule_config_id: The Schedule API configuration ID
         """
-        await self.delete(endpoint=f'configurations/{configuration_id}')
+        await self.delete(endpoint=f'configurations/{schedule_config_id}')
