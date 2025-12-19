@@ -8,7 +8,6 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Callable, Literal
 
 from fastmcp import FastMCP
-from mcp.server.auth.routes import create_auth_routes
 from pydantic import AliasChoices, BaseModel, Field
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
@@ -163,14 +162,7 @@ class CustomRoutes:
         app.add_route('/health-check', self.get_status, methods=['GET'])
         if self.oauth_provider:
             app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
-            auth_routes = create_auth_routes(
-                self.oauth_provider,
-                self.oauth_provider.issuer_url,
-                self.oauth_provider.service_documentation_url,
-                self.oauth_provider.client_registration_options,
-                self.oauth_provider.revocation_options,
-            )
-            for route in auth_routes:
+            for route in self.oauth_provider.get_routes():
                 app.add_route(route.path, route.endpoint, methods=route.methods)
 
 
