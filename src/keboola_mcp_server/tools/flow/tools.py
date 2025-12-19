@@ -31,8 +31,11 @@ from keboola_mcp_server.tools.flow.model import (
     GetFlowsListOutput,
     GetFlowsOutput,
 )
-from keboola_mcp_server.tools.flow.scheduler import process_schedule_request, fetch_schedules_for_flows, fetch_schedules_for_flow_summaries
-from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest, Schedule
+from keboola_mcp_server.tools.flow.scheduler import (
+    fetch_schedules_for_flows,
+    process_schedule_request,
+)
+from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest
 from keboola_mcp_server.tools.flow.utils import (
     get_all_flows,
     get_flow_configuration,
@@ -260,7 +263,7 @@ async def create_conditional_flow(
 @tool_errors()
 async def update_flow(
     ctx: Context,
-    configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
+    configuration_id: Annotated[str, Field(description='ID of the flow configuration.')],
     flow_type: Annotated[
         FlowType,
         Field(
@@ -275,13 +278,22 @@ async def update_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
     name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
-    schedule: Annotated[
-        ScheduleRequest,
-        Field(description='Optional schedule request to create/modify/deactivate/delete schedule for this flow.'),
-    ] = None,
+    schedules: Annotated[
+        Sequence[ScheduleRequest],
+        Field(
+            description=(
+                'Optional sequence of schedule requests to add/update/remove schedules for this flow. '
+                'Each request must have "action": "add"|"update"|"remove". '
+                'For add: include "cron_tab", "state" ("enabled"|"disabled"), "timezone". '
+                'For update/remove: include "schedule_id". '
+                'Example: [{"action": "add", "cron_tab": "0 8 * * 1-5", "state": "enabled", "timezone": "UTC"}]'
+            )
+        ),
+    ] = tuple(),
 ) -> FlowToolOutput:
     """
-    Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
+    Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
+    manages schedules for this flow.
 
     PRE-REQUISITES:
     - Always use `get_flow_schema` (and `get_flow_examples`) for that flow type you want to update to follow the
@@ -293,10 +305,8 @@ async def update_flow(
     - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
     - Tasks must reference existing component configurations; keep dependencies consistent
     - Always provide a clear `change_description` and surface any links returned in the response to the user
-    - If requested, you can manage schedules for this flow by including a schedule parameter with the appropriate
-    action. A flow can have multiple schedules. When creating a new schedule, specify the type and the relevant fields.
-    For type = 'weekly', specify days of the week using values 0–6. For type = 'monthly', specify days of the month
-    using values 1–31. When updating an existing schedule, specify the schedule_id and the action to perform.
+    - A flow can have multiple schedules for automation runs. Add/update/remove schedules only if requested.
+    - When updating a flow or a schedule, specify only the fields you want to update, others will be kept unchanged.
 
     CONDITIONAL FLOWS (`keboola.flow`):
     - Maintain a single entry phase and ensure every phase is reachable; connect phases via `next` transitions
@@ -307,7 +317,8 @@ async def update_flow(
     - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
     WHEN TO USE:
-    - Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
+    - Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules or
+    adjusting dependencies
     """
 
     project_info = await get_project_info(ctx)
@@ -358,18 +369,20 @@ async def update_flow(
             configuration_version=api_config.version,
         )
     else:
-        api_config = current_config
+        api_config = CreateConfigurationAPIResponse.model_validate(current_config)
 
+    response_message: str | None = None
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
-    # Process schedule request if provided
-    if schedule is not None:
-        schedule = await process_schedule_request(
+    # Process schedule requests if provided
+    if schedules is not None and len(schedules) > 0:
+        responses = await process_schedule_request(
             client=client,
             target_component_id=flow_type,
             target_configuration_id=configuration_id,
-            request=schedule,
+            requests=schedules,
         )
-        LOG.info(f'Successfully processed schedule request for flow {configuration_id}')
+        response_message = 'Schedules request processed successfully: \n' + '\n'.join(responses)
+        LOG.info(f'Successfully processed {len(schedules)} schedule request(s) for flow {configuration_id}')
         flow_links.append(links_manager.get_scheduler_detail_link(configuration_id, flow_type))
 
     tool_response = FlowToolOutput(
@@ -378,6 +391,7 @@ async def update_flow(
         description=api_config.description or '',
         version=api_config.version,
         timestamp=datetime.now(timezone.utc),
+        response=response_message,
         success=True,
         links=flow_links,
     )
@@ -430,7 +444,6 @@ async def get_flows(
     # Case 2: no flow_ids - list all flows as summaries
     flows = await get_all_flows(client)
     LOG.info(f'Retrieved {len(flows)} flows.')
-    flows = await fetch_schedules_for_flow_summaries(client=client, flow_summaries=flows)
     links = [
         links_manager.get_flows_dashboard_link(ORCHESTRATOR_COMPONENT_ID),
         links_manager.get_flows_dashboard_link(CONDITIONAL_FLOW_COMPONENT_ID),
