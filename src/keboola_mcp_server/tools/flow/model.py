@@ -44,6 +44,7 @@ class FlowToolOutput(BaseModel):
     :param success: Indicates if the operation succeeded.
     :param links: The links relevant to the flow.
     :param version: The version number of the flow configuration.
+    :param response: The response messages from the operation.
     """
 
     configuration_id: str = Field(description='The configuration ID of the flow.')
@@ -51,6 +52,7 @@ class FlowToolOutput(BaseModel):
     description: str = Field(description='The description of the Flow.')
     version: int = Field(description='The version number of the flow configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')
+    response: Optional[str] = Field(default=None, description='The response message from the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the flow.')
 
