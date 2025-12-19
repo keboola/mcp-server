@@ -212,6 +212,7 @@ class SimpleOAuthProvider(OAuthProvider):
             # and return the registered redirect URI.
             redirect_uris=[AnyHttpUrl('http://foo')],
             client_id=client_id,
+            token_endpoint_auth_method='none',
         )
         LOG.debug(f'Client loaded: client_id={client_id}')
         return client
