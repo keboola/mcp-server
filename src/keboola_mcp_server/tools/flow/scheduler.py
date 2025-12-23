@@ -216,7 +216,7 @@ async def create_schedule(
     await set_cfg_creation_metadata(
         client,
         component_id=SCHEDULER_COMPONENT_ID,
-        configuration_id=schedule_configuration_id,
+        configuration_id=schedule_config_id,
     )
 
     await set_cfg_creation_metadata(
