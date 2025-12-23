@@ -10,6 +10,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
 from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.tools.flow.scheduler_model import SchedulesOutput
 
 # =============================================================================
 # RESPONSE MODELS
@@ -43,6 +44,7 @@ class FlowToolOutput(BaseModel):
     :param success: Indicates if the operation succeeded.
     :param links: The links relevant to the flow.
     :param version: The version number of the flow configuration.
+    :param response: The response messages from the operation.
     """
 
     configuration_id: str = Field(description='The configuration ID of the flow.')
@@ -50,6 +52,7 @@ class FlowToolOutput(BaseModel):
     description: str = Field(description='The description of the Flow.')
     version: int = Field(description='The version number of the flow configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')
+    response: Optional[str] = Field(default=None, description='The response message from the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the flow.')
 
@@ -359,11 +362,16 @@ class Flow(BaseModel):
     )
     created: Optional[str] = Field(None, description='Creation timestamp')
     updated: Optional[str] = Field(None, description='Last update timestamp')
+    schedules: Optional[SchedulesOutput] = Field(default=None, description='List of schedules for this flow')
     links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
 
     @classmethod
     def from_api_response(
-        cls, api_config: APIFlowResponse, flow_component_id: FlowType, links: Optional[list[Link]] = None
+        cls,
+        api_config: APIFlowResponse,
+        flow_component_id: FlowType,
+        links: Optional[list[Link]] = None,
+        schedules: Optional[SchedulesOutput] = None,
     ) -> 'Flow':
         """
         Create a Flow domain model from an APIFlowResponse.
@@ -398,6 +406,7 @@ class Flow(BaseModel):
             created=api_config.created,
             updated=api_config.updated,
             links=links or [],
+            schedules=schedules,
         )
 
 
@@ -413,11 +422,14 @@ class FlowSummary(BaseModel):
     is_deleted: bool = Field(default=False, description='Whether the flow configuration is deleted')
     phases_count: int = Field(description='Number of phases in the flow')
     tasks_count: int = Field(description='Number of tasks in the flow')
+    schedules_count: int = Field(default=0, description='Number of configured schedules for this flow')
     created: Optional[str] = Field(None, description='Creation timestamp')
     updated: Optional[str] = Field(None, description='Last update timestamp')
 
     @classmethod
-    def from_api_response(cls, api_config: APIFlowResponse, flow_component_id: FlowType) -> 'FlowSummary':
+    def from_api_response(
+        cls, api_config: APIFlowResponse, flow_component_id: FlowType, n_schedules: int = 0
+    ) -> 'FlowSummary':
         """
         Create a FlowSummary domain model from an APIFlowResponse.
 
@@ -436,6 +448,7 @@ class FlowSummary(BaseModel):
             is_deleted=api_config.is_deleted,
             phases_count=len(config.get('phases', [])),
             tasks_count=len(config.get('tasks', [])),
+            schedules_count=n_schedules,
             created=api_config.created,
             updated=api_config.updated,
         )

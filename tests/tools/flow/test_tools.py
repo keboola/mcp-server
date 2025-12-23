@@ -21,6 +21,7 @@ from keboola_mcp_server.tools.flow.model import (
     GetFlowsDetailOutput,
     GetFlowsListOutput,
 )
+from keboola_mcp_server.tools.flow.scheduler_model import SchedulesOutput
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolOutput,
     create_conditional_flow,
@@ -445,6 +446,7 @@ class TestGetFlowsTool:
             raise ValueError(f'Unexpected component_id: {component_id}')
 
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        mocker.patch.object(keboola_client.scheduler_client, 'list_schedules_by_config_id', return_value=[])
         mocker.patch.object(
             keboola_client.storage_client, 'configuration_detail', side_effect=mock_configuration_detail
         )
@@ -484,6 +486,17 @@ class TestGetFlowsTool:
                 Link(type='ui-dashboard', title='Flows in the project', url=f'{base_url}/flows'),
                 Link(type='docs', title='Documentation for Keboola Flows', url='https://help.keboola.com/flows/'),
             ],
+            schedules=SchedulesOutput(
+                schedules=[],
+                n_schedules=0,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Schedules',
+                        url=f"{base_url}/flows/{mock_legacy_flow['configuration_id']}/schedules",
+                    )
+                ],
+            ),
         )
 
         assert result == GetFlowsDetailOutput(flows=[expected_flow])
@@ -533,6 +546,17 @@ class TestGetFlowsTool:
                 Link(type='ui-dashboard', title='Conditional Flows in the project', url=f'{base_url}/flows-v2'),
                 Link(type='docs', title='Documentation for Keboola Flows', url='https://help.keboola.com/flows/'),
             ],
+            schedules=SchedulesOutput(
+                schedules=[],
+                n_schedules=0,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Schedules',
+                        url=f"{base_url}/flows-v2/{mock_conditional_flow['configuration_id']}/schedules",
+                    ),
+                ],
+            ),
         )
 
         assert result == GetFlowsDetailOutput(flows=[expected_flow])
@@ -630,6 +654,7 @@ class TestGetFlowsTool:
             raise Exception(f'Configuration {configuration_id} not found')
 
         keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_configuration_detail)
+        mocker.patch.object(keboola_client.scheduler_client, 'list_schedules_by_config_id', return_value=[])
 
         result = await get_flows(ctx=mcp_context_client, flow_ids=[legacy_id, conditional_id])
 
@@ -663,6 +688,17 @@ class TestGetFlowsTool:
                 Link(type='ui-dashboard', title='Flows in the project', url=f'{base_url}/flows'),
                 Link(type='docs', title='Documentation for Keboola Flows', url='https://help.keboola.com/flows/'),
             ],
+            schedules=SchedulesOutput(
+                schedules=[],
+                n_schedules=0,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Schedules',
+                        url=f"{base_url}/flows/{mock_legacy_flow['configuration_id']}/schedules",
+                    ),
+                ],
+            ),
         )
 
         expected_conditional_flow = Flow(
@@ -690,6 +726,17 @@ class TestGetFlowsTool:
                 Link(type='ui-dashboard', title='Conditional Flows in the project', url=f'{base_url}/flows-v2'),
                 Link(type='docs', title='Documentation for Keboola Flows', url='https://help.keboola.com/flows/'),
             ],
+            schedules=SchedulesOutput(
+                schedules=[],
+                n_schedules=0,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Schedules',
+                        url=f"{base_url}/flows-v2/{mock_conditional_flow['configuration_id']}/schedules",
+                    ),
+                ],
+            ),
         )
 
         assert result == GetFlowsDetailOutput(flows=[expected_legacy_flow, expected_conditional_flow])

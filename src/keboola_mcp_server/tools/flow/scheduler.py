@@ -213,6 +213,11 @@ async def create_schedule(
     # Step 2: Activate scheduler in Scheduler API
     schedule_response = await client.scheduler_client.activate_schedule(schedule_config_id)
     LOG.info(f'Activated schedule in Scheduler API: {schedule_response.id}')
+    await set_cfg_creation_metadata(
+        client,
+        component_id=SCHEDULER_COMPONENT_ID,
+        configuration_id=schedule_config_id,
+    )
 
     await set_cfg_creation_metadata(
         client,

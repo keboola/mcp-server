@@ -2006,7 +2006,8 @@ OPTIONS:
 
 **Description**:
 
-Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
+Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
+manages schedules for this flow.
 
 PRE-REQUISITES:
 - Always use `get_flow_schema` (and `get_flow_examples`) for that flow type you want to update to follow the
@@ -2018,6 +2019,8 @@ RULES (ALL FLOWS):
 - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
 - Tasks must reference existing component configurations; keep dependencies consistent
 - Always provide a clear `change_description` and surface any links returned in the response to the user
+- A flow can have multiple schedules for automation runs. Add/update/remove schedules only if requested.
+- When updating a flow or a schedule, specify only the fields you want to update, others will be kept unchanged.
 
 CONDITIONAL FLOWS (`keboola.flow`):
 - Maintain a single entry phase and ensure every phase is reachable; connect phases via `next` transitions
@@ -2028,15 +2031,87 @@ LEGACY FLOWS (`keboola.orchestrator`):
 - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
 WHEN TO USE:
-- Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
+- Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules or
+adjusting dependencies
 
 
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "ScheduleRequest": {
+      "properties": {
+        "action": {
+          "description": "Action to perform on the schedule.",
+          "enum": [
+            "add",
+            "update",
+            "remove"
+          ],
+          "type": "string"
+        },
+        "scheduleId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ID of the schedule configuration to update. None if creating a new schedule."
+        },
+        "timezone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Timezone for the schedule. Default UTC if None provided."
+        },
+        "cronTab": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cron expression for the schedule following the format: `* * * * *`.Where 1. minutes, 2. hours, 3. days of month, 4. months, 5. days of week. Example: `15,45 1,13 * * 0`"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "enabled",
+                "disabled"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Enable or disable the schedule."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
+  },
   "properties": {
     "configuration_id": {
-      "description": "ID of the flow configuration to update.",
+      "description": "ID of the flow configuration.",
       "type": "string"
     },
     "flow_type": {
@@ -2078,6 +2153,14 @@ WHEN TO USE:
       "default": "",
       "description": "Updated flow description. Only updated if provided.",
       "type": "string"
+    },
+    "schedules": {
+      "default": [],
+      "description": "Optional sequence of schedule requests to add/update/remove schedules for this flow. Each request must have \"action\": \"add\"|\"update\"|\"remove\". For add: include \"cron_tab\", \"state\" (\"enabled\"|\"disabled\"), \"timezone\". For update/remove: include \"schedule_id\". Example: [{\"action\": \"add\", \"cron_tab\": \"0 8 * * 1-5\", \"state\": \"enabled\", \"timezone\": \"UTC\"}]",
+      "items": {
+        "$ref": "#/$defs/ScheduleRequest"
+      },
+      "type": "array"
     }
   },
   "required": [
