@@ -72,7 +72,7 @@ class TestValidateCronTab:
     )
     def test_invalid_cron_tab(self, cron_tab: str, error_match: str):
         """Test invalid cron tab expressions."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match='Invalid cron tab expression') as exc_info:
             validate_cron_tab(cron_tab)
         error_message = str(exc_info.value)
         # Check that the error message starts with "Invalid cron tab expression: "
@@ -94,7 +94,7 @@ class TestValidateCronTab:
         validate_cron_tab('  0  8  *  *  *  ')
         validate_cron_tab('0 8 * * *')
         # Should fail with wrong number of parts after stripping
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match='Invalid cron tab expression') as exc_info:
             validate_cron_tab('  0  8  *  *  ')
         error_message = str(exc_info.value)
         assert 'Cron expression must have exactly 5 parts' in error_message

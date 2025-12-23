@@ -2,7 +2,6 @@ import logging
 
 import pytest
 
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.flow.scheduler import (
     create_schedule,
     list_schedules_for_config,
