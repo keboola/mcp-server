@@ -56,17 +56,23 @@ class TestValidateCronTab:
             pytest.param('0 8 * * -1', 'Days of week.*must be between 0=Sunday and 6=Saturday', id='weekdays_negative'),
             pytest.param('0 8 * * abc', 'Cron expression must have only digits', id='weekdays_non_digit'),
             pytest.param('* 1,3 * *', 'Cron expression must have exactly 5 parts', id='missing_weekday'),
-            pytest.param('0 8 * 1,3 *', 'Months of year must be specified with days of month', id='months_without_days'),
+            pytest.param(
+                '0 8 * 1,3 *', 'Months of year must be specified with days of month', id='months_without_days'
+            ),
             pytest.param('0 * 1,3 * *', 'Days of month must be specified with hours of day', id='days_without_hours'),
-            pytest.param('* 8 * * *', 'Hours of day must be specified with minutes of hour', id='hours_without_minutes'),
+            pytest.param(
+                '* 8 * * *', 'Hours of day must be specified with minutes of hour', id='hours_without_minutes'
+            ),
             pytest.param('* * * * 0', 'Days of week must be specified with hours of day', id='weekdays_without_hours'),
             pytest.param('0 8 1 * 0', 'Days of week must not be specified with days of month', id='weekdays_with_days'),
-            pytest.param('0 8 1,3 1,3 0', 'Days of week must not be specified with days of month', id='weekdays_with_both'),
+            pytest.param(
+                '0 8 1,3 1,3 0', 'Days of week must not be specified with days of month', id='weekdays_with_both'
+            ),
         ],
     )
     def test_invalid_cron_tab(self, cron_tab: str, error_match: str):
         """Test invalid cron tab expressions."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match='Invalid cron tab expression') as exc_info:
             validate_cron_tab(cron_tab)
         error_message = str(exc_info.value)
         # Check that the error message starts with "Invalid cron tab expression: "
@@ -88,9 +94,8 @@ class TestValidateCronTab:
         validate_cron_tab('  0  8  *  *  *  ')
         validate_cron_tab('0 8 * * *')
         # Should fail with wrong number of parts after stripping
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match='Invalid cron tab expression') as exc_info:
             validate_cron_tab('  0  8  *  *  ')
         error_message = str(exc_info.value)
         assert 'Cron expression must have exactly 5 parts' in error_message
         assert 'Cron Tab Expression should be in the format: `* * * * *`' in error_message
-

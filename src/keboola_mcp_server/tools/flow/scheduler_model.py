@@ -45,7 +45,9 @@ class ScheduleDetail(BaseModel):
     """Schedule model for flow tools."""
 
     schedule_id: str = Field(
-        description='Schedule configuration ID', serialization_alias='scheduleId', validation_alias=AliasChoices('id', 'schedule_id')
+        description='Schedule configuration ID',
+        serialization_alias='scheduleId',
+        validation_alias=AliasChoices('id', 'schedule_id'),
     )
     timezone: str = Field(description='Timezone')
     state: Literal['enabled', 'disabled'] = Field(description='Schedule state')
