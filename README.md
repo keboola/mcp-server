@@ -41,30 +41,36 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 3. **Configure your AI assistant**: Paste the URL into your AI assistant's MCP settings
 4. **Authenticate**: You'll be prompted to authenticate with your Keboola account and select your project
 
-### Supported Clients
+### MCP Client Configuration
 
-- **[Cursor](https://cursor.com)**: Use the "Install In Cursor" button in your project's MCP Server settings or click
-  this button
-  [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
-- **[Claude Desktop](https://claude.ai)**: Add the integration via Settings → Integrations
-- **[Claude Code](https://www.anthropic.com/)**: Install using `claude mcp add --transport http keboola <URL>` (see below for details)
-- **[Windsurf](https://windsurf.ai)**: Configure with the remote server URL
-- **[Make](https://make.com)**: Configure with the remote server URL
-- **Other MCP clients**: Configure with the remote server URL
+The standard configuration for local MCP server setup:
 
-#### Claude Code Setup
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "uvx",
+      "args": ["keboola_mcp_server"],
+      "env": {
+        "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
+        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+      }
+    }
+  }
+}
+```
 
-Claude Code is a command-line interface tool that allows you to interact with Claude using your terminal. You can install the Keboola MCP Server integration using a simple command.
+<details>
+  <summary>Claude Code</summary>
 
-**Installation:**
+Use the Claude Code CLI to add the Keboola MCP server (<a href="https://docs.anthropic.com/en/docs/claude-code/mcp">guide</a>).
 
-Run the following command in your terminal, replacing `<YOUR_REGION>` with your Keboola region:
+**Remote server (recommended):**
 
 ```bash
 claude mcp add --transport http keboola https://mcp.<YOUR_REGION>.keboola.com/mcp
 ```
-
-**Region-specific commands:**
 
 | Region | Installation Command |
 |--------|----------------------|
@@ -74,18 +80,165 @@ claude mcp add --transport http keboola https://mcp.<YOUR_REGION>.keboola.com/mc
 | EU Ireland Azure | `claude mcp add --transport http keboola https://mcp.north-europe.azure.keboola.com/mcp` |
 | EU Frankfurt GCP | `claude mcp add --transport http keboola https://mcp.europe-west3.gcp.keboola.com/mcp` |
 
-**Usage:**
+When you first use the remote server, a browser window will open prompting you to log in with your Keboola account, select the project you want to connect to, and authorize the connection.
 
-Once installed, you can use the Keboola MCP Server in Claude Code by typing `/mcp` in your conversation and selecting the Keboola tools you want to use.
+**Local server:**
 
-**Authentication:**
+```bash
+claude mcp add keboola \
+  --env KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com \
+  --env KBC_STORAGE_TOKEN=your_keboola_storage_token \
+  --env KBC_WORKSPACE_SCHEMA=your_workspace_schema \
+  -- uvx keboola_mcp_server
+```
 
-When you first use the Keboola MCP Server in Claude Code, a browser window will open prompting you to:
-1. Log in with your Keboola account
-2. Select the project you want to connect to
-3. Authorize the connection
+</details>
 
-After authentication, you can start using Keboola tools directly from Claude Code.
+<details>
+  <summary>Claude Desktop</summary>
+
+**Remote server (recommended):**
+
+Add the integration via `Settings` → `Integrations` and use the remote server URL for your region: `https://mcp.<YOUR_REGION>.keboola.com/sse`
+
+**Local server:**
+
+Go to `Claude` (top left corner) → `Settings` → `Developer` → `Edit Config` and add the standard config from above.
+
+Config file locations:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Restart Claude Desktop for changes to take effect.
+
+</details>
+
+<details>
+  <summary>Cursor</summary>
+
+**Remote server (recommended):**
+
+Click the button to install for US Virginia GCP region:
+
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
+
+Or use the "Install In Cursor" button in your Keboola Project Settings → MCP Server tab to install with your specific region.
+
+For manual setup, go to `Cursor Settings` → `MCP` → `+ Add new global MCP Server` and configure:
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "url": "https://mcp.<YOUR_REGION>.keboola.com/sse"
+    }
+  }
+}
+```
+
+**Local server:**
+
+Go to `Cursor Settings` → `MCP` → `+ Add new global MCP Server` and use the standard config from above.
+
+**Note**: Use short, descriptive names for MCP servers. Since the full tool name includes the server name and must stay under ~60 characters, longer names may be filtered out in Cursor.
+
+</details>
+
+<details>
+  <summary>Windsurf</summary>
+
+Follow the <a href="https://docs.windsurf.com/windsurf/cascade/mcp#mcp-config-json">configure MCP guide</a>.
+
+**Remote server (recommended):**
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "serverUrl": "https://mcp.<YOUR_REGION>.keboola.com/sse"
+    }
+  }
+}
+```
+
+**Local server:**
+
+Use the standard config from above.
+
+</details>
+
+<details>
+  <summary>Copilot / VS Code</summary>
+
+Follow the MCP install <a href="https://code.visualstudio.com/docs/copilot/chat/mcp-servers#_add-an-mcp-server">guide</a>.
+
+**Remote server (recommended):**
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "url": "https://mcp.<YOUR_REGION>.keboola.com/sse"
+    }
+  }
+}
+```
+
+**Local server:**
+
+Use the standard config from above.
+
+</details>
+
+<details>
+  <summary>Cursor on Windows WSL</summary>
+
+When running the MCP server from Windows Subsystem for Linux with Cursor AI, use this configuration:
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "wsl.exe",
+      "args": [
+        "bash",
+        "-c '",
+        "export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com &&",
+        "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
+        "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
+        "/snap/bin/uvx keboola_mcp_server",
+        "'"
+      ]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+  <summary>Other MCP Clients</summary>
+
+For other MCP-compatible clients:
+
+**Remote server (recommended):**
+
+Configure with your region-specific URL: `https://mcp.<YOUR_REGION>.keboola.com/sse`
+
+Available regions:
+| Region | Remote Server URL |
+|--------|-------------------|
+| US Virginia AWS | `https://mcp.keboola.com/sse` |
+| US Virginia GCP | `https://mcp.us-east4.gcp.keboola.com/sse` |
+| EU Frankfurt AWS | `https://mcp.eu-central-1.keboola.com/sse` |
+| EU Ireland Azure | `https://mcp.north-europe.azure.keboola.com/sse` |
+| EU Frankfurt GCP | `https://mcp.europe-west3.gcp.keboola.com/sse` |
+
+**Local server:**
+
+Use the standard config from above, adjusting the command format as needed for your client.
+
+</details>
 
 For detailed setup instructions and region-specific URLs, see our [Remote Server Setup documentation](https://help.keboola.com/ai/mcp-server/#remote-server-setup).
 
