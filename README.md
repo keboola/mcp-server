@@ -54,12 +54,19 @@ The standard configuration for local MCP server setup:
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
         "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
-        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema"
+        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
+        "KBC_BRANCH_ID": "your_branch_id_optional"
       }
     }
   }
 }
 ```
+
+Environment variables:
+- [KBC_STORAGE_API_URL](#kbc_storage_api_url-keboola-region) - Your Keboola region API URL
+- [KBC_STORAGE_TOKEN](#kbc_storage_token) - Your Keboola Storage API token
+- [KBC_WORKSPACE_SCHEMA](#kbc_workspace_schema) - Your workspace schema (only required with custom (non-master) tokens)
+- [KBC_BRANCH_ID](#kbc_branch_id-optional) - Development branch ID (optional)
 
 <details>
   <summary>Claude Code</summary>
