@@ -742,52 +742,26 @@ async def update_sql_transformation(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    sql_dialect = await workspace_manager.get_sql_dialect()
 
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-
-    config_details = await client.storage_client.configuration_detail(
-        component_id=sql_transformation_id, configuration_id=configuration_id
-    )
-    api_component = await fetch_component(client=client, component_id=sql_transformation_id)
-    transformation = Component.from_api_response(api_component)
-
-    updated_configuration = config_details.get('configuration', {})
-
-    msg = ''
-
-    if parameter_updates:
-        current_param_dict = updated_configuration.get('parameters', {})
-        current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
-        simplified_parameters = await current_raw_parameters.to_simplified_parameters()
-
-        updated_params, msg = update_transformation_parameters(
-            parameters=simplified_parameters,
-            updates=parameter_updates,
-            sql_dialect=sql_dialect,
-        )
-        updated_raw_parameters = await updated_params.to_raw_parameters()
-
-        parameters_cfg = validate_root_parameters_configuration(
-            component=transformation,
-            parameters=updated_raw_parameters.model_dump(exclude_none=True),
-            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
-        )
-        updated_configuration['parameters'] = parameters_cfg
-
-    if storage is not None:
-        storage_cfg = validate_root_storage_configuration(
-            component=transformation,
-            storage=storage,
-            initial_message='The "storage" field is not valid.',
-        )
-        updated_configuration['storage'] = storage_cfg
 
     LOG.info(
         f'Updating transformation: {sql_transformation_id} with config ID: {configuration_id}. '
         f'SQL dialect: {sql_dialect}'
     )
 
+    _, updated_configuration, msg = await update_sql_transformation_internal(
+        client=client,
+        workspace_manager=workspace_manager,
+        configuration_id=configuration_id,
+        change_description=change_description,
+        parameter_updates=parameter_updates,
+        storage=storage,
+        updated_description=updated_description,
+        is_disabled=is_disabled,
+    )
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
@@ -825,6 +799,60 @@ async def update_sql_transformation(
         version=updated_raw_configuration['version'],
         change_summary=msg,
     )
+
+
+async def update_sql_transformation_internal(
+    *,
+    client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+    configuration_id: str,
+    change_description: str,
+    parameter_updates: list[TfParamUpdate] | None = None,
+    storage: dict[str, Any] | None = None,
+    updated_description: str = '',
+    is_disabled: bool = False,
+) -> tuple[JsonDict, JsonDict, str]:
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    config_details = await client.storage_client.configuration_detail(
+        component_id=sql_transformation_id, configuration_id=configuration_id
+    )
+    api_component = await fetch_component(client=client, component_id=sql_transformation_id)
+    transformation = Component.from_api_response(api_component)
+
+    updated_configuration = cast(JsonDict, config_details.get('configuration', {}))
+    updated_configuration = copy.deepcopy(updated_configuration)
+
+    msg: str = ''
+
+    if parameter_updates:
+        current_param_dict = updated_configuration.get('parameters', {})
+        current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
+        simplified_parameters = await current_raw_parameters.to_simplified_parameters()
+
+        updated_params, msg = update_transformation_parameters(
+            parameters=simplified_parameters,
+            updates=parameter_updates,
+            sql_dialect=sql_dialect,
+        )
+        updated_raw_parameters = await updated_params.to_raw_parameters()
+
+        parameters_cfg = validate_root_parameters_configuration(
+            component=transformation,
+            parameters=updated_raw_parameters.model_dump(exclude_none=True),
+            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
+        )
+        updated_configuration['parameters'] = parameters_cfg
+
+    if storage is not None:
+        storage_cfg = validate_root_storage_configuration(
+            component=transformation,
+            storage=storage,
+            initial_message='The "storage" field is not valid.',
+        )
+        updated_configuration['storage'] = storage_cfg
+
+    return config_details, updated_configuration, msg
 
 
 @tool_errors()

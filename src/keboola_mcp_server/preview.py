@@ -11,6 +11,8 @@ from starlette.responses import JSONResponse, Response
 from keboola_mcp_server.clients import KeboolaClient
 from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
 from keboola_mcp_server.tools.components import tools as components_tools
+from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -81,6 +83,10 @@ async def preview_config_diff(rq: Request) -> Response:
     state = SessionStateMiddleware.create_session_state(config, server_state.runtime_info, readonly=True)
     client = KeboolaClient.from_state(state)
 
+    mutator_params: dict[str, Any] = {
+        'client': client,
+    }
+
     if preview_rq.tool_name == 'update_config':
         coordinates = ConfigCoordinates(
             component_id=preview_rq.tool_params.get('component_id'),
@@ -96,16 +102,26 @@ async def preview_config_diff(rq: Request) -> Response:
         )
         mutator_fn = components_tools.update_config_row_internal
 
+    elif preview_rq.tool_name == 'update_sql_transformation':
+        workspace_manager = WorkspaceManager.from_state(state)
+        coordinates = ConfigCoordinates(
+            component_id=get_sql_transformation_id_from_sql_dialect(await workspace_manager.get_sql_dialect()),
+            configuration_id=preview_rq.tool_params.get('configuration_id'),
+        )
+        mutator_fn = components_tools.update_sql_transformation_internal
+        mutator_params['workspace_manager'] = workspace_manager
+
     else:
         raise ValueError(f'Invalid tool name: "{preview_rq.tool_name}"')
 
     try:
-        original_config, new_config = await mutator_fn(client=client, **preview_rq.tool_params)
+        original_config, new_config, *_ = await mutator_fn(**mutator_params, **preview_rq.tool_params)
         updated_config = copy.deepcopy(original_config)
         updated_config['configuration'] = new_config
         if name := preview_rq.tool_params.get('name'):
             updated_config['name'] = name
-        if description := preview_rq.tool_params.get('description'):
+        description = preview_rq.tool_params.get('description') or preview_rq.tool_params.get('updated_description')
+        if description:
             updated_config['description'] = description
         if change_description := preview_rq.tool_params.get('change_description'):
             updated_config['changeDescription'] = change_description
@@ -119,6 +135,7 @@ async def preview_config_diff(rq: Request) -> Response:
         )
 
     except (pydantic.ValidationError, jsonschema.ValidationError, ValueError) as ex:
+        LOG.exception(f'[preview_config_diff] {ex}')
         preview_resp = PreviewConfigDiffResp(
             coordinates=coordinates,
             original_config=None,
