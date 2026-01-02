@@ -12,6 +12,7 @@ from keboola_mcp_server.clients import KeboolaClient
 from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
 from keboola_mcp_server.tools.components import tools as components_tools
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
+from keboola_mcp_server.tools.flow import tools as flow_tools
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -110,6 +111,13 @@ async def preview_config_diff(rq: Request) -> Response:
         )
         mutator_fn = components_tools.update_sql_transformation_internal
         mutator_params['workspace_manager'] = workspace_manager
+
+    elif preview_rq.tool_name == 'update_flow':
+        coordinates = ConfigCoordinates(
+            component_id=preview_rq.tool_params.get('flow_type'),
+            configuration_id=preview_rq.tool_params.get('configuration_id'),
+        )
+        mutator_fn = flow_tools.update_flow_internal
 
     else:
         raise ValueError(f'Invalid tool name: "{preview_rq.tool_name}"')
