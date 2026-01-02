@@ -10,7 +10,6 @@ import dataclasses
 import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
 from typing import Any, TypeVar
 from unittest.mock import MagicMock
 
@@ -25,6 +24,7 @@ from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel
 from pydantic_core import to_json
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -42,7 +42,7 @@ T = TypeVar('T')
 DEFAULT_CONCURRENCY = 10
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ServerState:
     config: Config
     runtime_info: ServerRuntimeInfo
@@ -52,6 +52,13 @@ class ServerState:
         server_state = ctx.request_context.lifespan_context
         if not isinstance(server_state, ServerState):
             raise ValueError('ServerState is not available in the context.')
+        return server_state
+
+    @classmethod
+    def from_starlette(cls, app: Starlette) -> 'ServerState':
+        server_state = app.state.server_state
+        if not isinstance(server_state, ServerState):
+            raise ValueError('ServerState is not available in the Starlette app.')
         return server_state
 
 
@@ -143,24 +150,11 @@ class SessionStateMiddleware(fmw.Middleware):
             #   returns the same object as ctx.request_context.request.
 
             if http_rq := get_http_request_or_none():
-                LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
-                config = config.replace_by(http_rq.headers)
-
-                if user := http_rq.scope.get('user'):
-                    LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
-                    assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
-                    assert isinstance(
-                        user.access_token, ProxyAccessToken
-                    ), f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
-                    config = dataclasses.replace(
-                        config,
-                        storage_token=user.access_token.sapi_token,
-                        bearer_token=user.access_token.delegate.token,
-                    )
+                config = self.apply_request_config(http_rq, config)
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
-            state = self._create_session_state(config, runtime_info)
+            state = self.create_session_state(config, runtime_info)
             ctx.session.state = state
 
         try:
@@ -189,8 +183,36 @@ class SessionStateMiddleware(fmw.Middleware):
         }
 
     @classmethod
-    def _create_session_state(cls, config: Config, runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
-        """Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state."""
+    def apply_request_config(cls, http_rq: Request, config: Config) -> Config:
+        LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
+        config = config.replace_by(http_rq.headers)
+
+        if user := http_rq.scope.get('user'):
+            LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
+            assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
+            assert isinstance(
+                user.access_token, ProxyAccessToken
+            ), f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            config = dataclasses.replace(
+                config,
+                storage_token=user.access_token.sapi_token,
+                bearer_token=user.access_token.delegate.token,
+            )
+
+        return config
+
+    @classmethod
+    def create_session_state(
+        cls, config: Config, runtime_info: ServerRuntimeInfo, readonly: bool | None = None
+    ) -> dict[str, Any]:
+        """
+        Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
+
+        :param config: The MCP server configuration.
+        :param runtime_info: The MCP server runtime information.
+        :param readonly: If True, the `KeboolaClient` will only use HTTP GET, HEAD operations.
+        :return: The session state dictionary containing the created client and workspace manager instances.
+        """
         LOG.info(f'Creating SessionState from config: {config}.')
 
         state: dict[str, Any] = {}
@@ -205,6 +227,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 bearer_token=config.bearer_token,
                 branch_id=config.branch_id,
                 headers=cls._get_headers(runtime_info),
+                readonly=readonly,
             )
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')

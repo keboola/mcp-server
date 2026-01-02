@@ -25,6 +25,7 @@ class RawKeboolaClient:
         api_token: Optional[str],
         headers: dict[str, Any] | None = None,
         timeout: httpx.Timeout | None = None,
+        readonly: bool | None = None,
     ) -> None:
         self.base_api_url = base_api_url
         self.headers = {
@@ -39,6 +40,7 @@ class RawKeboolaClient:
         self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
         if headers:
             self.headers.update(headers)
+        self.readonly = readonly
 
     @staticmethod
     def _raise_for_status(response: httpx.Response) -> None:
@@ -140,6 +142,9 @@ class RawKeboolaClient:
         :param headers: Additional headers for the request
         :return: API response as dictionary
         """
+        if self.readonly:
+            raise RuntimeError(f'Forbidden POST operation on a readonly client: {self.base_api_url}')
+
         headers = self.headers | (headers or {})
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
@@ -167,6 +172,9 @@ class RawKeboolaClient:
         :param headers: Additional headers for the request
         :return: API response as dictionary
         """
+        if self.readonly:
+            raise RuntimeError(f'Forbidden PUT operation on a readonly client: {self.base_api_url}')
+
         headers = self.headers | (headers or {})
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.put(
@@ -190,6 +198,9 @@ class RawKeboolaClient:
         :param headers: Additional headers for the request
         :return: API response as dictionary
         """
+        if self.readonly:
+            raise RuntimeError(f'Forbidden DELETE operation on a readonly client: {self.base_api_url}')
+
         headers = self.headers | (headers or {})
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.delete(
@@ -219,6 +230,9 @@ class RawKeboolaClient:
         :param headers: Additional headers for the request
         :return: API response as dictionary
         """
+        if self.readonly:
+            raise RuntimeError(f'Forbidden PATCH operation on a readonly client: {self.base_api_url}')
+
         headers = self.headers | (headers or {})
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.patch(
