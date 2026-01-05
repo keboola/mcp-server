@@ -149,7 +149,7 @@ class KeboolaClient:
         )
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(
-            root_url=encryption_api_url, token=None, headers=self._headers, readonly=readonly
+            root_url=encryption_api_url, token=None, headers=self._headers
         )
 
     @property

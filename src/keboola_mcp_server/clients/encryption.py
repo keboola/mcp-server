@@ -13,7 +13,6 @@ class EncryptionClient(KeboolaServiceClient):
         root_url: str,
         token: str | None = None,
         headers: dict[str, Any] | None = None,
-        readonly: bool | None = None,
     ) -> 'EncryptionClient':
         """
         Creates an EncryptionClient from a Keboola Storage API token.
@@ -21,12 +20,9 @@ class EncryptionClient(KeboolaServiceClient):
         :param root_url: The root URL of the service API.
         :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :param headers: Additional headers for the requests.
-        :param readonly: If True, the client will only use HTTP GET, HEAD operations.
         :return: A new instance of EncryptionClient
         """
-        return cls(
-            raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers, readonly=readonly)
-        )
+        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers))
 
     async def encrypt(
         self,

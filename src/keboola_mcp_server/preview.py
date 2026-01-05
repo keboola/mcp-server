@@ -9,7 +9,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from keboola_mcp_server.clients import KeboolaClient
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
+from keboola_mcp_server.tools import data_apps as data_app_tools
 from keboola_mcp_server.tools.components import tools as components_tools
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
 from keboola_mcp_server.tools.flow import tools as flow_tools
@@ -119,11 +121,22 @@ async def preview_config_diff(rq: Request) -> Response:
         )
         mutator_fn = flow_tools.update_flow_internal
 
+    elif preview_rq.tool_name == 'modify_data_app':
+        coordinates = ConfigCoordinates(
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=preview_rq.tool_params.get('configuration_id'),
+        )
+        mutator_fn = data_app_tools.modify_data_app_internal
+        mutator_params['workspace_manager'] = WorkspaceManager.from_state(state)
+
     else:
         raise ValueError(f'Invalid tool name: "{preview_rq.tool_name}"')
 
     try:
         original_config, new_config, *_ = await mutator_fn(**mutator_params, **preview_rq.tool_params)
+        if isinstance(original_config, BaseModel):
+            original_config = original_config.model_dump()
+
         updated_config = copy.deepcopy(original_config)
         updated_config['configuration'] = new_config
         if name := preview_rq.tool_params.get('name'):
