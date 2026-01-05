@@ -573,13 +573,117 @@ class TestSearch:
         keboola_client.storage_client.bucket_list.assert_has_calls([call(), call()])
         keboola_client.storage_client.bucket_table_list.assert_has_calls(
             [
-                call('in.c-test-bucket-a'),
-                call('in.c-test-bucket-b'),
-                call('in.c-test-bucket-c'),
+                call('in.c-test-bucket-a', include=['columns', 'columnMetadata']),
+                call('in.c-test-bucket-b', include=['columns', 'columnMetadata']),
+                call('in.c-test-bucket-c', include=['columns', 'columnMetadata']),
             ]
         )
         keboola_client.storage_client.component_list.assert_called_once_with(None, include=['configuration', 'rows'])
         keboola_client.storage_client.workspace_list.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('tables_data', 'search_pattern', 'expected_count', 'expected_first_table_id'),
+        [
+            # Test: search finds table by matching column name
+            (
+                [
+                    {
+                        'id': 'in.c-test-bucket.users',
+                        'name': 'users',
+                        'created': '2024-01-01T00:00:00Z',
+                        'columns': ['id', 'email', 'name'],
+                        'columnMetadata': {},
+                    }
+                ],
+                'email',
+                1,
+                'in.c-test-bucket.users',
+            ),
+            # Test: search finds table by matching column description
+            (
+                [
+                    {
+                        'id': 'in.c-test-bucket.customers',
+                        'name': 'customers',
+                        'created': '2024-01-01T00:00:00Z',
+                        'columns': ['id', 'contact_info'],
+                        'columnMetadata': {
+                            'contact_info': [{'key': MetadataField.DESCRIPTION, 'value': 'Customer email address'}]
+                        },
+                    }
+                ],
+                'email',
+                1,
+                'in.c-test-bucket.customers',
+            ),
+            # Test: table appears only once when both table name and column match
+            (
+                [
+                    {
+                        'id': 'in.c-test-bucket.customer_data',
+                        'name': 'customer_data',
+                        'created': '2024-01-01T00:00:00Z',
+                        'columns': ['customer_id', 'name', 'email'],
+                        'columnMetadata': {},
+                    }
+                ],
+                'customer',
+                1,
+                'in.c-test-bucket.customer_data',
+            ),
+            # Test: handles tables without columns or columnMetadata gracefully
+            (
+                [
+                    {
+                        'id': 'in.c-test-bucket.table1',
+                        'name': 'table1',
+                        'created': '2024-01-01T00:00:00Z',
+                        # No 'columns' field
+                        # No 'columnMetadata' field
+                    },
+                    {
+                        'id': 'in.c-test-bucket.table2',
+                        'name': 'table2',
+                        'created': '2024-01-01T00:00:00Z',
+                        'columns': [],  # Empty columns
+                        'columnMetadata': {},  # Empty metadata
+                    },
+                ],
+                'test',
+                2,
+                'in.c-test-bucket.table2',  # table2 comes first due to reverse sorting by ID
+            ),
+        ],
+    )
+    async def test_search_table_by_columns(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+        tables_data: list[JsonDict],
+        search_pattern: str,
+        expected_count: int,
+        expected_first_table_id: str,
+    ):
+        """Test search functionality with table columns and metadata."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+        # Mock bucket_list
+        keboola_client.storage_client.bucket_list = mocker.AsyncMock(
+            return_value=[
+                {'id': 'in.c-test-bucket', 'name': 'test-bucket', 'created': '2024-01-01T00:00:00Z'},
+            ]
+        )
+
+        # Mock bucket_table_list with provided test data
+        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=tables_data)
+
+        result = await search(ctx=mcp_context_client, patterns=[search_pattern], item_types=(cast(ItemType, 'table'),))
+
+        assert isinstance(result, list)
+        assert len(result) == expected_count
+        if expected_count > 0:
+            assert result[0].table_id == expected_first_table_id
 
 
 @pytest.mark.asyncio
