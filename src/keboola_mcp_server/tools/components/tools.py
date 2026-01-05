@@ -72,6 +72,7 @@ from keboola_mcp_server.tools.components.utils import (
     update_params,
     update_transformation_parameters,
 )
+from keboola_mcp_server.tools.restrictions import validate_component_id_for_update
 from keboola_mcp_server.tools.validation import (
     validate_processors_configuration,
     validate_root_parameters_configuration,
@@ -1203,6 +1204,8 @@ async def update_config(
     3. Prepare parameter_updates list with targeted operations
     4. Call update_config with only the fields to change
     """
+    validate_component_id_for_update(component_id, 'update_config')
+
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
