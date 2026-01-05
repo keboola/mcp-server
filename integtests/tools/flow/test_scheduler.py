@@ -1,7 +1,12 @@
 import logging
+from typing import Any, cast
 
 import pytest
+from fastmcp import Client
 
+from integtests.conftest import ConfigDef
+from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.tools.flow.model import GetFlowsDetailOutput
 from keboola_mcp_server.tools.flow.scheduler import (
     create_schedule,
     list_schedules_for_config,
@@ -9,6 +14,7 @@ from keboola_mcp_server.tools.flow.scheduler import (
     update_schedule,
 )
 from keboola_mcp_server.tools.flow.scheduler_model import ScheduleDetail
+from keboola_mcp_server.tools.flow.tools import FlowToolOutput
 
 LOG = logging.getLogger(__name__)
 
@@ -144,3 +150,116 @@ async def test_scheduler_lifecycle(mcp_context, configs, keboola_client) -> None
             except Exception as cleanup_error:
                 LOG.warning(f'Failed to clean up schedule: {cleanup_error}')
         raise
+
+
+@pytest.mark.asyncio
+async def test_scheduler_lifecycle_tooling(
+    initial_lf: FlowToolOutput, mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
+) -> None:
+    """
+    Test scheduler lifecycle using MCP tools: create schedule for a flow, update, and remove it.
+    """
+    assert configs
+    assert configs[0].configuration_id is not None
+
+    flow_id = initial_lf.configuration_id
+
+    schedule_id: str | None = None
+    try:
+        initial_cron_tab = '0 8 * * *'
+        initial_timezone = 'UTC'
+
+        add_result = await mcp_client.call_tool(
+            name='update_flow',
+            arguments={
+                'configuration_id': flow_id,
+                'flow_type': ORCHESTRATOR_COMPONENT_ID,
+                'change_description': 'Add scheduler via tooling',
+                'schedules': [
+                    {
+                        'action': 'add',
+                        'cron_tab': initial_cron_tab,
+                        'timezone': initial_timezone,
+                        'state': 'enabled',
+                    }
+                ],
+            },
+        )
+        add_output = FlowToolOutput.model_validate(add_result.structured_content)
+        assert add_output.success is True
+
+        tool_call_result = await mcp_client.call_tool(name='get_flows', arguments={'flow_ids': [flow_id]})
+        struct_call_result = cast(dict[str, Any], tool_call_result.structured_content)
+        flow_detail_result = GetFlowsDetailOutput.model_validate(struct_call_result['result'])
+        flow_detail = flow_detail_result.flows[0]
+
+        assert flow_detail.schedules is not None
+        assert flow_detail.schedules.n_schedules == 1
+        schedule = flow_detail.schedules.schedules[0]
+        assert schedule.cron_tab == initial_cron_tab
+        assert schedule.timezone == initial_timezone
+        assert schedule.state == 'enabled'
+        schedule_id = schedule.schedule_id
+
+        updated_cron_tab = '0 12 * * *'
+        updated_timezone = 'America/New_York'
+
+        update_result = await mcp_client.call_tool(
+            name='update_flow',
+            arguments={
+                'configuration_id': flow_id,
+                'flow_type': ORCHESTRATOR_COMPONENT_ID,
+                'change_description': 'Update scheduler via tooling',
+                'schedules': [
+                    {
+                        'action': 'update',
+                        'schedule_id': schedule_id,
+                        'cron_tab': updated_cron_tab,
+                        'timezone': updated_timezone,
+                        'state': 'disabled',
+                    }
+                ],
+            },
+        )
+        update_output = FlowToolOutput.model_validate(update_result.structured_content)
+        assert update_output.success is True
+
+        tool_call_result = await mcp_client.call_tool(name='get_flows', arguments={'flow_ids': [flow_id]})
+        struct_call_result = cast(dict[str, Any], tool_call_result.structured_content)
+        flow_detail_result = GetFlowsDetailOutput.model_validate(struct_call_result['result'])
+        flow_detail = flow_detail_result.flows[0]
+
+        assert flow_detail.schedules is not None
+        assert flow_detail.schedules.n_schedules == 1
+        schedule = flow_detail.schedules.schedules[0]
+        assert schedule.schedule_id == schedule_id
+        assert schedule.cron_tab == updated_cron_tab
+        assert schedule.timezone == updated_timezone
+        assert schedule.state == 'disabled'
+
+        remove_result = await mcp_client.call_tool(
+            name='update_flow',
+            arguments={
+                'configuration_id': flow_id,
+                'flow_type': ORCHESTRATOR_COMPONENT_ID,
+                'change_description': 'Remove scheduler via tooling',
+                'schedules': [{'action': 'remove', 'schedule_id': schedule_id}],
+            },
+        )
+        remove_output = FlowToolOutput.model_validate(remove_result.structured_content)
+        assert remove_output.success is True
+
+        tool_call_result = await mcp_client.call_tool(name='get_flows', arguments={'flow_ids': [flow_id]})
+        struct_call_result = cast(dict[str, Any], tool_call_result.structured_content)
+        flow_detail_result = GetFlowsDetailOutput.model_validate(struct_call_result['result'])
+        flow_detail = flow_detail_result.flows[0]
+
+        assert flow_detail.schedules is not None
+        assert flow_detail.schedules.n_schedules == 0
+        assert flow_detail.schedules.schedules == []
+    finally:
+        if schedule_id:
+            try:
+                await remove_schedule(client=keboola_client, schedule_config_id=schedule_id)
+            except Exception:
+                LOG.info('Schedule cleanup skipped; schedule already removed.')

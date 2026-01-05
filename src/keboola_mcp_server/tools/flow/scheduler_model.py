@@ -46,8 +46,8 @@ class ScheduleDetail(BaseModel):
 
     schedule_id: str = Field(
         description='Schedule configuration ID',
-        serialization_alias='scheduleId',
-        validation_alias=AliasChoices('id', 'schedule_id'),
+        serialization_alias='schedule_id',
+        validation_alias=AliasChoices('id', 'schedule_id', 'scheduleId'),
     )
     timezone: str = Field(description='Timezone')
     state: Literal['enabled', 'disabled'] = Field(description='Schedule state')
