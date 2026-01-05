@@ -42,13 +42,11 @@ def validate_component_id_for_update(
             alternative_tool = 'update_config/update_config_row'
 
         raise ValueError(
-            f"Component '{component_id}' cannot be used with {tool_name}. "
-            f"Use '{alternative_tool}' instead."
+            f"Component '{component_id}' cannot be used with {tool_name}. " f"Use '{alternative_tool}' instead."
         )
 
     if component_id in SPECIALIZED_COMPONENT_TO_UPDATE_TOOL:
         alternative_tool = SPECIALIZED_COMPONENT_TO_UPDATE_TOOL[component_id]
         raise ValueError(
-            f"Component '{component_id}' cannot be used with {tool_name}. "
-            f"Use '{alternative_tool}' instead."
+            f"Component '{component_id}' cannot be used with {tool_name}. " f"Use '{alternative_tool}' instead."
         )
