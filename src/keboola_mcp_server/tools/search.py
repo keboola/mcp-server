@@ -110,6 +110,23 @@ def _get_field_value(item: JsonDict, fields: Sequence[str]) -> Any | None:
     return None
 
 
+def _check_column_match(table: JsonDict, patterns: list[re.Pattern]) -> bool:
+    """Check if any column name or description matches the patterns."""
+    # Check column names (list of strings)
+    for col_name in table.get('columns', []):
+        if _matches_pattern(col_name, patterns):
+            return True
+
+    # Check column descriptions (from columnMetadata)
+    column_metadata = table.get('columnMetadata', {})
+    for col_meta in column_metadata.values():
+        col_description = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
+        if _matches_pattern(col_description, patterns):
+            return True
+
+    return False
+
+
 async def _fetch_buckets(client: KeboolaClient, patterns: list[re.Pattern]) -> list[SearchHit]:
     """Fetches and filters buckets."""
     hits = []
@@ -147,7 +164,7 @@ async def _fetch_tables(client: KeboolaClient, patterns: list[re.Pattern]) -> li
         if not (bucket_id := bucket.get('id')):
             continue
 
-        tables = await client.storage_client.bucket_table_list(bucket_id)
+        tables = await client.storage_client.bucket_table_list(bucket_id, include=['columns', 'columnMetadata'])
         for table in tables:
             if not (table_id := table.get('id')):
                 continue
@@ -161,6 +178,7 @@ async def _fetch_tables(client: KeboolaClient, patterns: list[re.Pattern]) -> li
                 or _matches_pattern(table_name, patterns)
                 or _matches_pattern(table_display_name, patterns)
                 or _matches_pattern(table_description, patterns)
+                or _check_column_match(table, patterns)
             ):
                 hits.append(
                     SearchHit(
@@ -305,6 +323,7 @@ async def search(
 
     HOW IT WORKS:
     - Searches by regex pattern matching against id, name, displayName, and description fields
+    - For tables, also searches column names and column descriptions
     - Case-insensitive search
     - Multiple patterns work as OR condition - matches items containing ANY of the patterns
     - Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
@@ -321,6 +340,10 @@ async def search(
     - user_input: "Find all tables with 'customer' in the name"
       → patterns=["customer"], item_types=["table"]
       → Returns all tables whose id, name, displayName, or description contains "customer"
+
+    - user_input: "Find tables with 'email' column"
+      → patterns=["email"], item_types=["table"]
+      → Returns all tables that have a column named "email" or with "email" in column description
 
     - user_input: "Search for the sales transformation"
       → patterns=["sales"], item_types=["transformation"]

@@ -1,7 +1,7 @@
+import asyncio
 import json
 import subprocess
 import tempfile
-import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
@@ -385,21 +385,44 @@ async def test_json_logging():
             stderr=subprocess.PIPE,
             text=True,
         )
+
+        # Read output streams in background to prevent buffer blocking
+        stdout_lines = []
+        stderr_lines = []
+
+        async def read_stream(stream, lines_list):
+            """Read from stream in a non-blocking way"""
+            loop = asyncio.get_event_loop()
+            while True:
+                line = await loop.run_in_executor(None, stream.readline)
+                if not line:
+                    break
+                lines_list.append(line)
+
+        stdout_task = asyncio.create_task(read_stream(p.stdout, stdout_lines))
+        stderr_task = asyncio.create_task(read_stream(p.stderr, stderr_lines))
+
         try:
             # give the server time to fully start
-            time.sleep(5)
+            await asyncio.sleep(5)
 
             # connect to the server and list prompts to force 'fastmcp' looger to get used
             # the listing of the prompts does not require SAPI connection
-            async with Client(SSETransport('http://localhost:8000/sse')) as client:
+            async with Client(SSETransport('http://localhost:8000/sse', sse_read_timeout=5)) as client:
                 prompts = await client.list_prompts()
                 assert len(prompts) > 1
 
         finally:
-            # kill the server and capture streams
+            # kill the server and wait for output tasks
             p.terminate()
+            p.wait()
 
-    stdout, stderr = p.communicate()
+            # Cancel background tasks and collect remaining output
+            stdout_task.cancel()
+            stderr_task.cancel()
+
+            stdout = ''.join(stdout_lines)
+            stderr = ''.join(stderr_lines)
 
     # Filter out known websockets deprecation warnings (these bypass logging config)
     # These warnings come from uvicorn's dependencies and are not actual logging errors

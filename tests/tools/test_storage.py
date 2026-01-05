@@ -855,7 +855,44 @@ async def test_get_buckets(
                 ],
             ),
         ),
-        (None, 'in.c-foo.assets', None),
+        (None, 'in.c-1246948-foo.assets', None),
+        (
+            '1246948',
+            'in.c-1246948-foo.emails',
+            TableDetail(
+                id='in.c-foo.emails',
+                name='emails',
+                display_name='All user emails.',
+                primary_key=['email_id'],
+                created='2025-08-21T01:02:03+0400',
+                rows_count=22,
+                data_size_bytes=2211,
+                columns=[
+                    TableColumnInfo(
+                        name='email_id', quoted_name='#email_id#', database_native_type='INT', nullable=False
+                    ),
+                    TableColumnInfo(
+                        name='address',
+                        quoted_name='#address#',
+                        database_native_type='VARCHAR',
+                        nullable=False,
+                        description='Email address. 2',
+                    ),
+                    TableColumnInfo(
+                        name='user_id', quoted_name='#user_id#', database_native_type='INT', nullable=False
+                    ),
+                ],
+                fully_qualified_name='#SAPI_TEST#.#in.c-1246948-foo#.#emails#',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Table: emails',
+                        url='https://connection.test.keboola.com/admin/projects/69420/branch/1246948'
+                        '/storage/in.c-1246948-foo/table/emails',
+                    ),
+                ],
+            ),
+        ),
         (
             '1246948',
             'in.c-foo.assets',
@@ -930,7 +967,10 @@ async def test_get_table(
 
     if branch_id:
         keboola_client.storage_client.table_detail.assert_has_calls(
-            [call(table_id), call(table_id.replace('c-', f'c-{branch_id}-'))]
+            [
+                call(table_id),
+                call(table_id.replace('c-', f'c-{branch_id}-') if f'c-{branch_id}-' not in table_id else table_id),
+            ]
         )
         dashboard_url = f'https://connection.test.keboola.com/admin/projects/69420/branch/{branch_id}/storage'
     else:

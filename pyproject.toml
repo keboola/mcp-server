@@ -4,20 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.36.2"
+version = "1.36.6"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    # Using fastmcp 2.13.1 instead of 2.13.3 due to bug in 2.13.2+ (KeyError: 'ctx')
-    # see https://github.com/jlowin/fastmcp/issues/2524
-    # fastmcp==2.13.3 requires mcp<1.23 due to compatibility reasons
-    # fastmcp==2.14 will fix the incompatibilities and require mcp>=1.23
-    # see https://github.com/jlowin/fastmcp/releases/tag/v2.13.3
-    "fastmcp == 2.13.1",
-    "mcp == 1.22.0",
+    "fastmcp == 2.14.1",
+    "mcp == 1.24.0",
     "httpx ~= 0.28",
     "jsonpath-ng ~= 1.7",
     "jsonschema ~= 4.25",
@@ -25,9 +20,9 @@ dependencies = [
     "json-log-formatter ~= 1.1",
     "cryptography ~= 46.0",
     "pydantic ~= 2.12",
-    "sqlglot ~= 28.1",
+    "sqlglot ~= 28.5",
     "toon-format ~= 0.9.0b1",
-    "pyyaml>=6.0.3",
+    "pyyaml ~= 6.0",
 ]
 [project.optional-dependencies]
 codestyle = [

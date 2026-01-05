@@ -585,7 +585,13 @@ async def _get_table(
 
     dev_table: JsonDict | None = None
     if client.branch_id:
-        dev_id = table_id.replace('c-', f'c-{client.branch_id}-')
+        if f'c-{client.branch_id}-' in table_id:
+            # we already deal with the dev table ID
+            dev_id = table_id
+        else:
+            # convert the prod table ID to the dev table ID
+            dev_id = table_id.replace('c-', f'c-{client.branch_id}-')
+
         dev_table = await _get_table_detail(client.storage_client, dev_id)
         if dev_table:
             branch_id = get_metadata_property(dev_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
