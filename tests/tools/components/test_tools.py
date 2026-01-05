@@ -5,7 +5,12 @@ import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    DATA_APP_COMPONENT_ID,
+    KeboolaClient,
+    ORCHESTRATOR_COMPONENT_ID,
+)
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     add_config_row,
@@ -1072,6 +1077,63 @@ async def test_update_config(
         updated_name=updated_name,
         updated_description=updated_description,
     )
+
+
+@pytest.mark.asyncio
+async def test_update_config_blocks_data_app(
+    mcp_context_components_configs: Context,
+):
+    """Test that update_config blocks data app component."""
+    context = mcp_context_components_configs
+
+    with pytest.raises(ValueError) as exc_info:
+        await update_config(
+            ctx=context,
+            change_description='Test',
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id='test-config-id',
+        )
+    assert DATA_APP_COMPONENT_ID in str(exc_info.value)
+    assert 'modify_data_app' in str(exc_info.value)
+    assert 'update_config' in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_update_config_blocks_conditional_flow(
+    mcp_context_components_configs: Context,
+):
+    """Test that update_config blocks conditional flow component."""
+    context = mcp_context_components_configs
+
+    with pytest.raises(ValueError) as exc_info:
+        await update_config(
+            ctx=context,
+            change_description='Test',
+            component_id=CONDITIONAL_FLOW_COMPONENT_ID,
+            configuration_id='test-config-id',
+        )
+    assert CONDITIONAL_FLOW_COMPONENT_ID in str(exc_info.value)
+    assert 'update_flow' in str(exc_info.value)
+    assert 'update_config' in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_update_config_blocks_orchestrator(
+    mcp_context_components_configs: Context,
+):
+    """Test that update_config blocks orchestrator component."""
+    context = mcp_context_components_configs
+
+    with pytest.raises(ValueError) as exc_info:
+        await update_config(
+            ctx=context,
+            change_description='Test',
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id='test-config-id',
+        )
+    assert ORCHESTRATOR_COMPONENT_ID in str(exc_info.value)
+    assert 'update_flow' in str(exc_info.value)
+    assert 'update_config' in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
