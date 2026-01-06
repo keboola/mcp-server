@@ -60,6 +60,7 @@ class TestServer:
             'query_data',
             'run_job',
             'search',
+            'search_keboola_objects',
             'update_config',
             'update_config_row',
             'update_descriptions',

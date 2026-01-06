@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Annotated, Literal, Mapping, Optional, Sequence
 
 from fastmcp import Context
@@ -355,4 +356,398 @@ def get_last_updated_by(
         component_id=str(component_id),
         configuration_id=str(configuration_id),
         timestamp=timestamp,
+    )
+
+
+def search_json_string(
+    json_string: str,
+    pattern: str,
+    *,
+    mode: Literal['literal', 'wildcard', 'regex'] = 'literal',
+    whole_word: bool = False,
+    ignore_case: bool = True,
+) -> bool:
+    """
+    Search inside a JSON string using different pattern modes.
+
+    Args:
+        json_string: Stringified JSON (e.g. json.dumps(obj))
+        pattern: Search pattern as string
+        mode:
+            - "literal": exact text match
+            - "wildcard": supports '*' like shell glob
+            - "regex": full regular expression
+        whole_word: Match full words only
+        ignore_case: Case-insensitive search
+
+    Returns:
+        True if pattern is found, False otherwise
+    """
+
+    flags = re.IGNORECASE if ignore_case else 0
+
+    # Escape literal pattern
+    if mode == 'literal':
+        regex = re.escape(pattern)
+
+    # Convert wildcard -> regex
+    elif mode == 'wildcard':
+        # Escape everything except '*'
+        regex = re.escape(pattern).replace(r'\*', '.*')
+
+    # Regex mode
+    elif mode == 'regex':
+        regex = pattern
+
+    else:
+        raise ValueError(f'Unsupported mode: {mode}')
+
+    # Whole word match
+    if whole_word:
+        regex = rf'\b{regex}\b'
+
+    return re.search(regex, json_string, flags) is not None
+
+
+def _matches_patterns(
+    value: JsonStruct,
+    patterns: Sequence[str],
+    *,
+    mode: Literal['literal', 'wildcard', 'regex'],
+    whole_word: bool,
+    ignore_case: bool,
+) -> bool:
+    haystack = _stringify_for_search(value)
+    return any(
+        search_json_string(
+            haystack,
+            pattern,
+            mode=mode,
+            whole_word=whole_word,
+            ignore_case=ignore_case,
+        )
+        for pattern in patterns
+    )
+
+
+class DataMatch(BaseModel):
+    item_type: Literal['bucket', 'table', 'component', 'flow', 'data-app', 'transformation']
+    bucket_id: str | None = None
+    table_id: str | None = None
+    component_id: str | None = None
+    configuration_id: str | None = None
+    configuration_row_id: str | None = None
+    name: str | None = None
+    description: str | None = None
+
+
+def add_usage_tools(mcp: KeboolaMcpServer) -> None:
+    """Add usage/search tools to the MCP server."""
+    mcp.add_tool(
+        FunctionTool.from_function(
+            search_keboola_objects,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
+            tags={USAGE_TOOLS_TAG},
+        )
+    )
+
+
+async def search_data_matches(
+    client: KeboolaClient,
+    patterns: Sequence[str],
+    *,
+    mode: Literal['literal', 'wildcard', 'regex'] = 'literal',
+    whole_word: bool = False,
+    ignore_case: bool = True,
+    search_types: Optional[Sequence[SearchDataType]] = None,
+) -> list[DataMatch]:
+    """
+    Searches through configurations (components, flows, data apps) and optionally buckets/tables.
+
+    :param client: The Keboola client to use.
+    :param patterns: Patterns to search for.
+    :param mode: Search mode (literal, wildcard, regex).
+    :param whole_word: Match whole words only.
+    :param ignore_case: Case-insensitive search.
+    :param search_types: Types to search in (bucket, table, component, flow, data-app).
+    :return: A list of data matches.
+    """
+    normalized_patterns = _normalize_ids(patterns)
+    if not normalized_patterns:
+        return []
+
+    normalized_types = _normalize_data_search_types(search_types or [])
+    include_components = 'component' in normalized_types
+    include_transformations = 'transformation' in normalized_types
+    include_flow = 'flow' in normalized_types
+    include_data_apps = 'data-app' in normalized_types
+
+    matches: list[DataMatch] = []
+
+    if 'bucket' in normalized_types:
+        for bucket in await client.storage_client.bucket_list():
+            if _matches_patterns(
+                bucket, normalized_patterns, mode=mode, whole_word=whole_word, ignore_case=ignore_case
+            ):
+                matches.append(
+                    DataMatch(
+                        item_type='bucket',
+                        bucket_id=bucket.get('id'),
+                        name=bucket.get('displayName') or bucket.get('name'),
+                        description=bucket.get('description'),
+                    )
+                )
+
+    if 'table' in normalized_types:
+        for bucket in await client.storage_client.bucket_list():
+            bucket_id = bucket.get('id')
+            if not bucket_id:
+                continue
+            tables = await client.storage_client.bucket_table_list(bucket_id, include=['columns', 'columnMetadata'])
+            for table in tables:
+                if _matches_patterns(
+                    table, normalized_patterns, mode=mode, whole_word=whole_word, ignore_case=ignore_case
+                ):
+                    matches.append(
+                        DataMatch(
+                            item_type='table',
+                            bucket_id=bucket_id,
+                            table_id=table.get('id'),
+                            name=table.get('displayName') or table.get('name'),
+                            description=table.get('description'),
+                        )
+                    )
+
+    if include_components or include_flow or include_data_apps:
+        components = await client.storage_client.component_list(include=['configuration', 'rows'])
+        for component in components:
+            component_id = component.get('id')
+            if not component_id:
+                continue
+            component_type = component.get('type')
+
+            if component_id == DATA_APP_COMPONENT_ID and not include_data_apps:
+                continue
+            if component_id in {CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID} and not include_flow:
+                continue
+            if component_id not in {DATA_APP_COMPONENT_ID, CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID}:
+                if component_type == 'transformation' and not include_transformations:
+                    continue
+                if component_type != 'transformation' and not include_components:
+                    continue
+
+            configurations = component.get('configurations', []) or []
+            for configuration in configurations:
+                configuration_id = _get_configuration_id(configuration)
+                if not configuration_id:
+                    continue
+
+                config_name = configuration.get('name')
+                config_description = configuration.get('description')
+                config_definition = configuration.get('configuration') or {}
+
+                config_match = _matches_patterns(
+                    {
+                        'component_id': component_id,
+                        'component_type': component_type,
+                        'configuration_id': configuration_id,
+                        'name': config_name,
+                        'description': config_description,
+                        'configuration': config_definition,
+                    },
+                    normalized_patterns,
+                    mode=mode,
+                    whole_word=whole_word,
+                    ignore_case=ignore_case,
+                )
+
+                if config_match:
+                    matches.append(
+                        DataMatch(
+                            item_type=(
+                                'data-app'
+                                if component_id == DATA_APP_COMPONENT_ID
+                                else (
+                                    'flow'
+                                    if component_id in {CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID}
+                                    else 'transformation' if component_type == 'transformation' else 'component'
+                                )
+                            ),
+                            component_id=component_id,
+                            configuration_id=configuration_id,
+                            name=config_name,
+                            description=config_description,
+                        )
+                    )
+
+                rows = configuration.get('rows', []) or []
+                for row in rows:
+                    row_id = row.get('id')
+                    row_name = row.get('name')
+                    row_description = row.get('description')
+                    row_config = row.get('configuration') or {}
+                    if not row_id:
+                        continue
+
+                    row_match = _matches_patterns(
+                        {
+                            'component_id': component_id,
+                            'component_type': component_type,
+                            'configuration_id': configuration_id,
+                            'row_id': row_id,
+                            'name': row_name,
+                            'description': row_description,
+                            'configuration': row_config,
+                        },
+                        normalized_patterns,
+                        mode=mode,
+                        whole_word=whole_word,
+                        ignore_case=ignore_case,
+                    )
+
+                    if row_match:
+                        matches.append(
+                            DataMatch(
+                                item_type=(
+                                    'data-app'
+                                    if component_id == DATA_APP_COMPONENT_ID
+                                    else (
+                                        'flow'
+                                        if component_id in {CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID}
+                                        else 'transformation' if component_type == 'transformation' else 'component'
+                                    )
+                                ),
+                                component_id=component_id,
+                                configuration_id=configuration_id,
+                                configuration_row_id=row_id,
+                                name=row_name or config_name,
+                                description=row_description or config_description,
+                            )
+                        )
+
+    return matches
+
+
+@tool_errors()
+async def search_keboola_objects(
+    ctx: Context,
+    patterns: Annotated[
+        Sequence[str],
+        Field(
+            description=(
+                'Search patterns to match. Multiple patterns use OR logic (matches ANY pattern). '
+                'Examples: ["customer"], ["sales*", "revenue*"] for wildcards, ["flow-.*"] for regex. '
+                'Do not pass empty strings.'
+            )
+        ),
+    ],
+    mode: Annotated[
+        Literal['literal', 'wildcard', 'regex'],
+        Field(
+            description=(
+                'Pattern matching mode: '
+                '"literal" - exact text match (default, fastest), '
+                '"wildcard" - use * for glob patterns (e.g., "sales*"), '
+                '"regex" - full regular expressions (most powerful).'
+            )
+        ),
+    ] = 'literal',
+    whole_word: Annotated[
+        bool,
+        Field(
+            description=(
+                'When true, only matches complete words. Prevents partial matches like finding "test" in "latest". '
+                'Useful for searching IDs or specific terms.'
+            )
+        ),
+    ] = False,
+    ignore_case: Annotated[
+        bool,
+        Field(description='When true, search ignores letter casing (e.g., "Sales" matches "sales"). Default: true.'),
+    ] = True,
+    search_types: Annotated[
+        Sequence[SearchDataType],
+        Field(
+            description=(
+                'Filter by object types: "bucket", "table", "component", "transformation", "flow", "data-app". '
+                'Empty list or ["any"] searches all types. Use to narrow results when you know what you need.'
+            )
+        ),
+    ] = tuple(),
+) -> list[DataMatch]:
+    """
+    Deep search across Keboola objects including their full JSON configuration data.
+
+    WHAT IT SEARCHES:
+    - Buckets/Tables: name, description, metadata, column names, column descriptions, and entire API payload
+    - Components/Flows/Data Apps/Transformations: name, description, and entire configuration JSON in raw format:
+      * All configuration parameters and nested settings
+      * Storage mappings (input/output tables)
+      * Credentials and connection details
+      * SQL queries and code blocks
+      * Any other data stored in the configuration
+
+    WHEN TO USE:
+    - Find configurations by specific parameter values (e.g., API endpoints, database hosts)
+    - Search deep in nested JSON structures (e.g., table mappings, processors)
+    - Locate objects containing specific SQL code or queries
+    - Find configurations with particular credentials or connection strings
+    - Use advanced pattern matching with wildcards or regex
+
+    PATTERN MATCHING:
+    - literal (default): Exact text matching - patterns=["salesforce.com"]
+    - wildcard: Glob patterns with * - patterns=["sales*"] matches "sales", "salesforce", "sales_data"
+    - regex: Regular expressions - patterns=["flow-[0-9]+"] matches "flow-1", "flow-123"
+    - Multiple patterns use OR logic (matches ANY pattern)
+
+    USAGE EXAMPLES:
+
+    1. Find extractors connecting to a specific database:
+       patterns=["prod-db-server.company.com"], search_types=["component"]
+
+    2. Find transformations using a specific input table:
+       patterns=["in.c-main.customers"], search_types=["transformation"]
+
+    3. Find all objects with "test" or "staging" in their configuration:
+       patterns=["test", "staging"], mode="literal"
+
+    4. Find flows starting with "daily-" prefix:
+       patterns=["daily-*"], mode="wildcard", search_types=["flow"]
+
+    5. Find components with API version v2 or v3:
+       patterns=["api/v[23]"], mode="regex", search_types=["component"]
+
+    6. Find data apps using specific Python packages:
+       patterns=["pandas", "streamlit"], search_types=["data-app"]
+
+    7. Search for exact table IDs (avoid partial matches):
+       patterns=["in.c-bucket.table"], whole_word=True
+
+    8. Find configs with nested JSON structure (key-value in parameters):
+       patterns=["\"parameters\":\\s*\\{.*api\\.paychex.*\\}"], mode="regex"
+
+    9. Find configs with specific authentication type:
+       patterns=["\"authentication\":\\s*\\{.*\"type\":\\s*\"oauth20\""], mode="regex"
+
+    10. Find configs with incremental loading enabled:
+        patterns=["\"incremental\":\\s*true"], mode="regex"
+
+    11. Find storage mappings referencing specific tables:
+        patterns=["\"source\":\\s*\"in\\.*\\.customers\""], mode="regex"
+
+    TIPS:
+    - Use whole_word=True when searching for IDs to avoid partial matches
+    - Start with literal mode for speed, use wildcard/regex for flexibility
+    - Narrow results with search_types when you know the object type
+    - Results include direct links to objects in Keboola UI
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    return await search_data_matches(
+        client=client,
+        patterns=patterns,
+        mode=mode,
+        whole_word=whole_word,
+        ignore_case=ignore_case,
+        search_types=search_types,
     )

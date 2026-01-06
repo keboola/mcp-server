@@ -34,6 +34,7 @@ from keboola_mcp_server.tools.project import add_project_tools
 from keboola_mcp_server.tools.search import add_search_tools
 from keboola_mcp_server.tools.sql import add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
+from keboola_mcp_server.tools.usage import add_usage_tools
 
 LOG = logging.getLogger(__name__)
 
@@ -238,6 +239,7 @@ def create_server(
     add_sql_tools(mcp)
     add_storage_tools(mcp)
     add_keboola_prompts(mcp)
+    add_usage_tools(mcp)
 
     if custom_routes_handling != 'return':
         return mcp

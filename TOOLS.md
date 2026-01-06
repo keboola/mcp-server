@@ -40,6 +40,7 @@ and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 - [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
+- [search_keboola_objects](#search_keboola_objects): Deep search across Keboola objects including their full JSON configuration data.
 
 ### Project Tools
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
@@ -1716,6 +1717,137 @@ updating, set `authentication_type` to `default` to keep the existing authentica
     "source_code",
     "packages",
     "authentication_type"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="search_keboola_objects"></a>
+## search_keboola_objects
+**Annotations**: `read-only`
+
+**Tags**: `usage`
+
+**Description**:
+
+Deep search across Keboola objects including their full JSON configuration data.
+
+WHAT IT SEARCHES:
+- Buckets/Tables: name, description, metadata, column names, column descriptions, and entire API payload
+- Components/Flows/Data Apps/Transformations: name, description, and entire configuration JSON in raw format:
+  * All configuration parameters and nested settings
+  * Storage mappings (input/output tables)
+  * Credentials and connection details
+  * SQL queries and code blocks
+  * Any other data stored in the configuration
+
+WHEN TO USE:
+- Find configurations by specific parameter values (e.g., API endpoints, database hosts)
+- Search deep in nested JSON structures (e.g., table mappings, processors)
+- Locate objects containing specific SQL code or queries
+- Find configurations with particular credentials or connection strings
+- Use advanced pattern matching with wildcards or regex
+
+PATTERN MATCHING:
+- literal (default): Exact text matching - patterns=["salesforce.com"]
+- wildcard: Glob patterns with * - patterns=["sales*"] matches "sales", "salesforce", "sales_data"
+- regex: Regular expressions - patterns=["flow-[0-9]+"] matches "flow-1", "flow-123"
+- Multiple patterns use OR logic (matches ANY pattern)
+
+USAGE EXAMPLES:
+
+1. Find extractors connecting to a specific database:
+   patterns=["prod-db-server.company.com"], search_types=["component"]
+
+2. Find transformations using a specific input table:
+   patterns=["in.c-main.customers"], search_types=["transformation"]
+
+3. Find all objects with "test" or "staging" in their configuration:
+   patterns=["test", "staging"], mode="literal"
+
+4. Find flows starting with "daily-" prefix:
+   patterns=["daily-*"], mode="wildcard", search_types=["flow"]
+
+5. Find components with API version v2 or v3:
+   patterns=["api/v[23]"], mode="regex", search_types=["component"]
+
+6. Find data apps using specific Python packages:
+   patterns=["pandas", "streamlit"], search_types=["data-app"]
+
+7. Search for exact table IDs (avoid partial matches):
+   patterns=["in.c-bucket.table"], whole_word=True
+
+8. Find configs with nested JSON structure (key-value in parameters):
+   patterns=[""parameters":\s*\{.*api\.paychex.*\}"], mode="regex"
+
+9. Find configs with specific authentication type:
+   patterns=[""authentication":\s*\{.*"type":\s*"oauth20""], mode="regex"
+
+10. Find configs with incremental loading enabled:
+    patterns=[""incremental":\s*true"], mode="regex"
+
+11. Find storage mappings referencing specific tables:
+    patterns=[""source":\s*"in\.*\.customers""], mode="regex"
+
+TIPS:
+- Use whole_word=True when searching for IDs to avoid partial matches
+- Start with literal mode for speed, use wildcard/regex for flexibility
+- Narrow results with search_types when you know the object type
+- Results include direct links to objects in Keboola UI
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "patterns": {
+      "description": "Search patterns to match. Multiple patterns use OR logic (matches ANY pattern). Examples: [\"customer\"], [\"sales*\", \"revenue*\"] for wildcards, [\"flow-.*\"] for regex. Do not pass empty strings.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "mode": {
+      "default": "literal",
+      "description": "Pattern matching mode: \"literal\" - exact text match (default, fastest), \"wildcard\" - use * for glob patterns (e.g., \"sales*\"), \"regex\" - full regular expressions (most powerful).",
+      "enum": [
+        "literal",
+        "wildcard",
+        "regex"
+      ],
+      "type": "string"
+    },
+    "whole_word": {
+      "default": false,
+      "description": "When true, only matches complete words. Prevents partial matches like finding \"test\" in \"latest\". Useful for searching IDs or specific terms.",
+      "type": "boolean"
+    },
+    "ignore_case": {
+      "default": true,
+      "description": "When true, search ignores letter casing (e.g., \"Sales\" matches \"sales\"). Default: true.",
+      "type": "boolean"
+    },
+    "search_types": {
+      "default": [],
+      "description": "Filter by object types: \"bucket\", \"table\", \"component\", \"transformation\", \"flow\", \"data-app\". Empty list or [\"any\"] searches all types. Use to narrow results when you know what you need.",
+      "items": {
+        "enum": [
+          "bucket",
+          "table",
+          "component",
+          "flow",
+          "data-app",
+          "transformation",
+          "any"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "patterns"
   ],
   "type": "object"
 }
