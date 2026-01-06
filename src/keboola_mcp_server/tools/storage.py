@@ -19,6 +19,13 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.utils import get_nested
+from keboola_mcp_server.tools.usage import (
+    ComponentUsage,
+    ComponentUsageRef,
+    find_id_usage,
+    get_created_by,
+    get_last_updated_by,
+)
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -101,6 +108,12 @@ class BucketDetail(BaseModel):
     source_project: str | None = Field(
         default=None, description='The source Keboola project of the linked bucket, None otherwise.'
     )
+    created_by: ComponentUsageRef | None = Field(
+        default=None, description='Configuration that created the bucket (component/config ID and timestamp).'
+    )
+    last_updated_by: ComponentUsageRef | None = Field(
+        default=None, description='Configuration that last updated the bucket (component/config ID and timestamp).'
+    )
 
     # these are internal fields not meant to be exposed to LLMs
     branch_id: str | None = Field(default=None, exclude=True, description='The ID of the branch the bucket belongs to.')
@@ -144,6 +157,14 @@ class BucketDetail(BaseModel):
             values['tables_count'] = len(values['tables'])
         else:
             values['tables_count'] = None
+        return values
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_lineage_metadata(cls, values: dict[str, Any]) -> dict[str, Any]:
+        metadata = values.get('metadata', [])
+        values['created_by'] = get_created_by(metadata)
+        values['last_updated_by'] = get_last_updated_by(metadata)
         return values
 
     @model_validator(mode='before')
@@ -250,6 +271,13 @@ class TableDetail(BaseModel):
     links: list[Link] | None = Field(default=None, description='The links relevant to the table.')
     source_project: str | None = Field(
         default=None, description='The source Keboola project of the linked table, None otherwise.'
+    )
+    used_by: list[ComponentUsage] = Field(default_factory=list, description='The components that use the table.')
+    created_by: ComponentUsageRef | None = Field(
+        default=None, description='Configuration that created the table (component/config ID and timestamp).'
+    )
+    last_updated_by: ComponentUsageRef | None = Field(
+        default=None, description='Configuration that last updated the table (component/config ID and timestamp).'
     )
 
     # these are internal fields not meant to be exposed to LLMs
@@ -378,14 +406,24 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
         if not dev_bucket:
             dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
             if raw := await _get_bucket_detail(client.storage_client, dev_id):
-                bucket = BucketDetail.model_validate(raw)
+                metadata = raw.get('metadata', [])
+                created_by = get_created_by(metadata)
+                last_updated_by = get_last_updated_by(metadata)
+                bucket = BucketDetail.model_validate(
+                    raw | {'created_by': created_by, 'last_updated_by': last_updated_by}
+                )
                 if bucket.branch_id == client.branch_id:
                     dev_bucket = bucket
 
         if not prod_bucket and f'.c-{client.branch_id}-' in bucket_id:
             prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
             if raw := await _get_bucket_detail(client.storage_client, prod_id):
-                bucket = BucketDetail.model_validate(raw)
+                metadata = raw.get('metadata', [])
+                created_by = get_created_by(metadata)
+                last_updated_by = get_last_updated_by(metadata)
+                bucket = BucketDetail.model_validate(
+                    raw | {'created_by': created_by, 'last_updated_by': last_updated_by}
+                )
                 if not bucket.branch_id:
                     prod_bucket = bucket
 
@@ -566,6 +604,13 @@ async def get_tables(
             elif isinstance(table_detail_or_id, str):
                 missing_ids.append(table_detail_or_id)
 
+        # Add the component usage to the table detail
+        matches = await find_id_usage(client, table_ids, ['storage'], ['any'])
+        for match in matches:
+            for table_id in match.matched_ids:
+                if table_id in tables_by_id:
+                    tables_by_id[table_id].used_by.append(match.to_component_usage())
+
     return GetTablesOutput(
         tables=list(tables_by_id.values()),
         tables_not_found=missing_ids if missing_ids else None,
@@ -645,6 +690,9 @@ async def _get_table(
 
     table_name = cast(str, raw_table.get('name', ''))
     links = [links_manager.get_table_detail_link(bucket_id, table_name)]
+    table_metadata = raw_table.get('metadata', [])
+    created_by = get_created_by(table_metadata)
+    last_updated_by = get_last_updated_by(table_metadata)
 
     table = TableDetail.model_validate(
         raw_table
@@ -652,6 +700,8 @@ async def _get_table(
             'columns': column_info,
             'fully_qualified_name': db_table_info.fqn.identifier if db_table_info else None,
             'links': links,
+            'created_by': created_by,
+            'last_updated_by': last_updated_by,
         }
     )
     return table.model_copy(update={'id': table.prod_id, 'branch_id': None})
