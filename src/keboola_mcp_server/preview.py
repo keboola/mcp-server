@@ -4,7 +4,7 @@ from typing import Any
 
 import jsonschema
 import pydantic
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -13,6 +13,7 @@ from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
 from keboola_mcp_server.tools import data_apps as data_app_tools
 from keboola_mcp_server.tools.components import tools as components_tools
+from keboola_mcp_server.tools.components.model import ConfigParamUpdate, TfParamUpdate
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
 from keboola_mcp_server.tools.flow import tools as flow_tools
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -87,6 +88,7 @@ async def preview_config_diff(rq: Request) -> Response:
     client = KeboolaClient.from_state(state)
 
     mutator_params: dict[str, Any] = {
+        **preview_rq.tool_params,
         'client': client,
     }
 
@@ -96,6 +98,9 @@ async def preview_config_diff(rq: Request) -> Response:
             configuration_id=preview_rq.tool_params.get('configuration_id'),
         )
         mutator_fn = components_tools.update_config_internal
+        if parameter_updates := mutator_params.get('parameter_updates'):
+            type_adapter = TypeAdapter(list[ConfigParamUpdate])
+            mutator_params['parameter_updates'] = type_adapter.validate_python(parameter_updates)
 
     elif preview_rq.tool_name == 'update_config_row':
         coordinates = ConfigCoordinates(
@@ -104,6 +109,9 @@ async def preview_config_diff(rq: Request) -> Response:
             configuration_row_id=preview_rq.tool_params.get('configuration_row_id'),
         )
         mutator_fn = components_tools.update_config_row_internal
+        if parameter_updates := mutator_params.get('parameter_updates'):
+            type_adapter = TypeAdapter(list[ConfigParamUpdate])
+            mutator_params['parameter_updates'] = type_adapter.validate_python(parameter_updates)
 
     elif preview_rq.tool_name == 'update_sql_transformation':
         workspace_manager = WorkspaceManager.from_state(state)
@@ -113,6 +121,9 @@ async def preview_config_diff(rq: Request) -> Response:
         )
         mutator_fn = components_tools.update_sql_transformation_internal
         mutator_params['workspace_manager'] = workspace_manager
+        if parameter_updates := mutator_params.get('parameter_updates'):
+            type_adapter = TypeAdapter(list[TfParamUpdate])
+            mutator_params['parameter_updates'] = type_adapter.validate_python(parameter_updates)
 
     elif preview_rq.tool_name == 'update_flow':
         coordinates = ConfigCoordinates(
@@ -133,7 +144,7 @@ async def preview_config_diff(rq: Request) -> Response:
         raise ValueError(f'Invalid tool name: "{preview_rq.tool_name}"')
 
     try:
-        original_config, new_config, *_ = await mutator_fn(**mutator_params, **preview_rq.tool_params)
+        original_config, new_config, *_ = await mutator_fn(**mutator_params)
         if isinstance(original_config, BaseModel):
             original_config = original_config.model_dump()
 
