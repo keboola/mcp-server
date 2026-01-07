@@ -159,13 +159,14 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             mount_paths: dict[str, StarletteWithLifespan] = {}
             custom_routes: CustomRoutes | None = None
             transports: list[str] = []
+            mcp_server: FastMCP | None = None
 
             if parsed_args.transport in ['http-compat', 'streamable-http']:
                 http_runtime_config = ServerRuntimeInfo('http-compat/streamable-http')
-                http_mcp_server, custom_routes = create_server(
+                mcp_server, custom_routes = create_server(
                     config, runtime_info=http_runtime_config, custom_routes_handling='return'
                 )
-                http_app: StarletteWithLifespan = http_mcp_server.http_app(
+                http_app: StarletteWithLifespan = mcp_server.http_app(
                     path='/',
                     transport='streamable-http',
                 )
@@ -174,10 +175,10 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
             if parsed_args.transport in ['http-compat', 'sse']:
                 sse_runtime_config = ServerRuntimeInfo('http-compat/sse')
-                sse_mcp_server, custom_routes = create_server(
+                mcp_server, custom_routes = create_server(
                     config, runtime_info=sse_runtime_config, custom_routes_handling='return'
                 )
-                sse_app: StarletteWithLifespan = sse_mcp_server.http_app(
+                sse_app: StarletteWithLifespan = mcp_server.http_app(
                     path='/',
                     transport='sse',
                 )
@@ -210,6 +211,11 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 app.mount(path, inner_app)
 
             custom_routes.add_to_starlette(app)
+
+            assert isinstance(mcp_server, FastMCP)
+            app.state.mcp_tools_input_schema = {
+                tool.name: tool.parameters for tool in (await mcp_server.get_tools()).values()
+            }
 
             config = uvicorn.Config(
                 app,

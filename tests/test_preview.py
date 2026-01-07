@@ -1,6 +1,9 @@
 import copy
+from typing import Generator
 
 import pytest
+import pytest_asyncio
+from fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -9,10 +12,11 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.preview import preview_config_diff
+from keboola_mcp_server.server import create_server
 
 
-@pytest.fixture
-def starlette_app() -> Starlette:
+@pytest_asyncio.fixture
+async def starlette_app() -> Starlette:
     """Create a Starlette app with the preview endpoint."""
     config = Config(
         storage_token='test-token',
@@ -20,25 +24,29 @@ def starlette_app() -> Starlette:
         workspace_schema='test-workspace',
     )
     server_state = ServerState(config=config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+    mcp_server = create_server(config, runtime_info=server_state.runtime_info)
+    assert isinstance(mcp_server, FastMCP)
 
     app = Starlette(exception_handlers=cli._exception_handlers)
     app.state.server_state = server_state
+    app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in (await mcp_server.get_tools()).values()}
+
     app.add_route('/preview/configuration', preview_config_diff, methods=['POST'])
 
     return app
 
 
 @pytest.fixture
-def test_client(starlette_app: Starlette) -> TestClient:
+def test_client(starlette_app: Starlette) -> Generator[TestClient, None, None]:
     """Create a test client for the Starlette app."""
-    return TestClient(starlette_app)
+    with TestClient(starlette_app) as client:
+        yield client
 
 
 class TestPreviewConfigDiff:
     """Tests for the POST /preview/configuration endpoint."""
 
-    @pytest.mark.asyncio
-    async def test_preview_update_config_success(self, test_client: TestClient, mocker):
+    def test_preview_update_config_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_config tool."""
         # Mock the storage client's configuration_detail method
         original_config_data = {
@@ -137,8 +145,7 @@ class TestPreviewConfigDiff:
         assert result['updatedConfig']['configuration']['parameters']['baz'] == 42
         assert result['updatedConfig']['changeDescription'] == 'Test change'
 
-    @pytest.mark.asyncio
-    async def test_preview_update_config_validation_error(self, test_client: TestClient, mocker):
+    def test_preview_update_config_validation_error(self, test_client: TestClient, mocker):
         """Test preview with validation error."""
         # Mock the storage client to raise a validation error
         mock_client = mocker.AsyncMock(KeboolaClient)
@@ -178,8 +185,7 @@ class TestPreviewConfigDiff:
         assert 'originalConfig' not in result
         assert 'updatedConfig' not in result
 
-    @pytest.mark.asyncio
-    async def test_preview_invalid_tool_name(self, test_client: TestClient, mocker):
+    def test_preview_invalid_tool_name(self, test_client: TestClient, mocker):
         """Test preview with invalid tool name."""
         mock_client = mocker.AsyncMock(KeboolaClient)
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
@@ -198,8 +204,7 @@ class TestPreviewConfigDiff:
 
         assert response.status_code == 400
 
-    @pytest.mark.asyncio
-    async def test_preview_update_config_only_required_params(self, test_client: TestClient, mocker):
+    def test_preview_update_config_only_required_params(self, test_client: TestClient, mocker):
         """Test preview with only required parameters."""
         from keboola_mcp_server.clients.storage import ComponentAPIResponse
 
@@ -261,8 +266,7 @@ class TestPreviewConfigDiff:
         # Configuration should remain the same
         assert result['updatedConfig']['configuration']['parameters']['foo'] == 'bar'
 
-    @pytest.mark.asyncio
-    async def test_preview_update_config_row_success(self, test_client: TestClient, mocker):
+    def test_preview_update_config_row_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_config_row tool."""
         from keboola_mcp_server.clients.storage import ComponentAPIResponse
 
@@ -341,8 +345,7 @@ class TestPreviewConfigDiff:
         assert result['updatedConfig']['description'] == 'Updated row description'
         assert result['updatedConfig']['configuration']['parameters']['foo'] == 'updated_bar'
 
-    @pytest.mark.asyncio
-    async def test_preview_update_sql_transformation_success(self, test_client: TestClient, mocker):
+    def test_preview_update_sql_transformation_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_sql_transformation tool."""
         from keboola_mcp_server.clients.storage import ComponentAPIResponse
 
@@ -434,8 +437,7 @@ class TestPreviewConfigDiff:
         # Check that configuration was updated
         assert result['updatedConfig']['configuration']['parameters']['blocks'][-1]['name'] == 'Updated Block'
 
-    @pytest.mark.asyncio
-    async def test_preview_update_flow_success(self, test_client: TestClient, mocker):
+    def test_preview_update_flow_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_flow tool."""
         # Mock the flow configuration data
         original_config_data = {
@@ -507,8 +509,7 @@ class TestPreviewConfigDiff:
         assert result['updatedConfig']['name'] == 'Updated Flow'
         assert result['updatedConfig']['description'] == 'Updated flow description'
 
-    @pytest.mark.asyncio
-    async def test_preview_modify_data_app_success(self, test_client: TestClient, mocker):
+    def test_preview_modify_data_app_success(self, test_client: TestClient, mocker):
         """Test successful preview of modify_data_app tool."""
         from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 
@@ -600,7 +601,7 @@ class TestPreviewConfigDiff:
                 'description': 'Updated data app description',
                 'source_code': 'print("Hello World")',
                 'packages': ['streamlit', 'pandas'],
-                'authentication_type': 'none',
+                'authentication_type': 'default',
             },
         }
 
@@ -619,3 +620,126 @@ class TestPreviewConfigDiff:
         # Check updated config
         assert result['updatedConfig']['name'] == 'Updated Data App'
         assert result['updatedConfig']['description'] == 'Updated data app description'
+
+    def test_preview_validation_missing_required_param(self, test_client: TestClient):
+        """Test validation error for missing required parameter."""
+        # Request missing required 'configuration_id'
+        request_payload = {
+            'toolName': 'update_config',
+            'toolParams': {
+                'component_id': 'keboola.ex-test',
+                # 'configuration_id': missing!
+                'change_description': 'Test',
+            },
+        }
+
+        # Make the request
+        response = test_client.post('/preview/configuration', json=request_payload)
+
+        # Assertions
+        assert response.status_code == 200
+        result = response.json()
+        print(result)
+        assert result['isValid'] is False
+        assert 'validationErrors' in result
+        assert 'configuration_id' in str(result['validationErrors'])
+
+        # Check that configs are not in the response (excluded by exclude_none=True)
+        assert 'originalConfig' not in result
+        assert 'updatedConfig' not in result
+
+    def test_preview_validation_invalid_param_type(self, test_client: TestClient, mocker):
+        """Test validation error for invalid parameter type.
+
+        Note: Type validation errors at the API level return 400 Bad Request
+        rather than 200 with validation errors, as they represent malformed requests.
+        """
+        request_payload = {
+            'toolName': 'update_config',
+            'toolParams': {
+                'component_id': 'keboola.ex-test',
+                'configuration_id': 'config-123',
+                'change_description': 'Test change',
+                'name': 'Updated Config Name',
+                'description': 'Updated description',
+                'parameter_updates': [
+                    {'op': 'set', 'path': 'foo', 'value': 'updated_bar'},
+                    {'op': 'foo', 'path': 'new_param', 'value': 'new_value'},  # Invalid op
+                ],
+            },
+        }
+
+        # Make the request
+        response = test_client.post('/preview/configuration', json=request_payload)
+        print(response.json())
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result['isValid'] is False
+        assert 'validationErrors' in result
+        assert 'parameter_updates.1' in str(result['validationErrors'])
+
+        # Check that configs are not in the response (excluded by exclude_none=True)
+        assert 'originalConfig' not in result
+        assert 'updatedConfig' not in result
+
+    def test_preview_validation_passes_for_valid_params(self, test_client: TestClient, mocker):
+        """Test that validation passes for valid parameters and processing continues."""
+        from keboola_mcp_server.clients.storage import ComponentAPIResponse
+
+        original_config_data = {
+            'id': 'config-123',
+            'name': 'Original Config',
+            'description': 'Original description',
+            'configuration': {'parameters': {'foo': 'bar'}},
+        }
+
+        # Mock fetch_component
+        async def mock_fetch_component(**kwargs):
+            return ComponentAPIResponse.model_validate(
+                {
+                    'id': 'keboola.ex-test',
+                    'name': 'Test Extractor',
+                    'type': 'extractor',
+                    'configurationSchema': {},
+                    'component_flags': [],
+                }
+            )
+
+        mocker.patch(
+            'keboola_mcp_server.tools.components.tools.fetch_component',
+            side_effect=mock_fetch_component,
+        )
+
+        # Mock the KeboolaClient
+        mock_client = mocker.AsyncMock(KeboolaClient)
+
+        async def mock_config_detail(**kwargs):
+            return copy.deepcopy(original_config_data)
+
+        mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
+
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
+
+        # Request payload with valid params (should pass validation)
+        request_payload = {
+            'toolName': 'update_config',
+            'toolParams': {
+                'component_id': 'keboola.ex-test',
+                'configuration_id': 'config-123',
+                'change_description': 'Test change',
+            },
+        }
+
+        # Make the request
+        response = test_client.post('/preview/configuration', json=request_payload)
+
+        # Assertions
+        assert response.status_code == 200
+        result = response.json()
+        # Validation passed, so processing continued and isValid should be True
+        assert result['isValid'] is True
+        assert 'validationErrors' not in result
+        # Config should be returned
+        assert 'originalConfig' in result
+        assert 'updatedConfig' in result
