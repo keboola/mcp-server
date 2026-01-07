@@ -109,6 +109,7 @@ class KeboolaClient:
         :param bearer_token: The access token issued by Keboola OAuth server
         :param branch_id: Keboola branch ID
         :param headers: Additional headers for the requests sent by all clients
+        :param readonly: If True, the client will only use HTTP GET, HEAD operations.
         """
         self._token = storage_api_token
         self._bearer_token = bearer_token
@@ -154,7 +155,7 @@ class KeboolaClient:
             root_url=encryption_api_url, token=None, headers=self._headers
         )
         self._scheduler_client = SchedulerClient.create(
-            root_url=scheduler_api_url, token=self._token, headers=self._headers
+            root_url=scheduler_api_url, token=self._token, headers=self._headers, readonly=readonly
         )
 
     @property
