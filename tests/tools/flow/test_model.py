@@ -3,6 +3,8 @@ from typing import Any
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
+    ConditionalFlowPhase,
+    ConditionalFlowTransition,
     Flow,
     FlowConfiguration,
     FlowPhase,
@@ -76,3 +78,67 @@ class TestFlowModels:
         assert len(flow.configuration.tasks) == 0
         assert flow_summary.phases_count == 0
         assert flow_summary.tasks_count == 0
+
+
+class TestConditionalFlowPhase:
+    """Tests for conditional flow phase serialization helpers."""
+
+    def test_next_defaults_to_empty_list(self):
+        """Ensure default next is an empty list and serialized when requested."""
+        phase = ConditionalFlowPhase(id='phase-1', name='Phase 1')
+
+        assert phase.next == []
+
+        serialized = phase.model_dump()
+        assert 'next' in serialized
+        assert serialized['next'] == []
+
+    def test_model_dump_exclude_unset_omits_empty_next(self):
+        """When exclude_unset=True, empty next should be removed from payload."""
+        phase = ConditionalFlowPhase(id='phase-1', name='Phase 1')
+
+        serialized = phase.model_dump(exclude_unset=True)
+
+        assert 'next' not in serialized
+
+    def test_model_dump_keeps_non_empty_next(self):
+        """Non-empty next array should always be serialized."""
+        transition = ConditionalFlowTransition(id='t1', name='Go to phase 2', goto='phase-2')
+        phase = ConditionalFlowPhase(id='phase-1', name='Phase 1', next=[transition])
+
+        serialized_default = phase.model_dump()
+        assert serialized_default['next'][0]['id'] == 't1'
+
+        serialized_excluding_unset = phase.model_dump(exclude_unset=True)
+        assert serialized_excluding_unset['next'][0]['goto'] == 'phase-2'
+
+    def test_model_dump_excludes_single_null_goto_transition(self):
+        """Single transition with goto=None should be excluded when exclude_unset=True to prevent UI damage."""
+        transition = ConditionalFlowTransition(id='t1', name='Go to end', goto=None)
+        phase = ConditionalFlowPhase(id='phase-1', name='Phase 1', next=[transition])
+
+        # Without exclude_unset, the next array should be serialized
+        serialized_default = phase.model_dump()
+        assert 'next' in serialized_default
+        assert serialized_default['next'][0]['id'] == 't1'
+        assert serialized_default['next'][0]['goto'] is None
+
+        # With exclude_unset=True, the next array should be excluded
+        serialized_excluding_unset = phase.model_dump(exclude_unset=True)
+        assert 'next' not in serialized_excluding_unset
+
+    def test_model_dump_keeps_multiple_transitions_with_null_goto(self):
+        """Multiple transitions should be kept even if one has goto=None."""
+        transition1 = ConditionalFlowTransition(id='t1', name='Go to phase 2', goto='phase-2')
+        transition2 = ConditionalFlowTransition(id='t2', name='Go to end', goto=None)
+        phase = ConditionalFlowPhase(id='phase-1', name='Phase 1', next=[transition1, transition2])
+
+        serialized_default = phase.model_dump()
+        assert 'next' in serialized_default
+        assert len(serialized_default['next']) == 2
+
+        serialized_excluding_unset = phase.model_dump(exclude_unset=True)
+        assert 'next' in serialized_excluding_unset
+        assert len(serialized_excluding_unset['next']) == 2
+        assert serialized_excluding_unset['next'][0]['goto'] == 'phase-2'
+        assert serialized_excluding_unset['next'][1]['goto'] is None

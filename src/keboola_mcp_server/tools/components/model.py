@@ -25,7 +25,9 @@ from individual tasks:
 
 ## Tool Output Models
 - ConfigToolOutput: Standard response for config create/update operations
-- ListConfigsOutput: Response for list_configs tool
+- GetConfigsListOutput: Response for get_configs tool (list mode)
+- GetConfigsDetailOutput: Response for get_configs tool (detail mode)
+- GetConfigsOutput: Union of list and detail output for get_configs tool
 
 ## Legacy Models
 - ComponentConfigurationResponseBase: Base class used by Flow tools (FlowConfigurationResponse)
@@ -33,19 +35,17 @@ from individual tasks:
 
 import asyncio
 from datetime import datetime
-from typing import Annotated, Any, List, Literal, Optional, Sequence, Union, get_args
+from typing import Annotated, Any, Literal, Optional, Sequence, Union, get_args
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
-from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
+from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components.sql_utils import join_sql_statements, split_sql_statements
 
 # ============================================================================
 # TYPE DEFINITIONS
 # ============================================================================
 
-ComponentType = Literal['application', 'extractor', 'transformation', 'writer']
 ALL_COMPONENT_TYPES = tuple(component_type for component_type in get_args(ComponentType))
 
 
@@ -99,6 +99,7 @@ class ComponentSummary(BaseModel):
     component_name: str = Field(description='Component name')
     component_type: str = Field(description='Component type')
     capabilities: ComponentCapabilities = Field(description='Component capabilities')
+    links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
 
     @classmethod
     def from_api_response(cls, api_response: ComponentAPIResponse) -> 'ComponentSummary':
@@ -180,9 +181,23 @@ class Component(BaseModel):
         )
 
 
+class GetComponentsOutput(BaseModel):
+    """Output of the get_components tool."""
+
+    components: list[Component] = Field(description='The components')
+    links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
+
+
 # ============================================================================
 # CONFIGURATION MODELS
 # ============================================================================
+
+
+class FullConfigId(BaseModel, frozen=True):
+    """Composite configuration ID (component ID + configuration ID)."""
+
+    component_id: str = Field(description='ID of the component')
+    configuration_id: str = Field(description='ID of the configuration')
 
 
 class ConfigurationRoot(BaseModel):
@@ -355,7 +370,7 @@ class ConfigurationRowSummary(BaseModel):
         )
 
 
-class ConfigurationSummary(BaseModel):
+class ConfigSummary(BaseModel):
     """
     Lightweight configuration structure for list operations.
 
@@ -368,9 +383,10 @@ class ConfigurationSummary(BaseModel):
     configuration_rows: Optional[list[ConfigurationRowSummary]] = Field(
         default=None, description='The configuration row summaries'
     )
+    links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
 
     @classmethod
-    def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationSummary':
+    def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigSummary':
         """
         Create ConfigurationSummary from API response.
 
@@ -456,12 +472,21 @@ class Configuration(BaseModel):
         )
 
 
+class ComponentWithConfigs(BaseModel, frozen=True):
+    """Grouping of a component and its associated configuration summaries."""
+
+    component: ComponentSummary = Field(description='The Keboola component.')
+    configs: list[ConfigSummary] = Field(
+        description='List of configuration summaries associated with the component.',
+    )
+
+
 # ============================================================================
 # CONFIGURATION PARAMETER UPDATE MODELS
 # ============================================================================
 
 
-class ConfigParamSet(BaseModel):
+class ConfigParamSet(BaseModel, frozen=True):
     """
     Set or create a parameter value at the specified path.
 
@@ -476,7 +501,7 @@ class ConfigParamSet(BaseModel):
     value: Any = Field(description='New value to set')
 
 
-class ConfigParamReplace(BaseModel):
+class ConfigParamReplace(BaseModel, frozen=True):
     """Replace a substring in a string parameter."""
 
     op: Literal['str_replace']
@@ -485,14 +510,14 @@ class ConfigParamReplace(BaseModel):
     replace_with: str = Field(description='Replacement string (can be empty for deletion)')
 
 
-class ConfigParamRemove(BaseModel):
+class ConfigParamRemove(BaseModel, frozen=True):
     """Remove a parameter key."""
 
     op: Literal['remove']
     path: str = Field(description='JSONPath to the parameter key to remove')
 
 
-class ConfigParamListAppend(BaseModel):
+class ConfigParamListAppend(BaseModel, frozen=True):
     """Append a value to a list parameter."""
 
     op: Literal['list_append']
@@ -540,6 +565,9 @@ class TransformationConfiguration(BaseModel):
         blocks: list[Block] = Field(description='The blocks for the transformation')
 
         async def to_simplified_parameters(self) -> 'SimplifiedTfBlocks':
+            # Avoid circular import
+            from keboola_mcp_server.tools.components.sql_utils import join_sql_statements
+
             """Convert the raw parameters to simplified parameters."""
             return SimplifiedTfBlocks(
                 blocks=[
@@ -595,6 +623,9 @@ class SimplifiedTfBlocks(BaseModel):
             script: str = Field(description='The SQL script of the code block')
 
             async def to_raw_code(self) -> TransformationConfiguration.Parameters.Block.Code:
+                # Avoid circular import
+                from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
+
                 """Convert the simplified code to the raw code."""
                 return TransformationConfiguration.Parameters.Block.Code(
                     name=self.name, script=await split_sql_statements(self.script)
@@ -625,7 +656,7 @@ class SimplifiedTfBlocks(BaseModel):
 TfPosition = Literal['start', 'end']
 
 
-class TfAddBlock(BaseModel):
+class TfAddBlock(BaseModel, frozen=True):
     """Add a new block to the transformation."""
 
     op: Literal['add_block']
@@ -633,14 +664,14 @@ class TfAddBlock(BaseModel):
     position: TfPosition = Field(description='The position of the block to add', default='end')
 
 
-class TfRemoveBlock(BaseModel):
+class TfRemoveBlock(BaseModel, frozen=True):
     """Remove an existing block from the transformation."""
 
     op: Literal['remove_block']
     block_id: str = Field(description='The ID of the block to remove')
 
 
-class TfRenameBlock(BaseModel):
+class TfRenameBlock(BaseModel, frozen=True):
     """Rename an existing block in the transformation."""
 
     op: Literal['rename_block']
@@ -648,7 +679,7 @@ class TfRenameBlock(BaseModel):
     block_name: str = Field(description='The new name of the block')
 
 
-class TfAddCode(BaseModel):
+class TfAddCode(BaseModel, frozen=True):
     """Add a new code to an existing block in the transformation."""
 
     op: Literal['add_code']
@@ -657,7 +688,7 @@ class TfAddCode(BaseModel):
     position: TfPosition = Field(description='The position of the code to add', default='end')
 
 
-class TfRemoveCode(BaseModel):
+class TfRemoveCode(BaseModel, frozen=True):
     """Remove an existing code from an existing block in the transformation."""
 
     op: Literal['remove_code']
@@ -665,7 +696,7 @@ class TfRemoveCode(BaseModel):
     code_id: str = Field(description='The ID of the code to remove')
 
 
-class TfRenameCode(BaseModel):
+class TfRenameCode(BaseModel, frozen=True):
     """Rename an existing code in an existing block in the transformation."""
 
     op: Literal['rename_code']
@@ -674,7 +705,7 @@ class TfRenameCode(BaseModel):
     code_name: str = Field(description='The new name of the code')
 
 
-class TfSetCode(BaseModel):
+class TfSetCode(BaseModel, frozen=True):
     """Set the SQL script of an existing code in an existing block in the transformation."""
 
     op: Literal['set_code']
@@ -683,7 +714,7 @@ class TfSetCode(BaseModel):
     script: str = Field(description='The SQL script of the code to set')
 
 
-class TfAddScript(BaseModel):
+class TfAddScript(BaseModel, frozen=True):
     """Append or prepend SQL script text to an existing code in an existing block in the transformation."""
 
     op: Literal['add_script']
@@ -693,7 +724,7 @@ class TfAddScript(BaseModel):
     position: TfPosition = Field(description='The position of the script to add', default='end')
 
 
-class TfStrReplace(BaseModel):
+class TfStrReplace(BaseModel, frozen=True):
     """Replace a substring in SQL statements in the transformation."""
 
     op: Literal['str_replace']
@@ -755,24 +786,18 @@ class ConfigToolOutput(BaseModel):
     )
 
 
-class ComponentWithConfigurations(BaseModel):
-    """Grouping of a component and its associated configuration summaries."""
-
-    component: ComponentSummary = Field(description='The Keboola component.')
-    configurations: List[ConfigurationSummary] = Field(
-        description='The list of configuration summaries associated with the component.',
+class GetConfigsListOutput(BaseModel, frozen=True):
+    components_with_configs: list[ComponentWithConfigs] = Field(description='The components with their configurations')
+    links: list[Link] = Field(
+        description='Links relevant to the listing of components with configurations.',
     )
 
 
-class ListConfigsOutput(BaseModel):
-    """Response model for list_configs tool."""
+class GetConfigsDetailOutput(BaseModel, frozen=True):
+    configs: list[Configuration] = Field(description='List of configurations')
 
-    components_with_configurations: List[ComponentWithConfigurations] = Field(
-        description='The groupings of components and their respective configurations.'
-    )
-    links: List[Link] = Field(
-        description='The list of links relevant to the listing of components with configurations.',
-    )
+
+GetConfigsOutput = Union[GetConfigsListOutput, GetConfigsDetailOutput]
 
 
 # ============================================================================

@@ -8,12 +8,13 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, model_validator
 
-from keboola_mcp_server.clients.ai_service import SuggestedComponent
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import toon_serializer
 from keboola_mcp_server.tools.components.utils import get_nested
 
 LOG = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ def add_search_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             find_component_id,
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
             tags={SEARCH_TOOLS_TAG},
         )
     )
@@ -49,6 +51,7 @@ def add_search_tools(mcp: FastMCP) -> None:
             search,
             name=SEARCH_TOOL_NAME,
             annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer,
             tags={SEARCH_TOOLS_TAG},
         )
     )
@@ -69,6 +72,7 @@ class SearchHit(BaseModel):
     name: str | None = Field(default=None, description='Name of the item.')
     display_name: str | None = Field(default=None, description='Display name of the item.')
     description: str | None = Field(default=None, description='Description of the item.')
+    links: list[Link] = Field(default_factory=list, description='Links to the item.')
 
     @model_validator(mode='after')
     def check_id_fields(self) -> 'SearchHit':
@@ -104,6 +108,23 @@ def _get_field_value(item: JsonDict, fields: Sequence[str]) -> Any | None:
         if value := get_nested(item, field):
             return value
     return None
+
+
+def _check_column_match(table: JsonDict, patterns: list[re.Pattern]) -> bool:
+    """Check if any column name or description matches the patterns."""
+    # Check column names (list of strings)
+    for col_name in table.get('columns', []):
+        if _matches_pattern(col_name, patterns):
+            return True
+
+    # Check column descriptions (from columnMetadata)
+    column_metadata = table.get('columnMetadata', {})
+    for col_meta in column_metadata.values():
+        col_description = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
+        if _matches_pattern(col_description, patterns):
+            return True
+
+    return False
 
 
 async def _fetch_buckets(client: KeboolaClient, patterns: list[re.Pattern]) -> list[SearchHit]:
@@ -143,7 +164,7 @@ async def _fetch_tables(client: KeboolaClient, patterns: list[re.Pattern]) -> li
         if not (bucket_id := bucket.get('id')):
             continue
 
-        tables = await client.storage_client.bucket_table_list(bucket_id)
+        tables = await client.storage_client.bucket_table_list(bucket_id, include=['columns', 'columnMetadata'])
         for table in tables:
             if not (table_id := table.get('id')):
                 continue
@@ -157,6 +178,7 @@ async def _fetch_tables(client: KeboolaClient, patterns: list[re.Pattern]) -> li
                 or _matches_pattern(table_name, patterns)
                 or _matches_pattern(table_display_name, patterns)
                 or _matches_pattern(table_description, patterns)
+                or _check_column_match(table, patterns)
             ):
                 hits.append(
                     SearchHit(
@@ -297,10 +319,11 @@ async def search(
     - User asks "what tables/configs/flows do I have with X in the name?"
     - You need to discover items before performing operations on them
     - User asks to "list all items with [name] in it"
-    - DO NOT use for listing all items of a specific type. Use list_configs, list_tables, list_flows, etc instead.
+    - DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
 
     HOW IT WORKS:
     - Searches by regex pattern matching against id, name, displayName, and description fields
+    - For tables, also searches column names and column descriptions
     - Case-insensitive search
     - Multiple patterns work as OR condition - matches items containing ANY of the patterns
     - Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
@@ -308,15 +331,19 @@ async def search(
 
     IMPORTANT:
     - Always use this tool when the user mentions a name but you don't have the exact ID
-    - The search returns IDs that you can use with other tools (e.g., get_table, get_config, get_flow)
+    - The search returns IDs that you can use with other tools (e.g., get_table, get_configs, get_flows)
     - Results are ordered by update time. The most recently updated items are returned first.
-    - For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
-    - Use find_component_id and list_configs tools to find configurations related to a specific component
+    - For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
+    - Use find_component_id and get_configs tools to find configurations related to a specific component
 
     USAGE EXAMPLES:
     - user_input: "Find all tables with 'customer' in the name"
       → patterns=["customer"], item_types=["table"]
       → Returns all tables whose id, name, displayName, or description contains "customer"
+
+    - user_input: "Find tables with 'email' column"
+      → patterns=["email"], item_types=["table"]
+      → Returns all tables that have a column named "email" or with "email" in column description
 
     - user_input: "Search for the sales transformation"
       → patterns=["sales"], item_types=["transformation"]
@@ -396,25 +423,54 @@ async def search(
     )
     paginated_hits = all_hits[offset : offset + limit]
 
+    # Get links for the hits
+    links_manager = await ProjectLinksManager.from_client(client)
+    for hit in paginated_hits:
+        hit.links.extend(
+            links_manager.get_links(
+                bucket_id=hit.bucket_id,
+                table_id=hit.table_id,
+                component_id=hit.component_id,
+                configuration_id=hit.configuration_id,
+                name=hit.name,
+            )
+        )
+
     # TODO: Should we report the total number of hits?
     return paginated_hits
+
+
+class SuggestedComponentOutput(BaseModel):
+    """Output of find_component_id tool."""
+
+    component_id: str = Field(description='The component ID.')
+    score: float = Field(description='Score of the component suggestion.')
+    links: list[Link] = Field(description='Links to the component.', default_factory=list)
 
 
 @tool_errors()
 async def find_component_id(
     ctx: Context,
     query: Annotated[str, Field(description='Natural language query to find the requested component.')],
-) -> list[SuggestedComponent]:
+) -> list[SuggestedComponentOutput]:
     """
     Returns list of component IDs that match the given query.
 
-    USAGE:
+    WHEN TO USE:
     - Use when you want to find the component for a specific purpose.
 
-    EXAMPLES:
-    - user_input: `I am looking for a salesforce extractor component`
-        - returns a list of component IDs that match the query, ordered by relevance/best match.
+    USAGE EXAMPLES:
+    - user_input: "I am looking for a salesforce extractor component"
+      → Returns a list of component IDs that match the query, ordered by relevance/best match.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
     suggestion_response = await client.ai_service_client.suggest_component(query)
-    return suggestion_response.components
+
+    components = []
+    for component in suggestion_response.components:
+        links = [links_manager.get_config_dashboard_link(component_id=component.component_id, component_name=None)]
+        components.append(
+            SuggestedComponentOutput(component_id=component.component_id, score=component.score, links=links)
+        )
+    return components

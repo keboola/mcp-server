@@ -34,6 +34,7 @@ _WELL_KNOWN_DOMAINS = [
     re.compile(r'^.*make\.com$', re.IGNORECASE),
     re.compile(r'^api\.devin\.ai$', re.IGNORECASE),  # devin.ai API domain
     re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback
+    re.compile(r'^global\.consent\.azure-apim\.net$', re.IGNORECASE),  # Azure APIM consent domain
 ]
 _FORBIDDEN_SCHEMES = [
     # # Web/HTTP
@@ -211,6 +212,7 @@ class SimpleOAuthProvider(OAuthProvider):
             # and return the registered redirect URI.
             redirect_uris=[AnyHttpUrl('http://foo')],
             client_id=client_id,
+            token_endpoint_auth_method='none',
         )
         LOG.debug(f'Client loaded: client_id={client_id}')
         return client
@@ -253,6 +255,8 @@ class SimpleOAuthProvider(OAuthProvider):
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
         }
         state_jwt = self._encode(state)
+
+        LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
 
         # create the authorization URL
         url_params = {
@@ -347,6 +351,7 @@ class SimpleOAuthProvider(OAuthProvider):
             redirect_uri_base=redirect_uri,
             code=auth_code_jwt,
             state=state_data['state'],
+            code_challenge=state_data['code_challenge'],
         )
         LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
 

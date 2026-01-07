@@ -11,6 +11,10 @@ import logging
 import re
 from typing import Iterable
 
+import sqlglot
+
+from keboola_mcp_server.tools.components.model import SimplifiedTfBlocks
+
 LOG = logging.getLogger(__name__)
 
 SQL_SPLIT_REGEX = re.compile(
@@ -43,7 +47,7 @@ CODE_MARKER_REGEX = re.compile(r'/\*\s*=+\s*CODE:\s*([^*]+?)\s*=+\s*\*/', re.MUL
 
 async def split_sql_statements(script: str, timeout_seconds: float = 1.0) -> list[str]:
     """
-    Split a SQL script string into individual statements.
+    Splits a SQL script string into individual statements.
 
     Uses regex-based parsing similar to UI's splitQueriesWorker.worker.ts.
     Includes timeout protection to prevent catastrophic backtracking.
@@ -62,7 +66,7 @@ async def split_sql_statements(script: str, timeout_seconds: float = 1.0) -> lis
             statements = await asyncio.wait_for(asyncio.to_thread(_split_with_regex, script), timeout=timeout_seconds)
         except asyncio.TimeoutError:
             raise ValueError(
-                f'SQL parsing took too long ' f'(possible catastrophic backtracking). ' f'Timeout: {timeout_seconds}s'
+                f'SQL parsing took too long (possible catastrophic backtracking). Timeout: {timeout_seconds}s'
             )
 
         if statements is None:
@@ -94,10 +98,10 @@ def _split_with_regex(script: str) -> list[str]:
 
 def join_sql_statements(statements: Iterable[str]) -> str:
     """
-    Join SQL statements into a single script string.
+    Joins SQL statements into a single script string.
 
     :param statements: List of SQL statements to join
-    :return: Concatenated SQL script string with proper delimiters
+    :return: Concatenated SQL script string separated by double newlines
     """
     if not statements:
         return ''
@@ -109,15 +113,87 @@ def join_sql_statements(statements: Iterable[str]) -> str:
         if not trimmed_stmt:
             continue
 
-        ends_with_semicolon = trimmed_stmt.endswith(';')
-
-        # Check if ends with block comment or line comment at the end of the string
-        ends_with_comment = trimmed_stmt.endswith('*/') or bool(re.search(r'(--|//|#)[^\n]*$', trimmed_stmt))
-
         result_parts.append(trimmed_stmt)
-        if not ends_with_semicolon and not ends_with_comment:
-            result_parts.append(';')
-
         result_parts.append('\n\n')
 
     return ''.join(result_parts)
+
+
+def format_sql(sql: str, dialect: str) -> str:
+    """
+    Formats SQL code using sqlglot for better readability.
+
+    :param sql: Raw SQL code (may contain multiple statements)
+    :param dialect: SQL dialect
+    :return: Formatted SQL code, or original if formatting fails
+    """
+    try:
+        # transpile returns a list - one item per statement/comment
+        formatted_items = sqlglot.transpile(sql, read=dialect.lower(), pretty=True)
+
+        if not formatted_items:
+            return sql
+
+        def process_item(item: str) -> str | None:
+            """Process a single formatted item, returning None if it should be skipped."""
+            item = item.rstrip()
+            if not item:
+                return None
+
+            # Check if it's ONLY a comment (no SQL after it)
+            # Remove block comments and line comments, then check if anything substantial remains
+            sql_content = re.sub(r'/\*.*?\*/', '', item, flags=re.DOTALL)
+            sql_content = re.sub(r'(--.*)$', '', sql_content, flags=re.MULTILINE).strip()
+
+            is_only_comment = not sql_content
+
+            # Add semicolon only to actual SQL statements (not pure comments)
+            if not is_only_comment and not item.endswith(';'):
+                item += ';'
+
+            return item
+
+        result = [processed for item in formatted_items if (processed := process_item(item)) is not None]
+
+        if not result:
+            return sql
+
+        # Join with double newlines (consistent with join_sql_statements)
+        return '\n\n'.join(result)
+    except Exception as e:
+        LOG.warning(f'Failed to format SQL statement in {dialect} dialect: {sql}. Error: {e}')
+        return sql
+
+
+def format_simplified_tf_code(
+    code: SimplifiedTfBlocks.Block.Code, dialect: str
+) -> tuple[SimplifiedTfBlocks.Block.Code, bool]:
+    """
+    Formats the simplified transformation code using sqlglot for better readability.
+
+    :param code: The simplified transformation code
+    :param dialect: SQL dialect ('snowflake' or 'bigquery')
+    :return: Tuple of (formatted simplified transformation code,
+      bool representing if the script was changed by formatting)
+    """
+    formatted_script = format_sql(sql=code.script, dialect=dialect)
+
+    return SimplifiedTfBlocks.Block.Code(name=code.name, script=formatted_script), formatted_script != code.script
+
+
+def format_simplified_tf_block(block: SimplifiedTfBlocks.Block, dialect: str) -> tuple[SimplifiedTfBlocks.Block, bool]:
+    """
+    Formats the simplified transformation block using sqlglot for better readability.
+
+    :param block: The simplified transformation block
+    :param dialect: SQL dialect ('snowflake' or 'bigquery')
+    :return: Tuple of (formatted simplified transformation block,
+      bool representing if the block was changed by formatting)
+    """
+    formatted_codes = []
+    is_changed = False
+    for code in block.codes:
+        formatted_code, is_changed_code = format_simplified_tf_code(code=code, dialect=dialect)
+        is_changed = is_changed or is_changed_code
+        formatted_codes.append(formatted_code)
+    return SimplifiedTfBlocks.Block(name=block.name, codes=formatted_codes), is_changed

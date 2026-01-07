@@ -9,11 +9,9 @@ component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and a list of created table names.
-- [get_component](#get_component): Gets information about a specific component given its ID.
-- [get_config](#get_config): Gets information about a specific component/transformation configuration.
+- [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
-- [list_configs](#list_configs): Lists all component configurations in the project with optional filtering by component type or specific
-component IDs.
+- [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
@@ -22,19 +20,15 @@ component IDs.
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
 ### Flow Tools
-- [create_conditional_flow](#create_conditional_flow): Creates a new conditional flow configuration in Keboola.
-- [create_flow](#create_flow): Creates a new flow configuration in Keboola.
-- [get_flow](#get_flow): Gets detailed information about a specific flow configuration.
+- [create_conditional_flow](#create_conditional_flow): Creates a new conditional flow configuration using `keboola.
+- [create_flow](#create_flow): Creates a new legacy (non-conditional) flow using `keboola.
 - [get_flow_examples](#get_flow_examples): Retrieves examples of valid flow configurations.
-- [get_flow_schema](#get_flow_schema): Returns the JSON schema for the given flow type in markdown format.
-- [list_flows](#list_flows): Retrieves flow configurations from the project.
-- [update_flow](#update_flow): Updates an existing flow configuration in Keboola.
+- [get_flow_schema](#get_flow_schema): Returns the JSON schema for the given flow type (markdown).
+- [get_flows](#get_flows): Lists flows or retrieves full details for specific flows.
+- [update_flow](#update_flow): Updates an existing flow configuration (either legacy `keboola.
 
 ### Jobs Tools
-- [get_job](#get_job): Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
-results, and any relevant metadata.
-- [list_jobs](#list_jobs): Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
-filtering.
+- [get_jobs](#get_jobs): Retrieves job execution information from the Keboola project.
 - [run_job](#run_job): Starts a new job for a given component or transformation.
 
 ### OAuth Tools
@@ -60,11 +54,9 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.
 
 ### Storage Tools
-- [get_bucket](#get_bucket): Gets detailed information about a specific bucket.
-- [get_table](#get_table): Gets detailed information about a specific Keboola table, including fully qualified database name,
+- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets.
+- [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, and metadata.
-- [list_buckets](#list_buckets): Retrieves information about all buckets in the project.
-- [list_tables](#list_tables): Retrieves all tables in a specific bucket with their basic information.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
@@ -310,7 +302,7 @@ EXAMPLES:
       "type": "string"
     },
     "sql_code_blocks": {
-      "description": "The SQL query code blocks, each containing a descriptive name and an executable SQL script written in the current SQL dialect.",
+      "description": "The SQL query code blocks, each containing a descriptive name and an executable SQL script written in the current SQL dialect. The query will be automatically reformatted to be more readable.",
       "items": {
         "$ref": "#/$defs/Code"
       },
@@ -335,81 +327,51 @@ EXAMPLES:
 ```
 
 ---
-<a name="get_component"></a>
-## get_component
+<a name="get_components"></a>
+## get_components
 **Annotations**: `read-only`
 
 **Tags**: `components`
 
 **Description**:
 
-Gets information about a specific component given its ID.
+Retrieves detailed information about one or more components by their IDs.
 
-USAGE:
-- Use when you want to see the details of a specific component to get its documentation, configuration schemas,
-  etc. Especially in situation when the users asks to create or update a component configuration.
-  This tool is mainly for internal use by the agent.
+RETURNS FOR EACH COMPONENT:
+- Component metadata (name, type, description)
+- Documentation and usage instructions
+- Configuration JSON schema (required for creating/updating configurations)
+- Links to component dashboard in Keboola UI
+
+WHEN TO USE:
+- Before creating a new configuration: fetch the component to get its configuration schema
+- Before updating a configuration: fetch the component to understand valid configuration options
+- When user asks about component capabilities or documentation
+
+PREREQUISITES:
+- You must know the component_id(s). If unknown, first use `find_component_id` or `docs` tool to discover them.
 
 EXAMPLES:
-- user_input: `Create a generic extractor configuration for x`
-    - Set the component_id if you know it or find the component_id by find_component_id
-      or docs use tool and set it
-    - returns the component
+- User: "Create a generic extractor configuration"
+  → First call `find_component_id` to get the component_id, then call this tool to get the schema
+- User: "What options does the Snowflake writer support?"
+  → Call this tool with the Snowflake writer component_id to retrieve its documentation and schema
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "component_id": {
-      "description": "ID of the component/transformation",
-      "type": "string"
+    "component_ids": {
+      "description": "IDs of the components",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
   "required": [
-    "component_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="get_config"></a>
-## get_config
-**Annotations**: `read-only`
-
-**Tags**: `components`
-
-**Description**:
-
-Gets information about a specific component/transformation configuration.
-
-USAGE:
-- Use when you want to see the configuration of a specific component/transformation.
-
-EXAMPLES:
-- user_input: `give me details about this configuration`
-    - set component_id and configuration_id to the specific component/transformation ID and configuration ID
-      if you know it
-    - returns the component/transformation configuration pair
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "component_id": {
-      "description": "ID of the component/transformation",
-      "type": "string"
-    },
-    "configuration_id": {
-      "description": "ID of the component/transformation configuration",
-      "type": "string"
-    }
-  },
-  "required": [
-    "component_id",
-    "configuration_id"
+    "component_ids"
   ],
   "type": "object"
 }
@@ -452,67 +414,67 @@ EXAMPLES:
 ```
 
 ---
-<a name="list_configs"></a>
-## list_configs
+<a name="get_configs"></a>
+## get_configs
 **Annotations**: `read-only`
 
 **Tags**: `components`
 
 **Description**:
 
-Lists all component configurations in the project with optional filtering by component type or specific
-component IDs.
+Retrieves component configurations in the project with optional filtering.
+
+Can list summaries of multiple configurations (grouped by component) or retrieve full details
+for specific configurations.
 
 Returns a list of components, each containing:
 - Component metadata (ID, name, type, description)
-- All configurations for that component
+- Configurations for that component (summaries by default, full details if requested)
 - Links to the Keboola UI
 
 PARAMETER BEHAVIOR:
-- If component_ids is provided (non-empty): Returns ONLY those specific components, component_types is IGNORED
-- If component_ids is empty [] and component_types is empty []: Returns ALL component types
-  (application, extractor, transformation, writer)
-- If component_ids is empty [] and component_types has values: Returns components matching ONLY those types
+- If configs is provided (non-empty): Returns FULL details ONLY for those configs.
+- Else if component_ids is provided (non-empty): Lists config summaries for those components.
+- Else: Lists configs based on component_types (all types if empty).
 
 WHEN TO USE:
-- User asks for "all configurations" or "list configurations" → Use component_types=[], component_ids=[]
-- User asks for specific component types (e.g., "extractors", "writers") → Use component_types with specific types
-- User asks for "all transformations" or "list transformations" → Use component_types=["transformation"]
-- User asks for specific component by ID → Use component_ids with the specific ID(s)
+- For listing: Use component_types/component_ids.
+- For details: Use configs (can handle multiple).
 
 EXAMPLES:
-- user_input: "Show me all components in the project"
-  → component_types=[], component_ids=[]
-  → Returns ALL component types (application, extractor, transformation, writer) with their configurations
-
-- user_input: "List all extractor configurations"
-  → component_types=["extractor"], component_ids=[]
-  → Returns only extractor component configurations
-
-- user_input: "Show me all extractors and writers"
-  → component_types=["extractor", "writer"], component_ids=[]
-  → Returns extractor and writer configurations only
-
-- user_input: "List all transformations"
-  → component_types=["transformation"], component_ids=[]
-  → Returns transformation configurations only
-
-- user_input: "Show me configurations for keboola.ex-db-mysql"
-  → component_types=[], component_ids=["keboola.ex-db-mysql"]
-  → Returns only configurations for the MySQL extractor (component_types is ignored)
-
-- user_input: "Get configs for these components: ex-db-mysql and wr-google-sheets"
-  → component_types=[], component_ids=["keboola.ex-db-mysql", "keboola.wr-google-sheets"]
-  → Returns configurations for both specified components (component_types is ignored)
+- List all configs (summaries): component_types=[], component_ids=[]
+- List extractors (summaries): component_types=["extractor"]
+- Get details for specific configs:
+  configs=[{"component_id": "keboola.ex-db-mysql", "configuration_id": "12345"}]
 
 
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "FullConfigId": {
+      "description": "Composite configuration ID (component ID + configuration ID).",
+      "properties": {
+        "component_id": {
+          "description": "ID of the component",
+          "type": "string"
+        },
+        "configuration_id": {
+          "description": "ID of the configuration",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component_id",
+        "configuration_id"
+      ],
+      "type": "object"
+    }
+  },
   "properties": {
     "component_types": {
       "default": [],
-      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\". Empty list [] means ALL component types will be returned (application, extractor, transformation, writer). This parameter is IGNORED when component_ids is provided (non-empty).",
+      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\". Empty list [] means ALL component types will be returned. This parameter is IGNORED when configs is provided (non-empty) or component_ids is non-empty.",
       "items": {
         "enum": [
           "application",
@@ -526,9 +488,17 @@ EXAMPLES:
     },
     "component_ids": {
       "default": [],
-      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list [] uses component_types filtering instead. When provided (non-empty), this parameter takes PRECEDENCE over component_types and component_types is IGNORED.",
+      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list [] uses component_types filtering instead. When provided (non-empty) and configs is empty, lists summaries for these components. Ignored if configs is provided.",
       "items": {
         "type": "string"
+      },
+      "type": "array"
+    },
+    "configs": {
+      "default": [],
+      "description": "List of specific configurations to retrieve full details for. Each dict must have \"component_id\" (str) and \"configuration_id\" (str). Example: [{\"component_id\": \"keboola.ex-db-mysql\", \"configuration_id\": \"12345\"}]. If provided (non-empty), ignores other filters and returns full details only for these configs, grouped by component. Use this for detailed retrieval.",
+      "items": {
+        "$ref": "#/$defs/FullConfigId"
       },
       "type": "array"
     }
@@ -561,14 +531,14 @@ WHEN TO USE:
 PREREQUISITES:
 - Configuration must already exist (use create_config for new configurations)
 - You must know both component_id and configuration_id
-- For parameter updates: Review the component's root_configuration_schema using get_component.
+- For parameter updates: Review the component's root_configuration_schema using get_components.
 - For storage updates: Ensure mappings are valid for the component type
 
 IMPORTANT CONSIDERATIONS:
 - Parameter updates are PARTIAL - only specify fields you want to change
 - parameter_updates supports granular operations: set keys, replace strings, remove keys, or append to lists
 - Parameters must conform to the component's root_configuration_schema
-- Validate schemas before calling: use get_component to retrieve root_configuration_schema
+- Validate schemas before calling: use get_components to retrieve root_configuration_schema
 - For row-based components, this updates the ROOT only (use update_config_row for individual rows)
 
 WORKFLOW:
@@ -700,7 +670,7 @@ WORKFLOW:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Prefer simple JSONPaths (e.g., \"array_param[1]\", \"object_param.key\") and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -787,14 +757,14 @@ WHEN TO USE:
 PREREQUISITES:
 - The configuration row must already exist (use add_config_row for new rows)
 - You must know component_id, configuration_id, and configuration_row_id
-- For parameter updates: Review the component's row_configuration_schema using get_component
+- For parameter updates: Review the component's row_configuration_schema using get_components
 - For storage updates: Ensure mappings are valid for row-level storage
 
 IMPORTANT CONSIDERATIONS:
 - Parameter updates are PARTIAL - only specify fields you want to change
 - parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
 - Parameters must conform to the component's row_configuration_schema (not root schema)
-- Validate schemas before calling: use get_component to retrieve row_configuration_schema
+- Validate schemas before calling: use get_components to retrieve row_configuration_schema
 - Each row operates independently - changes to one row don't affect others
 - Row-level storage is separate from root-level storage configuration
 
@@ -1792,26 +1762,22 @@ Answers a question using the Keboola documentation as a source.
 
 **Description**:
 
-Creates a new conditional flow configuration in Keboola.
+Creates a new conditional flow configuration using `keboola.flow`.
 
-BEFORE USING THIS TOOL:
-- Call `get_flow_schema` with flow_type='keboola.flow' to see the required schema structure
-- Call `get_flow_examples` with flow_type='keboola.flow' to see working examples
+PRE-REQUISITES:
+- Always use `get_flow_schema` with flow_type="keboola.flow" and review `get_flow_examples` if unknown
+- Gather component configuration IDs for all tasks you include
 
-REQUIREMENTS:
-- All phase and task IDs must be unique strings
-- The `phases` list cannot be empty
-- The `phases` and `tasks` parameters must match the keboola.flow JSON schema structure
-- Phase/task failures automatically end the flow - do NOT create failure conditions
-- Only add conditions/retry logic when user explicitly requests branching or error handling
-- All phases must be connected: no dangling phases are allowed
-- The flow must have exactly one entry point (one phase with no incoming transitions)
-- Every phase must either transition to another phase or end the flow
+RULES:
+- `phases` and `tasks` must follow the keboola.flow schema; each entry needs `id` and `name`
+- Exactly one entry phase (no incoming transitions); all phases must be reachable
+- Connect phases via `next` transitions; no cycles or dangling phases; empty `next` means flow end
+- Task/phase failures already stop the flow; add retries/conditions only if the user requests them
+- Always share the returned links with the user
 
 WHEN TO USE:
-- User asks to "create a flow" (conditional flows are the default flow type)
-- User requests conditional logic, retry mechanisms, or error handling
-- User needs a data pipeline with sophisticated branching or notifications
+- Flows needing branching, conditions, retries, or notifications
+- Default choice when user simply says “create a flow,” unless they explicitly want legacy orchestrator behavior
 
 
 **Input JSON Schema**:
@@ -1862,34 +1828,21 @@ WHEN TO USE:
 
 **Description**:
 
-Creates a new flow configuration in Keboola.
-A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
-how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
-Each flow is composed of:
-- Tasks: individual component configurations (e.g., extractors, writers, transformations).
-- Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
+Creates a new legacy (non-conditional) flow using `keboola.orchestrator`.
 
-If you haven't already called it, always use the `get_flow_schema` tool using `keboola.orchestrator` flow type
-to see the latest schema for flows and also look at the examples under `get_flow_examples` tool.
+PRE-REQUISITES:
+- Always use `get_flow_schema` with flow_type="keboola.orchestrator" and review `get_flow_examples` if unknown
+- Collect component configuration IDs for every task you include
 
-CONSIDERATIONS:
-- The `phases` and `tasks` parameters must conform to the Keboola Flow JSON schema.
-- Each task and phase must include at least: `id` and `name`.
-- Each task must reference an existing component configuration in the project.
-- Items in the `dependsOn` phase field reference ids of other phases.
-- Links contained in the response should ALWAYS be presented to the user
+RULES:
+- `phases` and `tasks` must follow the orchestrator schema; each entry must include `id` and `name`
+- Phases run sequentially; tasks inside a phase run in parallel
+- Use `dependsOn` on phases to sequence them; reference other phase ids
+- Always share the returned links with the user
 
-USAGE:
-Use this tool to automate multi-step data workflows. This is ideal for:
-- Creating ETL/ELT orchestration.
-- Coordinating dependencies between components.
-- Structuring parallel and sequential task execution.
-
-EXAMPLES:
-- user_input: Orchestrate all my JIRA extractors.
-    - fill `tasks` parameter with the tasks for the JIRA extractors
-    - determine dependencies between the JIRA extractors
-    - fill `phases` parameter by grouping tasks into phases
+WHEN TO USE:
+- Simple/linear orchestrations without branching or conditions
+- ETL/ELT pipelines where phases just need ordering and parallel task groups
 
 
 **Input JSON Schema**:
@@ -1932,34 +1885,6 @@ EXAMPLES:
 ```
 
 ---
-<a name="get_flow"></a>
-## get_flow
-**Annotations**: `read-only`
-
-**Tags**: `flows`
-
-**Description**:
-
-Gets detailed information about a specific flow configuration.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "configuration_id": {
-      "description": "ID of the flow to retrieve.",
-      "type": "string"
-    }
-  },
-  "required": [
-    "configuration_id"
-  ],
-  "type": "object"
-}
-```
-
----
 <a name="get_flow_examples"></a>
 ## get_flow_examples
 **Annotations**: `read-only`
@@ -1970,10 +1895,13 @@ Gets detailed information about a specific flow configuration.
 
 Retrieves examples of valid flow configurations.
 
-CONSIDERATIONS:
-- If the project has conditional flows disabled, this tool will fail when requesting conditional flow examples.
-- Projects with conditional flows enabled can fetch examples for both flow types.
-- Projects with conditional flows disabled should use `keboola.orchestrator` for legacy flow examples.
+PRE-REQUISITES:
+- Unknown examples for the target flow type: `keboola.flow` (conditional) or `keboola.orchestrator` (legacy) to help
+build the specific flow configuration by mirroring the structure/fields.
+
+RULES:
+- Conditional-flow examples require conditional flows to be enabled; otherwise use legacy orchestrator examples
+- Present the examples or cite unavailability to the user
 
 
 **Input JSON Schema**:
@@ -2005,16 +1933,15 @@ CONSIDERATIONS:
 
 **Description**:
 
-Returns the JSON schema for the given flow type in markdown format.
-`keboola.flow` = conditional flows
-`keboola.orchestrator` = legacy flows
+Returns the JSON schema for the given flow type (markdown).
 
-CONSIDERATIONS:
-- If the project has conditional flows disabled, this tool will fail when requesting conditional flow schema.
-- Otherwise, the returned schema matches the requested flow type.
+PRE-REQUISITES:
+- Unknown schema for the target flow type: `keboola.flow` (conditional) or `keboola.orchestrator` (legacy)
 
-Usage:
-    Use this tool to inspect the required structure of phases and tasks for `create_flow` or `update_flow`.
+RULES:
+- Projects without conditional flows enabled cannot request `keboola.flow` schema
+- Use the returned schema to shape `phases` and `tasks` for `create_flow` / `create_conditional_flow` /
+`update_flow`
 
 
 **Input JSON Schema**:
@@ -2038,15 +1965,19 @@ Usage:
 ```
 
 ---
-<a name="list_flows"></a>
-## list_flows
+<a name="get_flows"></a>
+## get_flows
 **Annotations**: `read-only`
 
 **Tags**: `flows`
 
 **Description**:
 
-Retrieves flow configurations from the project. Optionally filtered by IDs.
+Lists flows or retrieves full details for specific flows.
+
+OPTIONS:
+- `flow_ids=[]` → summaries of all flows in the project
+- `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows
 
 
 **Input JSON Schema**:
@@ -2055,7 +1986,7 @@ Retrieves flow configurations from the project. Optionally filtered by IDs.
   "properties": {
     "flow_ids": {
       "default": [],
-      "description": "IDs of the flows to retrieve.",
+      "description": "IDs of flows to retrieve full details for. When provided (non-empty), returns full flow configurations including phases and tasks. When empty [], lists all flows in the project as summaries.",
       "items": {
         "type": "string"
       },
@@ -2075,45 +2006,29 @@ Retrieves flow configurations from the project. Optionally filtered by IDs.
 
 **Description**:
 
-Updates an existing flow configuration in Keboola.
+Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
 
-A flow is a special type of Keboola component that orchestrates the execution of other components. It defines
-how tasks are grouped and ordered — enabling control over parallelization** and sequential execution.
-Each flow is composed of:
-- Tasks: individual component configurations (e.g., extractors, writers, transformations).
-- Phases: groups of tasks that run in parallel. Phases themselves run in order, based on dependencies.
+PRE-REQUISITES:
+- Always use `get_flow_schema` (and `get_flow_examples`) for that flow type you want to update to follow the
+required structure and see the examples if unknown
+- Only pass `phases`/`tasks` when you want to replace them; omit to keep the existing ones unchanged
 
-PREREQUISITES:
-- The flow specified by `configuration_id` must already exist in the project
-- Use `get_flow` to retrieve the current flow configuration and determine its type
-- Use `get_flow_schema` with the correct flow type to understand the required structure
-- Ensure all referenced component configurations exist in the project
+RULES (ALL FLOWS):
+- `flow_type` must match the stored component id of the flow; do not switch flow types during update
+- `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
+- Tasks must reference existing component configurations; keep dependencies consistent
+- Always provide a clear `change_description` and surface any links returned in the response to the user
 
-CONSIDERATIONS:
-- The `flow_type` parameter **MUST** match the actual type of the flow being updated
-- The `phases` and `tasks` parameters must conform to the appropriate JSON schema
-- Each task and phase must include at least: `id` and `name`
-- Each task must reference an existing component configuration in the project
-- Items in the `dependsOn` phase field reference ids of other phases
-- If the project has conditional flows disabled, this tool will fail when trying to update conditional flows
-- Links contained in the response should ALWAYS be presented to the user
+CONDITIONAL FLOWS (`keboola.flow`):
+- Maintain a single entry phase and ensure every phase is reachable; connect phases via `next` transitions
+- No cycles or dangling phases; failed tasks already stop the flow, so only add retries/conditions if requested
 
-USAGE:
-Use this tool to update an existing flow. You must specify the correct flow_type:
-- Use `"keboola.flow"` for conditional flows
-- Use `"keboola.orchestrator"` for legacy flows
+LEGACY FLOWS (`keboola.orchestrator`):
+- Phases run sequentially; tasks inside a phase run in parallel; `dependsOn` references other phase ids
+- Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
-EXAMPLES:
-- user_input: "Add a new transformation phase to my existing flow"
-    - First use `get_flow` to retrieve the current flow configuration
-    - Determine the flow type from the response
-    - Use `get_flow_schema` with the correct flow type
-    - Update the phases and tasks arrays with the new transformation
-    - Set `flow_type` to match the existing flow type
-- user_input: "Update my flow to include error handling"
-    - For conditional flows: add retry configurations and error conditions
-    - For legacy flows: adjust `continueOnFailure` settings
-    - Ensure the `flow_type` matches the existing flow
+WHEN TO USE:
+- Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
 
 
 **Input JSON Schema**:
@@ -2177,70 +2092,77 @@ EXAMPLES:
 ---
 
 # Jobs Tools
-<a name="get_job"></a>
-## get_job
+<a name="get_jobs"></a>
+## get_jobs
 **Annotations**: `read-only`
 
 **Tags**: `jobs`
 
 **Description**:
 
-Retrieves detailed information about a specific job, identified by the job_id, including its status, parameters,
-results, and any relevant metadata.
+Retrieves job execution information from the Keboola project.
+
+CONTEXT:
+Jobs in Keboola are execution records of components (extractors, transformations, writers, flows).
+Each job represents a single run with its status, timing, configuration, and results.
+
+TWO MODES OF OPERATION (controlled by job_ids parameter):
+
+MODE 1: GET DETAILS FOR SPECIFIC JOBS (job_ids is non-empty)
+- Provide one or more job IDs: job_ids=["12345", "67890"]
+- Returns: FULL details for each job including status, config_data, results, timing, and metadata
+- Ignores: All filtering/sorting parameters (status, component_id, config_id, limit, offset, sort_by, sort_order)
+- Use when: You know specific job IDs and need complete information about them
+
+MODE 2: LIST/SEARCH JOBS (job_ids is empty)
+- Leave job_ids empty: job_ids=[]
+- Returns: SUMMARY list of jobs (id, status, component_id, config_id, timing only - no config_data or results)
+- Supports: Filtering by status/component_id/config_id, pagination with limit/offset, sorting
+- Use when: You need to find jobs, see recent executions, or monitor job history
+
+DECISION GUIDE:
+- Start with MODE 2 (list) to find jobs → then use MODE 1 (details) if you need full information
+- If you already know job IDs → use MODE 1 directly
+- For monitoring/browsing → use MODE 2 with filters
+
+COMMON WORKFLOWS:
+1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1
+2. Check recent runs: job_ids=[], component_id="...", limit=10 → see latest executions
+3. Monitor specific job: job_ids=["123"] → poll for status and results
+4. Troubleshoot config: job_ids=[], component_id="...", config_id="...", status="error" → find which runs failed
 
 EXAMPLES:
-- If job_id = "123", then the details of the job with id "123" will be retrieved.
+
+MODE 1 - Get full details:
+- job_ids=["12345"] → detailed info for job 12345
+- job_ids=["12345", "67890"] → detailed info for multiple jobs
+
+MODE 2 - List/search jobs:
+- job_ids=[] → list latest 100 jobs (default)
+- job_ids=[], status="error" → list only failed jobs
+- job_ids=[], status="processing" → list currently running jobs
+- job_ids=[], component_id="keboola.ex-aws-s3" → list jobs for S3 extractor
+- job_ids=[], component_id="keboola.ex-aws-s3", config_id="12345" → list jobs for specific configuration
+- job_ids=[], limit=50, offset=100 → pagination (skip first 100, get next 50)
+- job_ids=[], sort_by="endTime", sort_order="asc" → oldest completed first
+- job_ids=[], sort_by="durationSeconds", sort_order="desc" → longest running first
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "job_id": {
-      "description": "The unique identifier of the job whose details should be retrieved.",
-      "type": "string"
-    }
-  },
-  "required": [
-    "job_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="list_jobs"></a>
-## list_jobs
-**Annotations**: `read-only`
-
-**Tags**: `jobs`
-
-**Description**:
-
-Retrieves all jobs in the project, or filter jobs by a specific component_id or config_id, with optional status
-filtering. Additional parameters support pagination (limit, offset) and sorting (sort_by, sort_order).
-
-USAGE:
-- Use when you want to list jobs for a given component_id and optionally for given config_id.
-- Use when you want to list all jobs in the project or filter them by status.
-
-EXAMPLES:
-- If status = "error", only jobs with status "error" will be listed.
-- If status = None, then all jobs with arbitrary status will be listed.
-- If component_id = "123" and config_id = "456", then the jobs for the component with id "123" and configuration
-  with id "456" will be listed.
-- If limit = 100 and offset = 0, the first 100 jobs will be listed.
-- If limit = 100 and offset = 100, the second 100 jobs will be listed.
-- If sort_by = "endTime" and sort_order = "asc", the jobs will be sorted by the end time in ascending order.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
+    "job_ids": {
+      "default": [],
+      "description": "IDs of jobs to retrieve full details for. When provided (non-empty), returns full job details including status, parameters, results, and metadata. When empty [], lists jobs in the project as summaries with optional filtering.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "status": {
       "default": null,
-      "description": "The optional status of the jobs to filter by, if None then default all.",
+      "description": "The optional status of the jobs to filter by when listing (ignored if job_ids is provided). If None then all statuses are included.",
       "enum": [
         "waiting",
         "processing",
@@ -2256,30 +2178,30 @@ EXAMPLES:
     },
     "component_id": {
       "default": null,
-      "description": "The optional ID of the component whose jobs you want to list, default = None.",
+      "description": "The optional ID of the component whose jobs you want to list (ignored if job_ids is provided). Default = None.",
       "type": "string"
     },
     "config_id": {
       "default": null,
-      "description": "The optional ID of the component configuration whose jobs you want to list, default = None.",
+      "description": "The optional ID of the component configuration whose jobs you want to list (ignored if job_ids is provided). Default = None.",
       "type": "string"
     },
     "limit": {
       "default": 100,
-      "description": "The number of jobs to list, default = 100, max = 500.",
+      "description": "The number of jobs to list when listing (ignored if job_ids is provided), default = 100, max = 500.",
       "maximum": 500,
       "minimum": 1,
       "type": "integer"
     },
     "offset": {
       "default": 0,
-      "description": "The offset of the jobs to list, default = 0.",
+      "description": "The offset of the jobs to list when listing (ignored if job_ids is provided), default = 0.",
       "minimum": 0,
       "type": "integer"
     },
     "sort_by": {
       "default": "startTime",
-      "description": "The field to sort the jobs by, default = \"startTime\".",
+      "description": "The field to sort the jobs by when listing (ignored if job_ids is provided), default = \"startTime\".",
       "enum": [
         "startTime",
         "endTime",
@@ -2291,7 +2213,7 @@ EXAMPLES:
     },
     "sort_order": {
       "default": "desc",
-      "description": "The order to sort the jobs by, default = \"desc\".",
+      "description": "The order to sort the jobs by when listing (ignored if job_ids is provided), default = \"desc\".",
       "enum": [
         "asc",
         "desc"
@@ -2417,12 +2339,12 @@ to establish the project context before using other tools.
 
 Returns list of component IDs that match the given query.
 
-USAGE:
+WHEN TO USE:
 - Use when you want to find the component for a specific purpose.
 
-EXAMPLES:
-- user_input: `I am looking for a salesforce extractor component`
-    - returns a list of component IDs that match the query, ordered by relevance/best match.
+USAGE EXAMPLES:
+- user_input: "I am looking for a salesforce extractor component"
+  → Returns a list of component IDs that match the query, ordered by relevance/best match.
 
 
 **Input JSON Schema**:
@@ -2460,10 +2382,11 @@ WHEN TO USE:
 - User asks "what tables/configs/flows do I have with X in the name?"
 - You need to discover items before performing operations on them
 - User asks to "list all items with [name] in it"
-- DO NOT use for listing all items of a specific type. Use list_configs, list_tables, list_flows, etc instead.
+- DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
 
 HOW IT WORKS:
 - Searches by regex pattern matching against id, name, displayName, and description fields
+- For tables, also searches column names and column descriptions
 - Case-insensitive search
 - Multiple patterns work as OR condition - matches items containing ANY of the patterns
 - Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
@@ -2471,15 +2394,19 @@ HOW IT WORKS:
 
 IMPORTANT:
 - Always use this tool when the user mentions a name but you don't have the exact ID
-- The search returns IDs that you can use with other tools (e.g., get_table, get_config, get_flow)
+- The search returns IDs that you can use with other tools (e.g., get_table, get_configs, get_flows)
 - Results are ordered by update time. The most recently updated items are returned first.
-- For exact ID lookups, use specific tools like get_table, get_config, get_flow instead
-- Use find_component_id and list_configs tools to find configurations related to a specific component
+- For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
+- Use find_component_id and get_configs tools to find configurations related to a specific component
 
 USAGE EXAMPLES:
 - user_input: "Find all tables with 'customer' in the name"
   → patterns=["customer"], item_types=["table"]
   → Returns all tables whose id, name, displayName, or description contains "customer"
+
+- user_input: "Find tables with 'email' column"
+  → patterns=["email"], item_types=["table"]
+  → Returns all tables that have a column named "email" or with "email" in column description
 
 - user_input: "Search for the sales transformation"
   → patterns=["sales"], item_types=["transformation"]
@@ -2590,6 +2517,9 @@ ERROR PREVENTION:
 * Use NULLIF or CASE statements to handle empty values
 * Always use TRY_CAST or similar safe casting functions when converting data types
 * Check for division by zero using NULLIF(denominator, 0)
+* Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
+  by this tool on the maximum number of rows that can be fetched and the maximum number of characters.
+  The tool will truncate the data if those limits are exceeded.
 
 DATA VALIDATION:
 * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
@@ -2620,55 +2550,55 @@ DATA VALIDATION:
 ---
 
 # Storage Tools
-<a name="get_bucket"></a>
-## get_bucket
+<a name="get_buckets"></a>
+## get_buckets
 **Annotations**: `read-only`
 
 **Tags**: `storage`
 
 **Description**:
 
-Gets detailed information about a specific bucket.
+Lists buckets or retrieves full details of specific buckets.
+
+EXAMPLES:
+- `bucket_ids=[]` → summaries of all buckets in the project
+- `bucket_ids=["id1", ...]` → full details of the buckets with the specified IDs
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "type": "string"
+    "bucket_ids": {
+      "default": [],
+      "description": "Filter by specific bucket IDs.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
-  "required": [
-    "bucket_id"
-  ],
   "type": "object"
 }
 ```
 
 ---
-<a name="get_table"></a>
-## get_table
+<a name="get_tables"></a>
+## get_tables
 **Annotations**: `read-only`
 
 **Tags**: `storage`
 
 **Description**:
 
-Gets detailed information about a specific Keboola table, including fully qualified database name,
+Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, and metadata.
 
 RETURNS:
-- Table metadata: ID, name, description, primary key column names, storage backend details
-- Column information for each column:
-  - name: Column name
-  - database_native_type: Backend-specific type (e.g., VARCHAR(255), TIMESTAMP_NTZ, DECIMAL(20,2))
-  - keboola_base_type: Storage-agnostic type (STRING, INTEGER, NUMERIC, FLOAT, BOOLEAN, DATE, TIMESTAMP)
-  - nullable: Whether the column accepts NULL values
-- Fully qualified database identifier for use in SQL queries
+- With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
+- With `table_ids`: Full details including columns, data types, and fully qualified database names.
 
-DATA TYPE FIELDS:
+COLUMN DATA TYPES:
 - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
   with precision, scale, and other implementation details
 - keboola_base_type: Standardized type indicating the semantic data type. May not always be
@@ -2676,72 +2606,33 @@ DATA TYPE FIELDS:
   a column with database_native_type VARCHAR might have keboola_base_type INTEGER, indicating
   it stores integer values despite being stored as text in the backend.
 
-USE WHEN:
-- You need column names and data types for writing SQL queries
-- You need the fully qualified table name for database operations
-- You want to understand the table schema before creating transformations or components
+EXAMPLES:
+- `bucket_ids=["id1", ...]` → summary info of the tables in the buckets with the specified IDs
+- `table_ids=["id1", ...]` → detailed info of the tables specified by their IDs
+- `bucket_ids=[]` and `table_ids=[]` → empty list; you have to specify at least one filter
 
 
 **Input JSON Schema**:
 ```json
 {
   "properties": {
-    "table_id": {
-      "description": "Unique ID of the table.",
-      "type": "string"
+    "bucket_ids": {
+      "default": [],
+      "description": "Filter by specific bucket IDs.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "table_ids": {
+      "default": [],
+      "description": "Filter by specific table IDs.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
-  "required": [
-    "table_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="list_buckets"></a>
-## list_buckets
-**Annotations**: `read-only`
-
-**Tags**: `storage`
-
-**Description**:
-
-Retrieves information about all buckets in the project.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {},
-  "type": "object"
-}
-```
-
----
-<a name="list_tables"></a>
-## list_tables
-**Annotations**: `read-only`
-
-**Tags**: `storage`
-
-**Description**:
-
-Retrieves all tables in a specific bucket with their basic information.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "bucket_id": {
-      "description": "Unique ID of the bucket.",
-      "type": "string"
-    }
-  },
-  "required": [
-    "bucket_id"
-  ],
   "type": "object"
 }
 ```

@@ -1,16 +1,20 @@
 """
 This module overrides FastMCP.add_tool() to improve conversion of tool function docstrings
 into tool descriptions.
-It also provides a decorator that MCP tool functions can use to inject session state into their Context parameter.
+It also provides a decorator that MCP tool functions can use to inject session state into their Context parameter
+and other utilities for the MCP server.
 """
 
+import asyncio
 import dataclasses
 import logging
 import textwrap
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 from unittest.mock import MagicMock
 
+import toon_format
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server import middleware as fmw
@@ -31,6 +35,11 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+
+R = TypeVar('R')
+T = TypeVar('T')
+
+DEFAULT_CONCURRENCY = 10
 
 
 @dataclass(frozen=True)
@@ -102,19 +111,26 @@ class SessionStateMiddleware(fmw.Middleware):
     Note: HTTP headers and URL query parameters are only used when the server runs on HTTP-based transport.
     """
 
-    async def on_message(
+    async def on_request(
         self,
-        context: fmw.MiddlewareContext[Any],
-        call_next: fmw.CallNext[Any, Any],
+        context: fmw.MiddlewareContext[mt.Request[Any, Any]],
+        call_next: fmw.CallNext[mt.Request[Any, Any], Any],
     ) -> Any:
         """
         Manages session state in the Context parameter. This middleware sets up the session state for all the other
         MCP functions down the chain. It is called for each tool, prompt, resource, etc. calls.
 
+        In fastmcp 2.13.0+, this must run in on_request rather than on_message because ctx.session
+        requires the request context to be available.
+
         :param context: Middleware context containing FastMCP context.
         :param call_next: Next middleware in the chain to call.
         :returns: Result from executing the middleware chain.
         """
+        # Skip session setup for initialize request - session state is only needed for actual operations
+        if context.method == 'initialize':
+            return await call_next(context)
+
         ctx = context.fastmcp_context
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
@@ -266,6 +282,37 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         return await call_next(context)
 
 
+def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
+    if isinstance(data, BaseModel):
+        return data.model_dump(exclude_none=exclude_none, by_alias=False)
+    elif isinstance(data, (list, tuple)):
+        # Handle sequences of BaseModels
+        cleaned = []
+        for item in data:
+            if isinstance(item, BaseModel):
+                cleaned.append(item.model_dump(exclude_none=exclude_none, by_alias=False))
+            elif item is not None:
+                cleaned.append(_to_python(item, exclude_none=exclude_none))
+            elif not exclude_none:
+                cleaned.append(None)
+        return cleaned
+    elif isinstance(data, dict):
+        # Handle dictionaries that might contain BaseModels
+        cleaned = {}
+        for key, value in data.items():
+            if isinstance(value, BaseModel):
+                cleaned[key] = value.model_dump(exclude_none=exclude_none, by_alias=False)
+            elif value is not None:
+                cleaned[key] = _to_python(value, exclude_none=exclude_none)
+            elif not exclude_none:
+                cleaned[key] = None
+        return cleaned
+    elif data is not None:
+        return data
+    else:
+        return None
+
+
 def _exclude_none_serializer(data: Any) -> str:
     if (cleaned := _to_python(data)) is not None:
         return to_json(cleaned, fallback=str).decode('utf-8')
@@ -273,28 +320,70 @@ def _exclude_none_serializer(data: Any) -> str:
         return ''
 
 
-def _to_python(data: Any) -> Any | None:
-    if isinstance(data, BaseModel):
-        return data.model_dump(exclude_none=True, by_alias=False)
-    elif isinstance(data, (list, tuple)):
-        # Handle sequences of BaseModels
-        cleaned = []
-        for item in data:
-            if isinstance(item, BaseModel):
-                cleaned.append(item.model_dump(exclude_none=True, by_alias=False))
-            elif item is not None:
-                cleaned.append(_to_python(item))
-        return cleaned
-    elif isinstance(data, dict):
-        # Handle dictionaries that might contain BaseModels
-        cleaned = {}
-        for key, value in data.items():
-            if isinstance(value, BaseModel):
-                cleaned[key] = value.model_dump(exclude_none=True, by_alias=False)
-            elif value is not None:
-                cleaned[key] = _to_python(value)
-        return cleaned
-    elif data is not None:
-        return data
-    else:
-        return None
+def toon_serializer(data: Any) -> str:
+    return toon_format.encode(_to_python(data, exclude_none=False))
+
+
+async def process_concurrently(
+    items: Iterable[T],
+    afunc: Callable[[T], Awaitable[R]],
+    max_concurrency: int = DEFAULT_CONCURRENCY,
+) -> list[R | BaseException]:
+    """
+    Asynchronously process a collection of items with a specified concurrency limit.
+
+    :param items: The collection of items to process.
+    :param afunc: An asynchronous function to apply to each item.
+    :param max_concurrency: The maximum number of concurrent executions allowed.
+    :return: A list of results or exceptions from processing each item.
+             The order of results corresponds to the order of the input items.
+    """
+    if max_concurrency <= 0:
+        raise ValueError('max_concurrency must be a positive integer.')
+
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def process_item_with_semaphore(item: T) -> R:
+        async with semaphore:
+            return await afunc(item)
+
+    tasks = [asyncio.create_task(process_item_with_semaphore(item)) for item in items]
+
+    return await asyncio.gather(*tasks, return_exceptions=True)
+
+
+class AggregateError(Exception):
+    """Exception that aggregates multiple exceptions (Python 3.10 compatible alternative to ExceptionGroup)."""
+
+    def __init__(self, message: str, exceptions: Iterable[BaseException]):
+        self.message = message
+        self.exceptions = list(exceptions)
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        error_details = '; '.join(f'{type(e).__name__}: {e}' for e in self.exceptions)
+        return f'{self.message} ({len(self.exceptions)} errors): {error_details}'
+
+
+def unwrap_results(results: Iterable[R | BaseException], message: str = 'Multiple errors occurred') -> list[R]:
+    """
+    Unwrap results from process_concurrently, raising an AggregateError if any exceptions occurred.
+
+    :param results: List of results or exceptions from process_concurrently.
+    :param message: Message for the AggregateError if exceptions are present.
+    :return: List of successful results.
+    :raises AggregateError: If any results are exceptions.
+    """
+    successes: list[R] = []
+    exceptions: list[BaseException] = []
+
+    for result in results:
+        if isinstance(result, BaseException):
+            exceptions.append(result)
+        else:
+            successes.append(result)
+
+    if exceptions:
+        raise AggregateError(message, exceptions)
+
+    return successes

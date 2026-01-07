@@ -8,7 +8,6 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Callable, Literal
 
 from fastmcp import FastMCP
-from mcp.server.auth.routes import create_auth_routes
 from pydantic import AliasChoices, BaseModel, Field
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
@@ -16,7 +15,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport
-from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
+from keboola_mcp_server.errors import ValidationErrorMiddleware
+from keboola_mcp_server.mcp import (
+    KeboolaMcpServer,
+    ServerState,
+    SessionStateMiddleware,
+    ToolsFilteringMiddleware,
+)
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
@@ -157,14 +162,7 @@ class CustomRoutes:
         app.add_route('/health-check', self.get_status, methods=['GET'])
         if self.oauth_provider:
             app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
-            auth_routes = create_auth_routes(
-                self.oauth_provider,
-                self.oauth_provider.issuer_url,
-                self.oauth_provider.service_documentation_url,
-                self.oauth_provider.client_registration_options,
-                self.oauth_provider.revocation_options,
-            )
-            for route in auth_routes:
+            for route in self.oauth_provider.get_routes():
                 app.add_route(route.path, route.endpoint, methods=route.methods)
 
 
@@ -221,7 +219,7 @@ def create_server(
         name='Keboola MCP Server',
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
-        middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware()],
+        middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware(), ValidationErrorMiddleware()],
     )
 
     if custom_routes_handling:

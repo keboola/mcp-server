@@ -4,13 +4,15 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generator
 
 import pytest
+import pytest_asyncio
 from dotenv import load_dotenv
-from fastmcp import Context
+from fastmcp import Client, Context, FastMCP
 from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
@@ -18,6 +20,7 @@ from mcp.shared.context import RequestContext
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.server import create_server
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -336,3 +339,17 @@ def mcp_context(
     client_context.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeInfo(transport='stdio'))
 
     return client_context
+
+
+@pytest.fixture
+def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
+    config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
+    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+    assert isinstance(server, FastMCP)
+    return server
+
+
+@pytest_asyncio.fixture
+async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
+    async with Client(mcp_server) as client:
+        yield client

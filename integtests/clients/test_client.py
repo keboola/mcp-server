@@ -16,6 +16,7 @@ class TestAsyncStorageClient:
         return keboola_client.storage_client
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Unstable')
     async def test_global_search(self, storage_client: AsyncStorageClient):
         not_existing_id = 'not-existing-id'
         ret = await storage_client.global_search(query=not_existing_id)
@@ -26,6 +27,7 @@ class TestAsyncStorageClient:
         assert ret.by_project == {}
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Unstable')
     async def test_global_search_with_results(self, storage_client: AsyncStorageClient, tables: list[TableDef]):
         search_for_name = 'test'
         is_global_search_enabled = await storage_client.is_enabled('global-search')

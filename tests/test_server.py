@@ -1,7 +1,7 @@
+import asyncio
 import json
 import subprocess
 import tempfile
-import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
@@ -15,7 +15,7 @@ from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer
+from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer, toon_serializer
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
@@ -45,22 +45,17 @@ class TestServer:
             'deploy_data_app',
             'docs_query',
             'find_component_id',
-            'get_bucket',
-            'get_component',
-            'get_config',
+            'get_buckets',
+            'get_components',
             'get_config_examples',
+            'get_configs',
             'get_data_apps',
-            'get_flow',
             'get_flow_examples',
             'get_flow_schema',
-            'get_job',
+            'get_flows',
+            'get_jobs',
             'get_project_info',
-            'get_table',
-            'list_buckets',
-            'list_configs',
-            'list_flows',
-            'list_jobs',
-            'list_tables',
+            'get_tables',
             'modify_data_app',
             'query_data',
             'run_job',
@@ -96,7 +91,7 @@ class TestServer:
         for tool in tools.values():
             if not tool.serializer:
                 missing_serializer.append(tool.name)
-            if tool.serializer != _exclude_none_serializer:
+            if tool.serializer not in (_exclude_none_serializer, toon_serializer):
                 missing_serializer.append(tool.name)
 
         missing_serializer.sort()
@@ -125,7 +120,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info', 'list_buckets']
+        assert missing_properties == ['get_project_info']
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()
@@ -298,9 +293,8 @@ async def test_tool_annotations_and_tags():
     ('tool_name', 'expected_readonly', 'expected_destructive', 'expected_idempotent', 'tags'),
     [
         # components
-        ('get_component', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('get_config', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('list_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('get_components', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('get_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('get_config_examples', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('create_config', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_config', None, True, None, {COMPONENT_TOOLS_TAG}),
@@ -309,24 +303,20 @@ async def test_tool_annotations_and_tags():
         ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG}),
         # storage
-        ('get_bucket', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('list_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('get_table', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('list_tables', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('get_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
+        ('get_tables', True, None, None, {STORAGE_TOOLS_TAG}),
         ('update_descriptions', None, True, None, {STORAGE_TOOLS_TAG}),
         # flows
         ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
         ('create_conditional_flow', None, False, None, {FLOW_TOOLS_TAG}),
-        ('list_flows', True, None, None, {FLOW_TOOLS_TAG}),
+        ('get_flows', True, None, None, {FLOW_TOOLS_TAG}),
         ('update_flow', None, True, None, {FLOW_TOOLS_TAG}),
-        ('get_flow', True, None, None, {FLOW_TOOLS_TAG}),
         ('get_flow_examples', True, None, None, {FLOW_TOOLS_TAG}),
         ('get_flow_schema', True, None, None, {FLOW_TOOLS_TAG}),
         # sql
         ('query_data', True, None, None, {SQL_TOOLS_TAG}),
         # jobs
-        ('get_job', True, None, None, {JOB_TOOLS_TAG}),
-        ('list_jobs', True, None, None, {JOB_TOOLS_TAG}),
+        ('get_jobs', True, None, None, {JOB_TOOLS_TAG}),
         ('run_job', None, True, None, {JOB_TOOLS_TAG}),
         # project/doc/search
         ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
@@ -395,24 +385,66 @@ async def test_json_logging():
             stderr=subprocess.PIPE,
             text=True,
         )
+
+        # Read output streams in background to prevent buffer blocking
+        stdout_lines = []
+        stderr_lines = []
+
+        async def read_stream(stream, lines_list):
+            """Read from stream in a non-blocking way"""
+            loop = asyncio.get_event_loop()
+            while True:
+                line = await loop.run_in_executor(None, stream.readline)
+                if not line:
+                    break
+                lines_list.append(line)
+
+        stdout_task = asyncio.create_task(read_stream(p.stdout, stdout_lines))
+        stderr_task = asyncio.create_task(read_stream(p.stderr, stderr_lines))
+
         try:
             # give the server time to fully start
-            time.sleep(5)
+            await asyncio.sleep(5)
 
             # connect to the server and list prompts to force 'fastmcp' looger to get used
             # the listing of the prompts does not require SAPI connection
-            async with Client(SSETransport('http://localhost:8000/sse')) as client:
+            async with Client(SSETransport('http://localhost:8000/sse', sse_read_timeout=5)) as client:
                 prompts = await client.list_prompts()
                 assert len(prompts) > 1
 
         finally:
-            # kill the server and capture streams
+            # kill the server and wait for output tasks
             p.terminate()
+            p.wait()
 
-    stdout, stderr = p.communicate()
+            # Cancel background tasks and collect remaining output
+            stdout_task.cancel()
+            stderr_task.cancel()
+
+            stdout = ''.join(stdout_lines)
+            stderr = ''.join(stderr_lines)
+
+    # Filter out known websockets deprecation warnings (these bypass logging config)
+    # These warnings come from uvicorn's dependencies and are not actual logging errors
+    stderr_lines = [
+        line
+        for line in stderr.splitlines()
+        if not any(
+            pattern in line
+            for pattern in [
+                'websockets/legacy/__init__.py',
+                'websockets.legacy is deprecated',
+                'websockets_impl.py',
+                'WebSocketServerProtocol is deprecated',
+                'warnings.warn',
+                'from websockets.server import WebSocketServerProtocol',
+            ]
+        )
+    ]
+    filtered_stderr = '\n'.join(stderr_lines)
 
     # there is only one handler (the root one) in logging-json.conf which sends messages to stdout
-    assert stderr == ''
+    assert filtered_stderr == '', f'Unexpected stderr: {filtered_stderr}'
 
     # all messages should be JSON-formatted, including those logged by FastMCP loggers
     top_names: set[str] = set()

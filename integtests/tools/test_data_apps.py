@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, Mapping, cast
 
 import pytest
 import pytest_asyncio
+import toon_format
 from fastmcp import Client, FastMCP
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
@@ -109,12 +110,19 @@ async def initial_data_app(
 
 @pytest.mark.asyncio
 async def test_get_data_apps_listing(mcp_client: Client, initial_data_app: ModifiedDataAppOutput) -> None:
-    """Test listing data apps does not error."""
+    """Test listing data apps returns valid TOON formatted output."""
     tool_result = await mcp_client.call_tool(name='get_data_apps', arguments={})
+
+    # Verify structured content
     assert tool_result.structured_content is not None
     apps = GetDataAppsOutput.model_validate(tool_result.structured_content)
-    assert isinstance(apps.data_apps, list)
-    assert all(isinstance(app, DataAppSummary) for app in apps.data_apps)
+    assert len(apps.data_apps) > 0
+
+    # Verify TOON formatted text content matches structured content
+    assert len(tool_result.content) == 1
+    assert tool_result.content[0].type == 'text'
+    toon_decoded = GetDataAppsOutput.model_validate(toon_format.decode(tool_result.content[0].text))
+    assert toon_decoded == apps
 
 
 @pytest.mark.asyncio

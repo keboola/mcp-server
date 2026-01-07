@@ -1,12 +1,11 @@
 import logging
 
 import pytest
-from fastmcp import Context
+import toon_format
+from fastmcp import Client
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
-from keboola_mcp_server.clients.ai_service import SuggestedComponent
-from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.tools.search import find_component_id, search
+from keboola_mcp_server.tools.search import SearchHit, SuggestedComponentOutput
 
 LOG = logging.getLogger(__name__)
 
@@ -15,8 +14,7 @@ LOG = logging.getLogger(__name__)
 @pytest.mark.parametrize('item_type', [None, 'bucket', 'table', 'configuration', 'transformation'])
 async def test_search_end_to_end(
     item_type: str | None,
-    keboola_client: KeboolaClient,
-    mcp_context: Context,
+    mcp_client: Client,
     buckets: list[BucketDef],
     tables: list[TableDef],
     configs: list[ConfigDef],
@@ -27,10 +25,21 @@ async def test_search_end_to_end(
     """
     item_types = (item_type,) if item_type else tuple()
 
-    # Search for test items by name pattern 'test' which should match our test data
-    result = await search(
-        ctx=mcp_context, patterns=['test'], item_types=item_types, limit=50, offset=0  # Search all types
+    full_result = await mcp_client.call_tool(
+        'search', {'patterns': ['test'], 'item_types': item_types, 'limit': 50, 'offset': 0}
     )
+    assert full_result.structured_content is not None
+    LOG.info(f'result: {full_result.structured_content}')
+    result = [SearchHit.model_validate(hit) for hit in full_result.structured_content['result']]
+    assert len(result) == len(full_result.structured_content['result'])
+
+    # check validity of the TOON formatted unstructured result
+    assert len(full_result.content) == 1
+    assert full_result.content[0].type == 'text'
+    decoded_toon = toon_format.decode(full_result.content[0].text)
+    assert isinstance(decoded_toon, list)
+    toon_result = [SearchHit.model_validate(hit) for hit in decoded_toon]
+    assert toon_result == result
 
     # filter out data apps that seem to often be left behind in the testing project
     result = [hit for hit in result if hit.item_type != 'configuration' or hit.component_id != 'keboola.data-apps']
@@ -73,14 +82,24 @@ async def test_search_end_to_end(
 
 
 @pytest.mark.asyncio
-async def test_find_component_id(mcp_context: Context):
+async def test_find_component_id(mcp_client: Client):
     """Tests that `find_component_id` returns relevant component IDs for a query."""
     query = 'generic extractor - extract data from many APIs'
     generic_extractor_id = 'ex-generic-v2'
 
-    result = await find_component_id(query=query, ctx=mcp_context)
+    full_result = await mcp_client.call_tool('find_component_id', {'query': query})
+
+    assert full_result.structured_content is not None
+    result = full_result.structured_content['result']
 
     assert isinstance(result, list)
     assert len(result) > 0
-    assert all(isinstance(component, SuggestedComponent) for component in result)
-    assert generic_extractor_id in [component.component_id for component in result]
+    LOG.info(f'result: {result}')
+    structured_result = [SuggestedComponentOutput.model_validate(component) for component in result]
+    assert generic_extractor_id in [component.component_id for component in structured_result]
+
+    # check validity of the TOON formatted unstructured result
+    assert len(full_result.content) == 1
+    assert full_result.content[0].type == 'text'
+    decoded_toon = toon_format.decode(full_result.content[0].text)
+    assert decoded_toon == result

@@ -3,31 +3,32 @@ from typing import Any, AsyncGenerator, cast
 
 import pytest
 import pytest_asyncio
-from fastmcp import Client, Context, FastMCP
+import toon_format
+from fastmcp import Client, Context
 from pydantic import TypeAdapter
 
 from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
-from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components import (
     add_config_row,
     create_config,
     create_sql_transformation,
-    get_component,
-    get_config,
+    get_components,
     get_config_examples,
-    list_configs,
+    get_configs,
 )
 from keboola_mcp_server.tools.components.model import (
-    Component,
     ComponentType,
-    ComponentWithConfigurations,
+    ComponentWithConfigs,
     ConfigParamUpdate,
     ConfigToolOutput,
     Configuration,
-    ListConfigsOutput,
+    FullConfigId,
+    GetComponentsOutput,
+    GetConfigsDetailOutput,
+    GetConfigsListOutput,
     SimplifiedTfBlocks,
     TfAddScript,
     TfParamUpdate,
@@ -37,7 +38,7 @@ from keboola_mcp_server.tools.components.model import (
     TfStrReplace,
     TransformationConfiguration,
 )
-from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
+from keboola_mcp_server.tools.components.sql_utils import format_sql, split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
     clean_bucket_name,
     expand_component_types,
@@ -51,16 +52,21 @@ LOG = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_config` returns a `Configuration` instance."""
+async def test_get_configs_detail(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_configs` with specific configs returns detailed `Configuration` instances."""
 
     for config in configs:
         assert config.configuration_id is not None
 
-        configuration = await get_config(
-            component_id=config.component_id, configuration_id=config.configuration_id, ctx=mcp_context
+        result = await get_configs(
+            ctx=mcp_context,
+            configs=[FullConfigId(component_id=config.component_id, configuration_id=config.configuration_id)],
         )
 
+        assert isinstance(result, GetConfigsDetailOutput)
+        assert len(result.configs) == 1
+
+        configuration = result.configs[0]
         assert isinstance(configuration, Configuration)
         assert configuration.component is not None
         assert configuration.component.component_id == config.component_id
@@ -77,26 +83,50 @@ async def test_get_config(mcp_context: Context, configs: list[ConfigDef]):
 
 
 @pytest.mark.asyncio
-async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `list_configs` returns components filtered by component IDs."""
+async def test_get_configs_list_by_ids(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_configs` returns components filtered by component IDs."""
 
     # Get unique component IDs from test configs
     component_ids = list({config.component_id for config in configs})
     assert len(component_ids) > 0
 
-    result = await list_configs(ctx=mcp_context, component_ids=component_ids)
+    result = await get_configs(ctx=mcp_context, component_ids=component_ids)
 
     # Verify result structure and content
-    assert isinstance(result, ListConfigsOutput)
-    assert len(result.components_with_configurations) == len(component_ids)
+    assert isinstance(result, GetConfigsListOutput)
+    assert len(result.components_with_configs) == len(component_ids)
 
-    for item in result.components_with_configurations:
-        assert isinstance(item, ComponentWithConfigurations)
+    for item in result.components_with_configs:
+        assert isinstance(item, ComponentWithConfigs)
         assert item.component.component_id in component_ids
 
         # Check that configurations belong to this component
-        for config in item.configurations:
+        for config in item.configs:
             assert config.configuration_root.component_id == item.component.component_id
+
+
+@pytest.mark.skip(reason='bug in toon_format library')
+@pytest.mark.asyncio
+async def test_get_configs_output_format(mcp_client: Client, configs: list[ConfigDef]):
+    """Tests that `get_configs` returns the tool output in TOON format."""
+    # Temporarily skip this test due to bug in the toon-format library:
+    # See: https://github.com/toon-format/toon-python/pull/36
+    # The bug creates TOON which not valid according to the TOON specs but still readable to the agents.
+    component_ids = list({config.component_id for config in configs})
+    assert len(component_ids) > 0
+
+    tool_result = await mcp_client.call_tool(name='get_configs', arguments={'component_ids': component_ids})
+
+    # Verify structured content
+    assert tool_result.structured_content is not None
+    result = GetConfigsListOutput.model_validate(tool_result.structured_content)
+    assert len(result.components_with_configs) > 0
+
+    # Verify TOON formatted text content matches structured content
+    assert len(tool_result.content) == 1
+    assert tool_result.content[0].type == 'text'
+    toon_decoded = toon_format.decode(tool_result.content[0].text)
+    assert GetConfigsListOutput.model_validate(toon_decoded) == result
 
 
 @pytest.mark.parametrize(
@@ -109,19 +139,19 @@ async def test_list_configs_by_ids(mcp_context: Context, configs: list[ConfigDef
     ],
 )
 @pytest.mark.asyncio
-async def test_list_configs_by_types(
+async def test_get_configs_list_by_types(
     mcp_context: Context, configs: list[ConfigDef], component_types: list[ComponentType], expected_count: int
 ):
-    """Tests that `list_configs` returns components filtered by component types."""
+    """Tests that `get_configs` returns components filtered by component types."""
 
-    result = await list_configs(ctx=mcp_context, component_types=component_types)
+    result = await get_configs(ctx=mcp_context, component_types=component_types)
 
-    assert isinstance(result, ListConfigsOutput)
+    assert isinstance(result, GetConfigsListOutput)
 
-    assert sum(len(cmp.configurations) for cmp in result.components_with_configurations) == expected_count
+    assert sum(len(cmp.configs) for cmp in result.components_with_configs) == expected_count
 
-    for item in result.components_with_configurations:
-        assert isinstance(item, ComponentWithConfigurations)
+    for item in result.components_with_configs:
+        assert isinstance(item, ComponentWithConfigs)
         assert item.component.component_type in expand_component_types(component_types)
 
 
@@ -173,7 +203,7 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
                 ),
                 Link(
                     type='ui-dashboard',
-                    title=f'{component_id} Configurations Dashboard',
+                    title=f'Component "{component_id}" Configurations Dashboard',
                     url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
                 ),
             ]
@@ -212,20 +242,6 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
             configuration_id=created_config.configuration_id,
             skip_trash=True,
         )
-
-
-@pytest.fixture
-def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
-    config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
-    server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
-    assert isinstance(server, FastMCP)
-    return server
-
-
-@pytest_asyncio.fixture
-async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
-    async with Client(mcp_server) as client:
-        yield client
 
 
 @pytest_asyncio.fixture
@@ -327,7 +343,7 @@ async def test_update_config(
             ),
             Link(
                 type='ui-dashboard',
-                title=f'{component_id} Configurations Dashboard',
+                title=f'Component "{component_id}" Configurations Dashboard',
                 url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
             ),
         ]
@@ -437,7 +453,7 @@ async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], ke
                 ),
                 Link(
                     type='ui-dashboard',
-                    title=f'{component_id} Configurations Dashboard',
+                    title=f'Component "{component_id}" Configurations Dashboard',
                     url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
                 ),
             ]
@@ -580,7 +596,7 @@ async def test_update_config_row(
             ),
             Link(
                 type='ui-dashboard',
-                title=f'{component_id} Configurations Dashboard',
+                title=f'Component "{component_id}" Configurations Dashboard',
                 url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
             ),
         ]
@@ -673,19 +689,16 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
             [
                 Link(
                     type='ui-detail',
-                    title=f'Configuration: {test_name}',
+                    title=f'Transformation: {test_name}',
                     url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/'
+                        f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2/'
                         f'{expected_component_id}/{created_transformation.configuration_id}'
                     ),
                 ),
                 Link(
                     type='ui-dashboard',
-                    title=f'{expected_component_id} Configurations Dashboard',
-                    url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/'
-                        f'{expected_component_id}'
-                    ),
+                    title='Transformations dashboard',
+                    url=(f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2'),
                 ),
             ]
         )
@@ -708,6 +721,8 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
 
         # Verify the parameters structure matches expected
         bucket_name = clean_bucket_name(test_name)
+        expected_script = format_sql(test_sql_code_blocks[0].script, sql_dialect)
+        expected_script = await split_sql_statements(expected_script)
         expected_parameters = {
             'blocks': [
                 {
@@ -715,7 +730,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
                     'codes': [
                         {
                             'name': test_sql_code_blocks[0].name,
-                            'script': await split_sql_statements(test_sql_code_blocks[0].script),
+                            'script': expected_script,
                         }
                     ],
                 }
@@ -819,8 +834,8 @@ async def initial_sqltrfm(
                     op='str_replace',
                     block_id='b0',
                     code_id='b0.c0',
-                    search_for='SELECT 1 as initial_column',
-                    replace_with='SELECT * FROM updated_table',
+                    search_for='SELECT\n  1',
+                    replace_with='SELECT\n  12',
                 ),
                 TfAddScript(
                     op='add_script',
@@ -911,14 +926,14 @@ async def test_update_sql_transformation(
         [
             Link(
                 type='ui-detail',
-                title=f'Configuration: {expected_name}',
+                title=f'Transformation: {expected_name}',
                 url='https://connection.keboola.com/admin'
-                f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+                f'/projects/{project_id}/transformations-v2/{component_id}/{configuration_id}',
             ),
             Link(
                 type='ui-dashboard',
-                title=f'{component_id} Configurations Dashboard',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                title='Transformations dashboard',
+                url=f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2',
             ),
         ]
     )
@@ -942,7 +957,9 @@ async def test_update_sql_transformation(
         orig_raw_parameters = TransformationConfiguration.Parameters.model_validate(orig_parameters_dict)
         orig_simplified_parameters = await orig_raw_parameters.to_simplified_parameters()
 
-        updated_params, _ = update_transformation_parameters(orig_simplified_parameters, param_updates)
+        updated_params, _ = update_transformation_parameters(
+            orig_simplified_parameters, param_updates, sql_dialect='snowflake'
+        )
         updated_raw_parameters = await updated_params.to_raw_parameters()
 
         expected_parameters = updated_raw_parameters.model_dump(exclude_none=True)
@@ -977,15 +994,33 @@ async def test_update_sql_transformation(
 
 
 @pytest.mark.asyncio
-async def test_get_component(mcp_context: Context, configs: list[ConfigDef]):
-    """Tests that `get_component` returns component details."""
-    test_config = configs[0]
-    component_id = test_config.component_id
+async def test_get_components(mcp_context: Context, configs: list[ConfigDef]):
+    """Tests that `get_components` returns component details for multiple components."""
+    # Get unique component IDs from test configs
+    component_ids = list({config.component_id for config in configs})
+    assert len(component_ids) > 0
 
-    result = await get_component(component_id=component_id, ctx=mcp_context)
+    result = await get_components(component_ids=component_ids, ctx=mcp_context)
 
-    assert isinstance(result, Component)
-    assert result.component_id == test_config.component_id
+    # Verify result structure
+    assert isinstance(result, GetComponentsOutput)
+    assert len(result.components) == len(component_ids)
+
+    # Verify each component
+    returned_ids = {comp.component_id for comp in result.components}
+    assert returned_ids == set(component_ids)
+
+    for component in result.components:
+        assert component.component_id in component_ids
+        assert component.component_name is not None
+        assert component.component_type is not None
+        # Verify links are present
+        assert component.links, 'Component links should not be empty.'
+        for link in component.links:
+            assert isinstance(link, Link)
+
+    # Verify output-level links
+    assert result.links, 'Output links should not be empty.'
 
 
 @pytest.mark.asyncio

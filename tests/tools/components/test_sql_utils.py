@@ -7,7 +7,11 @@ the Python implementation matches the production-proven JavaScript logic.
 
 import pytest
 
-from keboola_mcp_server.tools.components.sql_utils import join_sql_statements, split_sql_statements
+from keboola_mcp_server.tools.components.sql_utils import (
+    format_sql,
+    join_sql_statements,
+    split_sql_statements,
+)
 
 
 @pytest.mark.parametrize(
@@ -531,13 +535,13 @@ async def test_split_sql_statements(input_sql, expected, timeout_seconds, test_i
         # Single statement
         (
             ['SELECT 1'],
-            'SELECT 1;\n\n',
+            'SELECT 1\n\n',
             'single_statement',
         ),
         # Multiple statements
         (
             ['SELECT 1', 'SELECT 2', 'SELECT 3'],
-            'SELECT 1;\n\nSELECT 2;\n\nSELECT 3;\n\n',
+            'SELECT 1\n\nSELECT 2\n\nSELECT 3\n\n',
             'multiple_statements',
         ),
         # Preserve existing semicolons
@@ -546,125 +550,53 @@ async def test_split_sql_statements(input_sql, expected, timeout_seconds, test_i
             'SELECT 1;\n\nSELECT 2;\n\n',
             'existing_semicolons',
         ),
-        # Statement ending with line comment
+        # Mixed statements (with and without semicolons)
         (
-            ['SELECT 1 -- comment', 'SELECT 2'],
-            'SELECT 1 -- comment\n\nSELECT 2;\n\n',
-            'ending_with_line_comment',
-        ),
-        # Statement ending with block comment
-        (
-            ['SELECT 1 /* comment */', 'SELECT 2'],
-            'SELECT 1 /* comment */\n\nSELECT 2;\n\n',
-            'ending_with_block_comment',
-        ),
-        # Mixed statements
-        (
-            ['SELECT 1;', 'SELECT 2', 'SELECT 3 -- comment', 'SELECT 4'],
-            'SELECT 1;\n\nSELECT 2;\n\nSELECT 3 -- comment\n\nSELECT 4;\n\n',
+            ['SELECT 1;', 'SELECT 2', 'SELECT 3'],
+            'SELECT 1;\n\nSELECT 2\n\nSELECT 3\n\n',
             'mixed_statements',
         ),
         # Filter empty statements
         (
             ['SELECT 1', '', '  ', 'SELECT 2'],
-            'SELECT 1;\n\nSELECT 2;\n\n',
+            'SELECT 1\n\nSELECT 2\n\n',
             'filter_empty_statements',
         ),
         # Preserve internal whitespace
         (
             ['SELECT  \n  1'],
-            'SELECT  \n  1;\n\n',
+            'SELECT  \n  1\n\n',
             'preserve_whitespace',
         ),
         # Statement with trailing whitespace
         (
             ['SELECT 1;   ', 'SELECT 2  '],
-            'SELECT 1;\n\nSELECT 2;\n\n',
+            'SELECT 1;\n\nSELECT 2\n\n',
             'trailing_whitespace',
-        ),
-        # Multi-line statement with line comment in middle (not at end)
-        (
-            ['SELECT 1 -- comment\nFROM table'],
-            'SELECT 1 -- comment\nFROM table;\n\n',
-            'multiline_comment_in_middle',
-        ),
-        # Statement ending with hash comment
-        (
-            ['SELECT 1 # hash comment'],
-            'SELECT 1 # hash comment\n\n',
-            'ending_with_hash_comment',
-        ),
-        # Statement ending with double slash comment
-        (
-            ['SELECT 1 // slash comment'],
-            'SELECT 1 // slash comment\n\n',
-            'ending_with_slash_comment',
-        ),
-        # Multi-line with comment not at end
-        (
-            ['SELECT 1\n-- comment\nFROM table\nWHERE id = 1'],
-            'SELECT 1\n-- comment\nFROM table\nWHERE id = 1;\n\n',
-            'multiline_comment_not_at_end',
-        ),
-        # Statement with comment in middle and semicolon at end
-        (
-            ['SELECT 1 -- comment\nFROM table;'],
-            'SELECT 1 -- comment\nFROM table;\n\n',
-            'comment_middle_semicolon_end',
-        ),
-        # Block comment in middle of statement
-        (
-            ['SELECT /* inline comment */ 1'],
-            'SELECT /* inline comment */ 1;\n\n',
-            'block_comment_in_middle',
         ),
         # Multiple trailing spaces and tabs
         (
             ['SELECT 1  \t  ', '  \t SELECT 2'],
-            'SELECT 1;\n\nSELECT 2;\n\n',
+            'SELECT 1\n\nSELECT 2\n\n',
             'mixed_whitespace',
-        ),
-        # Statement with newline and ending comment
-        (
-            ['SELECT 1\nFROM table -- get data'],
-            'SELECT 1\nFROM table -- get data\n\n',
-            'newline_with_ending_comment',
         ),
         # Multiple empty strings (should be filtered)
         (
             ['SELECT 1', '', '   ', '\t'],
-            'SELECT 1;\n\n',
+            'SELECT 1\n\n',
             'with_multiple_empty',
         ),
-        # Pure comment statement with double dash
+        # Pure comment statement (comments are preserved like any other statement)
         (
             ['-- This is just a comment', 'SELECT 1'],
-            '-- This is just a comment\n\nSELECT 1;\n\n',
-            'pure_comment_double_dash',
+            '-- This is just a comment\n\nSELECT 1\n\n',
+            'pure_comment_statement',
         ),
-        # Pure comment statement with hash
+        # Multi-line statement with comments (preserved as-is)
         (
-            ['# This is just a comment', 'SELECT 1'],
-            '# This is just a comment\n\nSELECT 1;\n\n',
-            'pure_comment_hash',
-        ),
-        # Complex multi-line with various comment positions
-        (
-            ['SELECT a -- comment 1\n, b -- comment 2\nFROM table -- comment 3'],
-            'SELECT a -- comment 1\n, b -- comment 2\nFROM table -- comment 3\n\n',
-            'complex_multiline_comments',
-        ),
-        # Statement ending with semicolon and trailing whitespace
-        (
-            ['SELECT 1;  \n  ', 'SELECT 2'],
-            'SELECT 1;\n\nSELECT 2;\n\n',
-            'semicolon_with_trailing_whitespace',
-        ),
-        # Comment in middle followed by more code without comment at end
-        (
-            ['SELECT 1 -- inline\n, 2\nFROM t'],
-            'SELECT 1 -- inline\n, 2\nFROM t;\n\n',
-            'inline_comment_no_end_comment',
+            ['SELECT a -- comment 1\n, b -- comment 2\nFROM table'],
+            'SELECT a -- comment 1\n, b -- comment 2\nFROM table\n\n',
+            'multiline_with_comments',
         ),
     ],
 )
@@ -715,3 +647,253 @@ async def test_validate_round_trip(original, test_id):
 
     # Verify round-trip consistency
     assert split_original == split_again
+
+
+@pytest.mark.parametrize(
+    ('input_sql', 'dialect', 'expected', 'test_id'),
+    [
+        # Pure comment - should not get a semicolon
+        (
+            '-- This is a comment',
+            'snowflake',
+            '-- This is a comment',
+            'pure_line_comment',
+        ),
+        # Pure block comment - should not get a semicolon
+        (
+            '/* This is a comment */',
+            'snowflake',
+            '/* This is a comment */',
+            'pure_block_comment',
+        ),
+        # Single statement without semicolon - should add semicolon
+        (
+            'SELECT 1',
+            'snowflake',
+            'SELECT\n  1;',
+            'single_statement_no_semicolon',
+        ),
+        # Single statement with semicolon - should preserve semicolon
+        (
+            'SELECT 1;',
+            'snowflake',
+            'SELECT\n  1;',
+            'single_statement_with_semicolon',
+        ),
+        # Multiple statements without semicolons - should add semicolons
+        (
+            'SELECT 1; SELECT 2',
+            'snowflake',
+            'SELECT\n  1;\n\nSELECT\n  2;',
+            'multiple_statements_no_semicolons',
+        ),
+        # Multiple statements with semicolons - should preserve semicolons
+        (
+            'SELECT 1; SELECT 2;',
+            'snowflake',
+            'SELECT\n  1;\n\nSELECT\n  2;',
+            'multiple_statements_with_semicolons',
+        ),
+        # Statements with inline comment - comment preserved, semicolon added
+        (
+            'SELECT 1;\n-- comment\nSELECT 2',
+            'snowflake',
+            'SELECT\n  1;\n\n/* comment */\nSELECT\n  2;',
+            'statements_with_inline_comment',
+        ),
+        # Statements with inline comment - comment preserved, semicolon added
+        (
+            'SELECT 1;\n// comment\nSELECT 2',
+            'snowflake',
+            'SELECT\n  1;\n\n/* comment */\nSELECT\n  2;',
+            'statements_with_inline_comment_cpp',
+        ),
+        # Complex statement - properly formatted with semicolon
+        (
+            'SELECT a, b FROM table WHERE x > 10',
+            'snowflake',
+            'SELECT\n  a,\n  b\nFROM table\nWHERE\n  x > 10;',
+            'complex_statement',
+        ),
+        # BigQuery dialect tests
+        # Pure comment - should not get a semicolon
+        (
+            '-- This is a comment',
+            'bigquery',
+            '-- This is a comment',
+            'bigquery_pure_line_comment',
+        ),
+        # Pure block comment - should not get a semicolon
+        (
+            '/* This is a comment */',
+            'bigquery',
+            '/* This is a comment */',
+            'bigquery_pure_block_comment',
+        ),
+        # Single statement without semicolon - should add semicolon
+        (
+            'SELECT 1',
+            'bigquery',
+            'SELECT\n  1;',
+            'bigquery_single_statement_no_semicolon',
+        ),
+        # Single statement with semicolon - should preserve semicolon
+        (
+            'SELECT 1;',
+            'bigquery',
+            'SELECT\n  1;',
+            'bigquery_single_statement_with_semicolon',
+        ),
+        # Multiple statements - should add semicolons
+        (
+            'SELECT 1; SELECT 2',
+            'bigquery',
+            'SELECT\n  1;\n\nSELECT\n  2;',
+            'bigquery_multiple_statements',
+        ),
+        # Statements with inline comment - comment preserved, semicolon added
+        (
+            'SELECT 1;\n-- comment\nSELECT 2',
+            'bigquery',
+            'SELECT\n  1;\n\n/* comment */\nSELECT\n  2;',
+            'bigquery_statements_with_inline_comment',
+        ),
+        # Complex statement - properly formatted with semicolon
+        (
+            'SELECT a, b FROM table WHERE x > 10',
+            'bigquery',
+            'SELECT\n  a,\n  b\nFROM table\nWHERE\n  x > 10;',
+            'bigquery_complex_statement',
+        ),
+        # BigQuery-specific: backtick-quoted identifiers
+        (
+            'SELECT * FROM `project.dataset.table` WHERE id > 10',
+            'bigquery',
+            'SELECT\n  *\nFROM `project.dataset.table`\nWHERE\n  id > 10;',
+            'bigquery_backtick_identifiers',
+        ),
+        # BigQuery-specific: STRUCT syntax
+        (
+            'SELECT STRUCT(1 AS a, 2 AS b) AS my_struct',
+            'bigquery',
+            'SELECT\n  STRUCT(1 AS a, 2 AS b) AS my_struct;',
+            'bigquery_struct_syntax',
+        ),
+        # BigQuery-specific: ARRAY syntax (preserved as-is)
+        (
+            'SELECT [1, 2, 3] AS my_array',
+            'bigquery',
+            'SELECT\n  [1, 2, 3] AS my_array;',
+            'bigquery_array_syntax',
+        ),
+    ],
+)
+def test_format_sql(input_sql, dialect, expected, test_id):
+    """Test SQL formatting with semicolon and comment handling."""
+    result = format_sql(input_sql, dialect)
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    ('input_sql', 'dialect', 'test_id'),
+    [
+        # Invalid dialect handling
+        (
+            'SELECT 1',
+            'invalid_dialect_name',
+            'invalid_dialect',
+        ),
+        (
+            'SELECT * FROM table',
+            'nonexistent_sql_dialect',
+            'nonexistent_dialect',
+        ),
+        # SQL that sqlglot cannot parse
+        (
+            'SELECT FROM WHERE',
+            'snowflake',
+            'malformed_sql_missing_table',
+        ),
+        (
+            'SELECT * FROM',
+            'bigquery',
+            'malformed_sql_incomplete',
+        ),
+        (
+            'SELECT * FROM table WHERE x =',
+            'snowflake',
+            'malformed_sql_incomplete_where',
+        ),
+        (
+            'CREATE TABLE (id INT)',
+            'bigquery',
+            'malformed_sql_missing_table_name',
+        ),
+        (
+            'SELECT * FROM table WHERE x = (SELECT',
+            'snowflake',
+            'malformed_sql_unclosed_subquery',
+        ),
+        (
+            'SELECT * FROM table WHERE x = "unclosed string',
+            'bigquery',
+            'malformed_sql_unclosed_string',
+        ),
+        (
+            "SELECT * FROM table WHERE x = 'unclosed string",
+            'snowflake',
+            'malformed_sql_unclosed_single_quote',
+        ),
+        (
+            'SELECT * FROM table WHERE x = /* unclosed comment',
+            'bigquery',
+            'malformed_sql_unclosed_comment',
+        ),
+        (
+            'SELECT * FROM table WHERE x = $$ unclosed dollar quote',
+            'snowflake',
+            'malformed_sql_unclosed_dollar_quote',
+        ),
+        # Unsupported comment: '#'
+        (
+            'SELECT 1;\n-- comment1\nSELECT 2;\n# comment2\nSELECT 3;\n// comment3',
+            'snowflake',
+            'unsupported_comment_hash',
+        ),
+        # Empty strings and whitespace-only input
+        (
+            '',
+            'snowflake',
+            'empty_string',
+        ),
+        (
+            '',
+            'bigquery',
+            'empty_string_bigquery',
+        ),
+        (
+            '   ',
+            'snowflake',
+            'whitespace_only_spaces',
+        ),
+        (
+            '\t\t',
+            'bigquery',
+            'whitespace_only_tabs',
+        ),
+        (
+            '\n\n\n',
+            'snowflake',
+            'whitespace_only_newlines',
+        ),
+        (
+            ' \t\n\r ',
+            'bigquery',
+            'whitespace_only_mixed',
+        ),
+    ],
+)
+def test_format_sql_error(input_sql, dialect, test_id):
+    result = format_sql(input_sql, dialect)
+    # On error, format_sql returns the original SQL unchanged
+    assert result == input_sql

@@ -40,9 +40,10 @@ class DataAppResponse(BaseModel):
     url: str | None = Field(
         validation_alias=AliasChoices('url', 'url'), description='The URL of the running data app', default=None
     )
-    auto_suspend_after_seconds: int = Field(
+    auto_suspend_after_seconds: int | None = Field(
         validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),
         description='The auto suspend after seconds',
+        default=None,
     )
     size: str | None = Field(
         validation_alias=AliasChoices('size', 'size'), description='The size of the data app', default=None

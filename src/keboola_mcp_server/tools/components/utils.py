@@ -33,18 +33,20 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.tools.components import tf_update
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentSummary,
     ComponentType,
-    ComponentWithConfigurations,
+    ComponentWithConfigs,
     ConfigParamUpdate,
-    ConfigurationSummary,
+    ConfigSummary,
     SimplifiedTfBlocks,
     TfParamUpdate,
     TransformationConfiguration,
 )
+from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_block
 
 LOG = logging.getLogger(__name__)
 T = TypeVar('T')
@@ -66,6 +68,9 @@ BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 def expand_component_types(component_types: Sequence[ComponentType]) -> tuple[ComponentType, ...]:
     """
     Expand empty component types list to all component types.
+
+    :param component_types: Sequence of component types to expand
+    :return: Tuple of component types, or all component types if input is empty
     """
     if not component_types:
         return ALL_COMPONENT_TYPES
@@ -76,13 +81,13 @@ def expand_component_types(component_types: Sequence[ComponentType]) -> tuple[Co
 
 
 async def list_configs_by_types(
-    client: KeboolaClient, component_types: Sequence[ComponentType]
-) -> list[ComponentWithConfigurations]:
+    client: KeboolaClient, component_types: Sequence[ComponentType], links_manager: ProjectLinksManager
+) -> list[ComponentWithConfigs]:
     """
     Retrieves components with their configurations filtered by component types.
 
     Used by:
-    - list_configs tool
+    - get_configs tool (when component types are requested)
 
     :param client: Authenticated Keboola client instance
     :param component_types: Types of components to retrieve (extractor, writer, application, transformation)
@@ -103,23 +108,36 @@ async def list_configs_by_types(
                 for raw_configuration in cast(list[JsonDict], raw_component.get('configurations', []))
             ]
 
-            # Convert to domain models
-            configuration_summaries = [
-                ConfigurationSummary.from_api_response(api_config) for api_config in raw_configuration_responses
-            ]
+            # Convert to domain models add links
+            configuration_summaries = []
+            for api_config in raw_configuration_responses:
+                cfg_summary = ConfigSummary.from_api_response(api_config)
+                cfg_root = cfg_summary.configuration_root
+                cfg_summary.links.append(
+                    links_manager.get_component_config_link(
+                        component_id=cfg_root.component_id,
+                        configuration_id=cfg_root.configuration_id,
+                        configuration_name=cfg_root.name,
+                    )
+                )
+                configuration_summaries.append(cfg_summary)
 
             # Process component
             api_component = ComponentAPIResponse.model_validate(raw_component)
             domain_component = ComponentSummary.from_api_response(api_component)
-
+            domain_component.links.append(
+                links_manager.get_config_dashboard_link(
+                    component_id=domain_component.component_id, component_name=domain_component.component_name
+                )
+            )
             components_with_configurations.append(
-                ComponentWithConfigurations(
+                ComponentWithConfigs(
                     component=domain_component,
-                    configurations=configuration_summaries,
+                    configs=configuration_summaries,
                 )
             )
 
-    total_configurations = sum(len(component.configurations) for component in components_with_configurations)
+    total_configurations = sum(len(component.configs) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
         f'for types {component_types}.'
@@ -127,12 +145,14 @@ async def list_configs_by_types(
     return components_with_configurations
 
 
-async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str]) -> list[ComponentWithConfigurations]:
+async def list_configs_by_ids(
+    client: KeboolaClient, component_ids: Sequence[str], links_manager: ProjectLinksManager
+) -> list[ComponentWithConfigs]:
     """
     Retrieves components with their configurations filtered by specific component IDs.
 
     Used by:
-    - list_configs tool (when specific component IDs are requested)
+    - get_configs tool (when specific component IDs are requested)
 
     :param client: Authenticated Keboola client instance
     :param component_ids: Specific component IDs to retrieve
@@ -148,24 +168,36 @@ async def list_configs_by_ids(client: KeboolaClient, component_ids: Sequence[str
         # Process component
         api_component = ComponentAPIResponse.model_validate(raw_component)
         domain_component = ComponentSummary.from_api_response(api_component)
-
+        domain_component.links.append(
+            links_manager.get_config_dashboard_link(
+                component_id=domain_component.component_id, component_name=domain_component.component_name
+            )
+        )
         # Process configurations
         raw_configuration_responses = [
             ConfigurationAPIResponse.model_validate({**raw_configuration, 'component_id': raw_component['id']})
             for raw_configuration in raw_configurations
         ]
-        configuration_summaries = [
-            ConfigurationSummary.from_api_response(api_config) for api_config in raw_configuration_responses
-        ]
+        configuration_summaries = []
+        for api_config in raw_configuration_responses:
+            cfg_summary = ConfigSummary.from_api_response(api_config)
+            cfg_summary.links.append(
+                links_manager.get_component_config_link(
+                    component_id=cfg_summary.configuration_root.component_id,
+                    configuration_id=cfg_summary.configuration_root.configuration_id,
+                    configuration_name=cfg_summary.configuration_root.name,
+                )
+            )
+            configuration_summaries.append(cfg_summary)
 
         components_with_configurations.append(
-            ComponentWithConfigurations(
+            ComponentWithConfigs(
                 component=domain_component,
-                configurations=configuration_summaries,
+                configs=configuration_summaries,
             )
         )
 
-    total_configurations = sum(len(component.configurations) for component in components_with_configurations)
+    total_configurations = sum(len(component.configs) for component in components_with_configurations)
     LOG.info(
         f'Found {len(components_with_configurations)} components with total of {total_configurations} configurations '
         f'for ids {component_ids}.'
@@ -190,7 +222,7 @@ async def fetch_component(
     Storage API endpoint.
 
     Used by:
-    - get_component tool
+    - get_components tool
     - Configuration creation/update operations that need component schemas
 
     :param client: Authenticated Keboola client instance
@@ -255,6 +287,9 @@ def clean_bucket_name(bucket_name: str) -> str:
     - Converts spaces to dashes.
     - Removes leading underscores, dashes, and whitespace.
     - Removes any character that is not alphanumeric, dash, or underscore.
+
+    :param bucket_name: Raw bucket name to clean
+    :return: Cleaned bucket name suitable for Keboola storage
     """
     max_bucket_length = 96
     bucket_name = bucket_name.strip()
@@ -275,6 +310,7 @@ async def create_transformation_configuration(
     codes: Sequence[SimplifiedTfBlocks.Block.Code],
     transformation_name: str,
     output_tables: Sequence[str],
+    sql_dialect: str,
 ) -> TransformationConfiguration:
     """
     Creates transformation configuration from simplified code blocks and output tables.
@@ -283,19 +319,19 @@ async def create_transformation_configuration(
     :param codes: The code blocks
     :param transformation_name: The name of the transformation from which the bucket name is derived as in the UI
     :param output_tables: The output tables of the transformation, created by the code statements
+    :param sql_dialect: The SQL dialect of the transformation
     :return: TransformationConfiguration with parameters and storage
     """
     storage = TransformationConfiguration.Storage()
-    # build parameters configuration out of code blocks
-    parameters = SimplifiedTfBlocks(
-        blocks=[
-            SimplifiedTfBlocks.Block(
-                name='Blocks',
-                codes=list(codes),
-            )
-        ]
+    # for simplicity, we create a single block with the name 'Blocks'
+    block = SimplifiedTfBlocks.Block(
+        name='Blocks',
+        codes=list(codes),
     )
+    block, _ = format_simplified_tf_block(block=block, dialect=sql_dialect)
+    parameters = SimplifiedTfBlocks(blocks=[block])
     raw_parameters = await parameters.to_raw_parameters()
+
     if output_tables:
         # if the query creates new tables, output_table_mappings should contain the table names (llm generated)
         # we create bucket name from the sql query name adding `out.c-` prefix as in the UI and use it as destination
@@ -369,6 +405,11 @@ async def set_cfg_update_metadata(
 def get_nested(obj: Mapping[str, Any] | None, key: str, *, default: T | None = None) -> T | None:
     """
     Gets a value from a nested mapping associated with the key.
+
+    :param obj: Mapping (dictionary) object to search in
+    :param key: Dot-separated key path (e.g., 'database.host')
+    :param default: Default value to return if key is not found
+    :return: Value associated with the key, or default if not found
     """
     d = obj
     for k in key.split('.'):
@@ -499,18 +540,23 @@ def update_params(params: dict[str, Any], updates: Sequence[ConfigParamUpdate]) 
     return params
 
 
-def _apply_tf_param_update(parameters: dict[str, Any], update: TfParamUpdate) -> tuple[dict[str, Any], str]:
+def _apply_tf_param_update(
+    parameters: dict[str, Any], update: TfParamUpdate, sql_dialect: str
+) -> tuple[dict[str, Any], str]:
     """
     Applies a single parameter update to the given transformation parameters.
+
     Note: This function modifies the input dictionary in place for efficiency.
     The caller (update_transformation_parameters) is responsible for creating a copy if needed.
+
     :param parameters: The transformation parameters
     :param update: Parameter update operation to apply
+    :param sql_dialect: The SQL dialect of the transformation
     :return: Tuple of (updated transformation parameters, change summary message)
     """
     operation = update.op
     tf_update_func = getattr(tf_update, operation)
-    return tf_update_func(parameters, update)
+    return tf_update_func(params=parameters, op=update, sql_dialect=sql_dialect)
 
 
 def add_ids(parameters: dict[str, Any]) -> dict[str, Any]:
@@ -518,6 +564,9 @@ def add_ids(parameters: dict[str, Any]) -> dict[str, Any]:
     Adds IDs to the parameters dictionary.
     Blocks are numbered sequentially from 0.
     Codes are numbered sequentially from 0 within each block and prefixed with the block ID.
+
+    :param parameters: Transformation parameters dictionary
+    :return: Parameters dictionary with IDs added to blocks and codes
     """
     for bidx, block in enumerate(parameters['blocks']):
         block['id'] = f'b{bidx}'
@@ -580,7 +629,7 @@ def structure_summary(parameters: dict[str, Any]) -> str:
 
 
 def update_transformation_parameters(
-    parameters: SimplifiedTfBlocks, updates: Sequence[TfParamUpdate]
+    parameters: SimplifiedTfBlocks, updates: Sequence[TfParamUpdate], sql_dialect: str
 ) -> tuple[SimplifiedTfBlocks, str]:
     """
     Applies a list of parameter updates to the given transformation parameters.
@@ -588,13 +637,16 @@ def update_transformation_parameters(
 
     :param parameters: The transformation parameters
     :param updates: Sequence of parameter update operations
+    :param sql_dialect: The SQL dialect of the transformation
     :return: The updated transformation parameters and a summary of the changes.
     """
     is_structure_change = any(update.op in tf_update.STRUCTURAL_OPS for update in updates)
     parameters_dict = add_ids(parameters.model_dump())
     messages = []
     for update in updates:
-        parameters_dict, message = _apply_tf_param_update(parameters_dict, update)
+        parameters_dict, message = _apply_tf_param_update(
+            parameters=parameters_dict, update=update, sql_dialect=sql_dialect
+        )
 
         if message:
             messages.append(message)
