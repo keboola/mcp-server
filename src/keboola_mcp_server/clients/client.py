@@ -8,6 +8,7 @@ from keboola_mcp_server.clients.ai_service import AIServiceClient
 from keboola_mcp_server.clients.data_science import DataScienceClient
 from keboola_mcp_server.clients.encryption import EncryptionClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
+from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 
 LOG = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ class KeboolaClient:
         ai_service_api_url = urlunparse(('https', f'ai.{self._hostname_suffix}', '', '', '', ''))
         data_science_api_url = urlunparse(('https', f'data-science.{self._hostname_suffix}', '', '', '', ''))
         encryption_api_url = urlunparse(('https', f'encryption.{self._hostname_suffix}', '', '', '', ''))
+        scheduler_api_url = urlunparse(('https', f'scheduler.{self._hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
@@ -150,6 +152,9 @@ class KeboolaClient:
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(
             root_url=encryption_api_url, token=None, headers=self._headers
+        )
+        self._scheduler_client = SchedulerClient.create(
+            root_url=scheduler_api_url, token=self._token, headers=self._headers
         )
 
     @property
@@ -195,3 +200,7 @@ class KeboolaClient:
     @property
     def encryption_client(self) -> 'EncryptionClient':
         return self._encryption_client
+
+    @property
+    def scheduler_client(self) -> 'SchedulerClient':
+        return self._scheduler_client
