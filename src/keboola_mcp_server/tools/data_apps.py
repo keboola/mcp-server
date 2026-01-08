@@ -9,6 +9,7 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
@@ -310,20 +311,16 @@ async def modify_data_app(
 
     if configuration_id:
         # Update existing data app
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        existing_config = {
-            'parameters': data_app.parameters,
-            'authorization': data_app.authorization,
-            'storage': data_app.storage,
-        }
-        updated_config = _update_existing_data_app_config(
-            existing_config, name, source_code, packages, authentication_type, secrets, sql_dialect
-        )
-        updated_config = cast(
-            dict[str, Any],
-            await client.encryption_client.encrypt(
-                updated_config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
-            ),
+        data_app, updated_config = await modify_data_app_internal(
+            client=client,
+            workspace_manager=workspace_manager,
+            name=name,
+            description=description,
+            source_code=source_code,
+            packages=packages,
+            authentication_type=authentication_type,
+            configuration_id=configuration_id,
+            change_description=change_description,
         )
         await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
@@ -378,6 +375,46 @@ async def modify_data_app(
         return ModifiedDataAppOutput(
             response='created', data_app=DataAppSummary.from_api_response(data_app_resp), links=links
         )
+
+
+async def modify_data_app_internal(
+    *,
+    client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+    name: str,
+    description: str = '',
+    source_code: str,
+    packages: list[str],
+    authentication_type: AuthenticationType,
+    configuration_id: str,
+    change_description: str = '',
+) -> tuple[DataApp, JsonDict]:
+    secrets = _get_secrets(
+        workspace_id=str(await workspace_manager.get_workspace_id()),
+        branch_id=str(await workspace_manager.get_branch_id()),
+    )
+    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    existing_config = {
+        'parameters': data_app.parameters,
+        'authorization': data_app.authorization,
+        'storage': data_app.storage,
+    }
+    updated_config = _update_existing_data_app_config(
+        existing_config,
+        name,
+        source_code,
+        packages,
+        authentication_type,
+        secrets,
+        await workspace_manager.get_sql_dialect(),
+    )
+    updated_config = cast(
+        JsonDict,
+        await client.encryption_client.encrypt(
+            updated_config, component_id=DATA_APP_COMPONENT_ID, project_id=await client.storage_client.project_id()
+        ),
+    )
+    return data_app, updated_config
 
 
 @tool_errors()
@@ -522,7 +559,7 @@ def _update_existing_data_app_config(
     new_config['parameters']['packages'] = (
         sorted(list[str](set[str](packages + _DEFAULT_PACKAGES)))
         if packages
-        else sorted(list[str](set[str](existing_config['parameters']['packages'] + _DEFAULT_PACKAGES)))
+        else sorted(list[str](set[str](existing_config['parameters'].get('packages', []) + _DEFAULT_PACKAGES)))
     )
     new_config['parameters']['dataApp']['secrets'] = (
         existing_config['parameters']['dataApp'].get('secrets', {}) | secrets

@@ -1,5 +1,6 @@
 """Flow management tools for the MCP server (orchestrations/flows)."""
 
+import copy
 import importlib.resources as pkg_resources
 import json
 import logging
@@ -311,24 +312,17 @@ async def update_flow(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    current_config = await client.storage_client.configuration_detail(
-        component_id=flow_type, configuration_id=configuration_id
-    )
-    flow_configuration = current_config.get('configuration', {}).copy()
-
-    updated_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
-    if updated_configuration.get('phases'):
-        flow_configuration['phases'] = updated_configuration['phases']
-    if updated_configuration.get('tasks'):
-        flow_configuration['tasks'] = updated_configuration['tasks']
-
-    # Validate flow structure to catch semantic errors in the structure
-    validate_flow_structure(flow_configuration=flow_configuration, flow_type=flow_type)
-    # Validate flow configuration against schema to catch syntax errors in the configuration
-    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
-
     LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
-    links_manager = await ProjectLinksManager.from_client(client)
+    _, flow_configuration = await update_flow_internal(
+        client=client,
+        configuration_id=configuration_id,
+        flow_type=flow_type,
+        change_description=change_description,
+        phases=phases,
+        tasks=tasks,
+        name=name,
+        description=description,
+    )
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=flow_type,
         configuration_id=configuration_id,
@@ -346,6 +340,7 @@ async def update_flow(
         configuration_version=api_config.version,
     )
 
+    links_manager = await ProjectLinksManager.from_client(client)
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     tool_response = FlowToolOutput(
         configuration_id=api_config.id,
@@ -358,6 +353,37 @@ async def update_flow(
     )
     LOG.info(f'Updated flow configuration: {api_config.id}')
     return tool_response
+
+
+async def update_flow_internal(
+    *,
+    client: KeboolaClient,
+    configuration_id: str,
+    flow_type: FlowType,
+    change_description: str,
+    phases: list[dict[str, Any]] | None = None,
+    tasks: list[dict[str, Any]] | None = None,
+    name: str = '',
+    description: str = '',
+) -> tuple[JsonDict, JsonDict]:
+    current_config = await client.storage_client.configuration_detail(
+        component_id=flow_type, configuration_id=configuration_id
+    )
+    flow_configuration = cast(JsonDict, current_config.get('configuration', {}))
+    flow_configuration = copy.deepcopy(flow_configuration)
+
+    updated_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
+    if updated_configuration.get('phases'):
+        flow_configuration['phases'] = updated_configuration['phases']
+    if updated_configuration.get('tasks'):
+        flow_configuration['tasks'] = updated_configuration['tasks']
+
+    # Validate flow structure to catch semantic errors in the structure
+    validate_flow_structure(flow_configuration=flow_configuration, flow_type=flow_type)
+    # Validate flow configuration against schema to catch syntax errors in the configuration
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
+
+    return current_config, flow_configuration
 
 
 @tool_errors()

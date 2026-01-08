@@ -3,14 +3,21 @@
 import argparse
 import asyncio
 import contextlib
+import json
 import logging.config
 import os
 import pathlib
 import sys
+import traceback
 from typing import Optional
 
+import pydantic
+import requests
 from fastmcp import FastMCP
+from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -54,6 +61,45 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
 
     return parser.parse_args(args)
+
+
+def _create_exception_handler(status_code: int = 500, log_exception: bool = False):
+    """
+    Returns a JSON message response for all unhandled errors from request handlers. The response JSON body
+    will show exception message and traceback (if the app runs in the debug mode).
+
+    :param status_code: the HTTP status code to return; if not specified 500 (Server Error) status code is used
+    """
+
+    async def _exception_handler(request: Request, exc):
+        exc_str = f'{type(exc).__name__}: {exc}'
+        if log_exception:
+            LOG.exception(f'Unhandled error: {exc_str}')
+
+        if request.app.debug:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            exc_text = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+            return JSONResponse({'message': exc_str, 'exception': exc_text}, status_code)
+
+        else:
+            return JSONResponse({'message': exc_str}, status_code)
+
+    return _exception_handler
+
+
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse({'message': exc.detail}, status_code=exc.status_code)
+
+
+_bad_request_handler = _create_exception_handler(status_code=400)
+_exception_handlers = {
+    HTTPException: _http_exception_handler,
+    json.JSONDecodeError: _bad_request_handler,
+    requests.JSONDecodeError: _bad_request_handler,
+    pydantic.ValidationError: _bad_request_handler,
+    ValueError: _bad_request_handler,
+    Exception: _create_exception_handler(status_code=500, log_exception=True),
+}
 
 
 async def run_server(args: Optional[list[str]] = None) -> None:
@@ -113,13 +159,14 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             mount_paths: dict[str, StarletteWithLifespan] = {}
             custom_routes: CustomRoutes | None = None
             transports: list[str] = []
+            mcp_server: FastMCP | None = None
 
             if parsed_args.transport in ['http-compat', 'streamable-http']:
                 http_runtime_config = ServerRuntimeInfo('http-compat/streamable-http')
-                http_mcp_server, custom_routes = create_server(
+                mcp_server, custom_routes = create_server(
                     config, runtime_info=http_runtime_config, custom_routes_handling='return'
                 )
-                http_app: StarletteWithLifespan = http_mcp_server.http_app(
+                http_app: StarletteWithLifespan = mcp_server.http_app(
                     path='/',
                     transport='streamable-http',
                 )
@@ -128,10 +175,10 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
             if parsed_args.transport in ['http-compat', 'sse']:
                 sse_runtime_config = ServerRuntimeInfo('http-compat/sse')
-                sse_mcp_server, custom_routes = create_server(
+                mcp_server, custom_routes = create_server(
                     config, runtime_info=sse_runtime_config, custom_routes_handling='return'
                 )
-                sse_app: StarletteWithLifespan = sse_mcp_server.http_app(
+                sse_app: StarletteWithLifespan = mcp_server.http_app(
                     path='/',
                     transport='sse',
                 )
@@ -155,11 +202,20 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                         await stack.enter_async_context(_inner_app.lifespan(_app))
                     yield
 
-            app = Starlette(middleware=[Middleware(ForwardSlashMiddleware)], lifespan=lifespan)
+            app = Starlette(
+                middleware=[Middleware(ForwardSlashMiddleware)],
+                lifespan=lifespan,
+                exception_handlers=_exception_handlers,
+            )
             for path, inner_app in mount_paths.items():
                 app.mount(path, inner_app)
 
             custom_routes.add_to_starlette(app)
+
+            assert isinstance(mcp_server, FastMCP)
+            app.state.mcp_tools_input_schema = {
+                tool.name: tool.parameters for tool in (await mcp_server.get_tools()).values()
+            }
 
             config = uvicorn.Config(
                 app,
