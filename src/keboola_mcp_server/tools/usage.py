@@ -431,7 +431,7 @@ def _matches_patterns(
 
 
 class DataMatch(BaseModel):
-    item_type: Literal['bucket', 'table', 'component', 'flow', 'data-app', 'transformation']
+    item_type: Literal[ 'component', 'flow', 'data-app', 'transformation']
     bucket_id: str | None = None
     table_id: str | None = None
     component_id: str | None = None
@@ -710,10 +710,10 @@ async def search_keboola_objects(
        patterns=["in.c-main.customers"], search_types=["transformation"]
 
     3. Find all objects with "test" or "staging" in their configuration:
-       patterns=["test", "staging"], mode="literal"
+       patterns=["test", "staging"], mode="literal", search_types=["component", "transformation", "flow", "data-app"]
 
-    4. Find flows starting with "daily-" prefix:
-       patterns=["daily-*"], mode="wildcard", search_types=["flow"]
+    4. Find in which flows is this component used? kds-team.ex-shopify 01k9cz233cvd1rga3zzx40g8qj
+       patterns=["01k9cz233cvd1rga3zzx40g8qj"], search_types=["flows"]
 
     5. Find components with API version v2 or v3:
        patterns=["api/v[23]"], mode="regex", search_types=["component"]
@@ -731,10 +731,26 @@ async def search_keboola_objects(
        patterns=["\"authentication\":\\s*\\{.*\"type\":\\s*\"oauth20\""], mode="regex"
 
     10. Find configs with incremental loading enabled:
-        patterns=["\"incremental\":\\s*true"], mode="regex"
+        patterns=["\"incremental\":\\s*true"], mode="regex", search_types=["component", "transformation"]
 
     11. Find storage mappings referencing specific tables:
-        patterns=["\"source\":\\s*\"in\\.*\\.customers\""], mode="regex"
+        patterns=["\"source\":\\s*\"in\\.*\\.customers\""], mode="regex", search_types=["transformation", "component"]
+    
+    12. Find SQL transformations that calculate avg_monetary_value or create rfm_segment_summary:
+        patterns=["avg_monetary_value", "rfm_segment_summary"], mode="literal", search_types=["transformation"]
+    
+    13. Find which components use a specific table in input/output mappings (both directions):
+        patterns=["out\\.c-RFM-Segment-Summary-for-App\\.rfm_segment_summary"], 
+        mode="regex", 
+        search_types=["component", "transformation"]
+        
+        # Or more specific - find only input mappings:
+        patterns=["\"source\":\\s*\"out\\.c-RFM-Segment-Summary-for-App\\.rfm_segment_summary\""], 
+        mode="regex"
+        
+        # Or find only output mappings:
+        patterns=["\"destination\":\\s*\"out\\.c-RFM-Segment-Summary-for-App\\.rfm_segment_summary\""], 
+        mode="regex"
 
     TIPS:
     - Use whole_word=True when searching for IDs to avoid partial matches
