@@ -49,7 +49,7 @@ async def find_id_usage(
         search_scopes=scopes,
         pattern_mode='literal',
         search_type='config-based',
-        return_matched_patterns=True,
+        return_all_matched_patterns=True,
         stop_searching_after_first_value_match=False,
     )
 
