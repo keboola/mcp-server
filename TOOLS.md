@@ -2472,7 +2472,6 @@ USAGE EXAMPLES:
           "transformation",
           "configuration",
           "configuration-row",
-          "component",
           "workspace",
           "shared-code",
           "rows",
