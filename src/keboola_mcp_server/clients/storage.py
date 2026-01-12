@@ -296,6 +296,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         version: str = 'v2',
         branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
+        readonly: bool | None = None,
     ) -> 'AsyncStorageClient':
         """
         Creates an AsyncStorageClient from a Keboola Storage API token.
@@ -305,6 +306,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param version: The version of the API to use (default: 'v2')
         :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests
+        :param readonly: If True, the client will only use HTTP GET, HEAD operations.
         :return: A new instance of AsyncStorageClient
         """
         return cls(
@@ -312,6 +314,7 @@ class AsyncStorageClient(KeboolaServiceClient):
                 base_api_url=f'{root_url}/{version}/storage',
                 api_token=token,
                 headers=headers,
+                readonly=readonly,
             ),
             branch_id=branch_id,
         )
