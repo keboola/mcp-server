@@ -31,7 +31,7 @@ from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
 from keboola_mcp_server.tools.oauth import add_oauth_tools
 from keboola_mcp_server.tools.project import add_project_tools
-from keboola_mcp_server.tools.search import add_search_tools
+from keboola_mcp_server.tools.search.tools import add_search_tools
 from keboola_mcp_server.tools.sql import add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
 from keboola_mcp_server.tools.usage import add_usage_tools

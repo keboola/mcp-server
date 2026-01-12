@@ -181,8 +181,10 @@ class MetadataField:
     # Component lineage metadata for created/updated configuration sources
     CREATED_BY_COMPONENT_ID = 'KBC.createdBy.component.id'
     CREATED_BY_CONFIGURATION_ID = 'KBC.createdBy.configuration.id'
+    CREATED_BY_CONFIGURATION_ROW_ID = 'KBC.createdBy.configurationRow.id'
     UPDATED_BY_COMPONENT_ID = 'KBC.lastUpdatedBy.component.id'
     UPDATED_BY_CONFIGURATION_ID = 'KBC.lastUpdatedBy.configuration.id'
+    UPDATED_BY_CONFIGURATION_ROW_ID = 'KBC.lastUpdatedBy.configurationRow.id'
 
     # Data type metadata fields
     DATATYPE_TYPE = 'KBC.datatype.type'
