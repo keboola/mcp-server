@@ -377,9 +377,10 @@ async def _fetch_configs(
         if not (component_id := component.get('id')):
             continue
 
+        current_component_type = component.get('type')
         if component_id in [ORCHESTRATOR_COMPONENT_ID, CONDITIONAL_FLOW_COMPONENT_ID]:
             item_type = 'flow'
-        elif component_type == 'transformation':
+        elif current_component_type == 'transformation':
             item_type = 'transformation'
         elif component_id == 'keboola.sandboxes':
             item_type = 'workspace'
@@ -533,6 +534,7 @@ async def search(
       → patterns=["google.*analytics"], item_types=["configuration"]
       → Returns configurations with matching patterns
     """
+
     cfg = SearchSpec(
         patterns=patterns,
         item_types=item_types,
@@ -563,20 +565,14 @@ async def search(
 
     if not types_to_fetch:
         tasks.append(_fetch_configurations(client, cfg))
-    elif config_types_to_fetch := types_to_fetch & {
+    elif types_to_fetch & {
         'configuration',
         'transformation',
         'flow',
         'configuration-row',
         'workspace',
     }:
-        config_cfg = SearchSpec(
-            patterns=cfg.patterns,
-            item_types=tuple(config_types_to_fetch),
-            config_scopes=cfg.config_scopes,
-            configuration_search=cfg.configuration_search,
-        )
-        tasks.append(_fetch_configurations(client, config_cfg))
+        tasks.append(_fetch_configurations(client, cfg))
 
     # Gather all results
     results = await asyncio.gather(*tasks, return_exceptions=True)

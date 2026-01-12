@@ -1,9 +1,6 @@
 import json
-from typing import Annotated, Literal, Mapping, Optional, Sequence
+from typing import Literal, Mapping, Optional, Sequence
 
-from fastmcp import Context
-from fastmcp.tools import FunctionTool
-from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonStruct
@@ -15,8 +12,6 @@ from keboola_mcp_server.clients.client import (
     get_metadata_property,
 )
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import KeboolaMcpServer, toon_serializer
 
 SearchSection = Literal['parameters', 'storage', 'processors', 'tasks']
 UsageSection = Literal['parameters', 'processors', 'storage.input', 'storage.output', 'tasks']
@@ -30,11 +25,11 @@ USAGE_TOOLS_TAG = 'usage'
 
 class ComponentUsage(BaseModel):
     section: UsageSection
-    component_id: str
-    configuration_id: str
-    configuration_row_id: str | None
-    configuration_name: str | None
-    configuration_description: str | None
+    component_id: str = Field(description='The ID of the component.')
+    configuration_id: str = Field(description='The ID of the configuration.')
+    configuration_row_id: str | None = Field(default=None, description='The ID of the configuration row.')
+    configuration_name: str | None = Field(default=None, description='The name of the configuration.')
+    configuration_description: str | None = Field(default=None, description='The description of the configuration.')
 
 
 class UsageMatch(ComponentUsage):
