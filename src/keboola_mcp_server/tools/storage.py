@@ -619,7 +619,7 @@ async def get_tables(
         # Add the component usage to the table detail
         if include_usage:
             usage_by_ids = await find_id_usage(
-                client, table_ids, ['component', 'transformation'], ['storage.input', 'storage.output']
+                client, table_ids, ['configuration', 'configuration-row', 'transformation'], ['storage.input', 'storage.output']
             )
             for usage_by_id in usage_by_ids:
                 if usage_by_id.target_id in tables_by_id and usage_by_id.usage_references:
