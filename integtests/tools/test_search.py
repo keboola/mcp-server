@@ -5,7 +5,7 @@ import toon_format
 from fastmcp import Client
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
-from keboola_mcp_server.tools.search import SearchHit, SuggestedComponentOutput
+from keboola_mcp_server.tools.search.tools import SearchHit, SuggestedComponentOutput
 
 LOG = logging.getLogger(__name__)
 

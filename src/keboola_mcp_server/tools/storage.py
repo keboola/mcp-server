@@ -555,11 +555,7 @@ async def get_tables(
     table_ids: Annotated[Sequence[str], Field(description='Filter by specific table IDs.')] = tuple(),
     include_usage: Annotated[
         bool,
-        Field(
-            description=(
-                'Whether to include component / transformation usage information lineage.'
-            )
-        ),
+        Field(description=('Whether to include component / transformation usage information lineage.')),
     ] = False,
 ) -> GetTablesOutput:
     """
@@ -571,7 +567,7 @@ async def get_tables(
     IMPORTANT:
     - `include_usage` can be computationally demanding; use it only when clearly needed from context.
       It is still more efficient than running separate usage searches with the current tools.
-    - including usage 
+    - including usage
 
     RETURNS:
     - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).

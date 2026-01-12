@@ -55,9 +55,10 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.
 
 ### Storage Tools
-- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets.
+- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including metadata-derived descriptions,
+lineage references (created/updated by), and links.
 - [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
-column definitions, and metadata.
+column definitions, metadata, and references to components that created or updated the table.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
@@ -2690,7 +2691,8 @@ DATA VALIDATION:
 
 **Description**:
 
-Lists buckets or retrieves full details of specific buckets.
+Lists buckets or retrieves full details of specific buckets, including metadata-derived descriptions,
+lineage references (created/updated by), and links.
 
 EXAMPLES:
 - `bucket_ids=[]` → summaries of all buckets in the project
@@ -2724,7 +2726,14 @@ EXAMPLES:
 **Description**:
 
 Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
-column definitions, and metadata.
+column definitions, metadata, and references to components that created or updated the table.
+Optionally, usage component reference for each table can be included when getting full details, acting like a
+lineage, including storage input mappings and output mappings that reference the table.
+
+IMPORTANT:
+- `include_usage` can be computationally demanding; use it only when clearly needed from context.
+  It is still more efficient than running separate usage searches with the current tools.
+- including usage
 
 RETURNS:
 - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
@@ -2741,7 +2750,6 @@ COLUMN DATA TYPES:
 EXAMPLES:
 - `bucket_ids=["id1", ...]` → summary info of the tables in the buckets with the specified IDs
 - `table_ids=["id1", ...]` → detailed info of the tables specified by their IDs
-- `bucket_ids=[]` and `table_ids=[]` → empty list; you have to specify at least one filter
 
 
 **Input JSON Schema**:
@@ -2763,6 +2771,11 @@ EXAMPLES:
         "type": "string"
       },
       "type": "array"
+    },
+    "include_usage": {
+      "default": false,
+      "description": "Whether to include component / transformation usage information lineage.",
+      "type": "boolean"
     }
   },
   "type": "object"

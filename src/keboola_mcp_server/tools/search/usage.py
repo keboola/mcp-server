@@ -3,14 +3,13 @@ from typing import Mapping, Optional, Sequence
 
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.clients import KeboolaClient
 from keboola_mcp_server.clients.base import JsonStruct
 from keboola_mcp_server.clients.client import (
     KeboolaClient,
     get_metadata_property,
 )
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.tools.search.tools import SearchHit, SearchItemType, SearchSpec, _fetch_configurations
+from keboola_mcp_server.tools.search.tools import SearchItemType, SearchSpec, _fetch_configurations
 
 
 class ComponentUsageReference(BaseModel):
@@ -31,10 +30,12 @@ async def find_id_usage(
     client: KeboolaClient,
     target_ids: Sequence[str],
     item_types: Optional[Sequence[SearchItemType]] = None,
-    scopes: list[str] = list(),
+    scopes: list[str] = list,
 ) -> list[UsageById]:
     """
-    Finds component configurations (including rows) that reference any of the target IDs in the specified configuration scopes.
+    Finds component configurations (including rows) that reference any of the target IDs in the specified configuration
+    scopes.
+
     :param client: The Keboola client to use.
     :param target_ids: The IDs to search for.
     :param item_types: The item types to search for, if not provided, all item types are searched.
