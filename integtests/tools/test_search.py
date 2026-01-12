@@ -103,3 +103,32 @@ async def test_find_component_id(mcp_client: Client):
     assert full_result.content[0].type == 'text'
     decoded_toon = toon_format.decode(full_result.content[0].text)
     assert decoded_toon == result
+
+
+@pytest.mark.asyncio
+async def test_search_config_based_simple_query(
+    mcp_client: Client,
+    configs: list[ConfigDef],
+) -> None:
+    """
+    Test config-based search with a simple scoped query.
+    """
+    config = next(cfg for cfg in configs if cfg.component_id == 'ex-generic-v2')
+    full_result = await mcp_client.call_tool(
+        'search',
+        {
+            'patterns': ['wttr.in'],
+            'item_types': ['configuration'],
+            'search_type': 'config-based',
+            'scopes': ['parameters.api.baseUrl'],
+            'limit': 20,
+            'offset': 0,
+        },
+    )
+
+    assert full_result.structured_content is not None
+    result = [SearchHit.model_validate(hit) for hit in full_result.structured_content['result']]
+
+    assert any(
+        hit.component_id == 'ex-generic-v2' and hit.configuration_id == config.configuration_id for hit in result
+    ), f'Expected config {config.configuration_id} to be returned. Found: {result}'
