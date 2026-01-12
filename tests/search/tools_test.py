@@ -3,6 +3,7 @@ from unittest.mock import call
 
 import pytest
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.ai_service import ComponentSuggestionResponse, SuggestedComponent
@@ -11,8 +12,9 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.search import (
+from keboola_mcp_server.tools.search.tools import (
     SearchHit,
+    SearchSpec,
     SuggestedComponentOutput,
     find_component_id,
     search,
@@ -24,10 +26,10 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_search_no_patterns(self, mcp_context_client: Context):
-        with pytest.raises(ValueError, match='At least one search pattern must be provided.'):
+        with pytest.raises(ToolError, match='At least one search pattern must be provided.'):
             await search(ctx=mcp_context_client, patterns=[])
 
-        with pytest.raises(ValueError, match='At least one search pattern must be provided.'):
+        with pytest.raises(ToolError, match='At least one search pattern must be provided.'):
             await search(ctx=mcp_context_client, patterns=[''])
 
     @pytest.mark.asyncio
@@ -684,6 +686,98 @@ class TestSearch:
         assert len(result) == expected_count
         if expected_count > 0:
             assert result[0].table_id == expected_first_table_id
+
+
+class TestSearchSpec:
+    """Test cases for SearchSpec matching helpers."""
+
+    def test_match_texts_with_literal_and_regex(self):
+        spec = SearchSpec(
+            patterns=['foo.*'],
+            item_types=('bucket',),
+            pattern_mode='literal',
+            return_matched_patterns=True,
+        )
+        matches = spec.match_texts(['foo.*', 'foobar'])
+        assert [match.model_dump() for match in matches] == [
+            {'scope': 'foo.*', 'patterns': ['foo.*']},
+        ]
+
+        regex_spec = SearchSpec(
+            patterns=['foo.*'],
+            item_types=('bucket',),
+            pattern_mode='regex',
+            return_matched_patterns=True,
+        )
+        regex_matches = regex_spec.match_texts(['foo.*', 'foobar'])
+        assert [match.model_dump() for match in regex_matches] == [
+            {'scope': 'foo.*', 'patterns': ['foo.*']},
+        ]
+
+    def test_match_texts_case_sensitivity_and_stop(self):
+        spec = SearchSpec(
+            patterns=['foo', 'bar'],
+            item_types=('bucket',),
+            return_matched_patterns=True,
+            stop_searching_after_first_value_match=True,
+        )
+        matches = spec.match_texts(['Foo baz', 'BAR qux'])
+        assert [match.model_dump() for match in matches] == [
+            {'scope': 'Foo baz', 'patterns': ['foo']},
+        ]
+
+        all_spec = SearchSpec(
+            patterns=['foo', 'bar'],
+            item_types=('bucket',),
+            return_matched_patterns=True,
+            stop_searching_after_first_value_match=False,
+        )
+        all_matches = all_spec.match_texts(['Foo baz', 'BAR qux'])
+        assert [match.model_dump() for match in all_matches] == [
+            {'scope': 'Foo baz', 'patterns': ['foo']},
+            {'scope': 'BAR qux', 'patterns': ['bar']},
+        ]
+
+    def test_match_configuration_scopes(self):
+        configuration = {
+            'parameters': {'query': 'alpha'},
+            'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+        }
+
+        spec = SearchSpec(
+            patterns=['alpha', 'beta'],
+            item_types=('bucket',),
+            search_scopes=('parameters', 'storage.input'),
+            return_matched_patterns=True,
+            stop_searching_after_first_value_match=True,
+        )
+        matches = spec.match_configuration_scopes(configuration)
+        assert [match.model_dump() for match in matches] == [
+            {'scope': 'parameters', 'patterns': ['alpha']},
+            {'scope': 'storage.input', 'patterns': ['beta']},
+        ]
+
+        first_only_spec = SearchSpec(
+            patterns=['alpha', 'beta'],
+            item_types=('bucket',),
+            search_scopes=('parameters', 'storage.input'),
+            return_matched_patterns=True,
+            stop_searching_after_first_value_match=False,
+        )
+        first_only_matches = first_only_spec.match_configuration_scopes(configuration)
+        assert [match.model_dump() for match in first_only_matches] == [
+            {'scope': 'parameters', 'patterns': ['alpha']},
+        ]
+
+        any_scope_spec = SearchSpec(
+            patterns=['gamma'],
+            item_types=('bucket',),
+            return_matched_patterns=True,
+        )
+        any_scope_matches = any_scope_spec.match_configuration_scopes(configuration)
+        assert [match.model_dump() for match in any_scope_matches] == [
+            {'scope': None, 'patterns': ['gamma']},
+        ]
 
 
 @pytest.mark.asyncio
