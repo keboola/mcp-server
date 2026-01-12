@@ -38,7 +38,6 @@ SearchItemType = Literal[
     'transformation',
     'configuration',
     'configuration-row',
-    'component',
     'workspace',
     'shared-code',
     'rows',
@@ -49,7 +48,6 @@ SEARCH_ITEM_TYPE_TO_COMPONENT_TYPES: Mapping[SearchItemType, Sequence[str]] = {
     'data-app': ['other'],
     'flow': ['other'],
     'transformation': ['transformation'],
-    'component': ['extractor', 'writer', 'application'],
     'configuration': ['extractor', 'writer', 'application'],
     'configuration-row': ['extractor', 'writer', 'application'],
     'workspace': ['other'],
@@ -361,11 +359,13 @@ async def _fetch_configs(
 ) -> AsyncGenerator[SearchHit, None]:
     components = await client.storage_client.component_list(component_type, include=['configuration', 'rows'])
 
-    allowed_transformations = 'transformation' in spec.item_types
-    allowed_components = 'component' in spec.item_types
-    allowed_flows = 'flow' in spec.item_types
-    allowed_workspaces = 'workspace' in spec.item_types
-    allowed_data_apps = 'data-app' in spec.item_types
+    allowed_transformations = 'transformation' in spec.item_types or component_type is None
+    allowed_components = (
+        'configuration' in spec.item_types or 'configuration-row' in spec.item_types or component_type is None
+    )
+    allowed_flows = 'flow' in spec.item_types or component_type is None
+    allowed_workspaces = 'workspace' in spec.item_types or component_type is None
+    allowed_data_apps = 'data-app' in spec.item_types or component_type is None
 
     for component in components:
         if not (component_id := component.get('id')):
@@ -389,7 +389,7 @@ async def _fetch_configs(
             if not allowed_data_apps:
                 continue
         elif current_component_type in ['extractor', 'writer', 'application']:
-            item_type = 'component'
+            item_type = 'configuration'
             if not allowed_components:
                 continue
         else:
@@ -624,7 +624,6 @@ async def search(
         tasks.append(_fetch_configurations(client, cfg))
     elif types_to_fetch & {
         'configuration',
-        'component',
         'transformation',
         'flow',
         'configuration-row',
