@@ -345,11 +345,11 @@ def _validate_conditional_flow_structure(
     # Validate that there are no duplicate phase or task IDs
     counter_phases = Counter([phase.id for phase in phases])
     phase_ids = set(counter_phases)
-    if counter_phases.most_common(1)[0][1] > 1:
+    if counter_phases and counter_phases.most_common(1)[0][1] > 1:
         duplicate_phase_ids = [pid for pid, count in counter_phases.most_common() if count > 1]
         raise ValueError(f'Flow contains duplicate phase IDs: {duplicate_phase_ids}.')
     counter_tasks = Counter([task.id for task in tasks])
-    if counter_tasks.most_common(1)[0][1] > 1:
+    if counter_tasks and counter_tasks.most_common(1)[0][1] > 1:
         duplicate_task_ids = [tid for tid, count in counter_tasks.most_common() if count > 1]
         raise ValueError(f'Flow contains duplicate task IDs: {duplicate_task_ids}.')
 

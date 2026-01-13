@@ -10,7 +10,6 @@ import dataclasses
 import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
 from typing import Any, TypeVar
 from unittest.mock import MagicMock
 
@@ -25,12 +24,15 @@ from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel
 from pydantic_core import to_json
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
+from keboola_mcp_server.tools.flow.tools import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ T = TypeVar('T')
 DEFAULT_CONCURRENCY = 10
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ServerState:
     config: Config
     runtime_info: ServerRuntimeInfo
@@ -52,6 +54,13 @@ class ServerState:
         server_state = ctx.request_context.lifespan_context
         if not isinstance(server_state, ServerState):
             raise ValueError('ServerState is not available in the context.')
+        return server_state
+
+    @classmethod
+    def from_starlette(cls, app: Starlette) -> 'ServerState':
+        server_state = app.state.server_state
+        if not isinstance(server_state, ServerState):
+            raise ValueError('ServerState is not available in the Starlette app.')
         return server_state
 
 
@@ -143,24 +152,11 @@ class SessionStateMiddleware(fmw.Middleware):
             #   returns the same object as ctx.request_context.request.
 
             if http_rq := get_http_request_or_none():
-                LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
-                config = config.replace_by(http_rq.headers)
-
-                if user := http_rq.scope.get('user'):
-                    LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
-                    assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
-                    assert isinstance(
-                        user.access_token, ProxyAccessToken
-                    ), f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
-                    config = dataclasses.replace(
-                        config,
-                        storage_token=user.access_token.sapi_token,
-                        bearer_token=user.access_token.delegate.token,
-                    )
+                config = self.apply_request_config(http_rq, config)
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
-            state = self._create_session_state(config, runtime_info)
+            state = self.create_session_state(config, runtime_info)
             ctx.session.state = state
 
         try:
@@ -189,8 +185,36 @@ class SessionStateMiddleware(fmw.Middleware):
         }
 
     @classmethod
-    def _create_session_state(cls, config: Config, runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
-        """Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state."""
+    def apply_request_config(cls, http_rq: Request, config: Config) -> Config:
+        LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
+        config = config.replace_by(http_rq.headers)
+
+        if user := http_rq.scope.get('user'):
+            LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
+            assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
+            assert isinstance(
+                user.access_token, ProxyAccessToken
+            ), f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            config = dataclasses.replace(
+                config,
+                storage_token=user.access_token.sapi_token,
+                bearer_token=user.access_token.delegate.token,
+            )
+
+        return config
+
+    @classmethod
+    def create_session_state(
+        cls, config: Config, runtime_info: ServerRuntimeInfo, readonly: bool | None = None
+    ) -> dict[str, Any]:
+        """
+        Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
+
+        :param config: The MCP server configuration.
+        :param runtime_info: The MCP server runtime information.
+        :param readonly: If True, the `KeboolaClient` will only use HTTP GET, HEAD operations.
+        :return: The session state dictionary containing the created client and workspace manager instances.
+        """
         LOG.info(f'Creating SessionState from config: {config}.')
 
         state: dict[str, Any] = {}
@@ -205,6 +229,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 bearer_token=config.bearer_token,
                 branch_id=config.branch_id,
                 headers=cls._get_headers(runtime_info),
+                readonly=readonly,
             )
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
@@ -237,22 +262,44 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     """
 
     @staticmethod
-    async def get_project_features(ctx: Context) -> set[str]:
+    async def get_token_info(ctx: Context) -> JsonDict:
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
         client = KeboolaClient.from_state(ctx.session.state)
-        token_info = await client.storage_client.verify_token()
-        return set(filter(None, token_info.get('owner', {}).get('features', [])))
+        return await client.storage_client.verify_token()
+
+    @staticmethod
+    def get_project_features(token_info: JsonDict) -> set[str]:
+        owner_data = token_info.get('owner', {})
+        if not isinstance(owner_data, dict):
+            return set()
+        return set(filter(None, owner_data.get('features', [])))
+
+    @staticmethod
+    def get_token_role(token_info: JsonDict) -> str:
+        admin_data = token_info.get('admin', {})
+        if isinstance(admin_data, dict):
+            role = admin_data.get('role')
+            if isinstance(role, str):
+                return role
+        return ''
 
     async def on_list_tools(
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
-        features = await self.get_project_features(context.fastmcp_context)
+        token_info = await self.get_token_info(context.fastmcp_context)
+        features = self.get_project_features(token_info)
+        token_role = self.get_token_role(token_info).lower()
 
         if 'hide-conditional-flows' in features:
             tools = [t for t in tools if t.name != 'create_conditional_flow']
         else:
             tools = [t for t in tools if t.name != 'create_flow']
+
+        if token_role == 'admin':
+            tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
+        else:
+            tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
 
         return tools
 
@@ -262,7 +309,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
-        features = await self.get_project_features(context.fastmcp_context)
+        token_info = await self.get_token_info(context.fastmcp_context)
+        features = self.get_project_features(token_info)
+        token_role = self.get_token_role(token_info).lower()
 
         if 'hide-conditional-flows' in features:
             if tool.name == 'create_conditional_flow':
@@ -277,6 +326,19 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     'The "create_flow" tool is not available in this project. '
                     'This project uses "Conditional Flows", '
                     'please use"create_conditional_flow" tool instead.'
+                )
+
+        if token_role == 'admin':
+            if tool.name == UPDATE_FLOW_TOOL_NAME:
+                raise ToolError(
+                    'The "update_flow" tool is not available for admin tokens. '
+                    f'Use "{MODIFY_FLOW_TOOL_NAME}" to manage schedules instead.'
+                )
+        else:
+            if tool.name == MODIFY_FLOW_TOOL_NAME:
+                raise ToolError(
+                    f'The "{MODIFY_FLOW_TOOL_NAME}" tool is not available for this token. '
+                    f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
                 )
 
         return await call_next(context)

@@ -99,6 +99,7 @@ class KeboolaClient:
         bearer_token: str | None = None,
         branch_id: str | None = None,
         headers: Mapping[str, Any] | None = None,
+        readonly: bool | None = None,
     ) -> None:
         """
         Initialize the client.
@@ -108,6 +109,7 @@ class KeboolaClient:
         :param bearer_token: The access token issued by Keboola OAuth server
         :param branch_id: Keboola branch ID
         :param headers: Additional headers for the requests sent by all clients
+        :param readonly: If True, the client will only use HTTP GET, HEAD operations.
         """
         self._token = storage_api_token
         self._bearer_token = bearer_token
@@ -129,23 +131,31 @@ class KeboolaClient:
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
         self._storage_client = AsyncStorageClient.create(
-            root_url=self._storage_api_url, token=bearer_or_sapi_token, branch_id=branch_id, headers=self._headers
+            root_url=self._storage_api_url,
+            token=bearer_or_sapi_token,
+            branch_id=branch_id,
+            headers=self._headers,
+            readonly=readonly,
         )
         self._jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers
+            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers, readonly=readonly
         )
         self._ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self._token, headers=self._headers
+            root_url=ai_service_api_url, token=self._token, headers=self._headers, readonly=readonly
         )
         self._data_science_client = DataScienceClient.create(
-            root_url=data_science_api_url, token=self.token, branch_id=branch_id, headers=self._headers
+            root_url=data_science_api_url,
+            token=self.token,
+            branch_id=branch_id,
+            headers=self._headers,
+            readonly=readonly,
         )
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(
             root_url=encryption_api_url, token=None, headers=self._headers
         )
         self._scheduler_client = SchedulerClient.create(
-            root_url=scheduler_api_url, token=self._token, headers=self._headers
+            root_url=scheduler_api_url, token=self._token, headers=self._headers, readonly=readonly
         )
 
     @property

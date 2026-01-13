@@ -38,16 +38,25 @@ class AIServiceClient(KeboolaServiceClient):
     """Async client for Keboola AI Service."""
 
     @classmethod
-    def create(cls, root_url: str, token: Optional[str], headers: dict[str, Any] | None = None) -> 'AIServiceClient':
+    def create(
+        cls,
+        root_url: str,
+        token: Optional[str],
+        headers: dict[str, Any] | None = None,
+        readonly: bool | None = None,
+    ) -> 'AIServiceClient':
         """
         Creates an AIServiceClient from a Keboola Storage API token.
 
         :param root_url: The root URL of the AI service API.
         :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :param headers: Additional headers for the requests.
+        :param readonly: If True, the client will only use HTTP GET, HEAD operations.
         :return: A new instance of AIServiceClient.
         """
-        return cls(raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers))
+        return cls(
+            raw_client=RawKeboolaClient(base_api_url=root_url, api_token=token, headers=headers, readonly=readonly)
+        )
 
     async def get_component_detail(self, component_id: str) -> JsonDict:
         """
