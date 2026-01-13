@@ -17,8 +17,6 @@ from keboola_mcp_server.tools.components import tools as components_tools
 from keboola_mcp_server.tools.components.model import ConfigParamUpdate, TfParamUpdate
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
 from keboola_mcp_server.tools.flow import tools as flow_tools
-from keboola_mcp_server.tools.flow.scheduler import list_schedules_for_config, validate_cron_tab
-from keboola_mcp_server.tools.flow.scheduler_model import ScheduleDetail, ScheduleRequest
 from keboola_mcp_server.tools.flow.tools import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -223,60 +221,6 @@ def _prepare_mutator(
     return mutator_fn, mutator_params
 
 
-def _apply_schedule_preview(
-    schedules: list[ScheduleDetail],
-    requests: list[ScheduleRequest],
-) -> list[ScheduleDetail]:
-    updated_schedules = [schedule.model_copy(deep=True) for schedule in schedules]
-    schedule_index = {schedule.schedule_id: idx for idx, schedule in enumerate(updated_schedules)}
-    new_index = 1
-
-    for request in requests:
-        validate_cron_tab(request.cron_tab)
-        if request.action == 'add':
-            if request.cron_tab is None:
-                raise ValueError('Cron tab is required when creating a new schedule')
-            schedule_id = f'preview-new-{new_index}'
-            new_index += 1
-            updated_schedules.append(
-                ScheduleDetail(
-                    schedule_id=schedule_id,
-                    timezone=request.timezone or 'UTC',
-                    state=request.state or 'enabled',
-                    cron_tab=request.cron_tab,
-                    target_executions=[],
-                )
-            )
-            schedule_index[schedule_id] = len(updated_schedules) - 1
-        elif request.action == 'update':
-            if not request.schedule_id:
-                raise ValueError('Schedule ID is required to update a schedule')
-            schedule_idx = schedule_index.get(request.schedule_id)
-            if schedule_idx is None:
-                raise ValueError(f'Schedule ID "{request.schedule_id}" not found')
-            schedule = updated_schedules[schedule_idx]
-            updates: dict[str, Any] = {}
-            if request.cron_tab is not None:
-                updates['cron_tab'] = request.cron_tab
-            if request.timezone is not None:
-                updates['timezone'] = request.timezone
-            if request.state is not None:
-                updates['state'] = request.state
-            if updates:
-                updated_schedules[schedule_idx] = schedule.model_copy(update=updates)
-        elif request.action == 'remove':
-            if not request.schedule_id:
-                raise ValueError('Schedule ID is required to remove a schedule')
-            if request.schedule_id not in schedule_index:
-                raise ValueError(f'Schedule ID "{request.schedule_id}" not found')
-            updated_schedules = [schedule for schedule in updated_schedules if schedule.schedule_id != request.schedule_id]
-            schedule_index = {schedule.schedule_id: idx for idx, schedule in enumerate(updated_schedules)}
-        else:
-            raise ValueError(f'Invalid action for schedulers: {request.action}.')
-
-    return updated_schedules
-
-
 async def preview_config_diff(rq: Request) -> Response:
     preview_rq = PreviewConfigDiffRq.model_validate(await rq.json())
 
@@ -328,23 +272,6 @@ async def preview_config_diff(rq: Request) -> Response:
             updated_config['description'] = description
         if change_description := preview_rq.tool_params.get('change_description'):
             updated_config['changeDescription'] = change_description
-        if preview_rq.tool_name in {UPDATE_FLOW_TOOL_NAME, MODIFY_FLOW_TOOL_NAME}:
-            schedule_payload = preview_rq.tool_params.get('schedules') or []
-            if schedule_payload:
-                type_adapter = TypeAdapter(list[ScheduleRequest])
-                schedule_requests = type_adapter.validate_python(schedule_payload)
-                flow_type = preview_rq.tool_params.get('flow_type')
-                configuration_id = preview_rq.tool_params.get('configuration_id')
-                if not flow_type or not configuration_id:
-                    raise ValueError('Flow type and configuration ID are required to preview schedules')
-                original_schedules = await list_schedules_for_config(
-                    client=client,
-                    component_id=flow_type,
-                    configuration_id=configuration_id,
-                )
-                updated_schedules = _apply_schedule_preview(original_schedules, schedule_requests)
-                original_config['schedules'] = [s.model_dump(by_alias=True) for s in original_schedules]
-                updated_config['schedules'] = [s.model_dump(by_alias=True) for s in updated_schedules]
 
         preview_resp = PreviewConfigDiffResp(
             coordinates=coordinates,
