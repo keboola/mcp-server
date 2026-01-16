@@ -32,7 +32,7 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
-from keboola_mcp_server.tools.flow.tools import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
+from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)

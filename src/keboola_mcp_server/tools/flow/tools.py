@@ -25,6 +25,9 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
+from keboola_mcp_server.tools.constants import (
+    FLOW_TOOLS_TAG,
+)
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowToolOutput,
@@ -48,10 +51,6 @@ from keboola_mcp_server.tools.project import get_project_info
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
 LOG = logging.getLogger(__name__)
-
-FLOW_TOOLS_TAG = 'flows'
-UPDATE_FLOW_TOOL_NAME = 'update_flow'
-MODIFY_FLOW_TOOL_NAME = 'modify_flow'
 
 
 def add_flow_tools(mcp: FastMCP) -> None:

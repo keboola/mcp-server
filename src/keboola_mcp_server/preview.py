@@ -16,8 +16,8 @@ from keboola_mcp_server.tools import data_apps as data_app_tools
 from keboola_mcp_server.tools.components import tools as components_tools
 from keboola_mcp_server.tools.components.model import ConfigParamUpdate, TfParamUpdate
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
+from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.tools.flow import tools as flow_tools
-from keboola_mcp_server.tools.flow.tools import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
