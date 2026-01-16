@@ -25,6 +25,9 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
+from keboola_mcp_server.tools.constants import (
+    FLOW_TOOLS_TAG,
+)
 from keboola_mcp_server.tools.flow.model import (
     Flow,
     FlowToolOutput,
@@ -32,6 +35,11 @@ from keboola_mcp_server.tools.flow.model import (
     GetFlowsListOutput,
     GetFlowsOutput,
 )
+from keboola_mcp_server.tools.flow.scheduler import (
+    fetch_schedules_for_flows,
+    process_schedule_request,
+)
+from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest
 from keboola_mcp_server.tools.flow.utils import (
     get_all_flows,
     get_flow_configuration,
@@ -43,8 +51,6 @@ from keboola_mcp_server.tools.project import get_project_info
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
 LOG = logging.getLogger(__name__)
-
-FLOW_TOOLS_TAG = 'flows'
 
 
 def add_flow_tools(mcp: FastMCP) -> None:
@@ -74,6 +80,13 @@ def add_flow_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_flow,
+            annotations=ToolAnnotations(destructiveHint=True),
+            tags={FLOW_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            modify_flow,
             annotations=ToolAnnotations(destructiveHint=True),
             tags={FLOW_TOOLS_TAG},
         )
@@ -259,7 +272,7 @@ async def create_conditional_flow(
 @tool_errors()
 async def update_flow(
     ctx: Context,
-    configuration_id: Annotated[str, Field(description='ID of the flow configuration to update.')],
+    configuration_id: Annotated[str, Field(description='ID of the flow configuration.')],
     flow_type: Annotated[
         FlowType,
         Field(
@@ -300,6 +313,79 @@ async def update_flow(
     WHEN TO USE:
     - Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
     """
+    return await modify_flow(
+        ctx=ctx,
+        configuration_id=configuration_id,
+        flow_type=flow_type,
+        change_description=change_description,
+        phases=phases,
+        tasks=tasks,
+        name=name,
+        description=description,
+        schedules=tuple(),
+    )
+
+
+@tool_errors()
+async def modify_flow(
+    ctx: Context,
+    configuration_id: Annotated[str, Field(description='ID of the flow configuration.')],
+    flow_type: Annotated[
+        FlowType,
+        Field(
+            description=(
+                'The type of flow to update. Use "keboola.flow" for conditional flows or '
+                '"keboola.orchestrator" for legacy flows. This MUST match the existing flow type.'
+            )
+        ),
+    ],
+    change_description: Annotated[str, Field(description='Description of changes made.')],
+    phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')] = None,
+    tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
+    name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
+    description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
+    schedules: Annotated[
+        Sequence[ScheduleRequest],
+        Field(
+            description=(
+                'Optional sequence of schedule requests to add/update/remove schedules for this flow. '
+                'Each request must have "action": "add"|"update"|"remove". '
+                'For add: include "cron_tab", "state" ("enabled"|"disabled"), "timezone". '
+                'For update/remove: include "schedule_id". '
+                'Example: [{"action": "add", "cron_tab": "0 8 * * 1-5", "state": "enabled", "timezone": "UTC"}]'
+            )
+        ),
+    ] = tuple(),
+) -> FlowToolOutput:
+    """
+    Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
+    manages schedules for this flow.
+
+    PRE-REQUISITES:
+    - Always use `get_flow_schema` (and `get_flow_examples`) for that flow type you want to update to follow the
+    required structure and see the examples if unknown
+    - Only pass `phases`/`tasks` when you want to replace them; omit to keep the existing ones unchanged
+
+    RULES (ALL FLOWS):
+    - `flow_type` must match the stored component id of the flow; do not switch flow types during update
+    - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
+    - Tasks must reference existing component configurations; keep dependencies consistent
+    - Always provide a clear `change_description` and surface any links returned in the response to the user
+    - A flow can have multiple schedules for automation runs. Add/update/remove schedules only if requested.
+    - When updating a flow or a schedule, specify only the fields you want to update, others will be kept unchanged.
+
+    CONDITIONAL FLOWS (`keboola.flow`):
+    - Maintain a single entry phase and ensure every phase is reachable; connect phases via `next` transitions
+    - No cycles or dangling phases; failed tasks already stop the flow, so only add retries/conditions if requested
+
+    LEGACY FLOWS (`keboola.orchestrator`):
+    - Phases run sequentially; tasks inside a phase run in parallel; `dependsOn` references other phase ids
+    - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
+
+    WHEN TO USE:
+    - Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules or
+    adjusting dependencies
+    """
 
     project_info = await get_project_info(ctx)
     if flow_type == CONDITIONAL_FLOW_COMPONENT_ID and not project_info.conditional_flows:
@@ -312,42 +398,64 @@ async def update_flow(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
-    _, flow_configuration = await update_flow_internal(
-        client=client,
-        configuration_id=configuration_id,
-        flow_type=flow_type,
-        change_description=change_description,
-        phases=phases,
-        tasks=tasks,
-        name=name,
-        description=description,
-    )
-    updated_raw_configuration = await client.storage_client.configuration_update(
-        component_id=flow_type,
-        configuration_id=configuration_id,
-        configuration=flow_configuration,
-        change_description=change_description,
-        updated_name=name,
-        updated_description=description,
-    )
-    api_config = CreateConfigurationAPIResponse.model_validate(updated_raw_configuration)
+    response_message = None
+    has_config_changes = bool(name) or bool(description) or phases is not None or tasks is not None
 
-    await set_cfg_update_metadata(
-        client,
-        component_id=flow_type,
-        configuration_id=api_config.id,
-        configuration_version=api_config.version,
-    )
+    if has_config_changes:
+        LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
+        _, flow_configuration = await update_flow_internal(
+            client=client,
+            configuration_id=configuration_id,
+            flow_type=flow_type,
+            change_description=change_description,
+            phases=phases,
+            tasks=tasks,
+            name=name,
+            description=description,
+        )
+        updated_raw_configuration = await client.storage_client.configuration_update(
+            component_id=flow_type,
+            configuration_id=configuration_id,
+            configuration=flow_configuration,
+            change_description=change_description,
+            updated_name=name,
+            updated_description=description,
+        )
+        api_config = CreateConfigurationAPIResponse.model_validate(updated_raw_configuration)
+        await set_cfg_update_metadata(
+            client,
+            component_id=flow_type,
+            configuration_id=api_config.id,
+            configuration_version=api_config.version,
+        )
+    else:
+        current_config = await client.storage_client.configuration_detail(
+            component_id=flow_type,
+            configuration_id=configuration_id,
+        )
+        api_config = CreateConfigurationAPIResponse.model_validate(current_config)
 
     links_manager = await ProjectLinksManager.from_client(client)
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
+    # Process schedule requests if provided
+    if schedules is not None and len(schedules) > 0:
+        responses = await process_schedule_request(
+            client=client,
+            target_component_id=flow_type,
+            target_configuration_id=configuration_id,
+            requests=schedules,
+        )
+        response_message = 'Schedules request processed successfully: \n' + '\n'.join(responses)
+        LOG.info(f'Successfully processed {len(schedules)} schedule request(s) for flow {configuration_id}')
+        flow_links.append(links_manager.get_scheduler_detail_link(configuration_id, flow_type))
+
     tool_response = FlowToolOutput(
         configuration_id=api_config.id,
         component_id=flow_type,
         description=api_config.description or '',
         version=api_config.version,
         timestamp=datetime.now(timezone.utc),
+        response=response_message,
         success=True,
         links=flow_links,
     )
@@ -425,12 +533,12 @@ async def get_flows(
         flows = unwrap_results(results, 'Failed to fetch one or more flows')
 
         LOG.info(f'Retrieved full details for {len(flows)} flows.')
+        flows = await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=flows)
         return GetFlowsDetailOutput(flows=flows)
 
     # Case 2: no flow_ids - list all flows as summaries
     flows = await get_all_flows(client)
     LOG.info(f'Retrieved {len(flows)} flows.')
-
     links = [
         links_manager.get_flows_dashboard_link(ORCHESTRATOR_COMPONENT_ID),
         links_manager.get_flows_dashboard_link(CONDITIONAL_FLOW_COMPONENT_ID),

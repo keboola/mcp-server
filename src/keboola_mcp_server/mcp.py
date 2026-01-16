@@ -28,9 +28,11 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
+from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -260,22 +262,44 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     """
 
     @staticmethod
-    async def get_project_features(ctx: Context) -> set[str]:
+    async def get_token_info(ctx: Context) -> JsonDict:
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
         client = KeboolaClient.from_state(ctx.session.state)
-        token_info = await client.storage_client.verify_token()
-        return set(filter(None, token_info.get('owner', {}).get('features', [])))
+        return await client.storage_client.verify_token()
+
+    @staticmethod
+    def get_project_features(token_info: JsonDict) -> set[str]:
+        owner_data = token_info.get('owner', {})
+        if not isinstance(owner_data, dict):
+            return set()
+        return set(filter(None, owner_data.get('features', [])))
+
+    @staticmethod
+    def get_token_role(token_info: JsonDict) -> str:
+        admin_data = token_info.get('admin', {})
+        if isinstance(admin_data, dict):
+            role = admin_data.get('role')
+            if isinstance(role, str):
+                return role
+        return ''
 
     async def on_list_tools(
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
-        features = await self.get_project_features(context.fastmcp_context)
+        token_info = await self.get_token_info(context.fastmcp_context)
+        features = self.get_project_features(token_info)
+        token_role = self.get_token_role(token_info).lower()
 
         if 'hide-conditional-flows' in features:
             tools = [t for t in tools if t.name != 'create_conditional_flow']
         else:
             tools = [t for t in tools if t.name != 'create_flow']
+
+        if token_role == 'admin':
+            tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
+        else:
+            tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
 
         return tools
 
@@ -285,7 +309,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
-        features = await self.get_project_features(context.fastmcp_context)
+        token_info = await self.get_token_info(context.fastmcp_context)
+        features = self.get_project_features(token_info)
+        token_role = self.get_token_role(token_info).lower()
 
         if 'hide-conditional-flows' in features:
             if tool.name == 'create_conditional_flow':
@@ -300,6 +326,19 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     'The "create_flow" tool is not available in this project. '
                     'This project uses "Conditional Flows", '
                     'please use"create_conditional_flow" tool instead.'
+                )
+
+        if token_role == 'admin':
+            if tool.name == UPDATE_FLOW_TOOL_NAME:
+                raise ToolError(
+                    'The "update_flow" tool is not available for admin tokens. '
+                    f'Use "{MODIFY_FLOW_TOOL_NAME}" to manage schedules instead.'
+                )
+        else:
+            if tool.name == MODIFY_FLOW_TOOL_NAME:
+                raise ToolError(
+                    f'The "{MODIFY_FLOW_TOOL_NAME}" tool is not available for this token. '
+                    f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
                 )
 
         return await call_next(context)
