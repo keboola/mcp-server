@@ -8,6 +8,7 @@ from integtests.conftest import ConfigDef
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.tools.flow.model import GetFlowsDetailOutput
 from keboola_mcp_server.tools.flow.scheduler import (
+    SCHEDULER_COMPONENT_ID,
     create_schedule,
     list_schedules_for_config,
     remove_schedule,
@@ -28,6 +29,12 @@ async def test_scheduler_lifecycle(mcp_context, configs, keboola_client) -> None
     :param configs: List of real configuration definitions.
     :param keboola_client: KeboolaClient instance.
     """
+    token_info = await keboola_client.storage_client.verify_token()
+    admin_data = token_info.get('admin', {})
+    token_role = admin_data.get('role') if isinstance(admin_data, dict) else None
+    if token_role != 'admin':
+        pytest.skip('Scheduler tooling requires an admin token, skipping test.')
+
     assert configs
     assert configs[0].configuration_id is not None
 
@@ -43,7 +50,7 @@ async def test_scheduler_lifecycle(mcp_context, configs, keboola_client) -> None
     schedule_description = 'Schedule created by integration test'
 
     created_schedule: ScheduleDetail | None = None
-
+    scheduler_id: str | None = None
     try:
         # Step 1: Create a schedule
         LOG.info(f'Creating schedule for {target_component_id}/{target_configuration_id}')
@@ -57,7 +64,7 @@ async def test_scheduler_lifecycle(mcp_context, configs, keboola_client) -> None
             schedule_name=schedule_name,
             schedule_description=schedule_description,
         )
-
+        scheduler_id = created_schedule.schedule_id
         assert isinstance(created_schedule, ScheduleDetail)
         assert created_schedule.schedule_id is not None
         assert created_schedule.cron_tab == initial_cron_tab
@@ -136,20 +143,14 @@ async def test_scheduler_lifecycle(mcp_context, configs, keboola_client) -> None
         assert not deleted_schedule_exists, 'Schedule should be deleted'
 
         LOG.info('Scheduler lifecycle test completed successfully')
-
-    except Exception as e:
-        LOG.error(f'Error during scheduler lifecycle test: {e}')
-        # Clean up if schedule was created
-        if created_schedule is not None:
+    finally:
+        if scheduler_id:
             try:
-                await remove_schedule(
-                    client=keboola_client,
-                    schedule_config_id=created_schedule.schedule_id,
-                )
-                LOG.info(f'Cleaned up schedule {created_schedule.schedule_id}')
-            except Exception as cleanup_error:
-                LOG.warning(f'Failed to clean up schedule: {cleanup_error}')
-        raise
+                await remove_schedule(client=keboola_client, schedule_config_id=scheduler_id)
+                await remove_schedule(client=keboola_client, schedule_config_id=scheduler_id)
+                await keboola_client.storage_client.configuration_delete(component_id=SCHEDULER_COMPONENT_ID, configuration_id=scheduler_id, skip_trash=True)
+            except Exception:
+                LOG.info('Schedule cleanup error; schedule already removed.')
 
 
 @pytest.mark.asyncio
@@ -159,6 +160,11 @@ async def test_scheduler_lifecycle_tooling(
     """
     Test scheduler lifecycle using MCP tools: create schedule for a flow, update, and remove it.
     """
+    token_info = await keboola_client.storage_client.verify_token()
+    token_role = (token_info.get('admin', {}) or {}).get('role')
+    if token_role != 'admin':
+        pytest.skip('Scheduler tooling requires an admin token, skipping test.')
+
     assert configs
     assert configs[0].configuration_id is not None
 
@@ -170,7 +176,7 @@ async def test_scheduler_lifecycle_tooling(
         initial_timezone = 'UTC'
 
         add_result = await mcp_client.call_tool(
-            name='update_flow',
+            name='modify_flow',
             arguments={
                 'configuration_id': flow_id,
                 'flow_type': ORCHESTRATOR_COMPONENT_ID,
@@ -192,20 +198,20 @@ async def test_scheduler_lifecycle_tooling(
         struct_call_result = cast(dict[str, Any], tool_call_result.structured_content)
         flow_detail_result = GetFlowsDetailOutput.model_validate(struct_call_result['result'])
         flow_detail = flow_detail_result.flows[0]
+        schedule = flow_detail.schedules.schedules[0]
+        schedule_id = schedule.schedule_id
 
         assert flow_detail.schedules is not None
         assert flow_detail.schedules.n_schedules == 1
-        schedule = flow_detail.schedules.schedules[0]
         assert schedule.cron_tab == initial_cron_tab
         assert schedule.timezone == initial_timezone
         assert schedule.state == 'enabled'
-        schedule_id = schedule.schedule_id
 
         updated_cron_tab = '0 12 * * *'
         updated_timezone = 'America/New_York'
 
         update_result = await mcp_client.call_tool(
-            name='update_flow',
+            name='modify_flow',
             arguments={
                 'configuration_id': flow_id,
                 'flow_type': ORCHESTRATOR_COMPONENT_ID,
@@ -238,7 +244,7 @@ async def test_scheduler_lifecycle_tooling(
         assert schedule.state == 'disabled'
 
         remove_result = await mcp_client.call_tool(
-            name='update_flow',
+            name='modify_flow',
             arguments={
                 'configuration_id': flow_id,
                 'flow_type': ORCHESTRATOR_COMPONENT_ID,
@@ -261,5 +267,7 @@ async def test_scheduler_lifecycle_tooling(
         if schedule_id:
             try:
                 await remove_schedule(client=keboola_client, schedule_config_id=schedule_id)
+                await remove_schedule(client=keboola_client, schedule_config_id=schedule_id)
+                await keboola_client.storage_client.configuration_delete(component_id=SCHEDULER_COMPONENT_ID, configuration_id=schedule_id, skip_trash=True)
             except Exception:
-                LOG.info('Schedule cleanup skipped; schedule already removed.')
+                LOG.info('Schedule cleanup error; schedule already removed.')
