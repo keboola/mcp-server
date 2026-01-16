@@ -25,6 +25,7 @@ description, and a list of created table names.
 - [get_flow_examples](#get_flow_examples): Retrieves examples of valid flow configurations.
 - [get_flow_schema](#get_flow_schema): Returns the JSON schema for the given flow type (markdown).
 - [get_flows](#get_flows): Lists flows or retrieves full details for specific flows.
+- [modify_flow](#modify_flow): Updates an existing flow configuration (either legacy `keboola.
 - [update_flow](#update_flow): Updates an existing flow configuration (either legacy `keboola.
 
 ### Jobs Tools
@@ -1998,8 +1999,8 @@ OPTIONS:
 ```
 
 ---
-<a name="update_flow"></a>
-## update_flow
+<a name="modify_flow"></a>
+## modify_flow
 **Annotations**: `destructive`
 
 **Tags**: `flows`
@@ -2161,6 +2162,98 @@ adjusting dependencies
         "$ref": "#/$defs/ScheduleRequest"
       },
       "type": "array"
+    }
+  },
+  "required": [
+    "configuration_id",
+    "flow_type",
+    "change_description"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="update_flow"></a>
+## update_flow
+**Annotations**: `destructive`
+
+**Tags**: `flows`
+
+**Description**:
+
+Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
+
+PRE-REQUISITES:
+- Always use `get_flow_schema` (and `get_flow_examples`) for that flow type you want to update to follow the
+required structure and see the examples if unknown
+- Only pass `phases`/`tasks` when you want to replace them; omit to keep the existing ones unchanged
+
+RULES (ALL FLOWS):
+- `flow_type` must match the stored component id of the flow; do not switch flow types during update
+- `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
+- Tasks must reference existing component configurations; keep dependencies consistent
+- Always provide a clear `change_description` and surface any links returned in the response to the user
+
+CONDITIONAL FLOWS (`keboola.flow`):
+- Maintain a single entry phase and ensure every phase is reachable; connect phases via `next` transitions
+- No cycles or dangling phases; failed tasks already stop the flow, so only add retries/conditions if requested
+
+LEGACY FLOWS (`keboola.orchestrator`):
+- Phases run sequentially; tasks inside a phase run in parallel; `dependsOn` references other phase ids
+- Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
+
+WHEN TO USE:
+- Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_id": {
+      "description": "ID of the flow configuration.",
+      "type": "string"
+    },
+    "flow_type": {
+      "description": "The type of flow to update. Use \"keboola.flow\" for conditional flows or \"keboola.orchestrator\" for legacy flows. This MUST match the existing flow type.",
+      "enum": [
+        "keboola.flow",
+        "keboola.orchestrator"
+      ],
+      "type": "string"
+    },
+    "change_description": {
+      "description": "Description of changes made.",
+      "type": "string"
+    },
+    "phases": {
+      "default": null,
+      "description": "Updated list of phase definitions.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "tasks": {
+      "default": null,
+      "description": "Updated list of task definitions.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "name": {
+      "default": "",
+      "description": "Updated flow name. Only updated if provided.",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "description": "Updated flow description. Only updated if provided.",
+      "type": "string"
     }
   },
   "required": [
