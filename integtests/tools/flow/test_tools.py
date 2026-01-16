@@ -19,6 +19,7 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import ToolError
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.tools.flow.model import ConditionalFlowPhase, Flow, GetFlowsDetailOutput, GetFlowsListOutput
 from keboola_mcp_server.tools.flow.tools import (
     FlowToolOutput,
@@ -416,9 +417,17 @@ async def test_update_flow(
     initial_flow_result = GetFlowsDetailOutput.model_validate(struct_call_result['result'])
     initial_flow = initial_flow_result.flows[0]
 
+    # Determine the tool name to use based on the token role, should not break if not using schedulers
+    token_info = await keboola_client.storage_client.verify_token()
+    token_role = (token_info.get('admin', {}) or {}).get('role')
+    if token_role == 'admin':
+        tool_name = MODIFY_FLOW_TOOL_NAME
+    else:
+        tool_name = UPDATE_FLOW_TOOL_NAME
+
     project_id = keboola_project.project_id
     tool_result = await mcp_client.call_tool(
-        name='update_flow',
+        name=tool_name,
         arguments={
             'configuration_id': flow_id,
             'flow_type': flow_type,
