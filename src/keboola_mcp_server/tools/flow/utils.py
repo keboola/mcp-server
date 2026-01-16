@@ -14,6 +14,7 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.clients.storage import APIFlowResponse, JsonDict
+from keboola_mcp_server.mcp import process_concurrently
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
     ConditionalFlowTask,
@@ -21,6 +22,7 @@ from keboola_mcp_server.tools.flow.model import (
     FlowSummary,
     FlowTask,
 )
+from keboola_mcp_server.tools.flow.scheduler import list_schedules_for_config
 
 LOG = logging.getLogger(__name__)
 
@@ -197,19 +199,6 @@ async def get_flows_by_ids(client: KeboolaClient, flow_ids: Sequence[str]) -> li
         try:
             api_flow, flow_type = await resolve_flow_by_id(client, flow_id)
             flow_summary = FlowSummary.from_api_response(api_config=api_flow, flow_component_id=flow_type)
-
-            # Fetch schedule count
-            try:
-                from keboola_mcp_server.tools.flow.scheduler import list_schedules_for_config
-
-                schedules = await list_schedules_for_config(
-                    client=client, component_id=flow_type, configuration_id=flow_id
-                )
-                flow_summary.schedules_count = len(schedules)
-            except Exception as e:
-                LOG.warning(f'Failed to fetch schedules for flow {flow_id}: {e}')
-                flow_summary.schedules_count = 0
-
             flows.append(flow_summary)
         except ValueError as e:
             LOG.warning(f'Flow {flow_id} not found: {e}')
@@ -219,7 +208,18 @@ async def get_flows_by_ids(client: KeboolaClient, flow_ids: Sequence[str]) -> li
 
 
 async def get_flows_by_type(client: KeboolaClient, flow_type: FlowType) -> list[FlowSummary]:
-    from keboola_mcp_server.tools.flow.scheduler import list_schedules_for_config
+
+    async def _fetch_schedules_for_flow_summaries(flow_summary: FlowSummary) -> FlowSummary:
+        # Fetch schedule count
+        try:
+            schedules = await list_schedules_for_config(
+                client=client, component_id=flow_summary.component_id, configuration_id=flow_summary.configuration_id
+            )
+            flow_summary.schedules_count = len(schedules)
+        except Exception as e:
+            LOG.warning(f'Failed to fetch schedules for flow {flow_summary.configuration_id}: {e}')
+            flow_summary.schedules_count = 0
+        return flow_summary
 
     raw_flows = await client.storage_client.configuration_list(component_id=flow_type)
     flows = []
@@ -229,18 +229,9 @@ async def get_flows_by_type(client: KeboolaClient, flow_type: FlowType) -> list[
             api_config=APIFlowResponse.model_validate(raw), flow_component_id=flow_type
         )
 
-        # Fetch schedule count
-        try:
-            schedules = await list_schedules_for_config(
-                client=client, component_id=flow_type, configuration_id=flow_summary.configuration_id
-            )
-            flow_summary.schedules_count = len(schedules)
-        except Exception as e:
-            LOG.warning(f'Failed to fetch schedules for flow {flow_summary.configuration_id}: {e}')
-            flow_summary.schedules_count = 0
-
         flows.append(flow_summary)
 
+    flows = await process_concurrently(flows, _fetch_schedules_for_flow_summaries)
     return flows
 
 

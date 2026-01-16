@@ -148,7 +148,9 @@ async def test_scheduler_lifecycle(mcp_context, configs, keboola_client) -> None
             try:
                 await remove_schedule(client=keboola_client, schedule_config_id=scheduler_id)
                 await remove_schedule(client=keboola_client, schedule_config_id=scheduler_id)
-                await keboola_client.storage_client.configuration_delete(component_id=SCHEDULER_COMPONENT_ID, configuration_id=scheduler_id, skip_trash=True)
+                await keboola_client.storage_client.configuration_delete(
+                    component_id=SCHEDULER_COMPONENT_ID, configuration_id=scheduler_id, skip_trash=True
+                )
             except Exception:
                 LOG.info('Schedule cleanup error; schedule already removed.')
 
@@ -268,6 +270,8 @@ async def test_scheduler_lifecycle_tooling(
             try:
                 await remove_schedule(client=keboola_client, schedule_config_id=schedule_id)
                 await remove_schedule(client=keboola_client, schedule_config_id=schedule_id)
-                await keboola_client.storage_client.configuration_delete(component_id=SCHEDULER_COMPONENT_ID, configuration_id=schedule_id, skip_trash=True)
+                await keboola_client.storage_client.configuration_delete(
+                    component_id=SCHEDULER_COMPONENT_ID, configuration_id=schedule_id, skip_trash=True
+                )
             except Exception:
                 LOG.info('Schedule cleanup error; schedule already removed.')
