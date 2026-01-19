@@ -36,6 +36,28 @@ _WELL_KNOWN_DOMAINS = [
     re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback
     re.compile(r'^global\.consent\.azure-apim\.net$', re.IGNORECASE),  # Azure APIM consent domain
 ]
+# Allowlist of custom URL schemes that are known to redirect to locally running apps.
+# These schemes require a custom handler registered in the browser/OS and do not resolve to remote servers.
+# SECURITY: Only add schemes here that are verified to be local-only handlers.
+# Do NOT add schemes that can resolve to arbitrary remote hosts (e.g., x-safari-https, x-web-search).
+_ALLOWED_CUSTOM_SCHEMES = [
+    'cursor',  # Cursor IDE
+    'vscode',  # Visual Studio Code
+    'vscode-insiders',  # VS Code Insiders
+    'windsurf',  # Windsurf IDE
+    'zed',  # Zed editor
+    'jetbrains',  # JetBrains IDEs
+    'idea',  # IntelliJ IDEA
+    'pycharm',  # PyCharm
+    'webstorm',  # WebStorm
+    'goland',  # GoLand
+    'clion',  # CLion
+    'rider',  # Rider
+    'rubymine',  # RubyMine
+    'phpstorm',  # PhpStorm
+    'datagrip',  # DataGrip
+    'fleet',  # JetBrains Fleet
+]
 _FORBIDDEN_SCHEMES = [
     # # Web/HTTP
     # 'http',
@@ -135,8 +157,12 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
             LOG.debug(f'[validate_redirect_uri] Unknown domain in redirect_uri: {redirect_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
 
-        # All other schemes are allowed (e.g. cursor://). They require a custom handler registered in a browser.
-        # They are used for redirecting a browser to a locally running app.
+        # For custom URL schemes (not http/https), only allow explicitly allowlisted schemes.
+        # These are local app handlers (e.g., cursor://, vscode://) that redirect to locally running apps.
+        # SECURITY: This prevents attacks using schemes like x-safari-https:// that can redirect to remote hosts.
+        if redirect_uri.scheme not in ['http', 'https'] and redirect_uri.scheme not in _ALLOWED_CUSTOM_SCHEMES:
+            LOG.debug(f'[validate_redirect_uri] Unknown custom scheme in redirect_uri: {redirect_uri}')
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
 
         LOG.debug(f'[validate_redirect_uri] Accepted redirect_uri: {redirect_uri}]')
         return redirect_uri

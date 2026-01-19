@@ -131,7 +131,20 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://global.consent.azure-apim.net'), True),
             (AnyUrl('https://global.consent.azure-apim.net/oauth/callback'), True),
             (AnyUrl('https://foo.global.consent.azure-apim.net/bar'), False),  # no subdomains allowed
+            # Allowed custom schemes (local app handlers)
             (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
+            (AnyUrl('vscode://keboola.extension/oauth/callback'), True),
+            (AnyUrl('vscode-insiders://keboola.extension/oauth/callback'), True),
+            (AnyUrl('windsurf://oauth/callback'), True),
+            (AnyUrl('zed://oauth/callback'), True),
+            (AnyUrl('jetbrains://oauth/callback'), True),
+            (AnyUrl('idea://oauth/callback'), True),
+            (AnyUrl('pycharm://oauth/callback'), True),
+            # Blocked custom schemes (can redirect to remote hosts - security vulnerability)
+            (AnyUrl('x-safari-https://exitr1.insighti.org/repo.git'), False),  # pentest attack vector
+            (AnyUrl('x-web-search://malicious.com/callback'), False),
+            (AnyUrl('unknown-scheme://attacker.com/callback'), False),
+            (AnyUrl('custom://evil.com/steal-token'), False),
             (None, False),
             (AnyUrl('https://foo.bar.com/callback'), False),
             (AnyUrl('ftp://foo.bar.com'), False),
