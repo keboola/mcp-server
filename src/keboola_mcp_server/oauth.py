@@ -141,7 +141,7 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
         # deep link routing bugs, or schemes that explicitly open arbitrary URLs.
         # Only http://localhost and https:// with allowlisted domains are permitted.
         if redirect_uri.scheme not in ['http', 'https']:
-            LOG.debug(f'[validate_redirect_uri] Custom scheme not allowed in redirect_uri: {redirect_uri}')
+            LOG.warning(f'[validate_redirect_uri] Custom scheme not allowed in redirect_uri: {redirect_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
 
         LOG.debug(f'[validate_redirect_uri] Accepted redirect_uri: {redirect_uri}]')
