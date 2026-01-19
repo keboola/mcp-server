@@ -36,28 +36,6 @@ _WELL_KNOWN_DOMAINS = [
     re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback
     re.compile(r'^global\.consent\.azure-apim\.net$', re.IGNORECASE),  # Azure APIM consent domain
 ]
-# Allowlist of custom URL schemes that are known to redirect to locally running apps.
-# These schemes require a custom handler registered in the browser/OS and do not resolve to remote servers.
-# SECURITY: Only add schemes here that are verified to be local-only handlers.
-# Do NOT add schemes that can resolve to arbitrary remote hosts (e.g., x-safari-https, x-web-search).
-_ALLOWED_CUSTOM_SCHEMES = [
-    'cursor',  # Cursor IDE
-    'vscode',  # Visual Studio Code
-    'vscode-insiders',  # VS Code Insiders
-    'windsurf',  # Windsurf IDE
-    'zed',  # Zed editor
-    'jetbrains',  # JetBrains IDEs
-    'idea',  # IntelliJ IDEA
-    'pycharm',  # PyCharm
-    'webstorm',  # WebStorm
-    'goland',  # GoLand
-    'clion',  # CLion
-    'rider',  # Rider
-    'rubymine',  # RubyMine
-    'phpstorm',  # PhpStorm
-    'datagrip',  # DataGrip
-    'fleet',  # JetBrains Fleet
-]
 _FORBIDDEN_SCHEMES = [
     # # Web/HTTP
     # 'http',
@@ -157,11 +135,13 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
             LOG.debug(f'[validate_redirect_uri] Unknown domain in redirect_uri: {redirect_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
 
-        # For custom URL schemes (not http/https), only allow explicitly allowlisted schemes.
-        # These are local app handlers (e.g., cursor://, vscode://) that redirect to locally running apps.
-        # SECURITY: This prevents attacks using schemes like x-safari-https:// that can redirect to remote hosts.
-        if redirect_uri.scheme not in ['http', 'https'] and redirect_uri.scheme not in _ALLOWED_CUSTOM_SCHEMES:
-            LOG.debug(f'[validate_redirect_uri] Unknown custom scheme in redirect_uri: {redirect_uri}')
+        # SECURITY: Block ALL custom URL schemes (not http/https).
+        # Custom schemes like cursor://, vscode://, steam://openurl/, x-safari-https://, etc. can potentially
+        # be exploited to redirect OAuth codes to attacker-controlled hosts via extension handlers,
+        # deep link routing bugs, or schemes that explicitly open arbitrary URLs.
+        # Only http://localhost and https:// with allowlisted domains are permitted.
+        if redirect_uri.scheme not in ['http', 'https']:
+            LOG.debug(f'[validate_redirect_uri] Custom scheme not allowed in redirect_uri: {redirect_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri}')
 
         LOG.debug(f'[validate_redirect_uri] Accepted redirect_uri: {redirect_uri}]')

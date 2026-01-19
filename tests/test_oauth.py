@@ -131,17 +131,20 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://global.consent.azure-apim.net'), True),
             (AnyUrl('https://global.consent.azure-apim.net/oauth/callback'), True),
             (AnyUrl('https://foo.global.consent.azure-apim.net/bar'), False),  # no subdomains allowed
-            # Allowed custom schemes (local app handlers)
-            (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
-            (AnyUrl('vscode://keboola.extension/oauth/callback'), True),
-            (AnyUrl('vscode-insiders://keboola.extension/oauth/callback'), True),
-            (AnyUrl('windsurf://oauth/callback'), True),
-            (AnyUrl('zed://oauth/callback'), True),
-            (AnyUrl('jetbrains://oauth/callback'), True),
-            (AnyUrl('idea://oauth/callback'), True),
-            (AnyUrl('pycharm://oauth/callback'), True),
-            # Blocked custom schemes (can redirect to remote hosts - security vulnerability)
+            # ALL custom schemes are blocked - they can potentially redirect to remote hosts via
+            # extension handlers, deep link routing bugs, or schemes that explicitly open arbitrary URLs.
+            # Only http://localhost and https:// with allowlisted domains are permitted.
+            (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), False),
+            (AnyUrl('vscode://keboola.extension/oauth/callback'), False),
+            (AnyUrl('vscode-insiders://keboola.extension/oauth/callback'), False),
+            (AnyUrl('windsurf://oauth/callback'), False),
+            (AnyUrl('zed://oauth/callback'), False),
+            (AnyUrl('jetbrains://oauth/callback'), False),
+            (AnyUrl('idea://oauth/callback'), False),
+            (AnyUrl('pycharm://oauth/callback'), False),
             (AnyUrl('x-safari-https://exitr1.insighti.org/repo.git'), False),  # pentest attack vector
+            (AnyUrl('steam://openurl/https://malicious.com'), False),  # steam openurl attack
+            (AnyUrl('webcal://malicious.com/calendar'), False),  # webcal attack
             (AnyUrl('x-web-search://malicious.com/callback'), False),
             (AnyUrl('unknown-scheme://attacker.com/callback'), False),
             (AnyUrl('custom://evil.com/steal-token'), False),
