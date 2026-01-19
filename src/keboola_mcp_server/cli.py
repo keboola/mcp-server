@@ -21,6 +21,11 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.connections import (
+    DEFAULT_MAX_CONNECTIONS,
+    ConnectionLimitMiddleware,
+    init_connection_metrics,
+)
 from keboola_mcp_server.mcp import ForwardSlashMiddleware
 from keboola_mcp_server.server import CustomRoutes, create_server
 
@@ -59,6 +64,33 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
     parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
+
+    # Scalability options for HTTP-based transports
+    # These help address the asyncio single-threaded event loop bottleneck
+    parser.add_argument(
+        '--workers',
+        type=int,
+        default=1,
+        metavar='INT',
+        help=(
+            'Number of uvicorn worker processes for HTTP transports. '
+            'Each worker runs its own event loop, helping distribute load across multiple CPU cores. '
+            'Recommended: 2-4 workers for production. Note: SSE connections are stateful, '
+            'so sticky sessions at the load balancer are required when using multiple workers.'
+        ),
+    )
+    parser.add_argument(
+        '--max-connections',
+        type=int,
+        default=DEFAULT_MAX_CONNECTIONS,
+        metavar='INT',
+        help=(
+            'Maximum number of concurrent connections per worker. '
+            'When exceeded, new connections receive HTTP 503 (Service Unavailable). '
+            'This prevents event loop overload and ensures existing connections remain responsive. '
+            f'Default: {DEFAULT_MAX_CONNECTIONS}.'
+        ),
+    )
 
     return parser.parse_args(args)
 
@@ -156,6 +188,14 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             from fastmcp.server.http import StarletteWithLifespan
             from starlette.applications import Starlette
 
+            # Initialize connection metrics for backpressure handling.
+            # This helps prevent event loop overload by rejecting new connections when at capacity.
+            # Each uvicorn worker process will have its own ConnectionMetrics instance.
+            connection_metrics = init_connection_metrics(max_connections=parsed_args.max_connections)
+            LOG.info(
+                f'Connection limit configured: max_connections={parsed_args.max_connections} per worker'
+            )
+
             mount_paths: dict[str, StarletteWithLifespan] = {}
             custom_routes: CustomRoutes | None = None
             transports: list[str] = []
@@ -202,8 +242,14 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                         await stack.enter_async_context(_inner_app.lifespan(_app))
                     yield
 
+            # Middleware order matters:
+            # 1. ConnectionLimitMiddleware - first to reject connections early if at capacity
+            # 2. ForwardSlashMiddleware - handles path normalization
             app = Starlette(
-                middleware=[Middleware(ForwardSlashMiddleware)],
+                middleware=[
+                    Middleware(ConnectionLimitMiddleware, connection_metrics=connection_metrics),
+                    Middleware(ForwardSlashMiddleware),
+                ],
                 lifespan=lifespan,
                 exception_handlers=_exception_handlers,
             )
@@ -217,19 +263,32 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 tool.name: tool.parameters for tool in (await mcp_server.get_tools()).values()
             }
 
-            config = uvicorn.Config(
+            # Configure uvicorn with workers for horizontal scaling within a single instance.
+            # Each worker runs its own asyncio event loop, helping distribute load across CPU cores.
+            # This addresses the primary bottleneck: Python's asyncio is single-threaded, so with
+            # many concurrent SSE connections, every request competes for the same event loop.
+            # Note: SSE connections are stateful, so sticky sessions at the load balancer are
+            # required when using multiple workers.
+            uvicorn_config = uvicorn.Config(
                 app,
                 host=parsed_args.host,
                 port=parsed_args.port,
                 log_config=log_config,
                 timeout_graceful_shutdown=0,
                 lifespan='on',
+                workers=parsed_args.workers,
             )
-            server = uvicorn.Server(config)
+            server = uvicorn.Server(uvicorn_config)
+
+            workers_info = f' with {parsed_args.workers} worker(s)' if parsed_args.workers > 1 else ''
             LOG.info(
                 f'Starting MCP server with {", ".join(transports)} transport{"s" if len(transports) > 1 else ""}'
-                f' on http://{parsed_args.host}:{parsed_args.port}/'
+                f'{workers_info} on http://{parsed_args.host}:{parsed_args.port}/'
             )
+            if parsed_args.workers > 1:
+                LOG.info(
+                    'Note: Multiple workers require sticky sessions at the load balancer for SSE connections.'
+                )
 
             await server.serve()
 
