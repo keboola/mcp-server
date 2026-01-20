@@ -561,9 +561,12 @@ def _update_existing_data_app_config(
         if packages
         else sorted(list[str](set[str](existing_config['parameters'].get('packages', []) + _DEFAULT_PACKAGES)))
     )
-    new_config['parameters']['dataApp']['secrets'] = (
-        existing_config['parameters']['dataApp'].get('secrets', {}) | secrets
-    )
+    existing_secrets = existing_config['parameters']['dataApp'].get('secrets', {})
+    merged_secrets = existing_secrets | secrets
+    for key in ('WORKSPACE_ID', 'BRANCH_ID'):
+        if key in existing_secrets:
+            merged_secrets[key] = existing_secrets[key]
+    new_config['parameters']['dataApp']['secrets'] = merged_secrets
     new_config['authorization'] = (
         existing_config['authorization']
         if authentication_type == 'default'

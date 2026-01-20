@@ -218,6 +218,38 @@ def test_update_existing_data_app_config():
     assert new['authorization'] == _get_authorization(True)
 
 
+def test_update_existing_data_app_config_preserves_workspace_branch_secrets():
+    existing = {
+        'parameters': {
+            'dataApp': {
+                'slug': 'old-slug',
+                'secrets': {
+                    'WORKSPACE_ID': 'wid-old',
+                    'BRANCH_ID': 'branch-old',
+                    'KEEP': 'x',
+                },
+            },
+            'script': ['old'],
+            'packages': ['numpy'],
+        },
+        'authorization': {},
+    }
+
+    new = _update_existing_data_app_config(
+        existing_config=existing,
+        name='New Name',
+        source_code='new-code',
+        packages=['pandas'],
+        authentication_type='basic-auth',
+        secrets={'WORKSPACE_ID': 'wid-new', 'BRANCH_ID': 'branch-new', 'NEW': 'y'},
+        sql_dialect='snowflake',
+    )
+
+    assert new['parameters']['dataApp']['secrets']['WORKSPACE_ID'] == 'wid-old'
+    assert new['parameters']['dataApp']['secrets']['BRANCH_ID'] == 'branch-old'
+    assert new['parameters']['dataApp']['secrets']['NEW'] == 'y'
+
+
 def test_get_secrets():
     secrets = _get_secrets(workspace_id='wid-1234', branch_id='123')
     assert secrets == {
