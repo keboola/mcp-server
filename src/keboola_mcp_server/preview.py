@@ -16,6 +16,7 @@ from keboola_mcp_server.tools import data_apps as data_app_tools
 from keboola_mcp_server.tools.components import tools as components_tools
 from keboola_mcp_server.tools.components.model import ConfigParamUpdate, TfParamUpdate
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
+from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.tools.flow import tools as flow_tools
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -104,7 +105,7 @@ async def _extract_coordinates(
             component_id=get_sql_transformation_id_from_sql_dialect(sql_dialect),
             configuration_id=tool_params.get('configuration_id'),
         )
-    elif tool_name == 'update_flow':
+    elif tool_name in {UPDATE_FLOW_TOOL_NAME, MODIFY_FLOW_TOOL_NAME}:
         return ConfigCoordinates(
             component_id=tool_params.get('flow_type'),
             configuration_id=tool_params.get('configuration_id'),
@@ -206,8 +207,9 @@ def _prepare_mutator(
             type_adapter = TypeAdapter(list[TfParamUpdate])
             mutator_params['parameter_updates'] = type_adapter.validate_python(parameter_updates)
 
-    elif preview_rq.tool_name == 'update_flow':
+    elif preview_rq.tool_name in {UPDATE_FLOW_TOOL_NAME, MODIFY_FLOW_TOOL_NAME}:
         mutator_fn = flow_tools.update_flow_internal
+        mutator_params.pop('schedules', None)
 
     elif preview_rq.tool_name == 'modify_data_app':
         mutator_fn = data_app_tools.modify_data_app_internal
