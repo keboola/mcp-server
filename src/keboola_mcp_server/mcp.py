@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, TypeVar
 from unittest.mock import MagicMock
 
+import httpx
 import toon_format
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
@@ -283,6 +284,32 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                 return role
         return ''
 
+    @staticmethod
+    async def is_main_branch(ctx: Context) -> bool:
+        """
+        Checks if the current branch is the main/production branch.
+        """
+        client = KeboolaClient.from_state(ctx.session.state)
+        branch_id = client.branch_id
+
+        # No branch ID means the main production branch
+        if branch_id is None:
+            return True
+
+        # 'default' and 'production' are aliases for the main/production branch
+        if branch_id.lower() in {'default', 'production'}:
+            return True
+
+        try:
+            detail = await client.storage_client.dev_branch_detail(branch_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                LOG.warning(f'Branch not found when validating data apps: {branch_id}')
+                return False
+            raise
+
+        return detail.get('isDefault') is True
+
     async def on_list_tools(
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
@@ -300,6 +327,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
         else:
             tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
+
+        if not await self.is_main_branch(context.fastmcp_context):
+            tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
 
         return tools
 
@@ -340,6 +370,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     f'The "{MODIFY_FLOW_TOOL_NAME}" tool is not available for this token. '
                     f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
                 )
+
+        if tool.name in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}:
+            if not await self.is_main_branch(context.fastmcp_context):
+                raise ToolError('Data apps are supported only in the main production branch.')
 
         return await call_next(context)
 
