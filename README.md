@@ -92,6 +92,34 @@ For detailed setup instructions and region-specific URLs, see our [Remote Server
 ### Using Development Branches
 You can work safely in [Keboola development branches](https://help.keboola.com/components/branches/) without affecting your production data. The remotely hosted MCP Servers respect the `KBC_BRANCH_ID` parameter and will scope all operations to the specified branch. You can find the development branch ID in the URL when navigating to the development branch in the UI, for example: `https://connection.us-east4.gcp.keboola.com/admin/projects/PROJECT_ID/branch/BRANCH_ID/dashboard`. The branch ID must be included in each request using the header `X-Branch-Id: <branchId>`, otherwise the MCP Server uses production branch as default. This should be managed by the AI client or the environment handling the server connection.
 
+### Tool Authorization and Access Control
+
+When using HTTP-based transports (Streamable HTTP, SSE), you can control which tools are available to clients using HTTP headers. This is useful for restricting AI agent capabilities or enforcing compliance policies.
+
+#### Authorization Headers
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| `X-Allowed-Tools` | Comma-separated list of allowed tools | `get_configs,get_buckets,query_data` |
+| `X-Disallowed-Tools` | Comma-separated list of tools to exclude | `create_config,run_job` |
+| `X-Read-Only-Mode` | Restrict to read-only tools only | `true`, `1`, or `yes` |
+
+#### Filter Behavior
+
+Filters apply in order: allowed → read-only intersection → disallowed exclusion. Empty headers = no restriction.
+
+#### Read-Only Tools
+
+15 tools are classified as read-only: `get_configs`, `get_components`, `get_config_examples`, `get_flows`, `get_flow_examples`, `get_flow_schema`, `get_buckets`, `get_tables`, `query_data`, `get_data_apps`, `get_jobs`, `search`, `find_component_id`, `get_project_info`, `docs_query`
+
+#### Example: Read-Only Access
+
+```
+X-Read-Only-Mode: true
+```
+
+For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control](https://developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control).
+
 ---
 
 ## Local MCP Server Setup (Custom or Dev Way)
