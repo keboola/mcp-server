@@ -62,23 +62,22 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         # Check X-Allowed-Tools header for explicit tool list
         if header_tools := http_rq.headers.get('X-Allowed-Tools'):
             allowed_tools = set(t.strip() for t in header_tools.split(',') if t.strip())
-            # If header is set but parses to empty set, treat as no restriction and log warning
+            # Empty set means no restriction (same as None)
             if not allowed_tools:
-                LOG.warning('Tool authorization: X-Allowed-Tools header is set but empty, treating as no restriction')
                 allowed_tools = None
             else:
-                LOG.debug(f'Tool authorization: X-Allowed-Tools header specifies {len(allowed_tools)} tools')
+                LOG.info(f'Tool authorization: X-Allowed-Tools={sorted(allowed_tools)}')
 
         # Check X-Read-Only-Mode header
         if http_rq.headers.get('X-Read-Only-Mode', '').lower() in ('true', '1', 'yes'):
             read_only_mode = True
-            LOG.debug('Tool authorization: X-Read-Only-Mode enabled')
+            LOG.info('Tool authorization: X-Read-Only-Mode=true')
 
         # Check X-Disallowed-Tools header for tools to exclude
         if header_disallowed := http_rq.headers.get('X-Disallowed-Tools'):
             disallowed_tools = set(t.strip() for t in header_disallowed.split(',') if t.strip())
             if disallowed_tools:
-                LOG.debug(f'Tool authorization: X-Disallowed-Tools header excludes {len(disallowed_tools)} tools')
+                LOG.info(f'Tool authorization: X-Disallowed-Tools={sorted(disallowed_tools)}')
 
         return allowed_tools, disallowed_tools, read_only_mode
 
@@ -134,7 +133,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         tool = await context.fastmcp_context.fastmcp.get_tool(tool_name)
 
         if not self._is_tool_authorized(tool, allowed_tools, disallowed_tools, read_only_mode):
-            LOG.warning(f'Tool authorization denied: {tool_name} not authorized')
+            LOG.info(f'Tool authorization denied: {tool_name} not authorized')
             raise ToolError(
                 f'Access denied: The tool "{tool_name}" is not authorized for this client. '
                 f'Contact your administrator to request access.'

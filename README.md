@@ -110,7 +110,7 @@ Filters apply in order: allowed → read-only intersection → disallowed exclus
 
 #### Read-Only Tools
 
-15 tools are classified as read-only: `get_configs`, `get_components`, `get_config_examples`, `get_flows`, `get_flow_examples`, `get_flow_schema`, `get_buckets`, `get_tables`, `query_data`, `get_data_apps`, `get_jobs`, `search`, `find_component_id`, `get_project_info`, `docs_query`
+Read-only tools are those annotated with `readOnlyHint=True`. These tools only retrieve information without making any changes to your Keboola project. For the current list of read-only tools, see the [TOOLS.md](TOOLS.md) file which is an auto-generated snapshot of the actual tool set.
 
 #### Example: Read-Only Access
 
