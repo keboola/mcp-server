@@ -325,6 +325,12 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(list[JsonDict], await self.get(endpoint='dev-branches'))
 
+    async def dev_branch_detail(self, branch_id: str | int) -> JsonDict:
+        """
+        Gets details for a development branch.
+        """
+        return cast(JsonDict, await self.get(endpoint=f'dev-branches/{branch_id}'))
+
     async def branch_metadata_get(self) -> list[JsonDict]:
         """
         Retrieves metadata for the current branch.
