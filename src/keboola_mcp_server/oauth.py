@@ -37,6 +37,7 @@ _ALLOWED_DOMAINS = {
         re.compile(r'^api\.devin\.ai$', re.IGNORECASE),  # devin.ai API domain
         re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback
         re.compile(r'^global\.consent\.azure-apim\.net$', re.IGNORECASE),  # Azure APIM consent domain
+        re.compile(r'^n8n-playground\.groupondev\.com$', re.IGNORECASE),
     ],
     'http': [_RE_LOCALHOST],
     'cursor': [re.compile(r'^(anysphere\.cursor-retrieval|anysphere\.cursor-mcp)$', re.IGNORECASE)],

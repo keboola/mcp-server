@@ -158,6 +158,10 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://global.consent.azure-apim.net'), True),
             (AnyUrl('https://global.consent.azure-apim.net/oauth/callback'), True),
             (AnyUrl('https://foo.global.consent.azure-apim.net/bar'), False),  # no subdomains allowed
+            # n8n (no subdomains allowed)
+            (AnyUrl('https://n8n-playground.groupondev.com'), True),
+            (AnyUrl('https://n8n-playground.groupondev.com/rest/oauth2-credential/callback'), True),
+            (AnyUrl('https://foo.n8n-playground.groupondev.com/bar'), False),  # no subdomains allowed
             # Unknown HTTPS domains should be rejected
             (AnyUrl('https://foo.bar.com/callback'), False),
             (AnyUrl('https://evil.com/callback'), False),
