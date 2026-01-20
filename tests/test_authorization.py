@@ -294,3 +294,173 @@ class TestToolAuthorizationMiddleware:
 
         # Empty header is treated as no restriction (same as no header)
         assert result == sample_tools
+
+    # Tests for X-Disallowed-Tools header
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_with_disallowed_tools_header(self, middleware, mock_middleware_context, sample_tools):
+        """When X-Disallowed-Tools header is present, those tools should be excluded."""
+        call_next = AsyncMock(return_value=sample_tools)
+
+        mock_request = MagicMock()
+        mock_request.headers = {'X-Disallowed-Tools': 'create_config, update_descriptions'}
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            result = await middleware.on_list_tools(mock_middleware_context, call_next)
+
+        assert len(result) == 3
+        result_names = {t.name for t in result}
+        assert result_names == {'get_configs', 'get_buckets', 'query_data'}
+        assert 'create_config' not in result_names
+        assert 'update_descriptions' not in result_names
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_with_allowed_and_disallowed_tools(
+        self, middleware, mock_middleware_context, sample_tools
+    ):
+        """When both X-Allowed-Tools and X-Disallowed-Tools are present, disallowed takes precedence."""
+        call_next = AsyncMock(return_value=sample_tools)
+
+        mock_request = MagicMock()
+        mock_request.headers = {
+            'X-Allowed-Tools': 'get_configs, create_config, get_buckets',
+            'X-Disallowed-Tools': 'create_config',
+        }
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            result = await middleware.on_list_tools(mock_middleware_context, call_next)
+
+        # create_config is in allowed but also in disallowed, so should be excluded
+        result_names = {t.name for t in result}
+        assert result_names == {'get_configs', 'get_buckets'}
+        assert 'create_config' not in result_names
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_with_read_only_and_disallowed_tools(
+        self, middleware, mock_middleware_context, sample_tools
+    ):
+        """When both X-Read-Only-Mode and X-Disallowed-Tools are present, both filters apply."""
+        call_next = AsyncMock(return_value=sample_tools)
+
+        mock_request = MagicMock()
+        mock_request.headers = {
+            'X-Read-Only-Mode': 'true',
+            'X-Disallowed-Tools': 'get_configs',
+        }
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            result = await middleware.on_list_tools(mock_middleware_context, call_next)
+
+        # Only read-only tools minus disallowed
+        result_names = {t.name for t in result}
+        assert result_names == {'get_buckets', 'query_data'}
+        assert 'get_configs' not in result_names  # Disallowed
+        assert 'create_config' not in result_names  # Not read-only
+        assert 'update_descriptions' not in result_names  # Not read-only
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_with_all_three_headers(self, middleware, mock_middleware_context, sample_tools):
+        """When all three headers are present, all filters apply in order."""
+        call_next = AsyncMock(return_value=sample_tools)
+
+        mock_request = MagicMock()
+        mock_request.headers = {
+            'X-Allowed-Tools': 'get_configs, get_buckets, query_data, create_config',
+            'X-Read-Only-Mode': 'true',
+            'X-Disallowed-Tools': 'query_data',
+        }
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            result = await middleware.on_list_tools(mock_middleware_context, call_next)
+
+        # Allowed & read-only - disallowed
+        result_names = {t.name for t in result}
+        assert result_names == {'get_configs', 'get_buckets'}
+        assert 'query_data' not in result_names  # Disallowed
+        assert 'create_config' not in result_names  # Not read-only
+
+    @pytest.mark.asyncio
+    async def test_on_call_tool_disallowed_tool(self, middleware, mock_middleware_context):
+        """When tool is in disallowed list, ToolError should be raised."""
+        mock_middleware_context.message = MagicMock()
+        mock_middleware_context.message.name = 'create_config'
+
+        mock_request = MagicMock()
+        mock_request.headers = {'X-Disallowed-Tools': 'create_config, update_descriptions'}
+
+        call_next = AsyncMock()
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            with pytest.raises(ToolError) as exc_info:
+                await middleware.on_call_tool(mock_middleware_context, call_next)
+
+        assert 'create_config' in str(exc_info.value)
+        assert 'not authorized' in str(exc_info.value)
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_call_tool_not_in_disallowed_list(self, middleware, mock_middleware_context):
+        """When tool is not in disallowed list, call should proceed."""
+        mock_middleware_context.message = MagicMock()
+        mock_middleware_context.message.name = 'get_configs'
+
+        mock_request = MagicMock()
+        mock_request.headers = {'X-Disallowed-Tools': 'create_config, update_descriptions'}
+
+        call_next = AsyncMock(return_value=MagicMock())
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            await middleware.on_call_tool(mock_middleware_context, call_next)
+
+        call_next.assert_called_once_with(mock_middleware_context)
+
+    @pytest.mark.asyncio
+    async def test_on_call_tool_in_allowed_but_also_disallowed(self, middleware, mock_middleware_context):
+        """When tool is in both allowed and disallowed lists, disallowed takes precedence."""
+        mock_middleware_context.message = MagicMock()
+        mock_middleware_context.message.name = 'get_configs'
+
+        mock_request = MagicMock()
+        mock_request.headers = {
+            'X-Allowed-Tools': 'get_configs, get_buckets',
+            'X-Disallowed-Tools': 'get_configs',
+        }
+
+        call_next = AsyncMock()
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            with pytest.raises(ToolError) as exc_info:
+                await middleware.on_call_tool(mock_middleware_context, call_next)
+
+        assert 'get_configs' in str(exc_info.value)
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_disallowed_tools_header_with_whitespace(self, middleware, mock_middleware_context, sample_tools):
+        """Test that whitespace in X-Disallowed-Tools header is handled correctly."""
+        call_next = AsyncMock(return_value=sample_tools)
+
+        mock_request = MagicMock()
+        mock_request.headers = {'X-Disallowed-Tools': '  create_config  ,  update_descriptions  ,  '}
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            result = await middleware.on_list_tools(mock_middleware_context, call_next)
+
+        assert len(result) == 3
+        result_names = {t.name for t in result}
+        assert 'create_config' not in result_names
+        assert 'update_descriptions' not in result_names
+
+    @pytest.mark.asyncio
+    async def test_empty_disallowed_tools_header(self, middleware, mock_middleware_context, sample_tools):
+        """Test that empty X-Disallowed-Tools header is treated as no exclusion."""
+        call_next = AsyncMock(return_value=sample_tools)
+
+        mock_request = MagicMock()
+        mock_request.headers = {'X-Disallowed-Tools': ''}
+
+        with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=mock_request):
+            result = await middleware.on_list_tools(mock_middleware_context, call_next)
+
+        # Empty header is treated as no exclusion (same as no header)
+        assert result == sample_tools

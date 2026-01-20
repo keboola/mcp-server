@@ -6,12 +6,12 @@ allowing administrators to restrict which tools specific clients (like Devin) ca
 
 Authorization is configured via HTTP headers:
 - X-Allowed-Tools: Comma-separated list of allowed tool names
+- X-Disallowed-Tools: Comma-separated list of tools to exclude (removed from allowed set)
 - X-Read-Only-Mode: Set to "true" for read-only access (only tools with readOnlyHint=True)
 """
 
 import logging
 
-from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.middleware import CallNext, MiddlewareContext
@@ -60,6 +60,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
 
     Authorization is configured via HTTP headers:
     - X-Allowed-Tools: Comma-separated list of allowed tool names
+    - X-Disallowed-Tools: Comma-separated list of tools to exclude (removed from allowed set)
     - X-Read-Only-Mode: Set to "true" for read-only access
 
     The middleware:
@@ -68,17 +69,20 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     """
 
     @staticmethod
-    def _get_allowed_tools(ctx: Context) -> set[str] | None:
+    def _get_authorization_config() -> tuple[set[str] | None, set[str]]:
         """
-        Determines the set of allowed tools for the current request based on HTTP headers.
+        Determines the authorization configuration for the current request based on HTTP headers.
 
-        Returns None if all tools are allowed (no restrictions).
+        Returns a tuple of (allowed_tools, disallowed_tools):
+        - allowed_tools: Set of allowed tool names, or None if all tools are allowed
+        - disallowed_tools: Set of tool names to exclude (always applied after allowed_tools)
         """
         http_rq = get_http_request_or_none()
         if not http_rq:
-            return None
+            return None, set()
 
         allowed_tools: set[str] | None = None
+        disallowed_tools: set[str] = set()
 
         # Check X-Allowed-Tools header for explicit tool list
         if header_tools := http_rq.headers.get('X-Allowed-Tools'):
@@ -94,7 +98,24 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
                 allowed_tools = set(READ_ONLY_TOOLS)
             LOG.debug(f'Tool authorization: X-Read-Only-Mode enabled, {len(allowed_tools)} tools allowed')
 
-        return allowed_tools
+        # Check X-Disallowed-Tools header for tools to exclude
+        if header_disallowed := http_rq.headers.get('X-Disallowed-Tools'):
+            disallowed_tools = set(t.strip() for t in header_disallowed.split(',') if t.strip())
+            if disallowed_tools:
+                LOG.debug(f'Tool authorization: X-Disallowed-Tools header excludes {len(disallowed_tools)} tools')
+
+        return allowed_tools, disallowed_tools
+
+    @staticmethod
+    def _is_tool_authorized(tool_name: str, allowed_tools: set[str] | None, disallowed_tools: set[str]) -> bool:
+        """Check if a tool is authorized based on allowed and disallowed sets."""
+        # First check if tool is in disallowed list
+        if tool_name in disallowed_tools:
+            return False
+        # Then check if tool is in allowed list (if specified)
+        if allowed_tools is not None and tool_name not in allowed_tools:
+            return False
+        return True
 
     async def on_list_tools(
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
@@ -102,11 +123,11 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         """Filters the tools list to only include authorized tools."""
         tools = await call_next(context)
 
-        allowed_tools = self._get_allowed_tools(context.fastmcp_context)
-        if allowed_tools is None:
+        allowed_tools, disallowed_tools = self._get_authorization_config()
+        if allowed_tools is None and not disallowed_tools:
             return tools
 
-        filtered_tools = [t for t in tools if t.name in allowed_tools]
+        filtered_tools = [t for t in tools if self._is_tool_authorized(t.name, allowed_tools, disallowed_tools)]
         LOG.debug(f'Tool authorization: filtered {len(tools)} tools to {len(filtered_tools)} allowed tools')
         return filtered_tools
 
@@ -117,10 +138,10 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     ) -> mt.CallToolResult:
         """Blocks calls to unauthorized tools."""
         tool_name = context.message.name
-        allowed_tools = self._get_allowed_tools(context.fastmcp_context)
+        allowed_tools, disallowed_tools = self._get_authorization_config()
 
-        if allowed_tools is not None and tool_name not in allowed_tools:
-            LOG.warning(f'Tool authorization denied: {tool_name} not in allowed tools')
+        if not self._is_tool_authorized(tool_name, allowed_tools, disallowed_tools):
+            LOG.warning(f'Tool authorization denied: {tool_name} not authorized')
             raise ToolError(
                 f'Access denied: The tool "{tool_name}" is not authorized for this client. '
                 f'Contact your administrator to request access.'
