@@ -8,6 +8,10 @@ Authorization is configured via HTTP headers:
 - X-Allowed-Tools: Comma-separated list of allowed tool names
 - X-Disallowed-Tools: Comma-separated list of tools to exclude (removed from allowed set)
 - X-Read-Only-Mode: Set to "true" for read-only access (only tools with readOnlyHint=True)
+
+Note: These headers are intended to be injected by infrastructure/proxy layers (e.g., API gateways,
+reverse proxies) rather than set directly by end clients. For direct client access control,
+use Storage API token permissions which provide the security layer.
 """
 
 import logging
@@ -22,37 +26,6 @@ from keboola_mcp_server.mcp import get_http_request_or_none
 
 LOG = logging.getLogger(__name__)
 
-# Read-only tools that don't modify data (tools with readOnlyHint=True annotation)
-# These are tools that only retrieve information without making any changes
-READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    {
-        # components
-        'get_configs',
-        'get_components',
-        'get_config_examples',
-        # flows
-        'get_flows',
-        'get_flow_examples',
-        'get_flow_schema',
-        # storage
-        'get_buckets',
-        'get_tables',
-        # sql
-        'query_data',
-        # data_apps
-        'get_data_apps',
-        # jobs
-        'get_jobs',
-        # search
-        'search',
-        'find_component_id',
-        # project
-        'get_project_info',
-        # docs
-        'docs_query',
-    }
-)
-
 
 class ToolAuthorizationMiddleware(fmw.Middleware):
     """
@@ -61,7 +34,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     Authorization is configured via HTTP headers:
     - X-Allowed-Tools: Comma-separated list of allowed tool names
     - X-Disallowed-Tools: Comma-separated list of tools to exclude (removed from allowed set)
-    - X-Read-Only-Mode: Set to "true" for read-only access
+    - X-Read-Only-Mode: Set to "true" for read-only access (filters to tools with readOnlyHint=True)
 
     The middleware:
     - Filters the tools list in on_list_tools() to hide unauthorized tools
@@ -69,34 +42,37 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     """
 
     @staticmethod
-    def _get_authorization_config() -> tuple[set[str] | None, set[str]]:
+    def _get_authorization_config() -> tuple[set[str] | None, set[str], bool]:
         """
         Determines the authorization configuration for the current request based on HTTP headers.
 
-        Returns a tuple of (allowed_tools, disallowed_tools):
+        Returns a tuple of (allowed_tools, disallowed_tools, read_only_mode):
         - allowed_tools: Set of allowed tool names, or None if all tools are allowed
         - disallowed_tools: Set of tool names to exclude (always applied after allowed_tools)
+        - read_only_mode: Whether X-Read-Only-Mode header is enabled
         """
         http_rq = get_http_request_or_none()
         if not http_rq:
-            return None, set()
+            return None, set(), False
 
         allowed_tools: set[str] | None = None
         disallowed_tools: set[str] = set()
+        read_only_mode = False
 
         # Check X-Allowed-Tools header for explicit tool list
         if header_tools := http_rq.headers.get('X-Allowed-Tools'):
             allowed_tools = set(t.strip() for t in header_tools.split(',') if t.strip())
-            LOG.debug(f'Tool authorization: X-Allowed-Tools header specifies {len(allowed_tools)} tools')
+            # If header is set but parses to empty set, treat as no restriction and log warning
+            if not allowed_tools:
+                LOG.warning('Tool authorization: X-Allowed-Tools header is set but empty, treating as no restriction')
+                allowed_tools = None
+            else:
+                LOG.debug(f'Tool authorization: X-Allowed-Tools header specifies {len(allowed_tools)} tools')
 
         # Check X-Read-Only-Mode header
         if http_rq.headers.get('X-Read-Only-Mode', '').lower() in ('true', '1', 'yes'):
-            if allowed_tools is not None:
-                # Intersect with read-only tools
-                allowed_tools &= READ_ONLY_TOOLS
-            else:
-                allowed_tools = set(READ_ONLY_TOOLS)
-            LOG.debug(f'Tool authorization: X-Read-Only-Mode enabled, {len(allowed_tools)} tools allowed')
+            read_only_mode = True
+            LOG.debug('Tool authorization: X-Read-Only-Mode enabled')
 
         # Check X-Disallowed-Tools header for tools to exclude
         if header_disallowed := http_rq.headers.get('X-Disallowed-Tools'):
@@ -104,16 +80,28 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
             if disallowed_tools:
                 LOG.debug(f'Tool authorization: X-Disallowed-Tools header excludes {len(disallowed_tools)} tools')
 
-        return allowed_tools, disallowed_tools
+        return allowed_tools, disallowed_tools, read_only_mode
 
     @staticmethod
-    def _is_tool_authorized(tool_name: str, allowed_tools: set[str] | None, disallowed_tools: set[str]) -> bool:
-        """Check if a tool is authorized based on allowed and disallowed sets."""
+    def _is_read_only_tool(tool: Tool) -> bool:
+        """Check if a tool has readOnlyHint=True annotation."""
+        if tool.annotations is None:
+            return False
+        return tool.annotations.readOnlyHint is True
+
+    @staticmethod
+    def _is_tool_authorized(
+        tool: Tool, allowed_tools: set[str] | None, disallowed_tools: set[str], read_only_mode: bool
+    ) -> bool:
+        """Check if a tool is authorized based on allowed/disallowed sets and read-only mode."""
         # First check if tool is in disallowed list
-        if tool_name in disallowed_tools:
+        if tool.name in disallowed_tools:
+            return False
+        # Check read-only mode - only allow tools with readOnlyHint=True
+        if read_only_mode and not ToolAuthorizationMiddleware._is_read_only_tool(tool):
             return False
         # Then check if tool is in allowed list (if specified)
-        if allowed_tools is not None and tool_name not in allowed_tools:
+        if allowed_tools is not None and tool.name not in allowed_tools:
             return False
         return True
 
@@ -123,11 +111,13 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         """Filters the tools list to only include authorized tools."""
         tools = await call_next(context)
 
-        allowed_tools, disallowed_tools = self._get_authorization_config()
-        if allowed_tools is None and not disallowed_tools:
+        allowed_tools, disallowed_tools, read_only_mode = self._get_authorization_config()
+        if allowed_tools is None and not disallowed_tools and not read_only_mode:
             return tools
 
-        filtered_tools = [t for t in tools if self._is_tool_authorized(t.name, allowed_tools, disallowed_tools)]
+        filtered_tools = [
+            t for t in tools if self._is_tool_authorized(t, allowed_tools, disallowed_tools, read_only_mode)
+        ]
         LOG.debug(f'Tool authorization: filtered {len(tools)} tools to {len(filtered_tools)} allowed tools')
         return filtered_tools
 
@@ -138,9 +128,12 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     ) -> mt.CallToolResult:
         """Blocks calls to unauthorized tools."""
         tool_name = context.message.name
-        allowed_tools, disallowed_tools = self._get_authorization_config()
+        allowed_tools, disallowed_tools, read_only_mode = self._get_authorization_config()
 
-        if not self._is_tool_authorized(tool_name, allowed_tools, disallowed_tools):
+        # For on_call_tool, we need to get the tool to check its annotations
+        tool = await context.fastmcp_context.fastmcp.get_tool(tool_name)
+
+        if not self._is_tool_authorized(tool, allowed_tools, disallowed_tools, read_only_mode):
             LOG.warning(f'Tool authorization denied: {tool_name} not authorized')
             raise ToolError(
                 f'Access denied: The tool "{tool_name}" is not authorized for this client. '

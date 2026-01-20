@@ -7,35 +7,22 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import MiddlewareContext
 from fastmcp.tools import Tool
+from mcp.types import ToolAnnotations
 
-from keboola_mcp_server.authorization import READ_ONLY_TOOLS, ToolAuthorizationMiddleware
+from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 
 
-class TestReadOnlyTools:
-    """Test that READ_ONLY_TOOLS contains the expected tools."""
-
-    def test_read_only_tools_contains_expected_tools(self):
-        expected_tools = {
-            'get_configs',
-            'get_components',
-            'get_config_examples',
-            'get_flows',
-            'get_flow_examples',
-            'get_flow_schema',
-            'get_buckets',
-            'get_tables',
-            'query_data',
-            'get_data_apps',
-            'get_jobs',
-            'search',
-            'find_component_id',
-            'get_project_info',
-            'docs_query',
-        }
-        assert READ_ONLY_TOOLS == expected_tools
-
-    def test_read_only_tools_is_frozenset(self):
-        assert isinstance(READ_ONLY_TOOLS, frozenset)
+def create_mock_tool(name: str, read_only: bool = False) -> MagicMock:
+    """Create a mock Tool with the given name and read-only annotation."""
+    tool = MagicMock(spec=Tool)
+    tool.name = name
+    if read_only:
+        tool.annotations = MagicMock(spec=ToolAnnotations)
+        tool.annotations.readOnlyHint = True
+    else:
+        tool.annotations = MagicMock(spec=ToolAnnotations)
+        tool.annotations.readOnlyHint = False
+    return tool
 
 
 class TestToolAuthorizationMiddleware:
@@ -58,12 +45,18 @@ class TestToolAuthorizationMiddleware:
 
     @pytest.fixture
     def sample_tools(self):
-        tools = []
-        for name in ['get_configs', 'create_config', 'get_buckets', 'update_descriptions', 'query_data']:
-            tool = MagicMock(spec=Tool)
-            tool.name = name
-            tools.append(tool)
-        return tools
+        """Create sample tools with proper read-only annotations.
+
+        Read-only tools (readOnlyHint=True): get_configs, get_buckets, query_data
+        Write tools (readOnlyHint=False): create_config, update_descriptions
+        """
+        return [
+            create_mock_tool('get_configs', read_only=True),
+            create_mock_tool('create_config', read_only=False),
+            create_mock_tool('get_buckets', read_only=True),
+            create_mock_tool('update_descriptions', read_only=False),
+            create_mock_tool('query_data', read_only=True),
+        ]
 
     @pytest.mark.asyncio
     async def test_on_list_tools_no_headers_returns_all_tools(self, middleware, mock_middleware_context, sample_tools):
@@ -168,6 +161,10 @@ class TestToolAuthorizationMiddleware:
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'create_config'
 
+        # Mock get_tool to return a tool with annotations
+        mock_tool = create_mock_tool('create_config', read_only=False)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
+
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=None):
@@ -180,6 +177,10 @@ class TestToolAuthorizationMiddleware:
         """When tool is in allowed list, call should proceed."""
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'get_configs'
+
+        # Mock get_tool to return a tool with annotations
+        mock_tool = create_mock_tool('get_configs', read_only=True)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
 
         mock_request = MagicMock()
         mock_request.headers = {'X-Allowed-Tools': 'get_configs, get_buckets'}
@@ -196,6 +197,10 @@ class TestToolAuthorizationMiddleware:
         """When tool is not in allowed list, ToolError should be raised."""
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'create_config'
+
+        # Mock get_tool to return a tool with annotations
+        mock_tool = create_mock_tool('create_config', read_only=False)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
 
         mock_request = MagicMock()
         mock_request.headers = {'X-Allowed-Tools': 'get_configs, get_buckets'}
@@ -216,6 +221,10 @@ class TestToolAuthorizationMiddleware:
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'get_configs'
 
+        # Mock get_tool to return a read-only tool
+        mock_tool = create_mock_tool('get_configs', read_only=True)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
+
         mock_request = MagicMock()
         mock_request.headers = {'X-Read-Only-Mode': 'true'}
 
@@ -231,6 +240,10 @@ class TestToolAuthorizationMiddleware:
         """When read-only mode is enabled, write tools should be denied."""
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'create_config'
+
+        # Mock get_tool to return a write tool (not read-only)
+        mock_tool = create_mock_tool('create_config', read_only=False)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
 
         mock_request = MagicMock()
         mock_request.headers = {'X-Read-Only-Mode': 'true'}
@@ -250,6 +263,10 @@ class TestToolAuthorizationMiddleware:
         """When both headers are present, tool must be in both allowed list AND read-only."""
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'create_config'
+
+        # Mock get_tool to return a write tool (not read-only)
+        mock_tool = create_mock_tool('create_config', read_only=False)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
 
         mock_request = MagicMock()
         mock_request.headers = {
@@ -385,6 +402,10 @@ class TestToolAuthorizationMiddleware:
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'create_config'
 
+        # Mock get_tool to return a tool with annotations
+        mock_tool = create_mock_tool('create_config', read_only=False)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
+
         mock_request = MagicMock()
         mock_request.headers = {'X-Disallowed-Tools': 'create_config, update_descriptions'}
 
@@ -404,6 +425,10 @@ class TestToolAuthorizationMiddleware:
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'get_configs'
 
+        # Mock get_tool to return a tool with annotations
+        mock_tool = create_mock_tool('get_configs', read_only=True)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
+
         mock_request = MagicMock()
         mock_request.headers = {'X-Disallowed-Tools': 'create_config, update_descriptions'}
 
@@ -419,6 +444,10 @@ class TestToolAuthorizationMiddleware:
         """When tool is in both allowed and disallowed lists, disallowed takes precedence."""
         mock_middleware_context.message = MagicMock()
         mock_middleware_context.message.name = 'get_configs'
+
+        # Mock get_tool to return a tool with annotations
+        mock_tool = create_mock_tool('get_configs', read_only=True)
+        mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
 
         mock_request = MagicMock()
         mock_request.headers = {
