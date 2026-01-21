@@ -42,30 +42,28 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     """
 
     @staticmethod
-    def _get_authorization_config() -> tuple[set[str] | None, set[str], bool]:
+    def _get_authorization_config() -> tuple[set[str] | None, set[str] | None, bool]:
         """
         Determines the authorization configuration for the current request based on HTTP headers.
 
         Returns a tuple of (allowed_tools, disallowed_tools, read_only_mode):
         - allowed_tools: Set of allowed tool names, or None if all tools are allowed
-        - disallowed_tools: Set of tool names to exclude (always applied after allowed_tools)
+        - disallowed_tools: Set of tool names to exclude, or None if no tools are explicitly disallowed
         - read_only_mode: Whether X-Read-Only-Mode header is enabled
         """
         http_rq = get_http_request_or_none()
         if not http_rq:
-            return None, set(), False
+            # No HTTP request means no authorization headers are present, so we do not apply any filters.
+            return None, None, False
 
         allowed_tools: set[str] | None = None
-        disallowed_tools: set[str] = set()
+        disallowed_tools: set[str] | None = None
         read_only_mode = False
 
         # Check X-Allowed-Tools header for explicit tool list
         if header_tools := http_rq.headers.get('X-Allowed-Tools'):
             allowed_tools = set(t.strip() for t in header_tools.split(',') if t.strip())
-            # Empty set means no restriction (same as None)
-            if not allowed_tools:
-                allowed_tools = None
-            else:
+            if allowed_tools:
                 LOG.info(f'Tool authorization: X-Allowed-Tools={sorted(allowed_tools)}')
 
         # Check X-Read-Only-Mode header
@@ -90,11 +88,11 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
 
     @staticmethod
     def _is_tool_authorized(
-        tool: Tool, allowed_tools: set[str] | None, disallowed_tools: set[str], read_only_mode: bool
+        tool: Tool, allowed_tools: set[str] | None, disallowed_tools: set[str] | None, read_only_mode: bool
     ) -> bool:
         """Check if a tool is authorized based on allowed/disallowed sets and read-only mode."""
-        # First check if tool is in disallowed list
-        if tool.name in disallowed_tools:
+        # First check if tool is in disallowed list (if any disallow filter is configured)
+        if disallowed_tools and tool.name in disallowed_tools:
             return False
         # Check read-only mode - only allow tools with readOnlyHint=True
         if read_only_mode and not ToolAuthorizationMiddleware._is_read_only_tool(tool):
