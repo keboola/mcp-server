@@ -13,5 +13,6 @@ from keboola_mcp_server.tools.flow.tools import (
     create_flow,
     get_flow_schema,
     get_flows,
+    modify_flow,
     update_flow,
 )

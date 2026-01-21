@@ -14,8 +14,8 @@ from mcp.types import ToolAnnotations
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
+from keboola_mcp_server.tools.constants import FLOW_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
-from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
 from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
 from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
 from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG

@@ -68,6 +68,7 @@ class SchedulerClient(KeboolaServiceClient):
         root_url: str,
         token: str | None,
         headers: dict[str, Any] | None = None,
+        readonly: bool | None = None,
     ) -> 'SchedulerClient':
         """
         Creates a SchedulerClient from a Keboola Storage API token.
@@ -75,6 +76,7 @@ class SchedulerClient(KeboolaServiceClient):
         :param root_url: The root URL of the Scheduler API
         :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :param headers: Additional headers for the requests
+        :param readonly: If True, the client will only use HTTP GET, HEAD operations.
         :return: A new instance of SchedulerClient
         """
         return cls(
@@ -82,6 +84,7 @@ class SchedulerClient(KeboolaServiceClient):
                 base_api_url=root_url,
                 api_token=token,
                 headers=headers,
+                readonly=readonly,
             )
         )
 

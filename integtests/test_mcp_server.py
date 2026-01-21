@@ -147,11 +147,7 @@ async def test_http_multiple_clients_with_different_headers(
 async def _assert_basic_setup(client: Client):
     tools = await client.list_tools()
     # the create_conditional_flow, create_flow and search tools may not be present based on the testing project
-    exclude = {
-        'create_conditional_flow',
-        'create_flow',
-        'search',
-    }
+    exclude = {'create_conditional_flow', 'create_flow', 'search', 'update_flow', 'modify_flow'}
     expected_tools = {
         'add_config_row',
         'create_conditional_flow',
@@ -174,6 +170,7 @@ async def _assert_basic_setup(client: Client):
         'get_project_info',
         'get_tables',
         'modify_data_app',
+        'modify_flow',
         'query_data',
         'run_job',
         'search',
