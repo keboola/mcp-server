@@ -2550,11 +2550,12 @@ USAGE EXAMPLES:
 **Description**:
 
 Searches for Keboola items (tables, buckets, configurations, transformations, flows, data-apps etc.) in the current
-project.
+project. Returns matching items with IDs and metadata.
 Supports two modes:
 - textual: match patterns against ID, name, display name, description (and table columns)
 - config-based: match patterns against stringified configuration payloads, optionally limited to specific scopes
-Returns matching items with IDs and metadata.
+which can be derived from the configuration schemas or objects.
+
 
 WHEN TO USE:
 - User asks to "find", "locate", or "search for" something by name or text
@@ -2646,6 +2647,7 @@ USAGE EXAMPLES:
           "data-app",
           "flow",
           "transformation",
+          "component",
           "configuration",
           "configuration-row",
           "workspace",

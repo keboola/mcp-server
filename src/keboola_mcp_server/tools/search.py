@@ -36,6 +36,7 @@ SearchItemType = Literal[
     'data-app',
     'flow',
     'transformation',
+    'component',
     'configuration',
     'configuration-row',
     'workspace',
@@ -48,6 +49,7 @@ SearchItemType = Literal[
 SearchComponentItemType = Literal[
     'flow',
     'transformation',
+    'component',
     'configuration',
     'configuration-row',
     'workspace',
@@ -60,6 +62,7 @@ SEARCH_ITEM_TYPE_TO_COMPONENT_TYPES: Mapping[SearchItemType, Sequence[str]] = {
     'transformation': ['transformation'],
     'configuration': ['extractor', 'writer', 'application'],
     'configuration-row': ['extractor', 'writer', 'application'],
+    'component': ['extractor', 'writer', 'application'],
     'workspace': ['other'],
 }
 
@@ -188,6 +191,11 @@ class SearchSpec(BaseModel):
                 )
             )
         return self
+
+    @model_validator(mode='after')
+    def _validate_item_types(self) -> 'SearchSpec':
+        if 'component' in self.item_types:
+            self.item_types = list(set(self.item_types + ['configuration', 'configuration-row']))
 
     @staticmethod
     def _stringify(value: JsonDict) -> str:
@@ -508,11 +516,12 @@ async def search(
 ) -> list[SearchHit]:
     """
     Searches for Keboola items (tables, buckets, configurations, transformations, flows, data-apps etc.) in the current
-    project.
+    project. Returns matching items with IDs and metadata.
     Supports two modes:
     - textual: match patterns against ID, name, display name, description (and table columns)
     - config-based: match patterns against stringified configuration payloads, optionally limited to specific scopes
-    Returns matching items with IDs and metadata.
+    which can be derived from the configuration schemas or objects.
+
 
     WHEN TO USE:
     - User asks to "find", "locate", or "search for" something by name or text
