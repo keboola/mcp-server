@@ -25,6 +25,7 @@ description, and a list of created table names.
 - [get_flow_examples](#get_flow_examples): Retrieves examples of valid flow configurations.
 - [get_flow_schema](#get_flow_schema): Returns the JSON schema for the given flow type (markdown).
 - [get_flows](#get_flows): Lists flows or retrieves full details for specific flows.
+- [modify_flow](#modify_flow): Updates an existing flow configuration (either legacy `keboola.
 - [update_flow](#update_flow): Updates an existing flow configuration (either legacy `keboola.
 
 ### Jobs Tools
@@ -54,10 +55,10 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, data-apps etc.
 
 ### Storage Tools
-- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including metadata-derived descriptions,
+- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
 - [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
-column definitions, metadata, and references to components that created or updated the table.
+column definitions, lineage references (created/updated by) and links.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
@@ -1999,6 +2000,181 @@ OPTIONS:
 ```
 
 ---
+<a name="modify_flow"></a>
+## modify_flow
+**Annotations**: `destructive`
+
+**Tags**: `flows`
+
+**Description**:
+
+Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
+manages schedules for this flow.
+
+PRE-REQUISITES:
+- Always use `get_flow_schema` (and `get_flow_examples`) for that flow type you want to update to follow the
+required structure and see the examples if unknown
+- Only pass `phases`/`tasks` when you want to replace them; omit to keep the existing ones unchanged
+
+RULES (ALL FLOWS):
+- `flow_type` must match the stored component id of the flow; do not switch flow types during update
+- `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
+- Tasks must reference existing component configurations; keep dependencies consistent
+- Always provide a clear `change_description` and surface any links returned in the response to the user
+- A flow can have multiple schedules for automation runs. Add/update/remove schedules only if requested.
+- When updating a flow or a schedule, specify only the fields you want to update, others will be kept unchanged.
+
+CONDITIONAL FLOWS (`keboola.flow`):
+- Maintain a single entry phase and ensure every phase is reachable; connect phases via `next` transitions
+- No cycles or dangling phases; failed tasks already stop the flow, so only add retries/conditions if requested
+
+LEGACY FLOWS (`keboola.orchestrator`):
+- Phases run sequentially; tasks inside a phase run in parallel; `dependsOn` references other phase ids
+- Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
+
+WHEN TO USE:
+- Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules or
+adjusting dependencies
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "ScheduleRequest": {
+      "properties": {
+        "action": {
+          "description": "Action to perform on the schedule.",
+          "enum": [
+            "add",
+            "update",
+            "remove"
+          ],
+          "type": "string"
+        },
+        "scheduleId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ID of the schedule configuration to update. None if creating a new schedule."
+        },
+        "timezone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Timezone for the schedule. Default UTC if None provided."
+        },
+        "cronTab": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cron expression for the schedule following the format: `* * * * *`.Where 1. minutes, 2. hours, 3. days of month, 4. months, 5. days of week. Example: `15,45 1,13 * * 0`"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "enabled",
+                "disabled"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Enable or disable the schedule."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "configuration_id": {
+      "description": "ID of the flow configuration.",
+      "type": "string"
+    },
+    "flow_type": {
+      "description": "The type of flow to update. Use \"keboola.flow\" for conditional flows or \"keboola.orchestrator\" for legacy flows. This MUST match the existing flow type.",
+      "enum": [
+        "keboola.flow",
+        "keboola.orchestrator"
+      ],
+      "type": "string"
+    },
+    "change_description": {
+      "description": "Description of changes made.",
+      "type": "string"
+    },
+    "phases": {
+      "default": null,
+      "description": "Updated list of phase definitions.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "tasks": {
+      "default": null,
+      "description": "Updated list of task definitions.",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "name": {
+      "default": "",
+      "description": "Updated flow name. Only updated if provided.",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "description": "Updated flow description. Only updated if provided.",
+      "type": "string"
+    },
+    "schedules": {
+      "default": [],
+      "description": "Optional sequence of schedule requests to add/update/remove schedules for this flow. Each request must have \"action\": \"add\"|\"update\"|\"remove\". For add: include \"cron_tab\", \"state\" (\"enabled\"|\"disabled\"), \"timezone\". For update/remove: include \"schedule_id\". Example: [{\"action\": \"add\", \"cron_tab\": \"0 8 * * 1-5\", \"state\": \"enabled\", \"timezone\": \"UTC\"}]",
+      "items": {
+        "$ref": "#/$defs/ScheduleRequest"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "configuration_id",
+    "flow_type",
+    "change_description"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="update_flow"></a>
 ## update_flow
 **Annotations**: `destructive`
@@ -2037,7 +2213,7 @@ WHEN TO USE:
 {
   "properties": {
     "configuration_id": {
-      "description": "ID of the flow configuration to update.",
+      "description": "ID of the flow configuration.",
       "type": "string"
     },
     "flow_type": {
@@ -2618,7 +2794,7 @@ DATA VALIDATION:
 
 **Description**:
 
-Lists buckets or retrieves full details of specific buckets, including metadata-derived descriptions,
+Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
 
 EXAMPLES:
@@ -2653,18 +2829,14 @@ EXAMPLES:
 **Description**:
 
 Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
-column definitions, metadata, and references to components that created or updated the table.
-Optionally, usage component reference for each table can be included when getting full details, acting like a
-lineage, including storage input mappings and output mappings that reference the table.
-
-IMPORTANT:
-- `include_usage` can be computationally demanding; use it only when clearly needed from context.
-  It is still more efficient than running separate usage searches with the current tools.
-- including usage
+column definitions, lineage references (created/updated by) and links.
 
 RETURNS:
 - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
 - With `table_ids`: Full details including columns, data types, and fully qualified database names.
+- With `table_ids` and `include_usage`: Full details plus components / transformations that use the tables
+  in their input / output mappings. Use only when explicitly needed or evident from context; usage calculation
+  might be demanding in big projects.
 
 COLUMN DATA TYPES:
 - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
@@ -2677,6 +2849,7 @@ COLUMN DATA TYPES:
 EXAMPLES:
 - `bucket_ids=["id1", ...]` → summary info of the tables in the buckets with the specified IDs
 - `table_ids=["id1", ...]` → detailed info of the tables specified by their IDs
+- `bucket_ids=[]` and `table_ids=[]` → empty list; you have to specify at least one filter
 
 
 **Input JSON Schema**:
@@ -2701,7 +2874,7 @@ EXAMPLES:
     },
     "include_usage": {
       "default": false,
-      "description": "Whether to include component / transformation usage information lineage.",
+      "description": "Show components / transformations where each table is used.",
       "type": "boolean"
     }
   },

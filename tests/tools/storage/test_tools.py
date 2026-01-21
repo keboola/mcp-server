@@ -15,7 +15,7 @@ from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_proper
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.tools.storage import (
+from keboola_mcp_server.tools.storage.tools import (
     BucketCounts,
     BucketDetail,
     DescriptionUpdate,

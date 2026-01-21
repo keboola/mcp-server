@@ -19,7 +19,7 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.utils import get_nested
-from keboola_mcp_server.tools.search.usage import (
+from keboola_mcp_server.tools.storage.usage import (
     ComponentUsageReference,
     find_id_usage,
     get_created_by,
@@ -272,7 +272,7 @@ class TableDetail(BaseModel):
         default=None, description='The source Keboola project of the linked table, None otherwise.'
     )
     used_by: list[ComponentUsageReference] | None = Field(
-        default=None, description='The components that use the table.'
+        default=None, description='The components / transformations that use the table.'
     )
     created_by: ComponentUsageReference | None = Field(
         default=None, description='Configuration that created the table (component/config ID and timestamp).'
@@ -284,6 +284,14 @@ class TableDetail(BaseModel):
     # these are internal fields not meant to be exposed to LLMs
     branch_id: str | None = Field(default=None, exclude=True, description='The ID of the branch the bucket belongs to.')
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_lineage_metadata(cls, values: dict[str, Any]) -> dict[str, Any]:
+        metadata = values.get('metadata', [])
+        values['created_by'] = get_created_by(metadata)
+        values['last_updated_by'] = get_last_updated_by(metadata)
+        return values
 
     @model_validator(mode='before')
     @classmethod
@@ -407,24 +415,14 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
         if not dev_bucket:
             dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
             if raw := await _get_bucket_detail(client.storage_client, dev_id):
-                metadata = raw.get('metadata', [])
-                created_by = get_created_by(metadata)
-                last_updated_by = get_last_updated_by(metadata)
-                bucket = BucketDetail.model_validate(
-                    raw | {'created_by': created_by, 'last_updated_by': last_updated_by}
-                )
+                bucket = BucketDetail.model_validate(raw)
                 if bucket.branch_id == client.branch_id:
                     dev_bucket = bucket
 
         if not prod_bucket and f'.c-{client.branch_id}-' in bucket_id:
             prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
             if raw := await _get_bucket_detail(client.storage_client, prod_id):
-                metadata = raw.get('metadata', [])
-                created_by = get_created_by(metadata)
-                last_updated_by = get_last_updated_by(metadata)
-                bucket = BucketDetail.model_validate(
-                    raw | {'created_by': created_by, 'last_updated_by': last_updated_by}
-                )
+                bucket = BucketDetail.model_validate(raw)
                 if not bucket.branch_id:
                     prod_bucket = bucket
 
@@ -464,7 +462,7 @@ async def get_buckets(
     ctx: Context, bucket_ids: Annotated[Sequence[str], Field(description='Filter by specific bucket IDs.')] = tuple()
 ) -> GetBucketsOutput:
     """
-    Lists buckets or retrieves full details of specific buckets, including metadata-derived descriptions,
+    Lists buckets or retrieves full details of specific buckets, including descriptions,
     lineage references (created/updated by), and links.
 
     EXAMPLES:
@@ -555,23 +553,19 @@ async def get_tables(
     table_ids: Annotated[Sequence[str], Field(description='Filter by specific table IDs.')] = tuple(),
     include_usage: Annotated[
         bool,
-        Field(description=('Whether to include component / transformation usage information lineage.')),
+        Field(description=('Show components / transformations where each table is used.')),
     ] = False,
 ) -> GetTablesOutput:
     """
     Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
-    column definitions, metadata, and references to components that created or updated the table.
-    Optionally, usage component reference for each table can be included when getting full details, acting like a
-    lineage, including storage input mappings and output mappings that reference the table.
-
-    IMPORTANT:
-    - `include_usage` can be computationally demanding; use it only when clearly needed from context.
-      It is still more efficient than running separate usage searches with the current tools.
-    - including usage
+    column definitions, lineage references (created/updated by) and links.
 
     RETURNS:
     - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
     - With `table_ids`: Full details including columns, data types, and fully qualified database names.
+    - With `table_ids` and `include_usage`: Full details plus components / transformations that use the tables
+      in their input / output mappings. Use only when explicitly needed or evident from context; usage calculation
+      might be demanding in big projects.
 
     COLUMN DATA TYPES:
     - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
@@ -584,6 +578,7 @@ async def get_tables(
     EXAMPLES:
     - `bucket_ids=["id1", ...]` → summary info of the tables in the buckets with the specified IDs
     - `table_ids=["id1", ...]` → detailed info of the tables specified by their IDs
+    - `bucket_ids=[]` and `table_ids=[]` → empty list; you have to specify at least one filter
 
     """
     client = KeboolaClient.from_state(ctx.session.state)
@@ -618,15 +613,22 @@ async def get_tables(
 
         # Add the component usage to the table detail
         if include_usage:
+            prod_ids_to_ids = {table.prod_id: table.id for table in tables_by_id.values()}
             usage_by_ids = await find_id_usage(
                 client,
-                table_ids,
+                list(prod_ids_to_ids.keys()),
                 ['configuration', 'configuration-row', 'transformation'],
                 ['storage.input', 'storage.output'],
             )
-            for usage_by_id in usage_by_ids:
-                if usage_by_id.target_id in tables_by_id and usage_by_id.usage_references:
-                    tables_by_id[usage_by_id.target_id].used_by = usage_by_id.usage_references
+            # Initialize the used_by list for all tables to avoid None values which could confuse the model.
+            for table_id in tables_by_id.keys():
+                tables_by_id[table_id].used_by = []
+            for id_usage in usage_by_ids:
+                table_id = prod_ids_to_ids.get(id_usage.target_id)
+                if table_id:
+                    tables_by_id[table_id].used_by = id_usage.usage_references
+                else:
+                    LOG.error(f'Target ID has changed during searching for usage: prod_id={id_usage.target_id}.')
 
     return GetTablesOutput(
         tables=list(tables_by_id.values()),
@@ -707,18 +709,12 @@ async def _get_table(
 
     table_name = cast(str, raw_table.get('name', ''))
     links = [links_manager.get_table_detail_link(bucket_id, table_name)]
-    table_metadata = raw_table.get('metadata', [])
-    created_by = get_created_by(table_metadata)
-    last_updated_by = get_last_updated_by(table_metadata)
-
     table = TableDetail.model_validate(
         raw_table
         | {
             'columns': column_info,
             'fully_qualified_name': db_table_info.fqn.identifier if db_table_info else None,
             'links': links,
-            'created_by': created_by,
-            'last_updated_by': last_updated_by,
         }
     )
     return table.model_copy(update={'id': table.prod_id, 'branch_id': None})

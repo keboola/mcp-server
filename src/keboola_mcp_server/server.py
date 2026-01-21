@@ -23,6 +23,7 @@ from keboola_mcp_server.mcp import (
     ToolsFilteringMiddleware,
 )
 from keboola_mcp_server.oauth import SimpleOAuthProvider
+from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
@@ -31,7 +32,7 @@ from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
 from keboola_mcp_server.tools.oauth import add_oauth_tools
 from keboola_mcp_server.tools.project import add_project_tools
-from keboola_mcp_server.tools.search.tools import add_search_tools
+from keboola_mcp_server.tools.search import add_search_tools
 from keboola_mcp_server.tools.sql import add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
 
@@ -150,6 +151,7 @@ class CustomRoutes:
         """
         mcp.custom_route('/', methods=['GET'])(self.get_info)
         mcp.custom_route('/health-check', methods=['GET'])(self.get_status)
+        mcp.custom_route('/preview/configuration', methods=['POST'])(preview_config_diff)
         if self.oauth_provider:
             mcp.custom_route('/oauth/callback', methods=['GET'])(self.oauth_callback_handler)
 
@@ -158,8 +160,10 @@ class CustomRoutes:
 
         :param app: Starlette app instance.
         """
+        app.state.server_state = self.server_state
         app.add_route('/', self.get_info, methods=['GET'])
         app.add_route('/health-check', self.get_status, methods=['GET'])
+        app.add_route('/preview/configuration', preview_config_diff, methods=['POST'])
         if self.oauth_provider:
             app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
             for route in self.oauth_provider.get_routes():

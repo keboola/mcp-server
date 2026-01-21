@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Mapping, Optional, Sequence
+from datetime import datetime
+from typing import Mapping, Optional, Sequence, cast
 
 from pydantic import BaseModel, Field
 
@@ -9,7 +10,12 @@ from keboola_mcp_server.clients.client import (
     get_metadata_property,
 )
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.tools.search.tools import SearchItemType, SearchSpec, _fetch_configurations
+from keboola_mcp_server.tools.search import (
+    SearchComponentItemType,
+    SearchItemType,
+    SearchSpec,
+    fetch_configurations,
+)
 
 
 class ComponentUsageReference(BaseModel):
@@ -17,7 +23,7 @@ class ComponentUsageReference(BaseModel):
     configuration_id: str = Field(description='The ID of the configuration.')
     configuration_row_id: str | None = Field(default=None, description='The ID of the configuration row.')
     configuration_name: str | None = Field(default=None, description='The name of the configuration.')
-    used_in: str | None = Field(default=None, description='The scope in which the target item was used.')
+    used_in: str | None = Field(default=None, description='The dot-separated path within the configuration.')
     timestamp: str | None = Field(default=None, description='The timestamp of the usage.')
 
 
@@ -29,8 +35,8 @@ class UsageById(BaseModel):
 async def find_id_usage(
     client: KeboolaClient,
     target_ids: Sequence[str],
-    item_types: Optional[Sequence[SearchItemType]] = None,
-    scopes: list[str] = list,
+    item_types: Optional[Sequence[SearchComponentItemType]] = None,
+    scopes: Sequence[str] = tuple(),
 ) -> list[UsageById]:
     """
     Finds component configurations (including rows) that reference any of the target IDs in the specified configuration
@@ -38,29 +44,29 @@ async def find_id_usage(
 
     :param client: The Keboola client to use.
     :param target_ids: The IDs to search for.
-    :param item_types: The item types to search for, if not provided, all item types are searched.
+    :param item_types: Item types to search for. Only component configuration item types are supported.
     :param scopes: Dot-separated keys to search in the configuration.
     :return: A list of UsageById objects.
     """
 
     spec = SearchSpec(
         patterns=target_ids,
-        item_types=item_types or tuple(),
+        # Casting SearchComponentItemType to SearchItemType since it is a subset of SearchItemType.
+        item_types=cast(Sequence[SearchItemType], item_types) or tuple(),
         search_scopes=scopes,
         pattern_mode='literal',
         search_type='config-based',
         return_all_matched_patterns=True,
-        stop_searching_after_first_value_match=False,
     )
 
-    search_hits = await _fetch_configurations(client, spec)
+    search_hits = await fetch_configurations(client, spec)
 
     # group usage references by pattern = target_id
     output: dict[str, list[ComponentUsageReference]] = defaultdict(list)
     for search_hit in search_hits:
         for match in search_hit._matches:
-            for pattern in match.patterns:
-                output[pattern].append(
+            for target_id in match.patterns:
+                output[target_id].append(
                     # TODO: Consider whether adding configuration description is useful, it could overload context.
                     ComponentUsageReference(
                         component_id=search_hit.component_id,
@@ -89,6 +95,8 @@ def get_created_by(
     component_id = get_metadata_property(metadata_items, MetadataField.CREATED_BY_COMPONENT_ID)
     configuration_id = get_metadata_property(metadata_items, MetadataField.CREATED_BY_CONFIGURATION_ID)
     configuration_row_id = get_metadata_property(metadata_items, MetadataField.CREATED_BY_CONFIGURATION_ROW_ID)
+    if component_id is None or configuration_id is None:
+        return None
     timestamp = _get_latest_metadata_timestamp(
         metadata_items,
         [
@@ -97,8 +105,6 @@ def get_created_by(
             MetadataField.CREATED_BY_CONFIGURATION_ROW_ID,
         ],
     )
-    if component_id is None or configuration_id is None or timestamp is None:
-        return None
     return ComponentUsageReference(
         component_id=str(component_id),
         configuration_id=str(configuration_id),
@@ -120,11 +126,16 @@ def get_last_updated_by(
     component_id = get_metadata_property(metadata_items, MetadataField.UPDATED_BY_COMPONENT_ID)
     configuration_id = get_metadata_property(metadata_items, MetadataField.UPDATED_BY_CONFIGURATION_ID)
     configuration_row_id = get_metadata_property(metadata_items, MetadataField.UPDATED_BY_CONFIGURATION_ROW_ID)
-    timestamp = _get_latest_metadata_timestamp(
-        metadata_items, [MetadataField.UPDATED_BY_COMPONENT_ID, MetadataField.UPDATED_BY_CONFIGURATION_ID]
-    )
-    if component_id is None or configuration_id is None or timestamp is None:
+    if component_id is None or configuration_id is None:
         return None
+    timestamp = _get_latest_metadata_timestamp(
+        metadata_items,
+        [
+            MetadataField.UPDATED_BY_COMPONENT_ID,
+            MetadataField.UPDATED_BY_CONFIGURATION_ID,
+            MetadataField.UPDATED_BY_CONFIGURATION_ROW_ID,
+        ],
+    )
     return ComponentUsageReference(
         component_id=str(component_id),
         configuration_id=str(configuration_id),
@@ -148,14 +159,21 @@ def _coerce_metadata_list(
 
 
 def _get_latest_metadata_timestamp(metadata: list[Mapping[str, JsonStruct]], keys: Sequence[str]) -> str | None:
-    latest = None
-    for key in keys:
-        for item in metadata:
-            if item.get('key') != key:
-                continue
-            timestamp = item.get('timestamp')
-            if timestamp is None:
-                continue
-            if latest is None or str(timestamp) > str(latest):
-                latest = str(timestamp)
-    return latest
+    latest_ts = None
+    latest_raw: str | None = None
+    for item in metadata:
+        if item.get('key') not in keys:
+            continue
+        raw_ts = item.get('timestamp')
+        if raw_ts is None:
+            continue
+        if not isinstance(raw_ts, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw_ts.replace('Z', '+00:00'))
+        except ValueError:
+            continue
+        if latest_ts is None or parsed > latest_ts:
+            latest_ts = parsed
+            latest_raw = raw_ts
+    return latest_raw

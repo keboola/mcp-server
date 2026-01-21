@@ -9,7 +9,7 @@ from fastmcp import Client, Context
 from integtests.conftest import BucketDef, TableDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.tools.storage import (
+from keboola_mcp_server.tools.storage.tools import (
     BucketDetail,
     DescriptionUpdate,
     GetBucketsOutput,

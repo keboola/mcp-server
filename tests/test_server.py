@@ -23,9 +23,9 @@ from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
 from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
 from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
 from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG
-from keboola_mcp_server.tools.search.tools import SEARCH_TOOLS_TAG
+from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
 from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
-from keboola_mcp_server.tools.storage import STORAGE_TOOLS_TAG
+from keboola_mcp_server.tools.storage.tools import STORAGE_TOOLS_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -57,6 +57,7 @@ class TestServer:
             'get_project_info',
             'get_tables',
             'modify_data_app',
+            'modify_flow',
             'query_data',
             'run_job',
             'search',
@@ -181,7 +182,10 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
 
     mocker.patch(
         'keboola_mcp_server.clients.client.AsyncStorageClient.verify_token',
-        return_value={'owner': {'features': ['global-search', 'waii-integration', 'hide-conditional-flows']}},
+        return_value={
+            'owner': {'features': ['global-search', 'waii-integration', 'hide-conditional-flows']},
+            'admin': {'role': 'admin'},
+        },
     )
 
     # create MCP server with the initial Config
@@ -193,8 +197,9 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     # running the server as stdio transport through client
     async with Client(mcp) as client:
         tools = await client.list_tools()
-        # plus the one we've added in this test minus one for filtering create_flow()
-        assert len(tools) == tools_count + 1 - 1
+        # plus the one we've added in this test minus two filtered tools
+        # create_flow() and update_flow()
+        assert len(tools) == tools_count + 1 - 2
         assert tools[-1].name == 'assessed-function'
         assert tools[-1].description == 'custom text'
         # check if the inputSchema contains the expected param description
@@ -202,6 +207,42 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
         result = await client.call_tool('assessed-function', {'param': 'value'})
         assert isinstance(result.content[0], TextContent)
         assert result.content[0].text == 'value'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('admin_info', 'expected_included', 'expected_excluded'),
+    [
+        ({'role': 'admin'}, 'modify_flow', 'update_flow'),
+        ({'role': None}, 'update_flow', 'modify_flow'),
+        ({}, 'update_flow', 'modify_flow'),
+    ],
+)
+async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_included, expected_excluded):
+
+    os_mock = mocker.patch('keboola_mcp_server.server.os')
+    os_mock.environ = {
+        'KBC_STORAGE_TOKEN': 'SAPI_1234',
+        'KBC_STORAGE_API_URL': 'http://connection.sapi',
+        'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
+    }
+
+    mocker.patch(
+        'keboola_mcp_server.clients.client.AsyncStorageClient.verify_token',
+        return_value={
+            'owner': {'features': ['global-search', 'waii-integration', 'hide-conditional-flows']},
+            'admin': admin_info,
+        },
+    )
+
+    mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    assert isinstance(mcp, FastMCP)
+
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        tool_names = {tool.name for tool in tools}
+        assert expected_included in tool_names
+        assert expected_excluded not in tool_names
 
 
 @pytest.mark.asyncio

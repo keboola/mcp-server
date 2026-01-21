@@ -6,7 +6,7 @@ import pytest
 from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
-from keboola_mcp_server.tools.storage import get_buckets, get_tables
+from keboola_mcp_server.tools.storage.tools import get_buckets, get_tables
 
 LOG = logging.getLogger(__name__)
 
