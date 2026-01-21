@@ -94,7 +94,7 @@ You can work safely in [Keboola development branches](https://help.keboola.com/c
 
 ### Tool Authorization and Access Control
 
-When using HTTP-based transports (Streamable HTTP, SSE), you can control which tools are available to clients using HTTP headers. This is useful for restricting AI agent capabilities or enforcing compliance policies.
+When using HTTP-based transports (Streamable HTTP), you can control which tools are available to clients using HTTP headers. This is useful for restricting AI agent capabilities or enforcing compliance policies.
 
 #### Authorization Headers
 
