@@ -23,9 +23,9 @@ from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
 from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
 from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
 from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG
-from keboola_mcp_server.tools.search.tools import SEARCH_TOOLS_TAG
+from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
 from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
-from keboola_mcp_server.tools.storage import STORAGE_TOOLS_TAG
+from keboola_mcp_server.tools.storage.tools import STORAGE_TOOLS_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
 
 

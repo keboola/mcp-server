@@ -16,7 +16,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.tools.storage import TableColumnInfo
+from keboola_mcp_server.tools.storage.tools import TableColumnInfo
 
 
 @pytest.fixture

@@ -45,6 +45,14 @@ SearchItemType = Literal[
     'state',
 ]
 
+SearchComponentItemType = Literal[
+    'flow',
+    'transformation',
+    'configuration',
+    'configuration-row',
+    'workspace',
+]
+
 ITEM_TYPE_TO_COMPONENT_TYPES: Mapping[ItemType, Sequence[str]] = {
     'flow': ['other'],
     'transformation': ['transformation'],
@@ -64,10 +72,6 @@ SEARCH_ITEM_TYPE_TO_COMPONENT_TYPES: Mapping[SearchItemType, Sequence[str]] = {
 }
 
 SearchType = Literal['textual', 'config-based']
-SearchConfigurationScope = Literal['any', 'parameters', 'storage', 'processors', 'authorization', 'tasks', 'phases']
-SearchConfigurationScopeResp = Literal[
-    'any', 'parameters', 'storage', 'storage.input', 'storage.output', 'processors', 'authorization', 'tasks', 'phases'
-]
 SearchPatternMode = Literal['regex', 'literal']
 
 
@@ -154,9 +158,7 @@ class SearchSpec(BaseModel):
     case_sensitive: bool = False
     search_scopes: Sequence[str] = tuple()
     search_type: SearchType = 'textual'
-    return_matched_patterns: bool = False
-    # If True, stops searching scopes after the first match is found.
-    stop_searching_after_first_value_match: bool = True
+    return_all_matched_patterns: bool = False
 
     _component_types: Sequence[str] = PrivateAttr(default_factory=tuple)
     _compiled_patterns: list[re.Pattern] = PrivateAttr(default_factory=list)
@@ -185,8 +187,7 @@ class SearchSpec(BaseModel):
                 set(
                     component_type
                     for item in self.item_types
-                    if item in SEARCH_ITEM_TYPE_TO_COMPONENT_TYPES
-                    for component_type in SEARCH_ITEM_TYPE_TO_COMPONENT_TYPES[item]
+                    for component_type in SEARCH_ITEM_TYPE_TO_COMPONENT_TYPES.get(item, [])
                 )
             )
         return self
@@ -194,7 +195,7 @@ class SearchSpec(BaseModel):
     @staticmethod
     def _stringify(value: JsonDict) -> str:
         try:
-            return json.dumps(value, sort_keys=True, default=str)
+            return json.dumps(value, sort_keys=True, default=str, ensure_ascii=False)
         except (TypeError, ValueError):
             return str(value)
 
@@ -211,55 +212,42 @@ class SearchSpec(BaseModel):
         if not haystack:
             return []
 
-        # Use a generator to find matching patterns
-        matches = (
-            pattern
-            for pattern, compiled in zip(self._clean_patterns, self._compiled_patterns)
-            if compiled.search(haystack)
-        )
+        matches: list[str] = []
+        for pattern, compiled in zip(self._clean_patterns, self._compiled_patterns):
+            if compiled.search(haystack):
+                matches.append(pattern)
+                if not self.return_all_matched_patterns:
+                    break
 
-        if self.return_matched_patterns:
-            return list(matches)
-
-        return [m] if (m := next(matches, None)) else []
+        return matches
 
     def match_configuration_scopes(self, configuration: JsonDict | None) -> list[PatternMatch]:
         """
         Checks configuration fields within specified scopes for pattern matches.
 
-        :param cfg: The search configuration.
         :param configuration: The configuration to match against the patterns.
         :return: A tuple of scopes and patterns that matched the configuration; empty patterns if no matches.
         """
         if self.search_scopes:
-            matches = (
-                PatternMatch(scope=scope, patterns=matched)
-                for scope in self.search_scopes
-                if (matched := self.match_patterns(get_nested(configuration, scope, default=None)))
-            )
-            if self.stop_searching_after_first_value_match:
-                matches = list(matches)
-            else:
-                matches = [m] if (m := next(matches, None)) else []
+            matches: list[PatternMatch] = []
+            for scope in self.search_scopes:
+                if matched := self.match_patterns(get_nested(configuration, scope, default=None)):
+                    matches.append(PatternMatch(scope=scope, patterns=matched))
+                    if not self.return_all_matched_patterns:
+                        break
             return matches
-        else:
-            return (
-                [PatternMatch(scope=None, patterns=self.match_patterns(configuration))]
-                if (matched := self.match_patterns(configuration))
-                else []
-            )
+
+        if matched := self.match_patterns(configuration):
+            return [PatternMatch(scope=None, patterns=matched)]
+        return []
 
     def match_texts(self, texts: Sequence[str]) -> list[PatternMatch]:
         matches: list[PatternMatch] = []
-
-        matches = (
-            PatternMatch(scope=text, patterns=matched) for text in texts if (matched := self.match_patterns(text))
-        )
-
-        if not self.stop_searching_after_first_value_match:
-            matches = list(matches)
-        else:
-            matches = [m] if (m := next(matches, None)) else []
+        for text in texts:
+            if matched := self.match_patterns(text):
+                matches.append(PatternMatch(scope=None, patterns=matched))
+                if not self.return_all_matched_patterns:
+                    break
         return matches
 
 
@@ -270,24 +258,24 @@ def _get_field_value(item: JsonDict, fields: Sequence[str]) -> Any | None:
     return None
 
 
-def _check_column_match(table: JsonDict, cfg: SearchSpec) -> bool:
+def _check_column_match(table: JsonDict, spec: SearchSpec) -> bool:
     """Check if any column name or description matches the patterns."""
     # Check column names (list of strings)
     for col_name in table.get('columns', []):
-        if cfg.match_patterns(col_name):
+        if spec.match_patterns(col_name):
             return True
 
     # Check column descriptions (from columnMetadata)
     column_metadata = table.get('columnMetadata', {})
     for col_meta in column_metadata.values():
         col_description = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
-        if cfg.match_patterns(col_description):
+        if spec.match_patterns(col_description):
             return True
 
     return False
 
 
-async def _fetch_buckets(client: KeboolaClient, cfg: SearchSpec) -> list[SearchHit]:
+async def _fetch_buckets(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
     """Fetches and filters buckets."""
     hits = []
     for bucket in await client.storage_client.bucket_list():
@@ -299,10 +287,10 @@ async def _fetch_buckets(client: KeboolaClient, cfg: SearchSpec) -> list[SearchH
         bucket_description = get_metadata_property(bucket.get('metadata', []), MetadataField.DESCRIPTION)
 
         if (
-            cfg.match_patterns(bucket_id)
-            or cfg.match_patterns(bucket_name)
-            or cfg.match_patterns(bucket_display_name)
-            or cfg.match_patterns(bucket_description)
+            spec.match_patterns(bucket_id)
+            or spec.match_patterns(bucket_name)
+            or spec.match_patterns(bucket_display_name)
+            or spec.match_patterns(bucket_description)
         ):
             hits.append(
                 SearchHit(
@@ -317,7 +305,7 @@ async def _fetch_buckets(client: KeboolaClient, cfg: SearchSpec) -> list[SearchH
     return hits
 
 
-async def _fetch_tables(client: KeboolaClient, cfg: SearchSpec) -> list[SearchHit]:
+async def _fetch_tables(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
     """Fetches and filters tables from all buckets."""
     hits = []
     for bucket in await client.storage_client.bucket_list():
@@ -334,11 +322,11 @@ async def _fetch_tables(client: KeboolaClient, cfg: SearchSpec) -> list[SearchHi
             table_description = get_metadata_property(table.get('metadata', []), MetadataField.DESCRIPTION)
 
             if (
-                cfg.match_patterns(table_id)
-                or cfg.match_patterns(table_name)
-                or cfg.match_patterns(table_display_name)
-                or cfg.match_patterns(table_description)
-                or _check_column_match(table, cfg)
+                spec.match_patterns(table_id)
+                or spec.match_patterns(table_name)
+                or spec.match_patterns(table_display_name)
+                or spec.match_patterns(table_description)
+                or _check_column_match(table, spec)
             ):
                 hits.append(
                     SearchHit(
@@ -353,7 +341,7 @@ async def _fetch_tables(client: KeboolaClient, cfg: SearchSpec) -> list[SearchHi
     return hits
 
 
-async def _fetch_configurations(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
+async def fetch_configurations(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
     """Fetches and filters configurations and configuration rows from all component types."""
     hits = []
 
@@ -535,7 +523,7 @@ async def search(
       → Returns configurations with matching patterns
     """
 
-    cfg = SearchSpec(
+    spec = SearchSpec(
         patterns=patterns,
         item_types=item_types,
         search_type='textual',
@@ -550,7 +538,7 @@ async def search(
         limit = DEFAULT_GLOBAL_SEARCH_LIMIT
 
     # Determine which types to fetch
-    types_to_fetch = set(cfg.item_types) if cfg.item_types else set()
+    types_to_fetch = set(spec.item_types) if spec.item_types else set()
 
     # Fetch items concurrently based on requested types
     tasks = []
@@ -558,13 +546,13 @@ async def search(
     client = KeboolaClient.from_state(ctx.session.state)
 
     if not types_to_fetch or 'bucket' in types_to_fetch:
-        tasks.append(_fetch_buckets(client, cfg))
+        tasks.append(_fetch_buckets(client, spec))
 
     if not types_to_fetch or 'table' in types_to_fetch:
-        tasks.append(_fetch_tables(client, cfg))
+        tasks.append(_fetch_tables(client, spec))
 
     if not types_to_fetch:
-        tasks.append(_fetch_configurations(client, cfg))
+        tasks.append(fetch_configurations(client, spec))
     elif types_to_fetch & {
         'configuration',
         'transformation',
@@ -572,7 +560,7 @@ async def search(
         'configuration-row',
         'workspace',
     }:
-        tasks.append(_fetch_configurations(client, cfg))
+        tasks.append(fetch_configurations(client, spec))
 
     # Gather all results
     results = await asyncio.gather(*tasks, return_exceptions=True)

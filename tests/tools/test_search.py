@@ -12,7 +12,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.search.tools import (
+from keboola_mcp_server.tools.search import (
     SearchHit,
     SearchSpec,
     SuggestedComponentOutput,
@@ -688,96 +688,167 @@ class TestSearch:
             assert result[0].table_id == expected_first_table_id
 
 
-class TestSearchSpec:
-    """Test cases for SearchSpec matching helpers."""
+@pytest.mark.parametrize(
+    ('spec_kwargs', 'texts', 'expected'),
+    [
+        (
+            {
+                'patterns': ['foo.*', 'fo.*', 'olala'],
+                'item_types': ('bucket',),
+                'pattern_mode': 'regex',
+                'return_all_matched_patterns': True,
+            },
+            ['foo.*', 'foobar', 'olala'],
+            [
+                {'scope': None, 'patterns': ['foo.*', 'fo.*']},
+                {'scope': None, 'patterns': ['foo.*', 'fo.*']},
+                {'scope': None, 'patterns': ['olala']},
+            ],
+        ),
+        (
+            {
+                'patterns': ['foo.*', 'fo.*', 'olala'],
+                'item_types': ('bucket',),
+                'pattern_mode': 'regex',
+                'return_all_matched_patterns': False,
+            },
+            ['foo.*', 'foobar', 'olala'],
+            [{'scope': None, 'patterns': ['foo.*']}],
+        ),
+        (
+            {
+                'patterns': ['nomatch'],
+                'item_types': ('bucket',),
+                'return_all_matched_patterns': True,
+            },
+            ['Foo baz', 'BAR qux'],
+            [],
+        ),
+        (
+            {
+                'patterns': ['bar'],
+                'item_types': ('bucket',),
+                'pattern_mode': 'literal',
+                'case_sensitive': False,
+                'return_all_matched_patterns': False,
+            },
+            ['Foo baz', 'BAR qux', 'BARAndSomething'],
+            [
+                {'scope': None, 'patterns': ['bar']},
+            ],
+        ),
+        (
+            {
+                'patterns': ['bar'],
+                'item_types': ('bucket',),
+                'pattern_mode': 'literal',
+                'case_sensitive': True,
+                'return_all_matched_patterns': False,
+            },
+            ['Foo baz', 'BAR qux', 'BARrAndSomething'],
+            [],
+        ),
+    ],
+    ids=[
+        'regex_all_matches',
+        'regex_any_match',
+        'regex_no_match',
+        'literal_match_case_insensitive',
+        'literal_match_case_sensitive',
+    ],
+)
+def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: list[dict]):
+    spec = SearchSpec(**spec_kwargs)
+    matches = spec.match_texts(texts)
+    assert [match.model_dump() for match in matches] == expected
 
-    def test_match_texts_with_literal_and_regex(self):
-        spec = SearchSpec(
-            patterns=['foo.*'],
-            item_types=('bucket',),
-            pattern_mode='literal',
-            return_matched_patterns=True,
-        )
-        matches = spec.match_texts(['foo.*', 'foobar'])
-        assert [match.model_dump() for match in matches] == [
-            {'scope': 'foo.*', 'patterns': ['foo.*']},
-        ]
 
-        regex_spec = SearchSpec(
-            patterns=['foo.*'],
-            item_types=('bucket',),
-            pattern_mode='regex',
-            return_matched_patterns=True,
-        )
-        regex_matches = regex_spec.match_texts(['foo.*', 'foobar'])
-        assert [match.model_dump() for match in regex_matches] == [
-            {'scope': 'foo.*', 'patterns': ['foo.*']},
-        ]
-
-    def test_match_texts_case_sensitivity_and_stop(self):
-        spec = SearchSpec(
-            patterns=['foo', 'bar'],
-            item_types=('bucket',),
-            return_matched_patterns=True,
-            stop_searching_after_first_value_match=True,
-        )
-        matches = spec.match_texts(['Foo baz', 'BAR qux'])
-        assert [match.model_dump() for match in matches] == [
-            {'scope': 'Foo baz', 'patterns': ['foo']},
-        ]
-
-        all_spec = SearchSpec(
-            patterns=['foo', 'bar'],
-            item_types=('bucket',),
-            return_matched_patterns=True,
-            stop_searching_after_first_value_match=False,
-        )
-        all_matches = all_spec.match_texts(['Foo baz', 'BAR qux'])
-        assert [match.model_dump() for match in all_matches] == [
-            {'scope': 'Foo baz', 'patterns': ['foo']},
-            {'scope': 'BAR qux', 'patterns': ['bar']},
-        ]
-
-    def test_match_configuration_scopes(self):
-        configuration = {
-            'parameters': {'query': 'alpha'},
-            'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
-        }
-
-        spec = SearchSpec(
-            patterns=['alpha', 'beta'],
-            item_types=('bucket',),
-            search_scopes=('parameters', 'storage.input'),
-            return_matched_patterns=True,
-            stop_searching_after_first_value_match=True,
-        )
-        matches = spec.match_configuration_scopes(configuration)
-        assert [match.model_dump() for match in matches] == [
-            {'scope': 'parameters', 'patterns': ['alpha']},
-            {'scope': 'storage.input', 'patterns': ['beta']},
-        ]
-
-        first_only_spec = SearchSpec(
-            patterns=['alpha', 'beta'],
-            item_types=('bucket',),
-            search_scopes=('parameters', 'storage.input'),
-            return_matched_patterns=True,
-            stop_searching_after_first_value_match=False,
-        )
-        first_only_matches = first_only_spec.match_configuration_scopes(configuration)
-        assert [match.model_dump() for match in first_only_matches] == [
-            {'scope': 'parameters', 'patterns': ['alpha']},
-        ]
-
-        any_scope_spec = SearchSpec(
-            patterns=['gamma'],
-            item_types=('bucket',),
-            return_matched_patterns=True,
-        )
-        any_scope_matches = any_scope_spec.match_configuration_scopes(configuration)
-        assert [match.model_dump() for match in any_scope_matches] == [
-            {'scope': None, 'patterns': ['gamma']},
-        ]
+@pytest.mark.parametrize(
+    ('spec_kwargs', 'configuration', 'expected'),
+    [
+        (
+            {
+                'patterns': ['alpha', 'beta'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'storage.input'),
+                'return_all_matched_patterns': True,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [
+                {'scope': 'parameters', 'patterns': ['alpha']},
+                {'scope': 'storage.input', 'patterns': ['beta']},
+            ],
+        ),
+        (
+            {
+                'patterns': ['alpha', 'beta'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'storage.input'),
+                'return_all_matched_patterns': True,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}, {'source': 'alpha'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [
+                {'scope': 'parameters', 'patterns': ['alpha']},
+                {'scope': 'storage.input', 'patterns': ['alpha', 'beta']},
+            ],
+        ),
+        (
+            {
+                'patterns': ['gamma'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'storage.input'),
+                'return_all_matched_patterns': True,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [],
+        ),
+        (
+            {
+                'patterns': ['gamma'],
+                'item_types': ('configuration',),
+                'return_all_matched_patterns': True,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [{'scope': None, 'patterns': ['gamma']}],
+        ),
+        (
+            {
+                'patterns': ['alpha', 'beta'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'storage.input'),
+                'return_all_matched_patterns': False,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [{'scope': 'parameters', 'patterns': ['alpha']}],
+        ),
+    ],
+    ids=[
+        'all_patterns_many_scopes',
+        'two_patterns_in_one_scope',
+        'no_patterns_in_scope',
+        'all_patterns_no_scope',
+        'any_patterns_return_first_match',
+    ],
+)
+def test_match_configuration_scopes(spec_kwargs: dict[str, Any], configuration: dict[str, Any], expected: list[dict]):
+    spec = SearchSpec(**spec_kwargs)
+    matches = spec.match_configuration_scopes(configuration)
+    assert [match.model_dump() for match in matches] == expected
 
 
 @pytest.mark.asyncio
