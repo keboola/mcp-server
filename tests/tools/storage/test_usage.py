@@ -115,7 +115,11 @@ async def test_find_id_usage_groups_matches(
         ),
         (
             [
-                {'key': MetadataField.CREATED_BY_CONFIGURATION_ID, 'value': 'cfg-1', 'timestamp': '2024-01-02T00:00:00Z'},
+                {
+                    'key': MetadataField.CREATED_BY_CONFIGURATION_ID,
+                    'value': 'cfg-1',
+                    'timestamp': '2024-01-02T00:00:00Z',
+                },
             ],
             None,
         ),
@@ -124,7 +128,7 @@ async def test_find_id_usage_groups_matches(
 )
 def test_get_created_by(metadata: list[Mapping[str, Any]], expected: dict[str, Any] | None) -> None:
     result = storage_usage.get_created_by(metadata)
-    assert result.model_dump() if result else None == expected
+    assert result.model_dump() if result else None is expected
 
 
 @pytest.mark.parametrize(
@@ -180,7 +184,11 @@ def test_get_created_by(metadata: list[Mapping[str, Any]], expected: dict[str, A
         ),
         (
             [
-                {'key': MetadataField.UPDATED_BY_CONFIGURATION_ID, 'value': 'cfg-1', 'timestamp': '2024-01-02T00:00:00Z'},
+                {
+                    'key': MetadataField.UPDATED_BY_CONFIGURATION_ID,
+                    'value': 'cfg-1',
+                    'timestamp': '2024-01-02T00:00:00Z',
+                },
             ],
             None,
         ),
@@ -189,7 +197,7 @@ def test_get_created_by(metadata: list[Mapping[str, Any]], expected: dict[str, A
 )
 def test_get_last_updated_by(metadata: list[Mapping[str, Any]], expected: dict[str, Any] | None) -> None:
     result = storage_usage.get_last_updated_by(metadata)
-    assert result.model_dump() if result else None == expected
+    assert result.model_dump() if result else None is expected
 
 
 @pytest.mark.parametrize(
