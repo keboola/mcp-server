@@ -49,6 +49,9 @@ async def find_id_usage(
     :return: A list of UsageById objects.
     """
 
+    if not target_ids:
+        return []
+
     spec = SearchSpec(
         patterns=target_ids,
         # Casting SearchComponentItemType to SearchItemType since it is a subset of SearchItemType.
