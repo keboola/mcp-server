@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport
 from keboola_mcp_server.errors import ValidationErrorMiddleware
 from keboola_mcp_server.mcp import (
@@ -23,6 +24,7 @@ from keboola_mcp_server.mcp import (
     ToolsFilteringMiddleware,
 )
 from keboola_mcp_server.oauth import SimpleOAuthProvider
+from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
@@ -150,6 +152,7 @@ class CustomRoutes:
         """
         mcp.custom_route('/', methods=['GET'])(self.get_info)
         mcp.custom_route('/health-check', methods=['GET'])(self.get_status)
+        mcp.custom_route('/preview/configuration', methods=['POST'])(preview_config_diff)
         if self.oauth_provider:
             mcp.custom_route('/oauth/callback', methods=['GET'])(self.oauth_callback_handler)
 
@@ -158,8 +161,10 @@ class CustomRoutes:
 
         :param app: Starlette app instance.
         """
+        app.state.server_state = self.server_state
         app.add_route('/', self.get_info, methods=['GET'])
         app.add_route('/health-check', self.get_status, methods=['GET'])
+        app.add_route('/preview/configuration', preview_config_diff, methods=['POST'])
         if self.oauth_provider:
             app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
             for route in self.oauth_provider.get_routes():
@@ -219,7 +224,12 @@ def create_server(
         name='Keboola MCP Server',
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
-        middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware(), ValidationErrorMiddleware()],
+        middleware=[
+            SessionStateMiddleware(),
+            ToolAuthorizationMiddleware(),
+            ToolsFilteringMiddleware(),
+            ValidationErrorMiddleware(),
+        ],
     )
 
     if custom_routes_handling:

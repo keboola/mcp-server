@@ -114,6 +114,7 @@ class DataScienceClient(KeboolaServiceClient):
         token: str | None,
         branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
+        readonly: bool | None = None,
     ) -> 'DataScienceClient':
         """
         Creates a DataScienceClient from a Keboola Storage API token.
@@ -122,6 +123,7 @@ class DataScienceClient(KeboolaServiceClient):
         :param token: The Keboola Storage API token. If None, the client will not send any authorization header.
         :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests
+        :param readonly: If True, the client will only use HTTP GET, HEAD operations.
         :return: A new instance of DataScienceClient
         """
         return cls(
@@ -129,6 +131,7 @@ class DataScienceClient(KeboolaServiceClient):
                 base_api_url=root_url,
                 api_token=token,
                 headers=headers,
+                readonly=readonly,
             ),
             branch_id=branch_id,
         )

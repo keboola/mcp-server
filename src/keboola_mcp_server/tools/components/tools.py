@@ -24,6 +24,7 @@ component-related operations in the MCP server.
 - `update_sql_transformation`: Update existing SQL transformation configurations
 """
 
+import copy
 import json
 import logging
 from datetime import datetime, timezone
@@ -742,52 +743,26 @@ async def update_sql_transformation(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
-    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    sql_dialect = await workspace_manager.get_sql_dialect()
 
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-
-    config_details = await client.storage_client.configuration_detail(
-        component_id=sql_transformation_id, configuration_id=configuration_id
-    )
-    api_component = await fetch_component(client=client, component_id=sql_transformation_id)
-    transformation = Component.from_api_response(api_component)
-
-    updated_configuration = config_details.get('configuration', {})
-
-    msg = ''
-
-    if parameter_updates:
-        current_param_dict = updated_configuration.get('parameters', {})
-        current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
-        simplified_parameters = await current_raw_parameters.to_simplified_parameters()
-
-        updated_params, msg = update_transformation_parameters(
-            parameters=simplified_parameters,
-            updates=parameter_updates,
-            sql_dialect=sql_dialect,
-        )
-        updated_raw_parameters = await updated_params.to_raw_parameters()
-
-        parameters_cfg = validate_root_parameters_configuration(
-            component=transformation,
-            parameters=updated_raw_parameters.model_dump(exclude_none=True),
-            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
-        )
-        updated_configuration['parameters'] = parameters_cfg
-
-    if storage is not None:
-        storage_cfg = validate_root_storage_configuration(
-            component=transformation,
-            storage=storage,
-            initial_message='The "storage" field is not valid.',
-        )
-        updated_configuration['storage'] = storage_cfg
 
     LOG.info(
         f'Updating transformation: {sql_transformation_id} with config ID: {configuration_id}. '
         f'SQL dialect: {sql_dialect}'
     )
 
+    _, updated_configuration, msg = await update_sql_transformation_internal(
+        client=client,
+        workspace_manager=workspace_manager,
+        configuration_id=configuration_id,
+        change_description=change_description,
+        parameter_updates=parameter_updates,
+        storage=storage,
+        updated_description=updated_description,
+        is_disabled=is_disabled,
+    )
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
@@ -825,6 +800,60 @@ async def update_sql_transformation(
         version=updated_raw_configuration['version'],
         change_summary=msg,
     )
+
+
+async def update_sql_transformation_internal(
+    *,
+    client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+    configuration_id: str,
+    change_description: str,
+    parameter_updates: list[TfParamUpdate] | None = None,
+    storage: dict[str, Any] | None = None,
+    updated_description: str = '',
+    is_disabled: bool = False,
+) -> tuple[JsonDict, JsonDict, str]:
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
+    config_details = await client.storage_client.configuration_detail(
+        component_id=sql_transformation_id, configuration_id=configuration_id
+    )
+    api_component = await fetch_component(client=client, component_id=sql_transformation_id)
+    transformation = Component.from_api_response(api_component)
+
+    updated_configuration = cast(JsonDict, config_details.get('configuration', {}))
+    updated_configuration = copy.deepcopy(updated_configuration)
+
+    msg: str = ''
+
+    if parameter_updates:
+        current_param_dict = updated_configuration.get('parameters', {})
+        current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
+        simplified_parameters = await current_raw_parameters.to_simplified_parameters()
+
+        updated_params, msg = update_transformation_parameters(
+            parameters=simplified_parameters,
+            updates=parameter_updates,
+            sql_dialect=sql_dialect,
+        )
+        updated_raw_parameters = await updated_params.to_raw_parameters()
+
+        parameters_cfg = validate_root_parameters_configuration(
+            component=transformation,
+            parameters=updated_raw_parameters.model_dump(exclude_none=True),
+            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
+        )
+        updated_configuration['parameters'] = parameters_cfg
+
+    if storage is not None:
+        storage_cfg = validate_root_storage_configuration(
+            component=transformation,
+            storage=storage,
+            initial_message='The "storage" field is not valid.',
+        )
+        updated_configuration['storage'] = storage_cfg
+
+    return config_details, updated_configuration, msg
 
 
 @tool_errors()
@@ -1211,13 +1240,76 @@ async def update_config(
 
     LOG.info(f'Updating configuration for component: {component_id} and configuration ID {configuration_id}.')
 
+    _, configuration_payload = await update_config_internal(
+        client=client,
+        change_description=change_description,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        name=name,
+        description=description,
+        parameter_updates=parameter_updates,
+        storage=storage,
+        processors_before=processors_before,
+        processors_after=processors_after,
+    )
+    updated_raw_configuration = await client.storage_client.configuration_update(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration=configuration_payload,
+        change_description=change_description,
+        updated_name=name,
+        updated_description=description,
+    )
+
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
+
+    await set_cfg_update_metadata(
+        client=client,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_version=updated_raw_configuration['version'],
+    )
+
+    links = links_manager.get_configuration_links(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_name=updated_raw_configuration.get('name') or '',
+    )
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=updated_raw_configuration.get('description') or '',
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=links,
+        version=updated_raw_configuration['version'],
+    )
+
+
+# This function must use exactly the same parameters as update_config() function.
+# Except for the `ctx` and `client` parameters.
+async def update_config_internal(
+    *,
+    client: KeboolaClient,
+    change_description: str,
+    component_id: str,
+    configuration_id: str,
+    name: str = '',
+    description: str = '',
+    parameter_updates: list[ConfigParamUpdate] | None = None,
+    storage: dict[str, Any] | None = None,
+    processors_before: list[dict[str, Any]] | None = None,
+    processors_after: list[dict[str, Any]] | None = None,
+) -> tuple[JsonDict, JsonDict]:
     current_config = await client.storage_client.configuration_detail(
         component_id=component_id, configuration_id=configuration_id
     )
     api_component = await fetch_component(client=client, component_id=component_id)
     component = Component.from_api_response(api_component)
 
-    configuration_payload = cast(JsonDict, current_config.get('configuration', {})).copy()
+    configuration_payload = cast(JsonDict, current_config.get('configuration', {}))
+    configuration_payload = copy.deepcopy(configuration_payload)
 
     if storage is not None:
         storage_cfg = validate_root_storage_configuration(
@@ -1254,39 +1346,7 @@ async def update_config(
         )
         configuration_payload['parameters'] = parameters_cfg
 
-    updated_raw_configuration = await client.storage_client.configuration_update(
-        component_id=component_id,
-        configuration_id=configuration_id,
-        configuration=configuration_payload,
-        change_description=change_description,
-        updated_name=name,
-        updated_description=description,
-    )
-
-    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
-
-    await set_cfg_update_metadata(
-        client=client,
-        component_id=component_id,
-        configuration_id=configuration_id,
-        configuration_version=updated_raw_configuration['version'],
-    )
-
-    links = links_manager.get_configuration_links(
-        component_id=component_id,
-        configuration_id=configuration_id,
-        configuration_name=updated_raw_configuration.get('name') or '',
-    )
-
-    return ConfigToolOutput(
-        component_id=component_id,
-        configuration_id=configuration_id,
-        description=updated_raw_configuration.get('description') or '',
-        timestamp=datetime.now(timezone.utc),
-        success=True,
-        links=links,
-        version=updated_raw_configuration['version'],
-    )
+    return current_config, configuration_payload
 
 
 @tool_errors()
@@ -1407,49 +1467,19 @@ async def update_config_row(
         f'row id: {configuration_row_id}.'
     )
 
-    current_row = await client.storage_client.configuration_row_detail(
-        component_id=component_id, config_id=configuration_id, configuration_row_id=configuration_row_id
+    _, configuration_payload = await update_config_row_internal(
+        client=client,
+        change_description=change_description,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_row_id=configuration_row_id,
+        name=name,
+        description=description,
+        parameter_updates=parameter_updates,
+        storage=storage,
+        processors_before=processors_before,
+        processors_after=processors_after,
     )
-    api_component = await fetch_component(client=client, component_id=component_id)
-    component = Component.from_api_response(api_component)
-
-    configuration_payload = cast(JsonDict, current_row.get('configuration', {})).copy()
-
-    if storage is not None:
-        storage_cfg = validate_row_storage_configuration(
-            component=component,
-            storage=storage,
-            initial_message='The "storage" field is not valid.',
-        )
-        configuration_payload['storage'] = storage_cfg
-
-    if processors_before is not None:
-        processors_before = await validate_processors_configuration(
-            client=client,
-            processors=processors_before,
-            initial_message='The "processors_before" field is not valid.',
-        )
-        set_nested_value(configuration_payload, 'processors.before', processors_before)
-
-    if processors_after is not None:
-        processors_after = await validate_processors_configuration(
-            client=client,
-            processors=processors_after,
-            initial_message='The "processors_after" field is not valid.',
-        )
-        set_nested_value(configuration_payload, 'processors.after', processors_after)
-
-    if parameter_updates:
-        current_params = configuration_payload.get('parameters', {})
-        updated_params = update_params(current_params, parameter_updates)
-
-        parameters_cfg = validate_row_parameters_configuration(
-            component=component,
-            parameters=updated_params,
-            initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
-        )
-        configuration_payload['parameters'] = parameters_cfg
-
     updated_raw_configuration = await client.storage_client.configuration_row_update(
         component_id=component_id,
         config_id=configuration_id,
@@ -1487,6 +1517,69 @@ async def update_config_row(
         links=links,
         version=updated_raw_configuration['version'],
     )
+
+
+# This function must use exactly the same parameters as update_config_row() function.
+# Except for the `ctx` and `client` parameters.
+async def update_config_row_internal(
+    *,
+    client: KeboolaClient,
+    change_description: str,
+    component_id: str,
+    configuration_id: str,
+    configuration_row_id: str,
+    name: str = '',
+    description: str = '',
+    parameter_updates: list[ConfigParamUpdate] | None = None,
+    storage: dict[str, Any] | None = None,
+    processors_before: list[dict[str, Any]] | None = None,
+    processors_after: list[dict[str, Any]] | None = None,
+) -> tuple[JsonDict, JsonDict]:
+    current_row = await client.storage_client.configuration_row_detail(
+        component_id=component_id, config_id=configuration_id, configuration_row_id=configuration_row_id
+    )
+    api_component = await fetch_component(client=client, component_id=component_id)
+    component = Component.from_api_response(api_component)
+
+    configuration_payload = cast(JsonDict, current_row.get('configuration', {}))
+    configuration_payload = copy.deepcopy(configuration_payload)
+
+    if storage is not None:
+        storage_cfg = validate_row_storage_configuration(
+            component=component,
+            storage=storage,
+            initial_message='The "storage" field is not valid.',
+        )
+        configuration_payload['storage'] = storage_cfg
+
+    if processors_before is not None:
+        processors_before = await validate_processors_configuration(
+            client=client,
+            processors=processors_before,
+            initial_message='The "processors_before" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.before', processors_before)
+
+    if processors_after is not None:
+        processors_after = await validate_processors_configuration(
+            client=client,
+            processors=processors_after,
+            initial_message='The "processors_after" field is not valid.',
+        )
+        set_nested_value(configuration_payload, 'processors.after', processors_after)
+
+    if parameter_updates:
+        current_params = configuration_payload.get('parameters', {})
+        updated_params = update_params(current_params, parameter_updates)
+
+        parameters_cfg = validate_row_parameters_configuration(
+            component=component,
+            parameters=updated_params,
+            initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
+        )
+        configuration_payload['parameters'] = parameters_cfg
+
+    return current_row, configuration_payload
 
 
 @tool_errors()

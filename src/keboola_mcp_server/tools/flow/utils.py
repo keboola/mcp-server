@@ -14,6 +14,7 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.clients.storage import APIFlowResponse, JsonDict
+from keboola_mcp_server.mcp import process_concurrently
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
     ConditionalFlowTask,
@@ -21,6 +22,7 @@ from keboola_mcp_server.tools.flow.model import (
     FlowSummary,
     FlowTask,
 )
+from keboola_mcp_server.tools.flow.scheduler import list_schedules_for_config
 
 LOG = logging.getLogger(__name__)
 
@@ -206,11 +208,31 @@ async def get_flows_by_ids(client: KeboolaClient, flow_ids: Sequence[str]) -> li
 
 
 async def get_flows_by_type(client: KeboolaClient, flow_type: FlowType) -> list[FlowSummary]:
+
+    async def _fetch_schedules_for_flow_summaries(flow_summary: FlowSummary) -> FlowSummary:
+        # Fetch schedule count
+        try:
+            schedules = await list_schedules_for_config(
+                client=client, component_id=flow_summary.component_id, configuration_id=flow_summary.configuration_id
+            )
+            flow_summary.schedules_count = len(schedules)
+        except Exception as e:
+            LOG.warning(f'Failed to fetch schedules for flow {flow_summary.configuration_id}: {e}')
+            flow_summary.schedules_count = 0
+        return flow_summary
+
     raw_flows = await client.storage_client.configuration_list(component_id=flow_type)
-    return [
-        FlowSummary.from_api_response(api_config=APIFlowResponse.model_validate(raw), flow_component_id=flow_type)
-        for raw in raw_flows
-    ]
+    flows = []
+
+    for raw in raw_flows:
+        flow_summary = FlowSummary.from_api_response(
+            api_config=APIFlowResponse.model_validate(raw), flow_component_id=flow_type
+        )
+
+        flows.append(flow_summary)
+
+    flows = await process_concurrently(flows, _fetch_schedules_for_flow_summaries)
+    return flows
 
 
 async def get_all_flows(client: KeboolaClient) -> list[FlowSummary]:
@@ -314,11 +336,11 @@ def _validate_conditional_flow_structure(
     # Validate that there are no duplicate phase or task IDs
     counter_phases = Counter([phase.id for phase in phases])
     phase_ids = set(counter_phases)
-    if counter_phases.most_common(1)[0][1] > 1:
+    if counter_phases and counter_phases.most_common(1)[0][1] > 1:
         duplicate_phase_ids = [pid for pid, count in counter_phases.most_common() if count > 1]
         raise ValueError(f'Flow contains duplicate phase IDs: {duplicate_phase_ids}.')
     counter_tasks = Counter([task.id for task in tasks])
-    if counter_tasks.most_common(1)[0][1] > 1:
+    if counter_tasks and counter_tasks.most_common(1)[0][1] > 1:
         duplicate_task_ids = [tid for tid, count in counter_tasks.most_common() if count > 1]
         raise ValueError(f'Flow contains duplicate task IDs: {duplicate_task_ids}.')
 
