@@ -17,7 +17,7 @@ from keboola_mcp_server.mcp import CONVERSATION_ID, AggregateError
 from keboola_mcp_server.tools.doc import docs_query
 from keboola_mcp_server.tools.jobs import get_jobs
 from keboola_mcp_server.tools.sql import query_data
-from keboola_mcp_server.tools.storage import GetBucketsOutput, get_buckets
+from keboola_mcp_server.tools.storage.tools import GetBucketsOutput, get_buckets
 
 
 class TestHttpErrors:
