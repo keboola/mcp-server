@@ -190,7 +190,7 @@ class TestSimpleOAuthProvider:
             (None, False),  # no redirect_uri
         ],
     )
-    def test_validate_redirect_uri(self, uri: AnyUrl, valid: bool):
+    def test_validate_redirect_uri(self, uri: AnyUrl | None, valid: bool):
         info = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo')
         if valid:
             actual = info.validate_redirect_uri(uri)
