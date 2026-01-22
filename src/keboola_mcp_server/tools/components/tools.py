@@ -61,6 +61,7 @@ from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
+    check_suitable,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
@@ -73,7 +74,6 @@ from keboola_mcp_server.tools.components.utils import (
     update_params,
     update_transformation_parameters,
 )
-from keboola_mcp_server.tools.restrictions import validate_component_id_for_update
 from keboola_mcp_server.tools.validation import (
     validate_processors_configuration,
     validate_root_parameters_configuration,
@@ -913,6 +913,8 @@ async def create_config(
         - set the component_id and configuration parameters accordingly
         - returns the created component configuration if successful.
     """
+    check_suitable('create_config', component_id)
+
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
@@ -1045,6 +1047,8 @@ async def add_config_row(
         - set the component_id, configuration_id and configuration parameters accordingly
         - returns the created component configuration if successful.
     """
+    check_suitable('add_config_row', component_id)
+
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
@@ -1233,8 +1237,6 @@ async def update_config(
     3. Prepare parameter_updates list with targeted operations
     4. Call update_config with only the fields to change
     """
-    validate_component_id_for_update(component_id, 'update_config')
-
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
@@ -1302,6 +1304,8 @@ async def update_config_internal(
     processors_before: list[dict[str, Any]] | None = None,
     processors_after: list[dict[str, Any]] | None = None,
 ) -> tuple[JsonDict, JsonDict]:
+    check_suitable('update_config', component_id)
+
     current_config = await client.storage_client.configuration_detail(
         component_id=component_id, configuration_id=configuration_id
     )
@@ -1535,6 +1539,8 @@ async def update_config_row_internal(
     processors_before: list[dict[str, Any]] | None = None,
     processors_after: list[dict[str, Any]] | None = None,
 ) -> tuple[JsonDict, JsonDict]:
+    check_suitable('update_config_row', component_id)
+
     current_row = await client.storage_client.configuration_row_detail(
         component_id=component_id, config_id=configuration_id, configuration_row_id=configuration_row_id
     )
