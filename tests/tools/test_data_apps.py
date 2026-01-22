@@ -208,17 +208,14 @@ def test_update_existing_data_app_config():
     # Removed previous packages
     assert 'numpy' not in new['parameters']['packages']
     # Packages combined with defaults
-    assert 'pandas' in new['parameters']['packages']
-    assert 'httpx' in new['parameters']['packages']
+    assert sorted(new['parameters']['packages']) == sorted(['pandas', 'httpx'])
     # Secrets merged
-    assert new['parameters']['dataApp']['secrets']['FOO'] == 'new'
-    assert new['parameters']['dataApp']['secrets']['NEW'] == 'y'
-    assert new['parameters']['dataApp']['secrets']['KEEP'] == 'x'
+    assert new['parameters']['dataApp']['secrets'] == {'FOO': 'old', 'KEEP': 'x', 'NEW': 'y'}
     # Authentication updated
     assert new['authorization'] == _get_authorization(True)
 
 
-def test_update_existing_data_app_config_preserves_workspace_branch_secrets():
+def test_update_existing_data_app_config_preserves_existing_secrets():
     existing = {
         'parameters': {
             'dataApp': {
@@ -245,9 +242,12 @@ def test_update_existing_data_app_config_preserves_workspace_branch_secrets():
         sql_dialect='snowflake',
     )
 
-    assert new['parameters']['dataApp']['secrets']['WORKSPACE_ID'] == 'wid-old'
-    assert new['parameters']['dataApp']['secrets']['BRANCH_ID'] == 'branch-old'
-    assert new['parameters']['dataApp']['secrets']['NEW'] == 'y'
+    assert new['parameters']['dataApp']['secrets'] == {
+        'WORKSPACE_ID': 'wid-old',
+        'BRANCH_ID': 'branch-old',
+        'KEEP': 'x',
+        'NEW': 'y',
+    }
 
 
 def test_get_secrets():
