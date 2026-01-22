@@ -107,37 +107,86 @@ class TestSimpleOAuthProvider:
     @pytest.mark.parametrize(
         ('uri', 'valid'),
         [
+            # === HTTP scheme - localhost only ===
             (AnyUrl('http://localhost:8080/foo'), True),
             (AnyUrl('http://localhost:20388/oauth/callback'), True),
+            (AnyUrl('http://localhost/callback'), True),
             (AnyUrl('http://127.0.0.1:1234/bar'), True),
             (AnyUrl('http://127.0.0.1:54750/auth/callback'), True),
+            (AnyUrl('http://127.0.0.1/callback'), True),
+            # IPv6 localhost
+            (AnyUrl('http://[::1]:8080/callback'), True),
+            (AnyUrl('http://[::1]/callback'), True),
+            # HTTP to non-localhost should be rejected
+            (AnyUrl('http://example.com/callback'), False),
+            (AnyUrl('http://keboola.com/callback'), False),
+            (AnyUrl('http://192.168.1.1/callback'), False),
+            # === HTTPS scheme - whitelisted domains ===
+            # Keboola domains (requires subdomain)
             (AnyUrl('https://foo.keboola.com/bar/baz'), True),
             (AnyUrl('https://bar.keboola.dev/baz'), True),
+            (AnyUrl('https://connection.keboola.com/oauth/callback'), True),
+            (AnyUrl('https://keboola.com/callback'), False),  # requires subdomain
+            (AnyUrl('https://keboola.dev/callback'), False),  # requires subdomain
+            # ChatGPT (subdomain optional)
             (AnyUrl('https://chatgpt.com'), True),
             (AnyUrl('https://foo.chatgpt.com/bar'), True),
             (AnyUrl('https://chatgpt.com/connector_platform_oauth_redirect'), True),
+            # Claude (subdomain optional)
             (AnyUrl('https://claude.ai'), True),
             (AnyUrl('https://foo.claude.ai/bar'), True),
             (AnyUrl('https://claude.ai/api/mcp/auth_callback'), True),
+            # LibreChat (no subdomains allowed)
             (AnyUrl('https://librechat.glami-ml.com'), True),
             (AnyUrl('https://librechat.glami-ml.com/api/mcp/keboola/oauth/callback'), True),
             (AnyUrl('https://foo.librechat.glami-ml.com/bar'), False),  # no subdomains allowed
+            # Make.com (subdomain optional)
             (AnyUrl('https://make.com'), True),
             (AnyUrl('https://foo.make.com/bar'), True),
             (AnyUrl('https://www.make.com/oauth/cb/mcp'), True),
+            # Devin (exact domain only)
+            (AnyUrl('https://api.devin.ai/callback'), True),
+            (AnyUrl('https://api.devin.ai'), True),
+            (AnyUrl('https://devin.ai/callback'), False),  # must be api.devin.ai
+            (AnyUrl('https://foo.api.devin.ai/callback'), False),  # no subdomains
+            # Onyx (no subdomains allowed)
             (AnyUrl('https://cloud.onyx.app'), True),
             (AnyUrl('https://cloud.onyx.app/mcp/oauth/callback'), True),
             (AnyUrl('https://foo.cloud.onyx.app/bar'), False),  # no subdomains allowed
+            (AnyUrl('https://onyx.app/callback'), False),  # must be cloud.onyx.app
+            # Azure APIM (no subdomains allowed)
             (AnyUrl('https://global.consent.azure-apim.net'), True),
             (AnyUrl('https://global.consent.azure-apim.net/oauth/callback'), True),
             (AnyUrl('https://foo.global.consent.azure-apim.net/bar'), False),  # no subdomains allowed
-            (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
-            (None, False),
+            # Unknown HTTPS domains should be rejected
             (AnyUrl('https://foo.bar.com/callback'), False),
+            (AnyUrl('https://evil.com/callback'), False),
+            (AnyUrl('https://fakechatgpt.com/callback'), False),
+            (AnyUrl('https://evilclaude.ai/callback'), False),
+            # === Cursor scheme - specific hosts only ===
+            (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
+            (AnyUrl('cursor://anysphere.cursor-mcp/oauth/callback'), True),
+            (AnyUrl('cursor://anysphere.cursor-mcp/some/path'), True),
+            # Cursor with unknown hosts should be rejected
+            (AnyUrl('cursor://evil.com/callback'), False),
+            (AnyUrl('cursor://localhost/callback'), False),
+            (AnyUrl('cursor://anysphere.cursor-other/callback'), False),
+            # === Unknown/forbidden schemes should be rejected ===
             (AnyUrl('ftp://foo.bar.com'), False),
+            (AnyUrl('file:///etc/passwd'), False),
+            (AnyUrl('javascript://alert(1)'), False),
+            (AnyUrl('data://text/html,<script>alert(1)</script>'), False),
+            # Custom schemes that are NOT whitelisted should be rejected
+            (AnyUrl('vscode://localhost/callback'), False),
+            (AnyUrl('jetbrains://localhost/callback'), False),
+            (AnyUrl('zed://localhost/callback'), False),
+            (AnyUrl('myapp://localhost/callback'), False),
+            (AnyUrl('evil://localhost/callback'), False),
+            # === Edge cases ===
+            (None, False),  # no redirect_uri
         ],
     )
-    def test_validate_redirect_uri(self, uri: AnyUrl, valid: bool):
+    def test_validate_redirect_uri(self, uri: AnyUrl | None, valid: bool):
         info = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo')
         if valid:
             actual = info.validate_redirect_uri(uri)
