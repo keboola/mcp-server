@@ -158,7 +158,7 @@ class _SnowflakeWorkspace(_Workspace):
             # sql = f"show databases like '%_{source_project_id}';"
             sql = (
                 f'select "DATABASE_NAME" from "INFORMATION_SCHEMA"."DATABASES" '
-                f'where "DATABASE_NAME" like \'%_{source_project_id}\';'
+                f'where "DATABASE_NAME" like \'%^_{source_project_id}\' escape \'^\';'
             )
             result = await self.execute_query(sql)
             if result.is_ok and result.data and result.data.rows:
