@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport
 from keboola_mcp_server.errors import ValidationErrorMiddleware
 from keboola_mcp_server.mcp import (
@@ -223,7 +224,12 @@ def create_server(
         name='Keboola MCP Server',
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
-        middleware=[SessionStateMiddleware(), ToolsFilteringMiddleware(), ValidationErrorMiddleware()],
+        middleware=[
+            SessionStateMiddleware(),
+            ToolAuthorizationMiddleware(),
+            ToolsFilteringMiddleware(),
+            ValidationErrorMiddleware(),
+        ],
     )
 
     if custom_routes_handling:
