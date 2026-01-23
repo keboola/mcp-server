@@ -26,6 +26,7 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer, unwrap_results
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.constants import (
+    CONFIG_DIFF_PREVIEW_TAG,
     FLOW_TOOLS_TAG,
 )
 from keboola_mcp_server.tools.flow.model import (
@@ -81,14 +82,14 @@ def add_flow_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             update_flow,
             annotations=ToolAnnotations(destructiveHint=True),
-            tags={FLOW_TOOLS_TAG},
+            tags={FLOW_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             modify_flow,
             annotations=ToolAnnotations(destructiveHint=True),
-            tags={FLOW_TOOLS_TAG},
+            tags={FLOW_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
         )
     )
     mcp.add_tool(

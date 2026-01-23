@@ -74,6 +74,7 @@ from keboola_mcp_server.tools.components.utils import (
     update_params,
     update_transformation_parameters,
 )
+from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.tools.validation import (
     validate_processors_configuration,
     validate_root_parameters_configuration,
@@ -130,7 +131,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_config,
-            tags={COMPONENT_TOOLS_TAG},
+            tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )
     )
@@ -144,7 +145,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_config_row,
-            tags={COMPONENT_TOOLS_TAG},
+            tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )
     )
@@ -160,7 +161,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_sql_transformation,
-            tags={COMPONENT_TOOLS_TAG},
+            tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )
     )
