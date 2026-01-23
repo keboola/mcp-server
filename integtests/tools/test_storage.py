@@ -63,7 +63,8 @@ async def test_get_buckets_output_format(mcp_client: Client, buckets: list[Bucke
     # check that the tables are presented in tabular format
     assert result_text.startswith(
         f'buckets[{len(buckets)}]'
-        '{id,name,display_name,description,stage,created,data_size_bytes,tables_count,links,source_project}:'
+        '{id,name,display_name,description,stage,created,data_size_bytes,tables_count,links,source_project,'
+        'created_by,last_updated_by}:'
     )
 
 
@@ -134,7 +135,7 @@ async def test_get_tables_output_format(mcp_client: Client, tables: list[TableDe
     )
     assert result_text.startswith(
         'tables[1]{id,name,display_name,description,primary_key,created,rows_count,'
-        'data_size_bytes,columns,fully_qualified_name,links,source_project}:'
+        'data_size_bytes,columns,fully_qualified_name,links,source_project,used_by,created_by,last_updated_by}:'
     )
 
 
