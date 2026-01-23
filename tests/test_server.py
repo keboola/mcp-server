@@ -18,6 +18,8 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer, toon_serializer
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
+from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
+from keboola_mcp_server.tools.data_apps import DATA_APP_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
 from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
 from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
@@ -338,11 +340,11 @@ async def test_tool_annotations_and_tags():
         ('get_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('get_config_examples', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('create_config', None, False, None, {COMPONENT_TOOLS_TAG}),
-        ('update_config', None, True, None, {COMPONENT_TOOLS_TAG}),
+        ('update_config', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         ('add_config_row', None, False, None, {COMPONENT_TOOLS_TAG}),
-        ('update_config_row', None, True, None, {COMPONENT_TOOLS_TAG}),
+        ('update_config_row', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
-        ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG}),
+        ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         # storage
         ('get_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
         ('get_tables', True, None, None, {STORAGE_TOOLS_TAG}),
@@ -351,7 +353,8 @@ async def test_tool_annotations_and_tags():
         ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
         ('create_conditional_flow', None, False, None, {FLOW_TOOLS_TAG}),
         ('get_flows', True, None, None, {FLOW_TOOLS_TAG}),
-        ('update_flow', None, True, None, {FLOW_TOOLS_TAG}),
+        ('update_flow', None, True, None, {FLOW_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+        ('modify_flow', None, True, None, {FLOW_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         ('get_flow_examples', True, None, None, {FLOW_TOOLS_TAG}),
         ('get_flow_schema', True, None, None, {FLOW_TOOLS_TAG}),
         # sql
@@ -365,6 +368,10 @@ async def test_tool_annotations_and_tags():
         ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
         # oauth
         ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
+        # data apps
+        ('modify_data_app', None, True, None, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+        ('get_data_apps', True, None, None, {DATA_APP_TOOLS_TAG}),
+        ('deploy_data_app', None, False, None, {DATA_APP_TOOLS_TAG}),
     ],
 )
 async def test_tool_annotations_tags_values(
