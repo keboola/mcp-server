@@ -83,6 +83,9 @@ INJECTED_BLOCK_RE = re.compile(
 # Type of the authentication used in the data app
 AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
 
+SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
+SECRET_BRANCH_ID = 'BRANCH_ID'
+
 
 class DataAppSummary(BaseModel):
     """A summary of a data app used for sync operations."""
@@ -561,9 +564,15 @@ def _update_existing_data_app_config(
         if packages
         else sorted(list[str](set[str](existing_config['parameters'].get('packages', []) + _DEFAULT_PACKAGES)))
     )
-    new_config['parameters']['dataApp']['secrets'] = (
-        existing_config['parameters']['dataApp'].get('secrets', {}) | secrets
-    )
+
+    updated_secrets = existing_config['parameters']['dataApp'].get('secrets', {}).copy()
+    # Add new secrets, do not overwrite existing secrets
+    for key in secrets:
+        if key not in updated_secrets:
+            updated_secrets[key] = secrets[key]
+
+    new_config['parameters']['dataApp']['secrets'] = updated_secrets
+
     new_config['authorization'] = (
         existing_config['authorization']
         if authentication_type == 'default'
@@ -749,7 +758,7 @@ def _get_secrets(workspace_id: str, branch_id: str) -> dict[str, Any]:
     Generates secrets for the data app for querying the tables in the given workspace QS or SAPI.
     """
     secrets: dict[str, Any] = {
-        'WORKSPACE_ID': workspace_id,
-        'BRANCH_ID': branch_id,
+        SECRET_WORKSPACE_ID: workspace_id,
+        SECRET_BRANCH_ID: branch_id,
     }
     return secrets
