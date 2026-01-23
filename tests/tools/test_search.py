@@ -3,6 +3,7 @@ from unittest.mock import call
 
 import pytest
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.ai_service import ComponentSuggestionResponse, SuggestedComponent
@@ -13,6 +14,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.search import (
     SearchHit,
+    SearchSpec,
     SuggestedComponentOutput,
     find_component_id,
     search,
@@ -24,10 +26,10 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_search_no_patterns(self, mcp_context_client: Context):
-        with pytest.raises(ValueError, match='At least one search pattern must be provided.'):
+        with pytest.raises(ToolError, match='At least one search pattern must be provided.'):
             await search(ctx=mcp_context_client, patterns=[])
 
-        with pytest.raises(ValueError, match='At least one search pattern must be provided.'):
+        with pytest.raises(ToolError, match='At least one search pattern must be provided.'):
             await search(ctx=mcp_context_client, patterns=[''])
 
     @pytest.mark.asyncio
@@ -684,6 +686,169 @@ class TestSearch:
         assert len(result) == expected_count
         if expected_count > 0:
             assert result[0].table_id == expected_first_table_id
+
+
+@pytest.mark.parametrize(
+    ('spec_kwargs', 'texts', 'expected'),
+    [
+        (
+            {
+                'patterns': ['foo.*', 'fo.*', 'olala'],
+                'item_types': ('bucket',),
+                'pattern_mode': 'regex',
+                'return_all_matched_patterns': True,
+            },
+            ['foo.*', 'foobar', 'olala'],
+            [
+                {'scope': None, 'patterns': ['foo.*', 'fo.*']},
+                {'scope': None, 'patterns': ['foo.*', 'fo.*']},
+                {'scope': None, 'patterns': ['olala']},
+            ],
+        ),
+        (
+            {
+                'patterns': ['foo.*', 'fo.*', 'olala'],
+                'item_types': ('bucket',),
+                'pattern_mode': 'regex',
+                'return_all_matched_patterns': False,
+            },
+            ['foo.*', 'foobar', 'olala'],
+            [{'scope': None, 'patterns': ['foo.*']}],
+        ),
+        (
+            {
+                'patterns': ['nomatch'],
+                'item_types': ('bucket',),
+                'return_all_matched_patterns': True,
+            },
+            ['Foo baz', 'BAR qux'],
+            [],
+        ),
+        (
+            {
+                'patterns': ['bar'],
+                'item_types': ('bucket',),
+                'pattern_mode': 'literal',
+                'case_sensitive': False,
+                'return_all_matched_patterns': False,
+            },
+            ['Foo baz', 'BAR qux', 'BARAndSomething'],
+            [
+                {'scope': None, 'patterns': ['bar']},
+            ],
+        ),
+        (
+            {
+                'patterns': ['bar'],
+                'item_types': ('bucket',),
+                'pattern_mode': 'literal',
+                'case_sensitive': True,
+                'return_all_matched_patterns': False,
+            },
+            ['Foo baz', 'BAR qux', 'BARrAndSomething'],
+            [],
+        ),
+    ],
+    ids=[
+        'regex_all_matches',
+        'regex_any_match',
+        'regex_no_match',
+        'literal_match_case_insensitive',
+        'literal_match_case_sensitive',
+    ],
+)
+def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: list[dict]):
+    spec = SearchSpec(**spec_kwargs)
+    matches = spec.match_texts(texts)
+    assert [match.model_dump() for match in matches] == expected
+
+
+@pytest.mark.parametrize(
+    ('spec_kwargs', 'configuration', 'expected'),
+    [
+        (
+            {
+                'patterns': ['alpha', 'beta'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'storage.input'),
+                'return_all_matched_patterns': True,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [
+                {'scope': 'parameters', 'patterns': ['alpha']},
+                {'scope': 'storage.input', 'patterns': ['beta']},
+            ],
+        ),
+        (
+            {
+                'patterns': ['alpha', 'beta'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'storage.input'),
+                'return_all_matched_patterns': True,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}, {'source': 'alpha'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [
+                {'scope': 'parameters', 'patterns': ['alpha']},
+                {'scope': 'storage.input', 'patterns': ['alpha', 'beta']},
+            ],
+        ),
+        (
+            {
+                'patterns': ['gamma'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'storage.input'),
+                'return_all_matched_patterns': True,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [],
+        ),
+        (
+            {
+                'patterns': ['gamma'],
+                'item_types': ('configuration',),
+                'return_all_matched_patterns': True,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [{'scope': None, 'patterns': ['gamma']}],
+        ),
+        (
+            {
+                'patterns': ['alpha', 'beta'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'storage.input'),
+                'return_all_matched_patterns': False,
+            },
+            {
+                'parameters': {'query': 'alpha'},
+                'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
+            },
+            [{'scope': 'parameters', 'patterns': ['alpha']}],
+        ),
+    ],
+    ids=[
+        'all_patterns_many_scopes',
+        'two_patterns_in_one_scope',
+        'no_patterns_in_scope',
+        'all_patterns_no_scope',
+        'any_patterns_return_first_match',
+    ],
+)
+def test_match_configuration_scopes(spec_kwargs: dict[str, Any], configuration: dict[str, Any], expected: list[dict]):
+    spec = SearchSpec(**spec_kwargs)
+    matches = spec.match_configuration_scopes(configuration)
+    assert [match.model_dump() for match in matches] == expected
 
 
 @pytest.mark.asyncio
