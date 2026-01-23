@@ -4,6 +4,8 @@ import logging
 from typing import Any, Literal, Mapping, Sequence, TypeVar
 from urllib.parse import urlparse, urlunparse
 
+import httpx
+
 from keboola_mcp_server.clients.ai_service import AIServiceClient
 from keboola_mcp_server.clients.data_science import DataScienceClient
 from keboola_mcp_server.clients.encryption import EncryptionClient
@@ -79,15 +81,36 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
-    def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
+    async def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
         if branch_id == self.branch_id:
             return self
-        else:
+        elif branch_id is None:
             return KeboolaClient(
                 storage_api_url=self.storage_api_url,
                 storage_api_token=self.token,
                 bearer_token=self._bearer_token,
-                branch_id=branch_id,
+                branch_id=None,
+                headers=self._headers,
+            )
+        else:
+            is_default = False
+            try:
+                detail = await self.storage_client.dev_branch_detail(branch_id)
+                is_default = detail.get('isDefault') is True
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    LOG.error(f'Branch not found: {branch_id}: {exc.response.text}')
+                else:
+                    LOG.error(f'Failed to get branch detail for {branch_id}: {exc.response.text}')
+                raise exc
+
+            # Converts the branch id referring to the main/production branch to None as we expect
+            normalized_branch_id = None if is_default else branch_id
+            return KeboolaClient(
+                storage_api_url=self.storage_api_url,
+                storage_api_token=self.token,
+                bearer_token=self._bearer_token,
+                branch_id=normalized_branch_id,
                 headers=self._headers,
             )
 

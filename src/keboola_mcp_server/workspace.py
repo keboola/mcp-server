@@ -462,10 +462,25 @@ class WorkspaceManager:
         assert isinstance(instance, WorkspaceManager), f'Expected WorkspaceManager, got: {instance}'
         return instance
 
-    def __init__(self, client: KeboolaClient, workspace_schema: str | None = None):
+    @classmethod
+    async def create(cls, client: KeboolaClient, workspace_schema: str | None = None) -> 'WorkspaceManager':
         # We use the read-only workspace with access to all project data which lives in the production branch.
         # Hence, we need KeboolaClient bound to the production/default branch.
-        self._client = client.with_branch_id(None)
+        prod_client = await client.with_branch_id(None)
+        return cls(prod_client, workspace_schema)
+
+    def __init__(self, client: KeboolaClient, workspace_schema: str | None = None):
+        """
+        Initializes the WorkspaceManager.
+
+        :param client: The KeboolaClient bound to the production/default branch.
+        :param workspace_schema: The schema of the workspace to use.
+        """
+        if client.branch_id is not None:
+            raise ValueError(
+                'WorkspaceManager cannot be created for a branch other than the production/default branch.'
+            )
+        self._client = client
         self._workspace_schema = workspace_schema
         self._workspace: _Workspace | None = None
         self._table_info_cache: dict[str, DbTableInfo] = {}
