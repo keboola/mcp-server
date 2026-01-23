@@ -5,7 +5,12 @@ import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    DATA_APP_COMPONENT_ID,
+    ORCHESTRATOR_COMPONENT_ID,
+    KeboolaClient,
+)
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import (
     add_config_row,
@@ -43,7 +48,11 @@ from keboola_mcp_server.tools.components.model import (
     TfStrReplace,
 )
 from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_code
-from keboola_mcp_server.tools.components.utils import clean_bucket_name
+from keboola_mcp_server.tools.components.utils import (
+    BIGQUERY_TRANSFORMATION_ID,
+    SNOWFLAKE_TRANSFORMATION_ID,
+    clean_bucket_name,
+)
 from keboola_mcp_server.workspace import WorkspaceManager
 
 # ============================================================================
@@ -1072,6 +1081,148 @@ async def test_update_config(
         updated_name=updated_name,
         updated_description=updated_description,
     )
+
+
+@pytest.mark.parametrize(
+    ('tool_fn', 'tool_args', 'component_id', 'message'),
+    [
+        (
+            update_config,
+            {'configuration_id': 'foo', 'change_description': 'bar'},
+            DATA_APP_COMPONENT_ID,
+            'Use the data applications tools.',
+        ),
+        (
+            update_config,
+            {'configuration_id': 'foo', 'change_description': 'bar'},
+            CONDITIONAL_FLOW_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            update_config,
+            {'configuration_id': 'foo', 'change_description': 'bar'},
+            ORCHESTRATOR_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            update_config,
+            {'configuration_id': 'foo', 'change_description': 'bar'},
+            BIGQUERY_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+        (
+            update_config,
+            {'configuration_id': 'foo', 'change_description': 'bar'},
+            SNOWFLAKE_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+        (
+            update_config_row,
+            {'configuration_id': 'foo', 'configuration_row_id': 'bar', 'change_description': 'baz'},
+            DATA_APP_COMPONENT_ID,
+            'Use the data applications tools.',
+        ),
+        (
+            update_config_row,
+            {'configuration_id': 'foo', 'configuration_row_id': 'bar', 'change_description': 'baz'},
+            CONDITIONAL_FLOW_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            update_config_row,
+            {'configuration_id': 'foo', 'configuration_row_id': 'bar', 'change_description': 'baz'},
+            ORCHESTRATOR_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            update_config_row,
+            {'configuration_id': 'foo', 'configuration_row_id': 'bar', 'change_description': 'baz'},
+            BIGQUERY_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+        (
+            update_config_row,
+            {'configuration_id': 'foo', 'configuration_row_id': 'bar', 'change_description': 'baz'},
+            SNOWFLAKE_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+        (
+            create_config,
+            {'name': 'foo', 'description': 'bar', 'parameters': {}},
+            DATA_APP_COMPONENT_ID,
+            'Use the data applications tools.',
+        ),
+        (
+            create_config,
+            {'name': 'foo', 'description': 'bar', 'parameters': {}},
+            CONDITIONAL_FLOW_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            create_config,
+            {'name': 'foo', 'description': 'bar', 'parameters': {}},
+            ORCHESTRATOR_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            create_config,
+            {'name': 'foo', 'description': 'bar', 'parameters': {}},
+            BIGQUERY_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+        (
+            create_config,
+            {'name': 'foo', 'description': 'bar', 'parameters': {}},
+            SNOWFLAKE_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+        (
+            add_config_row,
+            {'name': 'foo', 'description': 'bar', 'configuration_id': 'baz', 'parameters': {}},
+            DATA_APP_COMPONENT_ID,
+            'Use the data applications tools.',
+        ),
+        (
+            add_config_row,
+            {'name': 'foo', 'description': 'bar', 'configuration_id': 'baz', 'parameters': {}},
+            CONDITIONAL_FLOW_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            add_config_row,
+            {'name': 'foo', 'description': 'bar', 'configuration_id': 'baz', 'parameters': {}},
+            ORCHESTRATOR_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            add_config_row,
+            {'name': 'foo', 'description': 'bar', 'configuration_id': 'baz', 'parameters': {}},
+            BIGQUERY_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+        (
+            add_config_row,
+            {'name': 'foo', 'description': 'bar', 'configuration_id': 'baz', 'parameters': {}},
+            SNOWFLAKE_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_generic_tools_reject_specialized_components(
+    tool_fn: Callable[..., Any],
+    tool_args: dict[str, Any],
+    component_id: str,
+    message: str,
+    mcp_context_components_configs: Context,
+):
+    m = f'The "{tool_fn.__name__}" tool cannot be used with {component_id} component. {message}'
+    with pytest.raises(ValueError, match=m):
+        await tool_fn(
+            ctx=mcp_context_components_configs,
+            component_id=component_id,
+            **tool_args,
+        )
 
 
 @pytest.mark.parametrize(

@@ -30,7 +30,12 @@ import jsonpath_ng
 from httpx import HTTPStatusError
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import (
+    CONDITIONAL_FLOW_COMPONENT_ID,
+    DATA_APP_COMPONENT_ID,
+    ORCHESTRATOR_COMPONENT_ID,
+    KeboolaClient,
+)
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import ProjectLinksManager
@@ -658,3 +663,25 @@ def update_transformation_parameters(
 
     change_summary = '\n'.join(messages)
     return SimplifiedTfBlocks.model_validate(parameters_dict, extra='ignore'), change_summary
+
+
+# ============================================================================
+# OTHER
+# ============================================================================
+
+_UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
+    DATA_APP_COMPONENT_ID: 'Use the data applications tools.',
+    CONDITIONAL_FLOW_COMPONENT_ID: 'Use the flows tools.',
+    ORCHESTRATOR_COMPONENT_ID: 'Use the flows tools.',
+    BIGQUERY_TRANSFORMATION_ID: 'Use the SQL transformation tools.',
+    SNOWFLAKE_TRANSFORMATION_ID: 'Use the SQL transformation tools.',
+}
+
+
+def check_suitable(tool_name: str, component_id: str) -> None:
+    """
+    Checks if the general components tooling can be used with the given component.
+    :raises ValueError: If the component needs to be handled by special tools.
+    """
+    if message := _UNSUITABLE_COMPONENTS_MESSAGES.get(component_id):
+        raise ValueError(f'The "{tool_name}" tool cannot be used with {component_id} component. {message}')
