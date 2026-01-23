@@ -20,7 +20,7 @@ def keboola_client(mocker) -> KeboolaClient:
     client = mocker.AsyncMock(KeboolaClient)
     client.storage_api_url = 'https://connection.test.keboola.com'
     client.branch_id = None
-    client.with_branch_id.return_value = client
+    client.with_branch_id = mocker.AsyncMock(return_value=client)
 
     # Mock API clients
     client.storage_client = mocker.AsyncMock(AsyncStorageClient)
