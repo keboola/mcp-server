@@ -514,7 +514,7 @@ EXAMPLES:
 ## update_config
 **Annotations**: `destructive`
 
-**Tags**: `components`
+**Tags**: `components, config-diff-preview`
 
 **Description**:
 
@@ -739,7 +739,7 @@ WORKFLOW:
 ## update_config_row
 **Annotations**: `destructive`
 
-**Tags**: `components`
+**Tags**: `components, config-diff-preview`
 
 **Description**:
 
@@ -971,7 +971,7 @@ WORKFLOW:
 ## update_sql_transformation
 **Annotations**: `destructive`
 
-**Tags**: `components`
+**Tags**: `components, config-diff-preview`
 
 **Description**:
 
@@ -1647,7 +1647,7 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 ## modify_data_app
 **Annotations**: `destructive`
 
-**Tags**: `data-apps`
+**Tags**: `config-diff-preview, data-apps`
 
 **Description**:
 
@@ -2004,7 +2004,7 @@ OPTIONS:
 ## modify_flow
 **Annotations**: `destructive`
 
-**Tags**: `flows`
+**Tags**: `config-diff-preview, flows`
 
 **Description**:
 
@@ -2179,7 +2179,7 @@ adjusting dependencies
 ## update_flow
 **Annotations**: `destructive`
 
-**Tags**: `flows`
+**Tags**: `config-diff-preview, flows`
 
 **Description**:
 
