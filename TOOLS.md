@@ -55,9 +55,10 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.
 
 ### Storage Tools
-- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets.
+- [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
+lineage references (created/updated by), and links.
 - [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
-column definitions, and metadata.
+column definitions, lineage references (created/updated by) and links.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
@@ -2734,7 +2735,8 @@ DATA VALIDATION:
 
 **Description**:
 
-Lists buckets or retrieves full details of specific buckets.
+Lists buckets or retrieves full details of specific buckets, including descriptions,
+lineage references (created/updated by), and links.
 
 EXAMPLES:
 - `bucket_ids=[]` → summaries of all buckets in the project
@@ -2768,11 +2770,14 @@ EXAMPLES:
 **Description**:
 
 Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
-column definitions, and metadata.
+column definitions, lineage references (created/updated by) and links.
 
 RETURNS:
 - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
 - With `table_ids`: Full details including columns, data types, and fully qualified database names.
+- With `table_ids` and `include_usage`: Full details plus components / transformations that use the tables
+  in their input / output mappings. Use only when explicitly needed or evident from context; usage calculation
+  might be demanding in big projects.
 
 COLUMN DATA TYPES:
 - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
@@ -2807,6 +2812,11 @@ EXAMPLES:
         "type": "string"
       },
       "type": "array"
+    },
+    "include_usage": {
+      "default": false,
+      "description": "Show components / transformations where each table is used.",
+      "type": "boolean"
     }
   },
   "type": "object"
