@@ -8,10 +8,8 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     AggregateError,
-    SessionStateMiddleware,
     ToolsFilteringMiddleware,
     _exclude_none_serializer,
     process_concurrently,
