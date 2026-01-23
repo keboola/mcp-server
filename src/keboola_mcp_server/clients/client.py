@@ -102,8 +102,6 @@ class KeboolaClient:
                     LOG.error(f'Branch not found: {branch_id}: {exc.response.text}')
                 else:
                     LOG.error(f'Failed to get branch detail for {branch_id}: {exc.response.text}')
-                # TODO: Decide whether to fail fast here (affecting tool listing in client Cursor) or only log and
-                # defer, since branch-dependent endpoints will fail later anyway with appropriate error messages.
                 raise exc
 
             # Converts the branch id referring to the main/production branch to None as we expect

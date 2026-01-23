@@ -291,10 +291,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         branch_id = client.branch_id
 
         # We use None for the branch id referring to the main/production branch in the KeboolaClient.
-        if branch_id is None:
-            return True
-
-        return False
+        return branch_id is None
 
     async def on_list_tools(
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
