@@ -309,9 +309,9 @@ def unique_id() -> str:
     return str(uuid.uuid4())[:8]
 
 
-@pytest.fixture
-def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> WorkspaceManager:
-    return WorkspaceManager(keboola_client, workspace_schema)
+@pytest_asyncio.fixture
+async def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> WorkspaceManager:
+    return await WorkspaceManager.create(keboola_client, workspace_schema)
 
 
 @pytest.fixture
