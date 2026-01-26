@@ -1,11 +1,16 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.mcp import (
     AggregateError,
+    ToolsFilteringMiddleware,
     _exclude_none_serializer,
     process_concurrently,
     toon_serializer,
@@ -22,6 +27,12 @@ class SimpleModel(BaseModel):
 class NestedModel(BaseModel):
     field1: str | None = None
     field2: list[str] | None = None
+
+
+def _tool(name: str) -> MagicMock:
+    tool = MagicMock()
+    tool.name = name
+    return tool
 
 
 async def _async_square(n: int) -> int:
@@ -288,3 +299,78 @@ def test_unwrap_results_all_exceptions():
     err = exc_info.value
     assert err.exceptions == [exc1, exc2]
     assert str(err) == 'Multiple errors occurred (2 errors): ValueError: error 1; ValueError: error 2'
+
+
+class ToolsFilteringMiddlewareTests:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('branch_id', 'expect_filtered'),
+        [
+            ('1234', True),
+            (None, False),
+        ],
+    )
+    async def test_list_tools_filters_data_apps_by_branch(
+        self,
+        mcp_context_client,
+        branch_id: str | None,
+        expect_filtered: bool,
+    ) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.branch_id = branch_id
+        keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+
+        tools = [_tool('modify_data_app'), _tool('get_data_apps'), _tool('deploy_data_app'), _tool('other_tool')]
+
+        async def call_next(_):
+            return tools
+
+        middleware = ToolsFilteringMiddleware()
+        context = SimpleNamespace(fastmcp_context=mcp_context_client)
+        result = await middleware.on_list_tools(context, call_next)
+
+        result_names = {t.name for t in result}
+        if expect_filtered:
+            assert 'modify_data_app' not in result_names
+            assert 'get_data_apps' not in result_names
+            assert 'deploy_data_app' not in result_names
+        else:
+            assert 'modify_data_app' in result_names
+            assert 'get_data_apps' in result_names
+            assert 'deploy_data_app' in result_names
+        assert 'other_tool' in result_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('branch_id', 'expect_error'),
+        [
+            ('5678', True),
+            (None, False),
+        ],
+    )
+    async def test_call_tool_blocks_data_apps_by_branch(
+        self,
+        mcp_context_client,
+        branch_id: str | None,
+        expect_error: bool,
+    ) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.branch_id = branch_id
+        keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+
+        tool = _tool('modify_data_app')
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name='modify_data_app'))
+
+        expected = MagicMock()
+
+        async def call_next(_):
+            return expected
+
+        middleware = ToolsFilteringMiddleware()
+        if expect_error:
+            with pytest.raises(ToolError, match='Data apps are supported only in the main production branch'):
+                await middleware.on_call_tool(context, call_next)
+        else:
+            result = await middleware.on_call_tool(context, call_next)
+            assert result is expected

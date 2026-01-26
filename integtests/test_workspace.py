@@ -1,7 +1,9 @@
 import logging
-from typing import Any, Generator, Mapping
+from collections.abc import AsyncGenerator, Mapping
+from typing import Any
 
 import pytest
+import pytest_asyncio
 import requests
 from kbcstorage.client import Client as SyncStorageClient
 
@@ -11,10 +13,10 @@ from keboola_mcp_server.workspace import WorkspaceManager
 LOG = logging.getLogger(__name__)
 
 
-@pytest.fixture
-def dynamic_manager(
+@pytest_asyncio.fixture
+async def dynamic_manager(
     keboola_client: KeboolaClient, sync_storage_client: SyncStorageClient, workspace_schema: str
-) -> Generator[WorkspaceManager, Any, None]:
+) -> AsyncGenerator[WorkspaceManager, Any]:
     storage_client = sync_storage_client
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
@@ -48,7 +50,7 @@ def dynamic_manager(
             f'{[{"id": w["id"], "name": w["name"]} for w in workspaces]}'
         )
 
-    yield WorkspaceManager(keboola_client)
+    yield await WorkspaceManager.create(keboola_client)
 
     LOG.info(f'Cleaning up workspaces in Keboola project with ID={project_id}')
     metas = _get_workspace_meta()

@@ -17,6 +17,7 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
+from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             modify_data_app,
-            tags={DATA_APP_TOOLS_TAG},
+            tags={DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
         )
     )

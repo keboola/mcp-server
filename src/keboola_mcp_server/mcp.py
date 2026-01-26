@@ -156,7 +156,7 @@ class SessionStateMiddleware(fmw.Middleware):
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
-            state = self.create_session_state(config, runtime_info)
+            state = await self.create_session_state(config, runtime_info)
             ctx.session.state = state
 
         try:
@@ -204,7 +204,7 @@ class SessionStateMiddleware(fmw.Middleware):
         return config
 
     @classmethod
-    def create_session_state(
+    async def create_session_state(
         cls, config: Config, runtime_info: ServerRuntimeInfo, readonly: bool | None = None
     ) -> dict[str, Any]:
         """
@@ -223,14 +223,13 @@ class SessionStateMiddleware(fmw.Middleware):
                 raise ValueError('Storage API token is not provided.')
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
-            client = KeboolaClient(
+            client = await KeboolaClient(
                 storage_api_url=config.storage_api_url,
                 storage_api_token=config.storage_token,
                 bearer_token=config.bearer_token,
-                branch_id=config.branch_id,
                 headers=cls._get_headers(runtime_info),
                 readonly=readonly,
-            )
+            ).with_branch_id(config.branch_id)
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
         except Exception as e:
@@ -238,7 +237,7 @@ class SessionStateMiddleware(fmw.Middleware):
             raise
 
         try:
-            workspace_manager = WorkspaceManager(client, config.workspace_schema)
+            workspace_manager = await WorkspaceManager.create(client, config.workspace_schema)
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             LOG.info('Successfully initialized Storage API Workspace manager.')
         except Exception as e:
@@ -283,6 +282,17 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                 return role
         return ''
 
+    @staticmethod
+    def is_client_using_main_branch(ctx: Context) -> bool:
+        """
+        Checks if the current branch is the main/production branch.
+        """
+        client = KeboolaClient.from_state(ctx.session.state)
+        branch_id = client.branch_id
+
+        # We use None for the branch id referring to the main/production branch in the KeboolaClient.
+        return branch_id is None
+
     async def on_list_tools(
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
@@ -300,6 +310,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
         else:
             tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
+
+        if not self.is_client_using_main_branch(context.fastmcp_context):
+            # Filter out data app tools when the client is not using the main/production branch
+            tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
 
         return tools
 
@@ -340,6 +354,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     f'The "{MODIFY_FLOW_TOOL_NAME}" tool is not available for this token. '
                     f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
                 )
+
+        if tool.name in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}:
+            if not self.is_client_using_main_branch(context.fastmcp_context):
+                raise ToolError('Data apps are supported only in the main production branch.')
 
         return await call_next(context)
 

@@ -231,7 +231,7 @@ async def preview_config_diff(rq: Request) -> Response:
 
     server_state = ServerState.from_starlette(rq.app)
     config = SessionStateMiddleware.apply_request_config(rq, server_state.config)
-    state = SessionStateMiddleware.create_session_state(config, server_state.runtime_info, readonly=True)
+    state = await SessionStateMiddleware.create_session_state(config, server_state.runtime_info, readonly=True)
     client = KeboolaClient.from_state(state)
     workspace_manager = WorkspaceManager.from_state(state)
 
