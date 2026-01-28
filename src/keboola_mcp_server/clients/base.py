@@ -11,33 +11,26 @@ JsonStruct = Union[JsonDict, JsonList]
 
 LOG = logging.getLogger(__name__)
 
-# Deadlock detection keywords for MySQL errors
-DEADLOCK_KEYWORDS = ['deadlock', 'sqlstate[40001]', '1213']
+# HTTP status code for conflict errors (deadlocks)
+HTTP_CONFLICT_STATUS = 409
 
-# Retry configuration for deadlock errors
-DEADLOCK_RETRY_MAX_ATTEMPTS = 3
-DEADLOCK_RETRY_INITIAL_DELAY = 1.0
-DEADLOCK_RETRY_MAX_DELAY = 10.0
+# Retry configuration for conflict errors
+CONFLICT_RETRY_MAX_ATTEMPTS = 3
+CONFLICT_RETRY_INITIAL_DELAY = 1.0
+CONFLICT_RETRY_MAX_DELAY = 10.0
 
 
-def _is_deadlock_error(response: httpx.Response) -> bool:
+def _is_conflict_error(response: httpx.Response) -> bool:
     """
-    Checks if the HTTP response indicates a MySQL deadlock error.
+    Checks if the HTTP response indicates a conflict error (HTTP 409).
 
-    Deadlock errors from the Connection API are returned as HTTP 500 errors
-    with error messages containing deadlock-related keywords.
+    Conflict errors from the Connection API indicate concurrent modification issues
+    such as MySQL deadlocks when multiple requests try to update the same resource.
 
     :param response: The HTTP response to check
-    :return: True if the response indicates a deadlock error, False otherwise
+    :return: True if the response indicates a conflict error, False otherwise
     """
-    if response.status_code != 500:
-        return False
-
-    try:
-        error_text = response.text.lower()
-        return any(keyword in error_text for keyword in DEADLOCK_KEYWORDS)
-    except Exception:
-        return False
+    return response.status_code == HTTP_CONFLICT_STATUS
 
 
 class RawKeboolaClient:
@@ -165,9 +158,9 @@ class RawKeboolaClient:
         """
         Makes a POST request to the service API.
 
-        Includes retry logic with exponential backoff for MySQL deadlock errors (HTTP 500
-        with deadlock-related error messages). This handles concurrent configuration updates
-        that may cause serialization failures.
+        Includes retry logic with exponential backoff for HTTP 409 Conflict errors.
+        This handles concurrent configuration updates that may cause conflicts
+        (e.g., MySQL deadlocks when multiple requests update the same resource).
 
         :param endpoint: API endpoint to call
         :param data: Request payload
@@ -180,7 +173,7 @@ class RawKeboolaClient:
 
         headers = self.headers | (headers or {})
 
-        for attempt in range(DEADLOCK_RETRY_MAX_ATTEMPTS + 1):
+        for attempt in range(CONFLICT_RETRY_MAX_ATTEMPTS + 1):
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     f'{self.base_api_url}/{endpoint}',
@@ -192,14 +185,14 @@ class RawKeboolaClient:
                 if response.is_success:
                     return cast(JsonStruct, response.json())
 
-                if _is_deadlock_error(response) and attempt < DEADLOCK_RETRY_MAX_ATTEMPTS:
+                if _is_conflict_error(response) and attempt < CONFLICT_RETRY_MAX_ATTEMPTS:
                     delay = min(
-                        DEADLOCK_RETRY_INITIAL_DELAY * (2**attempt),
-                        DEADLOCK_RETRY_MAX_DELAY,
+                        CONFLICT_RETRY_INITIAL_DELAY * (2**attempt),
+                        CONFLICT_RETRY_MAX_DELAY,
                     )
                     LOG.warning(
-                        f'Deadlock error detected on POST {endpoint}, '
-                        f'attempt {attempt + 1}/{DEADLOCK_RETRY_MAX_ATTEMPTS + 1}. '
+                        f'Conflict error (HTTP 409) on POST {endpoint}, '
+                        f'attempt {attempt + 1}/{CONFLICT_RETRY_MAX_ATTEMPTS + 1}. '
                         f'Retrying in {delay:.1f}s...'
                     )
                     await asyncio.sleep(delay)
