@@ -29,7 +29,7 @@ With the AI Agent and MCP Server, you can:
 ## 🚀 Quick Start: Remote MCP Server (Easiest Way)
 
 <div class="alert alert-warning" role="alert">
-<strong>⚠️ SSE Transport Deprecation:</strong> The SSE transport will be deprecated on 01.04.2026. Please migrate to Streamable HTTP transport using <code>/mcp</code> endpoints instead of <code>/sse</code>. Streamable HTTP provides bidirectional streaming for improved performance and reliability.
+<strong>⚠️ SSE Transport Deprecation:</strong> The SSE transport will be deprecated on 2026-04-01. Please migrate to Streamable HTTP transport using <code>/mcp</code> endpoints instead of <code>/sse</code>. Streamable HTTP provides bidirectional streaming for improved performance and reliability.
 </div>
 
 The easiest way to use Keboola MCP Server is through our **Remote MCP Server**. This hosted solution eliminates the need for local setup, configuration, or installation.
@@ -133,7 +133,7 @@ Run the MCP server on your own machine for full control and easy development. Ch
 The server supports multiple **transport** options, which can be selected by providing the `--transport <transport>` argument when starting the server:
 - `stdio` - Default when `--transport` is not specified. Standard input/output, typically used for local deployment with a single client.
 - `streamable-http` - Runs the server remotely over HTTP with a bidirectional streaming channel, allowing the client and server to continuously exchange messages. Connect via <url>/mcp (e.g., http://localhost:8000/mcp).
-- `sse` - **Deprecated (will be removed on 01.04.2026)**, use `streamable-http` instead. Runs the server remotely using Server-Sent Events (SSE) for one-way event streaming from server to client. Connect via <url>/sse (e.g., http://localhost:8000/sse).
+- `sse` - **Deprecated (will be removed on 2026-04-01)**, use `streamable-http` instead. Runs the server remotely using Server-Sent Events (SSE) for one-way event streaming from server to client. Connect via <url>/sse (e.g., http://localhost:8000/sse).
 - `http-compat` - A custom transport supporting both `SSE` and `streamable-http`. It is currently used on Keboola remote servers but will be replaced by `streamable-http` only when SSE is removed.
 
 For client–server communication, Keboola credentials must be provided to enable working with your project in your Keboola Region. The following are required: `KBC_STORAGE_TOKEN`, `KBC_STORAGE_API_URL`, `KBC_WORKSPACE_SCHEMA` and optionally `KBC_BRANCH_ID`. You can provide these in two ways:
