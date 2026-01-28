@@ -1,7 +1,8 @@
+import copy
 import importlib.resources as resources
 import logging
 import re
-from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast
+from typing import Annotated, Any, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -166,10 +167,9 @@ class DataApp(BaseModel):
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
     )
-    parameters: dict[str, Any] = Field(description='The parameters settings of the data app.')
-    authorization: dict[str, Any] = Field(description='The authorization settings of the data app.')
-    storage: dict[str, Any] = Field(
-        description='The storage input/output mapping of the data app.', default_factory=dict
+    # TODO: should this actually be DataAppConfig
+    configuration: dict[str, Any] = Field(
+        description='The nested configuration object containing parameters, storage and authorization'
     )
     deployment_info: Optional[DeploymentInfo] = Field(
         description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.',
@@ -183,9 +183,6 @@ class DataApp(BaseModel):
         api_response: DataAppResponse,
         api_configuration: ConfigurationAPIResponse,
     ) -> 'DataApp':
-        parameters = api_configuration.configuration.get('parameters', {}) or {}
-        authorization = api_configuration.configuration.get('authorization', {}) or {}
-        storage = api_configuration.configuration.get('storage', {}) or {}
         return cls(
             component_id=api_configuration.component_id,
             configuration_id=api_configuration.configuration_id,
@@ -199,9 +196,7 @@ class DataApp(BaseModel):
             auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
             name=api_configuration.name,
             description=api_configuration.description,
-            parameters=parameters,
-            authorization=authorization,
-            storage=storage,
+            configuration=api_configuration.configuration,
             deployment_info=None,
             links=[],
         )
@@ -345,7 +340,7 @@ async def modify_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         response = (
             'updated (redeploy required to apply changes in the running app)'
@@ -398,11 +393,7 @@ async def modify_data_app_internal(
         branch_id=str(await workspace_manager.get_branch_id()),
     )
     data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-    existing_config = {
-        'parameters': data_app.parameters,
-        'authorization': data_app.authorization,
-        'storage': data_app.storage,
-    }
+    existing_config = data_app.configuration
     updated_config = _update_existing_data_app_config(
         existing_config,
         name,
@@ -494,7 +485,7 @@ async def deploy_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
@@ -507,7 +498,7 @@ async def deploy_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=None,
-            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=None)
     else:
@@ -543,7 +534,7 @@ def _build_data_app_config(
 
 
 def _update_existing_data_app_config(
-    existing_config: dict[str, Any],
+    existing_config: Mapping[str, Any],
     name: str,
     source_code: str,
     packages: list[str],
@@ -551,7 +542,7 @@ def _update_existing_data_app_config(
     secrets: dict[str, Any],
     sql_dialect: str,
 ) -> dict[str, Any]:
-    new_config = existing_config.copy()
+    new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config['parameters']['dataApp']['slug'] = (
         _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
     )
@@ -646,11 +637,12 @@ async def _fetch_data_app_details_task(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         logs = await _fetch_logs(client, data_app.data_app_id)
         return data_app.with_links(links).with_deployment_info(logs)
     except Exception:
+        LOG.exception(f'Failed to fetch data app by configuration ID: {configuration_id}')
         return configuration_id
 
 
