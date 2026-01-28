@@ -247,8 +247,8 @@ async def preview_config_diff(rq: Request) -> Response:
         if not is_valid:
             preview_resp = PreviewConfigDiffResp(
                 coordinates=coordinates,
-                original_config=None,
-                updated_config=None,
+                original_config={},
+                updated_config={},
                 is_valid=False,
                 validation_errors=[validation_errors],
             )
@@ -285,8 +285,8 @@ async def preview_config_diff(rq: Request) -> Response:
         LOG.exception(f'[preview_config_diff] {ex}')
         preview_resp = PreviewConfigDiffResp(
             coordinates=coordinates,
-            original_config=None,
-            updated_config=None,
+            original_config={},
+            updated_config={},
             is_valid=False,
             validation_errors=[str(ex)],
         )

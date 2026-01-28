@@ -181,9 +181,9 @@ class TestPreviewConfigDiff:
         assert len(result['validationErrors']) > 0
         assert 'Invalid configuration ID' in result['validationErrors'][0]
 
-        # Check that configs are not in the response (excluded by exclude_none=True)
-        assert 'originalConfig' not in result
-        assert 'updatedConfig' not in result
+        # Check that empty configs are in the response (required by KAI backend)
+        assert result['originalConfig'] == {}
+        assert result['updatedConfig'] == {}
 
     def test_preview_invalid_tool_name(self, test_client: TestClient, mocker):
         """Test preview with invalid tool name."""
@@ -644,9 +644,9 @@ class TestPreviewConfigDiff:
         assert 'validationErrors' in result
         assert 'configuration_id' in str(result['validationErrors'])
 
-        # Check that configs are not in the response (excluded by exclude_none=True)
-        assert 'originalConfig' not in result
-        assert 'updatedConfig' not in result
+        # Check that empty configs are in the response (required by KAI backend)
+        assert result['originalConfig'] == {}
+        assert result['updatedConfig'] == {}
 
     def test_preview_validation_invalid_param_type(self, test_client: TestClient, mocker):
         """Test validation error for invalid parameter type.
@@ -679,9 +679,9 @@ class TestPreviewConfigDiff:
         assert 'validationErrors' in result
         assert 'parameter_updates.1' in str(result['validationErrors'])
 
-        # Check that configs are not in the response (excluded by exclude_none=True)
-        assert 'originalConfig' not in result
-        assert 'updatedConfig' not in result
+        # Check that empty configs are in the response (required by KAI backend)
+        assert result['originalConfig'] == {}
+        assert result['updatedConfig'] == {}
 
     def test_preview_validation_passes_for_valid_params(self, test_client: TestClient, mocker):
         """Test that validation passes for valid parameters and processing continues."""
