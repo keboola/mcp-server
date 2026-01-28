@@ -726,8 +726,11 @@ async def test_update_sql_transformation(
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
+    component_id = mock_component['id'] = expected_component_id
+    configuration_id = 'test-config-id'
+
     existing_configuration = {
-        'id': mock_configuration['id'],
+        'id': configuration_id,
         'name': 'Existing Transformation',
         'description': 'Existing description',
         'configuration': {
@@ -740,39 +743,48 @@ async def test_update_sql_transformation(
         'version': 1,
     }
 
-    new_change_description = 'Test transformation update'
-    updated_configuration = mock_configuration.copy()
-    updated_configuration['version'] = 2
-    mock_component['id'] = expected_component_id
+    updated_name = 'Updated Transformation'
+    updated_description = 'Updated transformation description'
+    updated_configuration = {
+        **existing_configuration,
+        'name': updated_name,
+        'description': updated_description,
+        'version': 2,
+    }
 
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_configuration)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
-    updated_result = await update_sql_transformation(
+    new_change_description = 'Test transformation update'
+
+    result = await update_sql_transformation(
         context,
-        mock_configuration['id'],
-        new_change_description,
+        change_description=new_change_description,
+        configuration_id=configuration_id,
+        name=updated_name,
+        description=updated_description,
         parameter_updates=parameter_updates,
         storage=storage,
-        updated_description=str(),
-        is_disabled=False,
     )
 
-    assert isinstance(updated_result, ConfigToolOutput)
-    assert updated_result.component_id == expected_component_id
-    assert updated_result.configuration_id == mock_configuration['id']
-    assert updated_result.description == mock_configuration['description']
-    assert updated_result.version == updated_configuration['version']
+    assert isinstance(result, ConfigToolOutput)
+    assert result.component_id == component_id
+    assert result.configuration_id == configuration_id
+    assert result.description == updated_description
+    assert result.success is True
+    assert result.timestamp is not None
+    assert result.version == updated_configuration['version']
 
     keboola_client.ai_service_client.get_component_detail.assert_called_with(component_id=expected_component_id)
     keboola_client.storage_client.configuration_update.assert_called_once_with(
-        component_id=expected_component_id,
-        configuration_id=mock_configuration['id'],
+        component_id=component_id,
+        configuration_id=configuration_id,
         change_description=new_change_description,
         configuration=expected_config,
-        updated_description='',
-        is_disabled=False,
+        updated_name=updated_name,
+        updated_description=updated_description,
+        is_disabled=None,
     )
 
 
@@ -1080,6 +1092,7 @@ async def test_update_config(
         change_description=change_description,
         updated_name=updated_name,
         updated_description=updated_description,
+        is_disabled=None,
     )
 
 
@@ -1340,4 +1353,5 @@ async def test_update_config_row(
         change_description=change_description,
         updated_name=updated_name,
         updated_description=updated_description,
+        is_disabled=None,
     )

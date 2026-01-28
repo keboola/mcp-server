@@ -471,7 +471,6 @@ async def create_sql_transformation(
 @tool_errors()
 async def update_sql_transformation(
     ctx: Context,
-    configuration_id: Annotated[str, Field(description='The ID of the transformation configuration to update.')],
     change_description: Annotated[
         str,
         Field(
@@ -481,6 +480,26 @@ async def update_sql_transformation(
             ),
         ),
     ],
+    configuration_id: Annotated[str, Field(description='The ID of the transformation configuration to update.')],
+    name: Annotated[
+        str,
+        Field(
+            description=(
+                'New name for the transformation. Only provide if changing the name. '
+                'Name should be short (typically under 50 characters) and descriptive.'
+            )
+        ),
+    ] = '',
+    description: Annotated[
+        str,
+        Field(
+            description=(
+                'New detailed description for the transformation. Only provide if changing the description. '
+                'Should explain what the transformation does, data sources, and business logic. '
+                'Leave empty to preserve the original description.'
+            ),
+        ),
+    ] = '',
     parameter_updates: Annotated[
         list[TfParamUpdate],
         Field(
@@ -537,25 +556,16 @@ async def update_sql_transformation(
             )
         ),
     ] = None,
-    updated_description: Annotated[
-        str,
-        Field(
-            description=(
-                'New detailed description for the transformation. Only provide if changing the description. '
-                'Should explain what the transformation does, data sources, and business logic. '
-                'Leave empty to preserve the original description.'
-            ),
-        ),
-    ] = '',
     is_disabled: Annotated[
-        bool,
+        bool | None,
         Field(
             description=(
-                'Whether to disable the transformation. Set to True to disable execution without deleting. '
-                'Default is False (transformation remains enabled).'
+                "Enable or disable the transformation. Set to True to disable execution (transformation won't run), "
+                'False to enable execution (transformation will run). Only provide if changing the status, '
+                'leave as null to preserve current state.'
             ),
         ),
-    ] = False,
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
@@ -568,7 +578,7 @@ async def update_sql_transformation(
     - Modifying SQL queries in transformation (add/edit/remove SQL statements)
     - Updating transformation block or code block names
     - Changing input/output table mappings for the transformation
-    - Updating the transformation description
+    - Updating the transformation name or description
     - Enabling or disabling the transformation
     - Any combination of the above
 
@@ -757,11 +767,12 @@ async def update_sql_transformation(
     _, updated_configuration, msg = await update_sql_transformation_internal(
         client=client,
         workspace_manager=workspace_manager,
-        configuration_id=configuration_id,
         change_description=change_description,
+        configuration_id=configuration_id,
+        name=name,
+        description=description,
         parameter_updates=parameter_updates,
         storage=storage,
-        updated_description=updated_description,
         is_disabled=is_disabled,
     )
     updated_raw_configuration = await client.storage_client.configuration_update(
@@ -769,7 +780,8 @@ async def update_sql_transformation(
         configuration_id=configuration_id,
         configuration=updated_configuration,
         change_description=change_description,
-        updated_description=updated_description,
+        updated_name=name,
+        updated_description=description,
         is_disabled=is_disabled,
     )
 
@@ -803,16 +815,19 @@ async def update_sql_transformation(
     )
 
 
+# This function must use exactly the same parameters as update_sql_transformation() function.
+# Except for the `ctx` and `client` parameters.
 async def update_sql_transformation_internal(
     *,
     client: KeboolaClient,
     workspace_manager: WorkspaceManager,
     configuration_id: str,
     change_description: str,
+    name: str = '',
+    description: str = '',
     parameter_updates: list[TfParamUpdate] | None = None,
     storage: dict[str, Any] | None = None,
-    updated_description: str = '',
-    is_disabled: bool = False,
+    is_disabled: bool | None = None,
 ) -> tuple[JsonDict, JsonDict, str]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
@@ -1157,7 +1172,8 @@ async def update_config(
         Field(
             description=(
                 'New detailed description for the configuration. Only provide if changing the description. '
-                'Should explain the purpose, data sources, and behavior of this configuration.'
+                'Should explain the purpose, data sources, and behavior of this configuration. '
+                'Leave empty to preserve the original description.'
             ),
         ),
     ] = '',
@@ -1204,6 +1220,16 @@ async def update_config(
     processors_after: Annotated[
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component row runs.'),
+    ] = None,
+    is_disabled: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Enable or disable the configuration. Set to True to disable execution (configuration won't run), "
+                'False to enable execution (configuration will run). Only provide if changing the status, '
+                'leave as null to preserve current state.'
+            ),
+        ),
     ] = None,
 ) -> ConfigToolOutput:
     """
@@ -1254,6 +1280,7 @@ async def update_config(
         storage=storage,
         processors_before=processors_before,
         processors_after=processors_after,
+        is_disabled=is_disabled,
     )
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=component_id,
@@ -1262,6 +1289,7 @@ async def update_config(
         change_description=change_description,
         updated_name=name,
         updated_description=description,
+        is_disabled=is_disabled,
     )
 
     LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
@@ -1304,6 +1332,7 @@ async def update_config_internal(
     storage: dict[str, Any] | None = None,
     processors_before: list[dict[str, Any]] | None = None,
     processors_after: list[dict[str, Any]] | None = None,
+    is_disabled: bool | None = None,
 ) -> tuple[JsonDict, JsonDict]:
     check_suitable('update_config', component_id)
 
@@ -1429,6 +1458,16 @@ async def update_config_row(
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
+    is_disabled: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Enable or disable the configuration row. Set to True to disable execution (config row won't run), "
+                'False to enable execution (config row will run). Only provide if changing the status, '
+                'leave as null to preserve current state.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
@@ -1484,6 +1523,7 @@ async def update_config_row(
         storage=storage,
         processors_before=processors_before,
         processors_after=processors_after,
+        is_disabled=is_disabled,
     )
     updated_raw_configuration = await client.storage_client.configuration_row_update(
         component_id=component_id,
@@ -1493,6 +1533,7 @@ async def update_config_row(
         change_description=change_description,
         updated_name=name,
         updated_description=description,
+        is_disabled=is_disabled,
     )
 
     LOG.info(
@@ -1539,6 +1580,7 @@ async def update_config_row_internal(
     storage: dict[str, Any] | None = None,
     processors_before: list[dict[str, Any]] | None = None,
     processors_after: list[dict[str, Any]] | None = None,
+    is_disabled: bool | None = None,
 ) -> tuple[JsonDict, JsonDict]:
     check_suitable('update_config_row', component_id)
 
