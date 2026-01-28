@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Optional, Union, cast
 
@@ -9,6 +10,34 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 LOG = logging.getLogger(__name__)
+
+# Deadlock detection keywords for MySQL errors
+DEADLOCK_KEYWORDS = ['deadlock', 'sqlstate[40001]', '1213']
+
+# Retry configuration for deadlock errors
+DEADLOCK_RETRY_MAX_ATTEMPTS = 3
+DEADLOCK_RETRY_INITIAL_DELAY = 1.0
+DEADLOCK_RETRY_MAX_DELAY = 10.0
+
+
+def _is_deadlock_error(response: httpx.Response) -> bool:
+    """
+    Checks if the HTTP response indicates a MySQL deadlock error.
+
+    Deadlock errors from the Connection API are returned as HTTP 500 errors
+    with error messages containing deadlock-related keywords.
+
+    :param response: The HTTP response to check
+    :return: True if the response indicates a deadlock error, False otherwise
+    """
+    if response.status_code != 500:
+        return False
+
+    try:
+        error_text = response.text.lower()
+        return any(keyword in error_text for keyword in DEADLOCK_KEYWORDS)
+    except Exception:
+        return False
 
 
 class RawKeboolaClient:
@@ -136,6 +165,10 @@ class RawKeboolaClient:
         """
         Makes a POST request to the service API.
 
+        Includes retry logic with exponential backoff for MySQL deadlock errors (HTTP 500
+        with deadlock-related error messages). This handles concurrent configuration updates
+        that may cause serialization failures.
+
         :param endpoint: API endpoint to call
         :param data: Request payload
         :param params: Query parameters for the request
@@ -146,15 +179,37 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden POST operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f'{self.base_api_url}/{endpoint}',
-                params=params,
-                headers=headers,
-                json=data or {},
-            )
-            self._raise_for_status(response)
-            return cast(JsonStruct, response.json())
+
+        for attempt in range(DEADLOCK_RETRY_MAX_ATTEMPTS + 1):
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f'{self.base_api_url}/{endpoint}',
+                    params=params,
+                    headers=headers,
+                    json=data or {},
+                )
+
+                if response.is_success:
+                    return cast(JsonStruct, response.json())
+
+                if _is_deadlock_error(response) and attempt < DEADLOCK_RETRY_MAX_ATTEMPTS:
+                    delay = min(
+                        DEADLOCK_RETRY_INITIAL_DELAY * (2**attempt),
+                        DEADLOCK_RETRY_MAX_DELAY,
+                    )
+                    LOG.warning(
+                        f'Deadlock error detected on POST {endpoint}, '
+                        f'attempt {attempt + 1}/{DEADLOCK_RETRY_MAX_ATTEMPTS + 1}. '
+                        f'Retrying in {delay:.1f}s...'
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                self._raise_for_status(response)
+                return cast(JsonStruct, response.json())
+
+        self._raise_for_status(response)
+        return cast(JsonStruct, response.json())
 
     async def put(
         self,
