@@ -1,8 +1,9 @@
-import asyncio
 import logging
+from http import HTTPStatus
 from typing import Any, Optional, Union, cast
 
 import httpx
+from httpx_retries import Retry, RetryTransport
 
 JsonPrimitive = Union[int, float, str, bool, None]
 JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
@@ -10,27 +11,6 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 LOG = logging.getLogger(__name__)
-
-# HTTP status code for conflict errors (deadlocks)
-HTTP_CONFLICT_STATUS = 409
-
-# Retry configuration for conflict errors
-CONFLICT_RETRY_MAX_ATTEMPTS = 3
-CONFLICT_RETRY_INITIAL_DELAY = 1.0
-CONFLICT_RETRY_MAX_DELAY = 10.0
-
-
-def _is_conflict_error(response: httpx.Response) -> bool:
-    """
-    Checks if the HTTP response indicates a conflict error (HTTP 409).
-
-    Conflict errors from the Connection API indicate concurrent modification issues
-    such as MySQL deadlocks when multiple requests try to update the same resource.
-
-    :param response: The HTTP response to check
-    :return: True if the response indicates a conflict error, False otherwise
-    """
-    return response.status_code == HTTP_CONFLICT_STATUS
 
 
 class RawKeboolaClient:
@@ -60,6 +40,14 @@ class RawKeboolaClient:
             else:
                 self.headers['X-StorageAPI-Token'] = api_token
         self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
+        self.transport = RetryTransport(
+            retry=Retry(
+                total=3,
+                backoff_factor=1.0,
+                max_backoff_wait=10,
+                status_forcelist=frozenset(Retry.RETRYABLE_STATUS_CODES | {HTTPStatus.CONFLICT}),
+            )
+        )
         if headers:
             self.headers.update(headers)
         self.readonly = readonly
@@ -115,7 +103,7 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.get(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -139,7 +127,7 @@ class RawKeboolaClient:
         :return: API response as text
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.get(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -158,10 +146,6 @@ class RawKeboolaClient:
         """
         Makes a POST request to the service API.
 
-        Includes retry logic with exponential backoff for HTTP 409 Conflict errors.
-        This handles concurrent configuration updates that may cause conflicts
-        (e.g., MySQL deadlocks when multiple requests update the same resource).
-
         :param endpoint: API endpoint to call
         :param data: Request payload
         :param params: Query parameters for the request
@@ -172,30 +156,15 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden POST operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(CONFLICT_RETRY_MAX_ATTEMPTS + 1):
-                response = await client.post(
-                    f'{self.base_api_url}/{endpoint}',
-                    params=params,
-                    headers=headers,
-                    json=data or {},
-                )
-                if response.is_success:
-                    return cast(JsonStruct, response.json())
-                if _is_conflict_error(response) and attempt < CONFLICT_RETRY_MAX_ATTEMPTS:
-                    delay = min(
-                        CONFLICT_RETRY_INITIAL_DELAY * (2**attempt),
-                        CONFLICT_RETRY_MAX_DELAY,
-                    )
-                    LOG.warning(
-                        f'Conflict error (HTTP 409) on POST {endpoint}, '
-                        f'attempt {attempt + 1}/{CONFLICT_RETRY_MAX_ATTEMPTS + 1}. '
-                        f'Retrying in {delay:.1f}s...'
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                self._raise_for_status(response)
-        raise RuntimeError('Unreachable code')
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+            response = await client.post(
+                f'{self.base_api_url}/{endpoint}',
+                params=params,
+                headers=headers,
+                json=data or {},
+            )
+            self._raise_for_status(response)
+            return cast(JsonStruct, response.json())
 
     async def put(
         self,
@@ -217,7 +186,7 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden PUT operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.put(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -243,7 +212,7 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden DELETE operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.delete(
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
@@ -275,7 +244,7 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden PATCH operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.patch(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
