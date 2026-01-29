@@ -14,7 +14,8 @@ description, and a list of created table names.
 - [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
-- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
+- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
+name or description.
 
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
@@ -667,7 +668,7 @@ WORKFLOW:
     },
     "description": {
       "default": "",
-      "description": "New detailed description for the configuration. Only provide if changing the description. Should explain the purpose, data sources, and behavior of this configuration.",
+      "description": "New detailed description for the configuration. Only provide if changing the description. Should explain the purpose, data sources, and behavior of this configuration. Leave empty to preserve the original description.",
       "type": "string"
     },
     "parameter_updates": {
@@ -723,6 +724,18 @@ WORKFLOW:
         "type": "object"
       },
       "type": "array"
+    },
+    "is_disabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Enable or disable the configuration. Set to True to disable execution (configuration won't run), False to enable execution (configuration will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -954,6 +967,18 @@ WORKFLOW:
         "type": "object"
       },
       "type": "array"
+    },
+    "is_disabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Enable or disable the configuration row. Set to True to disable execution (config row won't run), False to enable execution (config row will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -975,7 +1000,8 @@ WORKFLOW:
 
 **Description**:
 
-Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
+Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
+name or description.
 
 This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
 the operations you want to perform. All other fields will remain unchanged.
@@ -985,7 +1011,7 @@ WHEN TO USE:
 - Modifying SQL queries in transformation (add/edit/remove SQL statements)
 - Updating transformation block or code block names
 - Changing input/output table mappings for the transformation
-- Updating the transformation description
+- Updating the transformation name or description
 - Enabling or disabling the transformation
 - Any combination of the above
 
@@ -1468,12 +1494,22 @@ Example 4 - Update storage mappings:
     }
   },
   "properties": {
+    "change_description": {
+      "description": "A clear, human-readable summary of what changed in this transformation update. Be specific: e.g., \"Added JOIN with customers table\", \"Updated WHERE clause to filter active records\".",
+      "type": "string"
+    },
     "configuration_id": {
       "description": "The ID of the transformation configuration to update.",
       "type": "string"
     },
-    "change_description": {
-      "description": "A clear, human-readable summary of what changed in this transformation update. Be specific: e.g., \"Added JOIN with customers table\", \"Updated WHERE clause to filter active records\".",
+    "name": {
+      "default": "",
+      "description": "New name for the transformation. Only provide if changing the name. Name should be short (typically under 50 characters) and descriptive.",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "description": "New detailed description for the transformation. Only provide if changing the description. Should explain what the transformation does, data sources, and business logic. Leave empty to preserve the original description.",
       "type": "string"
     },
     "parameter_updates": {
@@ -1532,20 +1568,22 @@ Example 4 - Update storage mappings:
       "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
     },
-    "updated_description": {
-      "default": "",
-      "description": "New detailed description for the transformation. Only provide if changing the description. Should explain what the transformation does, data sources, and business logic. Leave empty to preserve the original description.",
-      "type": "string"
-    },
     "is_disabled": {
-      "default": false,
-      "description": "Whether to disable the transformation. Set to True to disable execution without deleting. Default is False (transformation remains enabled).",
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Enable or disable the transformation. Set to True to disable execution (transformation won't run), False to enable execution (transformation will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
-    "configuration_id",
-    "change_description"
+    "change_description",
+    "configuration_id"
   ],
   "type": "object"
 }
