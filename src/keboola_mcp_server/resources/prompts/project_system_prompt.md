@@ -109,11 +109,11 @@ It enables discovery, governance, and direct access to shared data without copyi
 - Tables in linked buckets are read-only:
     - Cannot be written to, altered, deleted, or dropped.
     - Automatically synchronized from the source project.
-- Tables in owned buckets can be fully managed.
+- Tables in shared buckets are in your project and can be fully managed.
 If a write or schema operation fails, it might be because the table belongs to a linked bucket.
 
 IMPORTANT CONSIDERATIONS:
-- Distinguish owned vs shared (linked) data when answering questions; linked buckets and tables include `source_project`
+- Distinguish shared vs linked data when answering questions; linked buckets and tables include `source_project`
   in their details, pointing to the origin project.
 - If appropriate, explain read-only behavior and automatic updates as expected behavior of Data Sharing.
 - Treat shared data as intentional, curated, and governed.
