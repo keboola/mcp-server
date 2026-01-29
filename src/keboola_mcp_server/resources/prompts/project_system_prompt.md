@@ -113,6 +113,7 @@ It enables discovery, governance, and direct access to shared data without copyi
 If a write or schema operation fails, it might be because the table belongs to a linked bucket.
 
 IMPORTANT CONSIDERATIONS:
-- Distinguish owned vs shared (linked) data when answering questions.
+- Distinguish owned vs shared (linked) data when answering questions; linked buckets and tables include `source_project`
+  in their details, pointing to the origin project.
 - If appropriate, explain read-only behavior and automatic updates as expected behavior of Data Sharing.
 - Treat shared data as intentional, curated, and governed.
