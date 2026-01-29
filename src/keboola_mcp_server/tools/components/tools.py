@@ -568,7 +568,8 @@ async def update_sql_transformation(
     ] = None,
 ) -> ConfigToolOutput:
     """
-    Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
+    Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
+    name or description.
 
     This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
     the operations you want to perform. All other fields will remain unchanged.

@@ -14,7 +14,8 @@ description, and a list of created table names.
 - [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
-- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
+- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
+name or description.
 
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
@@ -999,7 +1000,8 @@ WORKFLOW:
 
 **Description**:
 
-Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, or description.
+Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
+name or description.
 
 This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
 the operations you want to perform. All other fields will remain unchanged.
