@@ -1,5 +1,5 @@
 import copy
-from typing import Generator
+from typing import Generator, cast
 
 import pytest
 import pytest_asyncio
@@ -13,6 +13,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.server import create_server
+from keboola_mcp_server.tools.components.utils import get_nested, set_nested_value
 
 
 @pytest_asyncio.fixture
@@ -181,9 +182,9 @@ class TestPreviewConfigDiff:
         assert len(result['validationErrors']) > 0
         assert 'Invalid configuration ID' in result['validationErrors'][0]
 
-        # Check that configs are not in the response (excluded by exclude_none=True)
-        assert 'originalConfig' not in result
-        assert 'updatedConfig' not in result
+        # Check that empty configs are in the response (required by KAI backend)
+        assert result['originalConfig'] == {}
+        assert result['updatedConfig'] == {}
 
     def test_preview_invalid_tool_name(self, test_client: TestClient, mocker):
         """Test preview with invalid tool name."""
@@ -571,16 +572,18 @@ class TestPreviewConfigDiff:
             config_version='1',
             state='running',
             type='streamlit',
-            parameters={
-                'dataApp': {
-                    'slug': 'old-slug',
-                    'secrets': {'FOO': 'old', 'KEEP': 'x'},
+            configuration={
+                'parameters': {
+                    'dataApp': {
+                        'slug': 'old-slug',
+                        'secrets': {'FOO': 'old', 'KEEP': 'x'},
+                    },
+                    'script': ['old'],
+                    'packages': ['numpy'],
                 },
-                'script': ['old'],
-                'packages': ['numpy'],
+                'authorization': {},
+                'storage': {},
             },
-            authorization={},
-            storage={},
         )
 
         async def mock_fetch_data_app(client, **kwargs):
@@ -617,9 +620,35 @@ class TestPreviewConfigDiff:
         assert result['coordinates']['componentId'] == DATA_APP_COMPONENT_ID
         assert result['coordinates']['configurationId'] == 'app-123'
 
+        # Check original config
+        assert result['originalConfig'] == mock_data_app.model_dump()
+
         # Check updated config
-        assert result['updatedConfig']['name'] == 'Updated Data App'
-        assert result['updatedConfig']['description'] == 'Updated data app description'
+        updated_config_no_script = copy.deepcopy(result['updatedConfig'])
+        set_nested_value(updated_config_no_script, 'configuration.parameters.script', [])
+        assert updated_config_no_script == {
+            **mock_data_app.model_dump(),
+            'changeDescription': 'Update data app',
+            'name': 'Updated Data App',
+            'description': 'Updated data app description',
+            'configuration': {
+                'parameters': {
+                    'dataApp': {
+                        'slug': 'updated-data-app',
+                        'secrets': {'FOO': 'old', 'KEEP': 'x', 'BRANCH_ID': '456', 'WORKSPACE_ID': '123'},
+                    },
+                    'script': [],
+                    'packages': ['httpx', 'pandas', 'streamlit'],
+                },
+                'authorization': {},
+                'storage': {},
+            },
+        }
+        # check the script
+        actual_script = get_nested(result['updatedConfig'], 'configuration.parameters.script')
+        assert isinstance(actual_script, list)
+        assert len(actual_script) == 1
+        assert cast(str, actual_script[0]).endswith('print("Hello World")')
 
     def test_preview_validation_missing_required_param(self, test_client: TestClient):
         """Test validation error for missing required parameter."""
@@ -644,9 +673,9 @@ class TestPreviewConfigDiff:
         assert 'validationErrors' in result
         assert 'configuration_id' in str(result['validationErrors'])
 
-        # Check that configs are not in the response (excluded by exclude_none=True)
-        assert 'originalConfig' not in result
-        assert 'updatedConfig' not in result
+        # Check that empty configs are in the response (required by KAI backend)
+        assert result['originalConfig'] == {}
+        assert result['updatedConfig'] == {}
 
     def test_preview_validation_invalid_param_type(self, test_client: TestClient, mocker):
         """Test validation error for invalid parameter type.
@@ -679,9 +708,9 @@ class TestPreviewConfigDiff:
         assert 'validationErrors' in result
         assert 'parameter_updates.1' in str(result['validationErrors'])
 
-        # Check that configs are not in the response (excluded by exclude_none=True)
-        assert 'originalConfig' not in result
-        assert 'updatedConfig' not in result
+        # Check that empty configs are in the response (required by KAI backend)
+        assert result['originalConfig'] == {}
+        assert result['updatedConfig'] == {}
 
     def test_preview_validation_passes_for_valid_params(self, test_client: TestClient, mocker):
         """Test that validation passes for valid parameters and processing continues."""
