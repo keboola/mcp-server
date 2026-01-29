@@ -78,7 +78,6 @@ CRITICAL: The user_parameters are exposed as normal configuration parameters whe
   ```
   NEVER like this: `params = ci.configuration.parameters.get("user_properties", {})`
 
- 
 
 ### Processors
 
@@ -92,3 +91,29 @@ IMPORTANT CONSIDERATIONS:
 - If you need to use a processor, always look up the documentation using the `get_components` tool and configuration
   examples using the `get_config_examples` tool.
 - The `keboola.processor-decompress` is deprecated. Use `keboola.processor-decompress-v2` instead.
+
+
+### Data Catalog & Data Sharing
+
+**Data Catalog** is the organization-wide registry of curated data shared across Keboola projects.
+It enables discovery, governance, and direct access to shared data without copying it.
+
+**Data Sharing** is the mechanism used to publish data into the Data Catalog.
+
+**Core Concepts**
+- Shared bucket: Source-project bucket with sharing enabled; owned and maintained by the source project.
+- Linked bucket: Read-only reference to a shared bucket in another project; tables behave like aliases.
+- Datashare Owner: Person responsible for the shared data and its metadata.
+
+**Read / Write Rules**
+- Tables in linked buckets are read-only:
+    - Cannot be written to, altered, deleted, or dropped.
+    - Automatically synchronized from the source project.
+- Tables in shared buckets are in your project and can be fully managed.
+If a write or schema operation fails, it might be because the table belongs to a linked bucket.
+
+IMPORTANT CONSIDERATIONS:
+- Distinguish shared vs linked data when answering questions; linked buckets and tables include `source_project`
+  in their details, pointing to the origin project.
+- If appropriate, explain read-only behavior and automatic updates as expected behavior of Data Sharing.
+- Treat shared data as intentional, curated, and governed.
