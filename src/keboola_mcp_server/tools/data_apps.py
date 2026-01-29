@@ -546,11 +546,8 @@ def _update_existing_data_app_config(
     new_config['parameters']['dataApp']['slug'] = (
         _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
     )
-    new_config['parameters']['script'] = (
-        [_inject_query_to_source_code(source_code, sql_dialect)]
-        if source_code
-        else existing_config['parameters']['script']
-    )
+    if source_code:
+        new_config['parameters']['script'] = [_inject_query_to_source_code(source_code, sql_dialect)]
     new_config['parameters']['packages'] = (
         sorted(list[str](set[str](packages + _DEFAULT_PACKAGES)))
         if packages
