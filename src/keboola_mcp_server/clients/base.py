@@ -172,19 +172,16 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden POST operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-
-        for attempt in range(CONFLICT_RETRY_MAX_ATTEMPTS + 1):
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            for attempt in range(CONFLICT_RETRY_MAX_ATTEMPTS + 1):
                 response = await client.post(
                     f'{self.base_api_url}/{endpoint}',
                     params=params,
                     headers=headers,
                     json=data or {},
                 )
-
                 if response.is_success:
                     return cast(JsonStruct, response.json())
-
                 if _is_conflict_error(response) and attempt < CONFLICT_RETRY_MAX_ATTEMPTS:
                     delay = min(
                         CONFLICT_RETRY_INITIAL_DELAY * (2**attempt),
@@ -197,12 +194,8 @@ class RawKeboolaClient:
                     )
                     await asyncio.sleep(delay)
                     continue
-
                 self._raise_for_status(response)
-                return cast(JsonStruct, response.json())
-
-        self._raise_for_status(response)
-        return cast(JsonStruct, response.json())
+        raise RuntimeError('Unreachable code')
 
     async def put(
         self,
