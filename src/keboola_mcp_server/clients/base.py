@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Optional, Union, cast
 
@@ -9,6 +10,27 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 LOG = logging.getLogger(__name__)
+
+# HTTP status code for conflict errors (deadlocks)
+HTTP_CONFLICT_STATUS = 409
+
+# Retry configuration for conflict errors
+CONFLICT_RETRY_MAX_ATTEMPTS = 3
+CONFLICT_RETRY_INITIAL_DELAY = 1.0
+CONFLICT_RETRY_MAX_DELAY = 10.0
+
+
+def _is_conflict_error(response: httpx.Response) -> bool:
+    """
+    Checks if the HTTP response indicates a conflict error (HTTP 409).
+
+    Conflict errors from the Connection API indicate concurrent modification issues
+    such as MySQL deadlocks when multiple requests try to update the same resource.
+
+    :param response: The HTTP response to check
+    :return: True if the response indicates a conflict error, False otherwise
+    """
+    return response.status_code == HTTP_CONFLICT_STATUS
 
 
 class RawKeboolaClient:
@@ -136,6 +158,10 @@ class RawKeboolaClient:
         """
         Makes a POST request to the service API.
 
+        Includes retry logic with exponential backoff for HTTP 409 Conflict errors.
+        This handles concurrent configuration updates that may cause conflicts
+        (e.g., MySQL deadlocks when multiple requests update the same resource).
+
         :param endpoint: API endpoint to call
         :param data: Request payload
         :param params: Query parameters for the request
@@ -146,15 +172,37 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden POST operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f'{self.base_api_url}/{endpoint}',
-                params=params,
-                headers=headers,
-                json=data or {},
-            )
-            self._raise_for_status(response)
-            return cast(JsonStruct, response.json())
+
+        for attempt in range(CONFLICT_RETRY_MAX_ATTEMPTS + 1):
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f'{self.base_api_url}/{endpoint}',
+                    params=params,
+                    headers=headers,
+                    json=data or {},
+                )
+
+                if response.is_success:
+                    return cast(JsonStruct, response.json())
+
+                if _is_conflict_error(response) and attempt < CONFLICT_RETRY_MAX_ATTEMPTS:
+                    delay = min(
+                        CONFLICT_RETRY_INITIAL_DELAY * (2**attempt),
+                        CONFLICT_RETRY_MAX_DELAY,
+                    )
+                    LOG.warning(
+                        f'Conflict error (HTTP 409) on POST {endpoint}, '
+                        f'attempt {attempt + 1}/{CONFLICT_RETRY_MAX_ATTEMPTS + 1}. '
+                        f'Retrying in {delay:.1f}s...'
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                self._raise_for_status(response)
+                return cast(JsonStruct, response.json())
+
+        self._raise_for_status(response)
+        return cast(JsonStruct, response.json())
 
     async def put(
         self,
