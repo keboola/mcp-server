@@ -492,13 +492,29 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
         replace_cnt = 0
         for match in matches:
             current_value = match.value
-            if not isinstance(current_value, str):
-                raise ValueError(f'Path "{match.full_path}" is not a string')
+            if isinstance(current_value, str):
+                occurrences = current_value.count(update.search_for)
+                if occurrences:
+                    new_value = current_value.replace(update.search_for, update.replace_with)
+                    replace_cnt += occurrences
+                    params = match.full_path.update(params, new_value)
+            elif isinstance(current_value, list):
+                if not all(isinstance(item, str) for item in current_value):
+                    raise ValueError(f'Path "{match.full_path}" is not a string or list of strings')
 
-            new_value = current_value.replace(update.search_for, update.replace_with)
-            if new_value != current_value:
-                replace_cnt += 1
-                params = match.full_path.update(params, new_value)
+                occurrences = 0
+                new_value = []
+                for item in current_value:
+                    item_occurrences = item.count(update.search_for)
+                    occurrences += item_occurrences
+                    new_item = item.replace(update.search_for, update.replace_with) if item_occurrences else item
+                    new_value.append(new_item)
+
+                if occurrences:
+                    replace_cnt += occurrences
+                    params = match.full_path.update(params, new_value)
+            else:
+                raise ValueError(f'Path "{match.full_path}" is not a string or list of strings')
 
         if replace_cnt == 0:
             raise ValueError(f'Search string "{update.search_for}" not found in path "{update.path}"')
