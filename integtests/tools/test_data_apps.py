@@ -176,12 +176,13 @@ async def test_data_app_lifecycle(
     assert data_app_details.name == app_name
     assert data_app_details.description == app_description
     # Check code and code injection
-    assert streamlit_app_imports in data_app_details.parameters['script'][0]
-    assert streamlit_app_entrypoint in data_app_details.parameters['script'][0]
+    data_app_details_parameters = data_app_details.configuration.get('parameters') or {}
+    assert streamlit_app_imports in data_app_details_parameters['script'][0]
+    assert streamlit_app_entrypoint in data_app_details_parameters['script'][0]
     sql_dialect = await workspace_manager.get_sql_dialect()
-    assert _get_query_function_code(sql_dialect) in data_app_details.parameters['script'][0]
+    assert _get_query_function_code(sql_dialect) in data_app_details_parameters['script'][0]
     # Check packages
-    assert set(data_app_details.parameters['packages']) == set(['numpy', 'streamlit'] + _DEFAULT_PACKAGES)
+    assert set(data_app_details_parameters['packages']) == set(['numpy', 'streamlit'] + _DEFAULT_PACKAGES)
 
     # Check listing contains our app
     # TODO(REMOVE): Set the limit back to the default value once DSAPI is fixed. The limit is temporarily increased to
@@ -243,9 +244,10 @@ async def test_data_app_lifecycle(
     assert fetched.data_apps[0].name == updated_name
     assert fetched.data_apps[0].description == updated_description
     # Check that the source code is updated
-    assert _get_query_function_code(sql_dialect) in fetched.data_apps[0].parameters['script'][0]
-    assert updated_source_code in fetched.data_apps[0].parameters['script'][0]
-    assert streamlit_app_imports not in fetched.data_apps[0].parameters['script'][0]
-    assert streamlit_app_entrypoint not in fetched.data_apps[0].parameters['script'][0]
+    fetched_data_app_parameters = fetched.data_apps[0].configuration.get('parameters') or {}
+    assert _get_query_function_code(sql_dialect) in fetched_data_app_parameters['script'][0]
+    assert updated_source_code in fetched_data_app_parameters['script'][0]
+    assert streamlit_app_imports not in fetched_data_app_parameters['script'][0]
+    assert streamlit_app_entrypoint not in fetched_data_app_parameters['script'][0]
     # Check that the packages are updated
-    assert set(fetched.data_apps[0].parameters['packages']) == set(['streamlit'] + _DEFAULT_PACKAGES)
+    assert set(fetched_data_app_parameters['packages']) == set(['streamlit'] + _DEFAULT_PACKAGES)
