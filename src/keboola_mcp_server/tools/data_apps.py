@@ -167,7 +167,6 @@ class DataApp(BaseModel):
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
     )
-    # TODO: should this actually be DataAppConfig
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters, storage and authorization'
     )
