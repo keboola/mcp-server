@@ -581,7 +581,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         change_description: str,
         updated_name: Optional[str] = None,
         updated_description: Optional[str] = None,
-        is_disabled: bool = False,
+        is_disabled: bool | None = None,
     ) -> JsonDict:
         """
         Updates a component configuration.
@@ -599,7 +599,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
 
-        payload = {
+        payload: dict[str, Any] = {
             'configuration': configuration,
             'changeDescription': change_description,
         }
@@ -609,7 +609,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         if updated_description:
             payload['description'] = updated_description
 
-        if is_disabled:
+        if is_disabled is not None:
             payload['isDisabled'] = is_disabled
 
         return cast(JsonDict, await self.put(endpoint=endpoint, data=payload))
@@ -655,6 +655,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         change_description: str,
         updated_name: Optional[str] = None,
         updated_description: Optional[str] = None,
+        is_disabled: bool | None = None,
     ) -> JsonDict:
         """
         Updates a row configuration for a component configuration.
@@ -668,10 +669,11 @@ class AsyncStorageClient(KeboolaServiceClient):
             name is preserved.
         :param updated_description: The updated description of the configuration, if None, the original
             description is preserved.
+        :param is_disabled: Whether the configuration row should be disabled.
         :return: The SAPI call response - updated row configuration or raise an error.
         """
 
-        payload = {
+        payload: dict[str, Any] = {
             'configuration': configuration,
             'changeDescription': change_description,
         }
@@ -680,6 +682,9 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         if updated_description:
             payload['description'] = updated_description
+
+        if is_disabled is not None:
+            payload['isDisabled'] = is_disabled
 
         return cast(
             JsonDict,

@@ -284,6 +284,7 @@ async def initial_cmpconf(
         {'description': 'Updated just description'},
         {'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'value': 'Updated just parameters'}]},
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
+        {'is_disabled': True},
     ],
 )
 async def test_update_config(
@@ -332,6 +333,7 @@ async def test_update_config(
 
     expected_name = updates.get('name') or 'Initial Test Configuration'
     expected_description = updates.get('description') or initial_cmpconf.description
+    expected_is_disabled = updates.get('is_disabled') or False
     assert update_result.description == expected_description
     assert frozenset(update_result.links) == frozenset(
         [
@@ -356,6 +358,7 @@ async def test_update_config(
 
     assert updated_config['name'] == expected_name
     assert updated_config['description'] == expected_description
+    assert updated_config['isDisabled'] == expected_is_disabled
 
     updated_config_data = updated_config.get('configuration')
     assert isinstance(updated_config_data, dict), f'Expecting dict, got: {type(updated_config_data)}'
@@ -541,6 +544,7 @@ async def initial_cmpconf_row(
         {'description': 'Updated just description'},
         {'parameter_updates': [{'op': 'set', 'path': '$', 'value': {'updated_row_param': 'Updated just parameters'}}]},
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
+        {'is_disabled': True},
     ],
 )
 async def test_update_config_row(
@@ -585,6 +589,7 @@ async def test_update_config_row(
 
     expected_row_name = updates.get('name') or 'Initial Test Row Configuration'
     expected_row_description = updates.get('description') or initial_cmpconf_row.description
+    expected_row_is_disabled = updates.get('is_disabled') or False
     assert updated_row_config.description == expected_row_description
     assert frozenset(updated_row_config.links) == frozenset(
         [
@@ -615,6 +620,7 @@ async def test_update_config_row(
     assert isinstance(updated_row, dict), f'Expecting dict, got: {type(updated_row)}'
     assert updated_row['name'] == expected_row_name
     assert updated_row['description'] == expected_row_description
+    assert updated_row['isDisabled'] == expected_row_is_disabled
 
     row_config_data = updated_row['configuration']
     assert isinstance(row_config_data, dict), f'Expecting dict, got: {type(row_config_data)}'
@@ -802,7 +808,8 @@ async def initial_sqltrfm(
     'updates',
     [
         {
-            'updated_description': 'Updated SQL transformation description',
+            'name': 'Updated SQL transformation name',
+            'description': 'Updated SQL transformation description',
             'parameter_updates': [
                 TfRenameBlock(op='rename_block', block_id='b0', block_name='Updated block'),
                 TfRenameCode(op='rename_code', block_id='b0', code_id='b0.c0', code_name='Updated code'),
@@ -827,7 +834,8 @@ async def initial_sqltrfm(
             },
             'is_disabled': True,
         },
-        {'updated_description': 'Updated SQL transformation description'},
+        {'name': 'Updated SQL transformation name'},
+        {'description': 'Updated SQL transformation description'},
         {
             'parameter_updates': [
                 TfStrReplace(
@@ -920,7 +928,8 @@ async def test_update_sql_transformation(
     assert updated_trfm.version is not None
 
     expected_name = updates.get('name') or 'Initial Test SQL Transformation'
-    expected_description = updates.get('updated_description') or initial_sqltrfm.description
+    expected_description = updates.get('description') or initial_sqltrfm.description
+    expected_is_disabled = updates.get('is_disabled') or False
     assert updated_trfm.description == expected_description
     assert frozenset(updated_trfm.links) == frozenset(
         [
@@ -945,6 +954,7 @@ async def test_update_sql_transformation(
 
     assert trfm_detail['name'] == expected_name
     assert trfm_detail['description'] == expected_description
+    assert trfm_detail['isDisabled'] == expected_is_disabled
 
     trfm_data = trfm_detail.get('configuration')
     assert isinstance(trfm_data, dict), f'Expecting dict, got: {type(trfm_data)}'

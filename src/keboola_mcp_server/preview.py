@@ -247,8 +247,8 @@ async def preview_config_diff(rq: Request) -> Response:
         if not is_valid:
             preview_resp = PreviewConfigDiffResp(
                 coordinates=coordinates,
-                original_config=None,
-                updated_config=None,
+                original_config={},
+                updated_config={},
                 is_valid=False,
                 validation_errors=[validation_errors],
             )
@@ -267,9 +267,11 @@ async def preview_config_diff(rq: Request) -> Response:
         updated_config['configuration'] = new_config
         if name := preview_rq.tool_params.get('name'):
             updated_config['name'] = name
-        description = preview_rq.tool_params.get('description') or preview_rq.tool_params.get('updated_description')
+        description = preview_rq.tool_params.get('description')
         if description:
             updated_config['description'] = description
+        if (is_disabled := preview_rq.tool_params.get('is_disabled')) is not None:
+            updated_config['isDisabled'] = is_disabled
         if change_description := preview_rq.tool_params.get('change_description'):
             updated_config['changeDescription'] = change_description
 
@@ -285,8 +287,8 @@ async def preview_config_diff(rq: Request) -> Response:
         LOG.exception(f'[preview_config_diff] {ex}')
         preview_resp = PreviewConfigDiffResp(
             coordinates=coordinates,
-            original_config=None,
-            updated_config=None,
+            original_config={},
+            updated_config={},
             is_valid=False,
             validation_errors=[str(ex)],
         )

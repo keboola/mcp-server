@@ -38,8 +38,7 @@ def data_app() -> DataApp:
         config_version='test',
         type='test',
         auto_suspend_after_seconds=3600,
-        parameters={},
-        authorization={},
+        configuration={},
         state='test',
     )
 

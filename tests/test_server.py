@@ -117,7 +117,12 @@ class TestServer:
 
             required = tool.parameters.get('required') or []
             for prop_name, prop_def in properties.items():
-                if 'type' not in prop_def:
+                if all(
+                    [
+                        'type' not in prop_def,
+                        ('anyOf' not in prop_def or any('type' not in t for t in prop_def['anyOf'])),
+                    ]
+                ):
                     missing_type.append(f'{tool.name}.{prop_name}')
                 if prop_name not in required and 'default' not in prop_def:
                     missing_default.append(f'{tool.name}.{prop_name}')

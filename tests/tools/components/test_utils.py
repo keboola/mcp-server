@@ -301,6 +301,17 @@ def test_clean_bucket_name(input_str: str, expected_str: str):
             ConfigParamReplace(op='str_replace', path='messages[*]', search_for='old', replace_with='new'),
             {'messages': ['new1', 'new2 new3']},
         ),
+        # Test 'str_replace' on list of strings
+        (
+            {'blocks': [{'codes': [{'script': ['SELECT old', 'FROM old_table']}]}]},
+            ConfigParamReplace(
+                op='str_replace',
+                path='blocks[0].codes[0].script',
+                search_for='old',
+                replace_with='new',
+            ),
+            {'blocks': [{'codes': [{'script': ['SELECT new', 'FROM new_table']}]}]},
+        ),
         # Test 'remove' operation on simple key
         (
             {'api_key': 'value', 'count': 42},
@@ -386,7 +397,13 @@ def test_apply_param_update(
         (
             {'count': 42},
             ConfigParamReplace(op='str_replace', path='count', search_for='4', replace_with='5'),
-            'Path "count" is not a string',
+            'Path "count" is not a string or list of strings',
+        ),
+        # Test 'str_replace' operation on list with non-string values
+        (
+            {'script': ['SELECT 1', 2]},
+            ConfigParamReplace(op='str_replace', path='script', search_for='1', replace_with='2'),
+            'Path "script" is not a string or list of strings',
         ),
         # Test 'str_replace' when search string is empty
         (
