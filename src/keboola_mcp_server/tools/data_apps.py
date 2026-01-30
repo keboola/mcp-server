@@ -16,7 +16,7 @@ from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppRespon
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import process_concurrently, toon_serializer
+from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -41,7 +41,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
             get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer,
+            serializer=toon_serializer_compact,
         )
     )
     mcp.add_tool(
