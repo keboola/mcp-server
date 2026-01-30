@@ -515,3 +515,103 @@ class TestWorkspaceManagerBigQuery:
         actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
 
         assert actual == expected
+
+
+class TestQueryCancellation:
+    """Tests for query cancellation on timeout."""
+
+    @pytest.fixture
+    def snowflake_context(self, keboola_client: KeboolaClient, empty_context: Context) -> Context:
+        """Context with Snowflake workspace."""
+        keboola_client.storage_client.workspace_list.return_value = [
+            {
+                'id': 1234,
+                'connection': {
+                    'schema': 'workspace_1234',
+                    'backend': 'snowflake',
+                    'user': 'user_1234',
+                },
+                'readOnlyStorageAccess': True,
+            }
+        ]
+        empty_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+        empty_context.session.state[WorkspaceManager.STATE_KEY] = WorkspaceManager(
+            client=keboola_client, workspace_schema='workspace_1234'
+        )
+        return empty_context
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('cancel_succeeds', 'final_cancel_status', 'expected_in_error'),
+        [
+            # Successful cancellation
+            (True, 'canceled', 'cancelled'),
+            # Cancellation called but query still processing
+            (True, 'processing', 'cancelled'),
+            # Cancellation API fails
+            (False, None, 'timed out'),
+        ],
+        ids=['cancel_success', 'cancel_timeout', 'cancel_fails']
+    )
+    async def test_timeout_triggers_cancellation(
+        self,
+        snowflake_context: Context,
+        keboola_client: KeboolaClient,
+        mocker,
+        cancel_succeeds: bool,
+        final_cancel_status: str | None,
+        expected_in_error: str,
+    ) -> None:
+        """Test that query timeout triggers cancellation with various outcomes."""
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-timeout-123'
+
+        # Simulate timeout by always returning 'processing'
+        status_responses = [
+            {'status': 'processing', 'statements': [{'id': 'stmt-1'}]}
+        ] * 400  # More than timeout iterations
+
+        if cancel_succeeds:
+            qsclient.cancel_job.return_value = {}
+            # After cancel, change status
+            if final_cancel_status:
+                status_responses.append({'status': final_cancel_status})
+        else:
+            qsclient.cancel_job.side_effect = Exception("Cancel API failed")
+
+        qsclient.get_job_status.side_effect = status_responses
+
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_QUERY_TIMEOUT', 2.0)  # 2 second timeout for test
+
+        m = WorkspaceManager.from_state(snowflake_context.session.state)
+
+        with pytest.raises(RuntimeError, match=expected_in_error):
+            await m.execute_query('SELECT * FROM slow_table')
+
+        # Verify cancellation was attempted
+        qsclient.cancel_job.assert_called_once()
+        call_args = qsclient.cancel_job.call_args
+        assert call_args.args[0] == 'qs-job-timeout-123'  # job_id is first positional arg
+        assert 'timeout' in call_args.kwargs['reason'].lower()
+
+    @pytest.mark.asyncio
+    async def test_cancel_job_method(self, mocker) -> None:
+        """Test QueryServiceClient.cancel_job() sends correct request."""
+        from keboola_mcp_server.clients.base import RawKeboolaClient
+
+        raw_client = mocker.AsyncMock(RawKeboolaClient)
+        raw_client.post.return_value = {'status': 'canceling'}
+
+        qsclient = QueryServiceClient(raw_client=raw_client, branch_id='1234')
+
+        result = await qsclient.cancel_job('job-abc-123', reason='Test cancellation')
+
+        raw_client.post.assert_called_once_with(
+            endpoint='queries/job-abc-123/cancel',
+            data={'reason': 'Test cancellation'},
+            params=None
+        )
+        assert result == {'status': 'canceling'}

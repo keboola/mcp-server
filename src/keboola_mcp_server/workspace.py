@@ -87,6 +87,7 @@ class QueryResult:
 
 class _Workspace(abc.ABC):
     _QUERY_TIMEOUT = 300.0  # 5 minutes
+    _CANCELLATION_TIMEOUT = 30.0  # 30 seconds to wait for cancellation
     _SELECTED_ROWS_MSG = 'Returning {rows} of {total} selected rows.'
 
     def __init__(self, workspace_id: int) -> None:
@@ -143,6 +144,45 @@ class _SnowflakeWorkspace(_Workspace):
 
     def get_quoted_name(self, name: str) -> str:
         return f'"{name}"'  # wrap name in double quotes
+
+    async def _cancel_job_with_timeout(self, job_id: str, elapsed_query_time: float) -> None:
+        """
+        Cancel a query job and poll until cancellation is confirmed.
+
+        :param job_id: The query job ID to cancel.
+        :param elapsed_query_time: Elapsed time of the original query (for logging).
+
+        Note: Logs warnings on failure but does not raise, as the original
+        timeout error should be propagated to the user.
+        """
+        try:
+            await self._qsclient.cancel_job(
+                job_id,
+                reason=f"Query timeout exceeded after {elapsed_query_time:.1f}s"
+            )
+            LOG.info(f'Query cancellation requested: job_id={job_id}')
+
+            # Poll for cancellation confirmation
+            cancel_start = time.perf_counter()
+            while True:
+                job_status = await self._qsclient.get_job_status(job_id)
+                status = job_status['status']
+
+                if status in ['completed', 'failed', 'canceled', 'cancelled']:
+                    LOG.info(f'Query job cancellation confirmed: job_id={job_id}, status={status}')
+                    break
+
+                if time.perf_counter() - cancel_start > self._CANCELLATION_TIMEOUT:
+                    LOG.warning(
+                        f'Query cancellation polling timed out after {self._CANCELLATION_TIMEOUT}s: '
+                        f'job_id={job_id}, status={status}'
+                    )
+                    break
+
+                await asyncio.sleep(0.5)  # Poll every 500ms
+
+        except Exception as e:
+            LOG.warning(f'Failed to cancel query job {job_id}: {e}')
 
     async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
@@ -233,9 +273,11 @@ class _SnowflakeWorkspace(_Workspace):
             await asyncio.sleep(1)
             elapsed_time = time.perf_counter() - ts_start
             if elapsed_time > self._QUERY_TIMEOUT:
+                # Cancel the query before raising timeout error
+                await self._cancel_job_with_timeout(job_id, elapsed_time)
                 raise RuntimeError(
-                    f'Query execution timed out after {elapsed_time:.2f} seconds: '
-                    f'job_id={job_id}, status={job_status["status"]}'
+                    f'Query execution timed out after {elapsed_time:.2f} seconds. '
+                    f'The query has been cancelled: job_id={job_id}, status={job_status["status"]}'
                 )
 
         statement_id = cast(list[JsonDict], job_status['statements'])[0]['id']

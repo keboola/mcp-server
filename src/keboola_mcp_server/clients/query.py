@@ -86,6 +86,17 @@ class QueryServiceClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'queries/{job_id}'))
 
+    async def cancel_job(self, job_id: str, reason: str = "Query timeout exceeded") -> JsonDict:
+        """
+        Cancels a running query job.
+
+        :param job_id: The unique identifier for the query job to cancel.
+        :param reason: The reason for cancellation (for audit trail).
+        :return: The response from the API call.
+        """
+        payload = {"reason": reason}
+        return cast(JsonDict, await self.post(endpoint=f'queries/{job_id}/cancel', data=payload))
+
     async def get_job_results(
         self, job_id: str, statement_id: str, *, offset: int | None = None, limit: int | None = None
     ) -> JsonDict:
