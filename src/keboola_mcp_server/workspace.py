@@ -156,10 +156,7 @@ class _SnowflakeWorkspace(_Workspace):
         timeout error should be propagated to the user.
         """
         try:
-            await self._qsclient.cancel_job(
-                job_id,
-                reason=f"Query timeout exceeded after {elapsed_query_time:.1f}s"
-            )
+            await self._qsclient.cancel_job(job_id, reason=f'Query timeout exceeded after {elapsed_query_time:.1f}s')
             LOG.info(f'Query cancellation requested: job_id={job_id}')
 
             # Poll for cancellation confirmation
