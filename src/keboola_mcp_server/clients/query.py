@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Any, cast
 
 from keboola_mcp_server.clients import KeboolaServiceClient, RawKeboolaClient
 from keboola_mcp_server.clients.base import JsonDict
@@ -86,7 +86,7 @@ class QueryServiceClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'queries/{job_id}'))
 
-    async def cancel_job(self, job_id: str, reason: str = 'Query timeout exceeded') -> JsonDict:
+    async def cancel_job(self, job_id: str, reason: str) -> JsonDict:
         """
         Cancels a running query job.
 
@@ -94,7 +94,7 @@ class QueryServiceClient(KeboolaServiceClient):
         :param reason: The reason for cancellation (for audit trail).
         :return: The response from the API call.
         """
-        payload = {'reason': reason}
+        payload: JsonDict = {'reason': reason}
         return cast(JsonDict, await self.post(endpoint=f'queries/{job_id}/cancel', data=payload))
 
     async def get_job_results(
@@ -110,7 +110,7 @@ class QueryServiceClient(KeboolaServiceClient):
         :param limit: The maximum number of rows to return.
         :return: The query statement results.
         """
-        params = {}
+        params: dict[str, Any] = {}
         if offset is not None:
             params['offset'] = offset
         if limit is not None:

@@ -145,15 +145,13 @@ class _SnowflakeWorkspace(_Workspace):
     def get_quoted_name(self, name: str) -> str:
         return f'"{name}"'  # wrap name in double quotes
 
-    async def _cancel_job_with_timeout(self, job_id: str, elapsed_query_time: float) -> None:
+    async def _cancel_job_with_timeout(self, job_id: str, elapsed_query_time: float) -> bool:
         """
         Cancel a query job and poll until cancellation is confirmed.
 
         :param job_id: The query job ID to cancel.
         :param elapsed_query_time: Elapsed time of the original query (for logging).
-
-        Note: Logs warnings on failure but does not raise, as the original
-        timeout error should be propagated to the user.
+        :return: True if cancellation was confirmed, False if it failed or timed out.
         """
         try:
             await self._qsclient.cancel_job(job_id, reason=f'Query timeout exceeded after {elapsed_query_time:.1f}s')
@@ -163,23 +161,45 @@ class _SnowflakeWorkspace(_Workspace):
             cancel_start = time.perf_counter()
             while True:
                 job_status = await self._qsclient.get_job_status(job_id)
+                if 'status' not in job_status:
+                    LOG.error(f'Query status response missing "status" field: job_id={job_id}')
+                    return False
                 status = job_status['status']
 
-                if status in ['completed', 'failed', 'canceled', 'cancelled']:
+                if status == 'completed':
+                    LOG.info(f'Query completed successfully during cancellation attempt: job_id={job_id}')
+                    return True  # Query finished on its own
+                elif status in ['failed', 'canceled', 'cancelled']:
                     LOG.info(f'Query job cancellation confirmed: job_id={job_id}, status={status}')
-                    break
+                    return True
 
                 if time.perf_counter() - cancel_start > self._CANCELLATION_TIMEOUT:
-                    LOG.warning(
+                    LOG.info(
                         f'Query cancellation polling timed out after {self._CANCELLATION_TIMEOUT}s: '
                         f'job_id={job_id}, status={status}'
                     )
-                    break
+                    return False
 
                 await asyncio.sleep(0.5)  # Poll every 500ms
 
+        except HTTPStatusError as e:
+            LOG.error(
+                f'HTTP error during query cancellation: job_id={job_id}, '
+                f'status_code={e.response.status_code}, error={e}'
+            )
+            return False
+        except KeyError as e:
+            LOG.error(
+                f'Invalid API response structure during query cancellation: job_id={job_id}, '
+                f'missing_field={e}'
+            )
+            return False
         except Exception as e:
-            LOG.warning(f'Failed to cancel query job {job_id}: {e}')
+            LOG.error(
+                f'Unexpected error during query cancellation: job_id={job_id}, '
+                f'error_type={type(e).__name__}, error={e}'
+            )
+            return False
 
     async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
@@ -266,16 +286,24 @@ class _SnowflakeWorkspace(_Workspace):
             'completed',
             'failed',
             'canceled',
+            'cancelled',
         ]:
             await asyncio.sleep(1)
             elapsed_time = time.perf_counter() - ts_start
             if elapsed_time > self._QUERY_TIMEOUT:
                 # Cancel the query before raising timeout error
-                await self._cancel_job_with_timeout(job_id, elapsed_time)
-                raise RuntimeError(
-                    f'Query execution timed out after {elapsed_time:.2f} seconds. '
-                    f'The query has been cancelled: job_id={job_id}, status={job_status["status"]}'
-                )
+                cancellation_confirmed = await self._cancel_job_with_timeout(job_id, elapsed_time)
+                if cancellation_confirmed:
+                    raise RuntimeError(
+                        f'Query execution timed out after {elapsed_time:.2f} seconds. '
+                        f'The query has been cancelled: job_id={job_id}'
+                    )
+                else:
+                    raise RuntimeError(
+                        f'Query execution timed out after {elapsed_time:.2f} seconds. '
+                        f'Cancellation was attempted but could not be confirmed. '
+                        f'The query may still be running on the server: job_id={job_id}'
+                    )
 
         statement_id = cast(list[JsonDict], job_status['statements'])[0]['id']
 

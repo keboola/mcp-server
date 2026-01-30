@@ -545,11 +545,11 @@ class TestQueryCancellation:
         ('cancel_succeeds', 'final_cancel_status', 'expected_in_error'),
         [
             # Successful cancellation
-            (True, 'canceled', 'cancelled'),
-            # Cancellation called but query still processing
-            (True, 'processing', 'cancelled'),
+            (True, 'canceled', 'has been cancelled'),
+            # Cancellation called but query still processing (timeout during polling)
+            (True, 'processing', 'could not be confirmed'),
             # Cancellation API fails
-            (False, None, 'timed out'),
+            (False, None, 'could not be confirmed'),
         ],
         ids=['cancel_success', 'cancel_timeout', 'cancel_fails'],
     )
@@ -613,3 +613,226 @@ class TestQueryCancellation:
             endpoint='queries/job-abc-123/cancel', data={'reason': 'Test cancellation'}, params=None
         )
         assert result == {'status': 'canceling'}
+
+    @pytest.mark.asyncio
+    async def test_cancellation_polling_multiple_checks(
+        self, snowflake_context: Context, keboola_client: KeboolaClient, mocker
+    ) -> None:
+        """Verify cancellation polling makes multiple status checks until terminal state."""
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-polling-123'
+
+        # Simulate timeout by always returning 'processing'
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+
+        # After timeout, simulate cancellation polling: 'canceling' 3 times, then 'canceled'
+        cancel_status_responses = [
+            {'status': 'canceling'},
+            {'status': 'canceling'},
+            {'status': 'canceling'},
+            {'status': 'canceled'},
+        ]
+
+        qsclient.cancel_job.return_value = {}
+        qsclient.get_job_status.side_effect = status_responses + cancel_status_responses
+
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_QUERY_TIMEOUT', 2.0)  # 2 second timeout for test
+
+        m = WorkspaceManager.from_state(snowflake_context.session.state)
+
+        with pytest.raises(RuntimeError, match='has been cancelled'):
+            await m.execute_query('SELECT * FROM slow_table')
+
+        # Verify cancellation was attempted
+        qsclient.cancel_job.assert_called_once()
+
+        # Verify multiple status checks during cancellation polling (at least 4 calls during cancellation)
+        # Total calls = status_responses during query + cancel_status_responses during cancellation
+        assert qsclient.get_job_status.call_count >= 4
+
+    @pytest.mark.asyncio
+    async def test_cancellation_polling_timeout(
+        self, snowflake_context: Context, keboola_client: KeboolaClient, mocker
+    ) -> None:
+        """Verify cancellation polling stops after 30s if job stays in 'canceling' state."""
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-polling-timeout-123'
+
+        # Simulate timeout by always returning 'processing'
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+
+        # After cancel, return 'canceling' indefinitely
+        cancel_status_responses = [{'status': 'canceling'}] * 1000
+
+        qsclient.cancel_job.return_value = {}
+        qsclient.get_job_status.side_effect = status_responses + cancel_status_responses
+
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_QUERY_TIMEOUT', 2.0)  # 2 second timeout for test
+        mocker.patch.object(_SnowflakeWorkspace, '_CANCELLATION_TIMEOUT', 1.0)  # 1 second cancellation timeout
+
+        m = WorkspaceManager.from_state(snowflake_context.session.state)
+
+        with pytest.raises(RuntimeError, match='could not be confirmed'):
+            await m.execute_query('SELECT * FROM slow_table')
+
+        # Verify cancellation was attempted
+        qsclient.cancel_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('exception_type', 'exception_msg'),
+        [
+            (ConnectionError, 'Network connection lost'),
+            (TimeoutError, 'API request timed out'),
+            (Exception, 'Unexpected API error'),
+        ],
+        ids=['connection_error', 'timeout_error', 'generic_error'],
+    )
+    async def test_cancellation_polling_network_failure(
+        self,
+        snowflake_context: Context,
+        keboola_client: KeboolaClient,
+        mocker,
+        exception_type: type[Exception],
+        exception_msg: str,
+    ) -> None:
+        """Verify network failures during cancellation polling are handled gracefully."""
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-network-fail-123'
+
+        # Simulate timeout by always returning 'processing'
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+
+        qsclient.cancel_job.return_value = {}
+        # After cancel, get_job_status raises exception
+        qsclient.get_job_status.side_effect = status_responses + [exception_type(exception_msg)]
+
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_QUERY_TIMEOUT', 2.0)  # 2 second timeout for test
+
+        m = WorkspaceManager.from_state(snowflake_context.session.state)
+
+        with pytest.raises(RuntimeError, match='could not be confirmed'):
+            await m.execute_query('SELECT * FROM slow_table')
+
+        # Verify cancellation was attempted
+        qsclient.cancel_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_query_completes_during_cancellation(
+        self, snowflake_context: Context, keboola_client: KeboolaClient, mocker
+    ) -> None:
+        """Test edge case where query completes successfully during cancellation polling."""
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-completes-123'
+
+        # Simulate timeout by always returning 'processing'
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+
+        # After cancel, status becomes 'completed'
+        cancel_status_responses = [{'status': 'completed'}]
+
+        qsclient.cancel_job.return_value = {}
+        qsclient.get_job_status.side_effect = status_responses + cancel_status_responses
+
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_QUERY_TIMEOUT', 2.0)  # 2 second timeout for test
+
+        m = WorkspaceManager.from_state(snowflake_context.session.state)
+
+        # Should still raise timeout error (query did timeout, even though it completed during cancellation)
+        with pytest.raises(RuntimeError, match='has been cancelled'):
+            await m.execute_query('SELECT * FROM slow_table')
+
+        # Verify cancellation was attempted
+        qsclient.cancel_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'terminal_status',
+        ['completed', 'failed', 'canceled', 'cancelled'],
+        ids=['status_completed', 'status_failed', 'status_canceled', 'status_cancelled'],
+    )
+    async def test_cancellation_polling_terminal_statuses(
+        self,
+        snowflake_context: Context,
+        keboola_client: KeboolaClient,
+        mocker,
+        terminal_status: str,
+    ) -> None:
+        """Verify cancellation polling recognizes all terminal status types."""
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-terminal-123'
+
+        # Simulate timeout by always returning 'processing'
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+
+        # After cancel, return terminal_status
+        cancel_status_responses = [{'status': terminal_status}]
+
+        qsclient.cancel_job.return_value = {}
+        qsclient.get_job_status.side_effect = status_responses + cancel_status_responses
+
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_QUERY_TIMEOUT', 2.0)  # 2 second timeout for test
+
+        m = WorkspaceManager.from_state(snowflake_context.session.state)
+
+        with pytest.raises(RuntimeError, match='has been cancelled'):
+            await m.execute_query('SELECT * FROM slow_table')
+
+        # Verify cancellation was attempted
+        qsclient.cancel_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_query_completes_just_before_timeout(
+        self, snowflake_context: Context, keboola_client: KeboolaClient, mocker
+    ) -> None:
+        """Verify query completing just before timeout doesn't trigger cancellation."""
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-success-123'
+
+        # Return 'processing' a few times, then 'completed' before timeout
+        status_responses = [
+            {'status': 'processing', 'statements': [{'id': 'stmt-1'}]},
+            {'status': 'processing', 'statements': [{'id': 'stmt-1'}]},
+            {'status': 'completed', 'statements': [{'id': 'stmt-1'}]},
+        ]
+
+        qsclient.cancel_job.return_value = {}
+        qsclient.get_job_status.side_effect = status_responses
+        qsclient.get_job_results.return_value = {
+            'status': 'completed',
+            'message': 'Query completed',
+            'columns': [{'name': 'col1'}],
+            'data': [['value1']],
+        }
+
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_QUERY_TIMEOUT', 300.0)  # Normal 5-minute timeout
+
+        m = WorkspaceManager.from_state(snowflake_context.session.state)
+
+        result = await m.execute_query('SELECT col1 FROM fast_table')
+
+        # Query should succeed normally
+        assert result.is_ok
+        assert result.data is not None
+        assert result.data.columns == ['col1']
+
+        # Verify cancellation was NOT called
+        qsclient.cancel_job.assert_not_called()
