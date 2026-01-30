@@ -52,7 +52,6 @@ This section is to be filled by the release testers. Leave it as it is and just 
 Outline the deployment process:
 - Deployment method (automated CI/CD, manual steps)
 - Timing (date/time window for deployment)
-- Order of operations (which environments: dev → staging → production)
 - Any required coordination with other teams or systems
 - Verification steps after deployment
 
