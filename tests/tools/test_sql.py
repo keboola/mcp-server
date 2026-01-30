@@ -551,7 +551,7 @@ class TestQueryCancellation:
             # Cancellation API fails
             (False, None, 'timed out'),
         ],
-        ids=['cancel_success', 'cancel_timeout', 'cancel_fails']
+        ids=['cancel_success', 'cancel_timeout', 'cancel_fails'],
     )
     async def test_timeout_triggers_cancellation(
         self,
@@ -579,7 +579,7 @@ class TestQueryCancellation:
             if final_cancel_status:
                 status_responses.append({'status': final_cancel_status})
         else:
-            qsclient.cancel_job.side_effect = Exception("Cancel API failed")
+            qsclient.cancel_job.side_effect = Exception('Cancel API failed')
 
         qsclient.get_job_status.side_effect = status_responses
 
@@ -610,8 +610,6 @@ class TestQueryCancellation:
         result = await qsclient.cancel_job('job-abc-123', reason='Test cancellation')
 
         raw_client.post.assert_called_once_with(
-            endpoint='queries/job-abc-123/cancel',
-            data={'reason': 'Test cancellation'},
-            params=None
+            endpoint='queries/job-abc-123/cancel', data={'reason': 'Test cancellation'}, params=None
         )
         assert result == {'status': 'canceling'}
