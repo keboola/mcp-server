@@ -248,7 +248,14 @@ class GetDataAppsOutput(BaseModel):
 @tool_errors()
 async def modify_data_app(
     ctx: Context,
-    name: Annotated[str, Field(description='Name of the data app.')],
+    name: Annotated[
+        str,
+        Field(
+            description='Name of the data app. IMPORTANT: Keep the name short (under 50 characters recommended) '
+            'because it is converted to a URL slug used as a DNS label, which has a maximum length of 63 characters. '
+            'Names that are too long will cause DNS errors when accessing the app.'
+        ),
+    ],
     description: Annotated[str, Field(description='Description of the data app.')],
     source_code: Annotated[str, Field(description='Complete Python/Streamlit source code for the data app.')],
     packages: Annotated[
@@ -279,6 +286,10 @@ async def modify_data_app(
     """Creates or updates a Streamlit data app.
 
     Considerations:
+    - IMPORTANT: The data app name must be short enough that its URL slug does not exceed 63 characters (DNS label
+    limit). The slug is created by converting the name to lowercase, replacing spaces with hyphens, and removing
+    special characters. Names longer than ~50 characters may cause DNS errors. If you get a slug length error,
+    use a shorter name.
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
     `{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
     data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
@@ -670,8 +681,36 @@ def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
         }
 
 
+# Maximum length for DNS labels per RFC 1035
+MAX_DNS_LABEL_LENGTH = 63
+
+
+class DataAppSlugTooLongError(ValueError):
+    """Raised when the generated data app slug exceeds the DNS label length limit."""
+
+    pass
+
+
 def _get_data_app_slug(name: str) -> str:
-    return re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-'))
+    """Generate a URL-safe slug from the data app name.
+
+    The slug is used as part of the data app URL prefix, which is a DNS label.
+    DNS labels have a maximum length of 63 characters per RFC 1035.
+
+    :param name: The name of the data app
+    :return: A URL-safe slug
+    :raises DataAppSlugTooLongError: If the generated slug exceeds 63 characters
+    """
+    slug = re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-'))
+    if len(slug) > MAX_DNS_LABEL_LENGTH:
+        raise DataAppSlugTooLongError(
+            f'Data app name "{name}" generates a URL slug that is {len(slug)} characters long, '
+            f'which exceeds the maximum DNS label length of {MAX_DNS_LABEL_LENGTH} characters. '
+            f'Please use a shorter name (the slug "{slug[:20]}..." is too long). '
+            f'The name should generate a slug of at most {MAX_DNS_LABEL_LENGTH} characters after '
+            f'converting to lowercase, replacing spaces with hyphens, and removing special characters.'
+        )
+    return slug
 
 
 def _uses_basic_authentication(authorization: dict[str, Any]) -> bool:
