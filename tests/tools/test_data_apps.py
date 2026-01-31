@@ -10,7 +10,9 @@ from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
     _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
     _STORAGE_QUERY_DATA_FUNCTION_CODE,
+    MAX_DNS_LABEL_LENGTH,
     DataApp,
+    DataAppSlugTooLongError,
     DataAppSummary,
     _build_data_app_config,
     _fetch_data_app,
@@ -92,6 +94,39 @@ def test_get_data_app_slug():
     assert _get_data_app_slug('My Cool App') == 'my-cool-app'
     assert _get_data_app_slug('App 123') == 'app-123'
     assert _get_data_app_slug('Weird!@# Name$$$') == 'weird-name'
+
+
+def test_get_data_app_slug_at_max_length():
+    """Test that a slug exactly at the DNS label limit (63 chars) is accepted."""
+    name = 'a' * MAX_DNS_LABEL_LENGTH
+    slug = _get_data_app_slug(name)
+    assert len(slug) == MAX_DNS_LABEL_LENGTH
+    assert slug == 'a' * MAX_DNS_LABEL_LENGTH
+
+
+def test_get_data_app_slug_exceeds_max_length():
+    """Test that a slug exceeding the DNS label limit raises DataAppSlugTooLongError."""
+    name = 'a' * (MAX_DNS_LABEL_LENGTH + 1)
+    with pytest.raises(DataAppSlugTooLongError) as exc_info:
+        _get_data_app_slug(name)
+    error_message = str(exc_info.value)
+    assert 'exceeds the maximum DNS label length of 63 characters' in error_message
+    assert f'{MAX_DNS_LABEL_LENGTH + 1} characters long' in error_message
+
+
+def test_get_data_app_slug_long_name_with_special_chars():
+    """Test that a long name with special characters that gets shortened is still validated."""
+    name = 'a' * 70 + '!!!'
+    with pytest.raises(DataAppSlugTooLongError):
+        _get_data_app_slug(name)
+
+
+def test_get_data_app_slug_long_name_shortened_by_special_chars():
+    """Test that a long name that becomes short enough after removing special chars is accepted."""
+    name = 'a' * 30 + '!' * 50 + 'b' * 30
+    slug = _get_data_app_slug(name)
+    assert len(slug) == 60
+    assert slug == 'a' * 30 + 'b' * 30
 
 
 def test_get_authorization_mapping():
