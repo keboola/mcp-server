@@ -248,14 +248,7 @@ class GetDataAppsOutput(BaseModel):
 @tool_errors()
 async def modify_data_app(
     ctx: Context,
-    name: Annotated[
-        str,
-        Field(
-            description='Name of the data app. IMPORTANT: Keep the name short (under 50 characters recommended) '
-            'because it is converted to a URL slug used as a DNS label, which has a maximum length of 63 characters. '
-            'Names that are too long will cause DNS errors when accessing the app.'
-        ),
-    ],
+    name: Annotated[str, Field(description='Name of the data app.')],
     description: Annotated[str, Field(description='Description of the data app.')],
     source_code: Annotated[str, Field(description='Complete Python/Streamlit source code for the data app.')],
     packages: Annotated[
@@ -286,10 +279,6 @@ async def modify_data_app(
     """Creates or updates a Streamlit data app.
 
     Considerations:
-    - IMPORTANT: The data app name must be short enough that its URL slug does not exceed 63 characters (DNS label
-    limit). The slug is created by converting the name to lowercase, replacing spaces with hyphens, and removing
-    special characters. Names longer than ~50 characters may cause DNS errors. If you get a slug length error,
-    use a shorter name.
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
     `{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
     data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
