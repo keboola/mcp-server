@@ -1,7 +1,9 @@
 import logging
+from http import HTTPStatus
 from typing import Any, Optional, Union, cast
 
 import httpx
+from httpx_retries import Retry, RetryTransport
 
 JsonPrimitive = Union[int, float, str, bool, None]
 JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
@@ -38,6 +40,14 @@ class RawKeboolaClient:
             else:
                 self.headers['X-StorageAPI-Token'] = api_token
         self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
+        self.transport = RetryTransport(
+            retry=Retry(
+                total=3,
+                backoff_factor=1.0,
+                max_backoff_wait=10,
+                status_forcelist=frozenset(Retry.RETRYABLE_STATUS_CODES | {HTTPStatus.CONFLICT}),
+            )
+        )
         if headers:
             self.headers.update(headers)
         self.readonly = readonly
@@ -93,7 +103,7 @@ class RawKeboolaClient:
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.get(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -117,7 +127,7 @@ class RawKeboolaClient:
         :return: API response as text
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.get(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -146,7 +156,7 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden POST operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.post(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -176,7 +186,7 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden PUT operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.put(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -202,7 +212,7 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden DELETE operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.delete(
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
@@ -234,7 +244,7 @@ class RawKeboolaClient:
             raise RuntimeError(f'Forbidden PATCH operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
             response = await client.patch(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
