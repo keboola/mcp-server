@@ -124,6 +124,17 @@ X-Read-Only-Mode: true
 
 For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control](https://developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control).
 
+#### Role-Based Access Control
+
+The MCP Server automatically restricts tool access based on your Keboola token role:
+
+- **Guest Role**: Users with guest role can only access read-only tools
+- **Read Role**: Similar to guest, read-only users are restricted to query-only operations
+- **Admin Role**: Full access to all tools including modifications
+- **Other Roles**: Standard access with some administrative restrictions
+
+The role is determined by your Storage API token and automatically enforced.
+
 ---
 
 ## Local MCP Server Setup (Custom or Dev Way)

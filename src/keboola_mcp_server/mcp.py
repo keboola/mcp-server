@@ -258,6 +258,12 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
     The middleware also intercepts the `on_call_tool()` call and raises an exception if a call is attempted to a tool
     that is not available in the current project.
+
+    Role-based access control:
+    - Admin: Full access to all tools
+    - Guest: Read-only access (only tools with readOnlyHint=True)
+    - Read: Read-only access (only tools with readOnlyHint=True)
+    - Other roles: Standard access (write tools available)
     """
 
     @staticmethod
@@ -281,6 +287,33 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             if isinstance(role, str):
                 return role
         return ''
+
+    @staticmethod
+    def is_guest_role(token_info: JsonDict) -> bool:
+        """Check if the token belongs to a guest user."""
+        role = ToolsFilteringMiddleware.get_token_role(token_info).lower()
+        return role == 'guest'
+
+    @staticmethod
+    def is_read_only_role(token_info: JsonDict) -> bool:
+        """Check if the token belongs to a read-only user."""
+        role = ToolsFilteringMiddleware.get_token_role(token_info).lower()
+        return role == 'read'
+
+    @staticmethod
+    def requires_read_only_access(token_info: JsonDict) -> bool:
+        """Check if the token requires read-only tool access."""
+        return (
+            ToolsFilteringMiddleware.is_guest_role(token_info)
+            or ToolsFilteringMiddleware.is_read_only_role(token_info)
+        )
+
+    @staticmethod
+    def _is_read_only_tool(tool: Tool) -> bool:
+        """Check if a tool has readOnlyHint=True annotation."""
+        if tool.annotations is None:
+            return False
+        return tool.annotations.readOnlyHint is True
 
     @staticmethod
     def is_client_using_main_branch(ctx: Context) -> bool:
@@ -315,6 +348,11 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
 
+        # Role-based filtering: read-only access for guest and read roles
+        if self.requires_read_only_access(token_info):
+            tools = [t for t in tools if self._is_read_only_tool(t)]
+            LOG.info(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
+
         return tools
 
     async def on_call_tool(
@@ -326,6 +364,16 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         token_info = await self.get_token_info(context.fastmcp_context)
         features = self.get_project_features(token_info)
         token_role = self.get_token_role(token_info).lower()
+
+        # Block non-read-only tools for guest and read-only roles
+        if self.requires_read_only_access(token_info):
+            if not self._is_read_only_tool(tool):
+                LOG.info(f'Tool access denied: {tool.name} is not read-only for role={token_role}')
+                raise ToolError(
+                    f'Access denied: The tool "{tool.name}" requires write permissions. '
+                    f'Your current role ({token_role}) only allows read-only operations. '
+                    f'Contact your administrator to request write access.'
+                )
 
         if 'hide-conditional-flows' in features:
             if tool.name == 'create_conditional_flow':

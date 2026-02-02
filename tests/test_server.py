@@ -223,6 +223,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
         ({'role': 'admin'}, 'modify_flow', 'update_flow'),
         ({'role': None}, 'update_flow', 'modify_flow'),
         ({}, 'update_flow', 'modify_flow'),
+        ({'role': 'guest'}, 'get_buckets', 'create_config'),
+        ({'role': 'read'}, 'query_data', 'update_descriptions'),
     ],
 )
 async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_included, expected_excluded):
