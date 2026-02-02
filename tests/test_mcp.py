@@ -204,6 +204,20 @@ def test_filter_toon_nulls_multi_item_list_preserves_alignment() -> None:
     assert _filter_toon_nulls(data) == [{'a': 1, 'b': None}, {'a': None, 'b': 2}]
 
 
+def test_filter_toon_nulls_multi_item_list_preserves_key_order() -> None:
+    data = [
+        {
+            'b': 1,
+            'd': None,
+            'a': None,
+        },
+        {'a': 2, 'b': None, 'c': 3, 'd': None, 'e': None},
+    ]
+    result = _filter_toon_nulls(data)
+    assert result == [{'b': 1, 'a': None, 'c': None}, {'b': None, 'a': 2, 'c': 3}]
+    assert list(result[0].keys()) == ['b', 'a', 'c']
+
+
 @pytest.mark.parametrize(
     ('data', 'expected'),
     [
@@ -215,6 +229,28 @@ def test_filter_toon_nulls_multi_item_list_preserves_alignment() -> None:
         ([{'a': None, 'b': None}, {'a': 1, 'b': None}], [{'a': None}, {'a': 1}]),
         ([{'a': None}, {'b': None}], [{}, {}]),
         ([{'a': {'b': None}, 'c': 1}], [{'a': {}, 'c': 1}]),
+        # Test that _filter_toon_nulls applies recursively to lists nested inside dicts
+        (
+            [
+                {'a': 1, 'b': [None, 2, 3]},
+                {'a': None, 'b': [4, None]},
+            ],
+            [
+                {'a': 1, 'b': [None, 2, 3]},
+                {'a': None, 'b': [4, None]},
+            ],
+        ),
+        # Test with deeper nesting for key 'b'
+        (
+            [
+                {'a': 1, 'b': [{'c': None, 'd': 2}, {'c': None, 'd': None}]},
+                {'a': 2, 'b': [{'c': None, 'd': None}, {'c': None, 'd': None}]},
+            ],
+            [
+                {'a': 1, 'b': [{'d': 2}, {'d': None}]},
+                {'a': 2, 'b': [{}, {}]},
+            ],
+        ),
     ],
 )
 def test_filter_toon_nulls_edge_cases(data, expected) -> None:
