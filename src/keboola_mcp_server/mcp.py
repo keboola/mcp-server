@@ -298,7 +298,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     def is_read_only_role(token_info: JsonDict) -> bool:
         """Check if the token belongs to a read-only user."""
         role = ToolsFilteringMiddleware.get_token_role(token_info).lower()
-        return role == 'read'
+        return role == 'readonly'
 
     @staticmethod
     def requires_read_only_access(token_info: JsonDict) -> bool:

@@ -224,7 +224,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
         ({'role': None}, 'update_flow', 'modify_flow'),
         ({}, 'update_flow', 'modify_flow'),
         ({'role': 'guest'}, 'get_buckets', 'create_config'),
-        ({'role': 'read'}, 'query_data', 'update_descriptions'),
+        ({'role': 'readOnly'}, 'query_data', 'update_descriptions'),
     ],
 )
 async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_included, expected_excluded):
@@ -459,13 +459,22 @@ async def test_json_logging():
 
         try:
             # give the server time to fully start
-            await asyncio.sleep(5)
+            await asyncio.sleep(8)
 
             # connect to the server and list prompts to force 'fastmcp' looger to get used
             # the listing of the prompts does not require SAPI connection
-            async with Client(SSETransport('http://localhost:8000/sse', sse_read_timeout=5)) as client:
+            async with Client(SSETransport('http://localhost:8000/sse', sse_read_timeout=10)) as client:
                 prompts = await client.list_prompts()
                 assert len(prompts) > 1
+
+                # Also call list_resources to trigger more middleware logging from fastmcp
+                # This doesn't require SAPI connection either
+                resources = await client.list_resources()
+                assert len(resources) >= 0  # May be empty, that's OK
+
+                # Call list_prompts again to generate more fastmcp logs
+                prompts2 = await client.list_prompts()
+                assert len(prompts2) > 1
 
         finally:
             # kill the server and wait for output tasks

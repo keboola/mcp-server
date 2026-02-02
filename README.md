@@ -129,7 +129,7 @@ For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-auth
 The MCP Server automatically restricts tool access based on your Keboola token role:
 
 - **Guest Role**: Users with guest role can only access read-only tools
-- **Read Role**: Similar to guest, read-only users are restricted to query-only operations
+- **ReadOnly Role**: Similar to guest, read-only users are restricted to query-only operations
 - **Admin Role**: Full access to all tools including modifications
 - **Other Roles**: Standard access with some administrative restrictions
 
