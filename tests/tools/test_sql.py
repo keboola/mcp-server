@@ -571,7 +571,7 @@ class TestQueryCancellation:
         # Simulate timeout by always returning 'processing'
         status_responses = [
             {'status': 'processing', 'statements': [{'id': 'stmt-1'}]}
-        ] * 400  # More than timeout iterations
+        ] * 5  # Just enough for main query loop before timeout
 
         if cancel_succeeds:
             qsclient.cancel_job.return_value = {}
@@ -625,7 +625,7 @@ class TestQueryCancellation:
         qsclient.submit_job.return_value = 'qs-job-polling-123'
 
         # Simulate timeout by always returning 'processing'
-        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 5
 
         # After timeout, simulate cancellation polling: 'canceling' 3 times, then 'canceled'
         cancel_status_responses = [
@@ -664,7 +664,7 @@ class TestQueryCancellation:
         qsclient.submit_job.return_value = 'qs-job-polling-timeout-123'
 
         # Simulate timeout by always returning 'processing'
-        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 5
 
         # After cancel, return 'canceling' indefinitely
         cancel_status_responses = [{'status': 'canceling'}] * 1000
@@ -709,7 +709,7 @@ class TestQueryCancellation:
         qsclient.submit_job.return_value = 'qs-job-network-fail-123'
 
         # Simulate timeout by always returning 'processing'
-        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 5
 
         qsclient.cancel_job.return_value = {}
         # After cancel, get_job_status raises exception
@@ -737,7 +737,7 @@ class TestQueryCancellation:
         qsclient.submit_job.return_value = 'qs-job-completes-123'
 
         # Simulate timeout by always returning 'processing'
-        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 5
 
         # After cancel, status becomes 'completed'
         cancel_status_responses = [{'status': 'completed'}]
@@ -777,7 +777,7 @@ class TestQueryCancellation:
         qsclient.submit_job.return_value = 'qs-job-terminal-123'
 
         # Simulate timeout by always returning 'processing'
-        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 400
+        status_responses = [{'status': 'processing', 'statements': [{'id': 'stmt-1'}]}] * 5
 
         # After cancel, return terminal_status
         cancel_status_responses = [{'status': terminal_status}]
