@@ -395,16 +395,18 @@ def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
 
 def _filter_toon_nulls(data: Any) -> Any:
     """
-    Drop None fields while keeping TOON list-of-dicts alignment.
-    Single-item lists drop null keys; multi-item lists keep only keys
-    that appear with a non-None value in any row.
+    Drops None fields while keeping TOON's list-of-dicts alignment.
+    Single-item lists drop keys that have None assigned.
+    Multi-item lists drop keys that have None assigned in all items.
     """
     if isinstance(data, list):
         if not data:
             return data
-        if all(isinstance(item, dict) for item in data):
+
+        elif all(isinstance(item, dict) for item in data):
             if len(data) == 1:
                 return [_filter_toon_nulls(data[0])]
+
             ordered_keys_with_values: list[str] = []
             seen_keys_with_values: set[str] = set()
             for item in data:
@@ -423,9 +425,11 @@ def _filter_toon_nulls(data: Any) -> Any:
                     else:
                         cleaned_item[key] = _filter_toon_nulls(value)
                 cleaned_items.append(cleaned_item)
+
             return cleaned_items
 
-        return [_filter_toon_nulls(item) if item is not None else None for item in data]
+        else:
+            return [_filter_toon_nulls(item) if item is not None else None for item in data]
 
     if isinstance(data, dict):
         cleaned: dict[str, Any] = {}
