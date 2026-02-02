@@ -405,16 +405,18 @@ def _filter_toon_nulls(data: Any) -> Any:
         if all(isinstance(item, dict) for item in data):
             if len(data) == 1:
                 return [_filter_toon_nulls(data[0])]
-            keys_with_values: set[str] = set()
+            ordered_keys_with_values: list[str] = []
+            seen_keys_with_values: set[str] = set()
             for item in data:
                 for key, value in item.items():
-                    if value is not None:
-                        keys_with_values.add(key)
+                    if value is not None and key not in seen_keys_with_values:
+                        seen_keys_with_values.add(key)
+                        ordered_keys_with_values.append(key)
 
             cleaned_items: list[dict[str, Any]] = []
             for item in data:
                 cleaned_item: dict[str, Any] = {}
-                for key in keys_with_values:
+                for key in ordered_keys_with_values:
                     value = item.get(key)
                     if value is None:
                         cleaned_item[key] = None
