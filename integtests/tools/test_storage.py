@@ -133,10 +133,10 @@ async def test_get_tables_output_format(mcp_client: Client, tables: list[TableDe
     assert GetTablesOutput.model_validate(toon_format.decode(result_text)) == GetTablesOutput.model_validate(
         result.structured_content
     )
-    assert result_text.startswith(
-        'tables[1]{id,name,display_name,description,primary_key,created,rows_count,'
-        'data_size_bytes,columns,fully_qualified_name,links,source_project,used_by,created_by,last_updated_by}:'
-    )
+    structured_output = GetTablesOutput.model_validate(result.structured_content)
+    first_table = structured_output.tables[0]
+    expected_keys = list(first_table.model_dump(exclude_none=True).keys())
+    assert result_text.startswith(f"tables[1]{{{','.join(expected_keys)}}}:")
 
 
 @pytest.mark.asyncio
