@@ -248,7 +248,7 @@ class GetDataAppsOutput(BaseModel):
 @tool_errors()
 async def modify_data_app(
     ctx: Context,
-    name: Annotated[str, Field(description='Name of the data app.')],
+    name: Annotated[str, Field(description='Name of the data app (max ~50 chars to fit DNS label limit).')],
     description: Annotated[str, Field(description='Description of the data app.')],
     source_code: Annotated[str, Field(description='Complete Python/Streamlit source code for the data app.')],
     packages: Annotated[
@@ -690,7 +690,7 @@ def _get_data_app_slug(name: str) -> str:
     :return: A URL-safe slug
     :raises DataAppSlugTooLongError: If the generated slug exceeds 63 characters
     """
-    slug = re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-'))
+    slug = re.sub(r'[^a-z0-9\-]', '', name.strip().lower().replace(' ', '-'))
     if len(slug) > MAX_DNS_LABEL_LENGTH:
         raise DataAppSlugTooLongError(
             f'Data app name "{name}" generates a URL slug that is {len(slug)} characters long, '

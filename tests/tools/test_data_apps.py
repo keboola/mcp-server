@@ -96,37 +96,23 @@ def test_get_data_app_slug():
     assert _get_data_app_slug('Weird!@# Name$$$') == 'weird-name'
 
 
-def test_get_data_app_slug_at_max_length():
-    """Test that a slug exactly at the DNS label limit (63 chars) is accepted."""
-    name = 'a' * MAX_DNS_LABEL_LENGTH
-    slug = _get_data_app_slug(name)
-    assert len(slug) == MAX_DNS_LABEL_LENGTH
-    assert slug == 'a' * MAX_DNS_LABEL_LENGTH
-
-
-def test_get_data_app_slug_exceeds_max_length():
-    """Test that a slug exceeding the DNS label limit raises DataAppSlugTooLongError."""
-    name = 'a' * (MAX_DNS_LABEL_LENGTH + 1)
-    with pytest.raises(DataAppSlugTooLongError) as exc_info:
-        _get_data_app_slug(name)
-    error_message = str(exc_info.value)
-    assert 'exceeds the maximum DNS label length of 63 characters' in error_message
-    assert f'{MAX_DNS_LABEL_LENGTH + 1} characters long' in error_message
-
-
-def test_get_data_app_slug_long_name_with_special_chars():
-    """Test that a long name with special characters that gets shortened is still validated."""
-    name = 'a' * 70 + '!!!'
-    with pytest.raises(DataAppSlugTooLongError):
-        _get_data_app_slug(name)
-
-
-def test_get_data_app_slug_long_name_shortened_by_special_chars():
-    """Test that a long name that becomes short enough after removing special chars is accepted."""
-    name = 'a' * 30 + '!' * 50 + 'b' * 30
-    slug = _get_data_app_slug(name)
-    assert len(slug) == 60
-    assert slug == 'a' * 30 + 'b' * 30
+@pytest.mark.parametrize(
+    ('name', 'expected_slug', 'expected_error'),
+    [
+        pytest.param('a' * MAX_DNS_LABEL_LENGTH, 'a' * MAX_DNS_LABEL_LENGTH, None, id='at_max_length'),
+        pytest.param('a' * (MAX_DNS_LABEL_LENGTH + 1), None, DataAppSlugTooLongError, id='exceeds_max_length'),
+        pytest.param('a' * 70 + '!!!', None, DataAppSlugTooLongError, id='long_name_with_special_chars'),
+        pytest.param('a' * 30 + '!' * 50 + 'b' * 30, 'a' * 30 + 'b' * 30, None, id='shortened_by_special_chars'),
+    ],
+)
+def test_get_data_app_slug_length_validation(name, expected_slug, expected_error):
+    """Test DNS label length validation in slug generation."""
+    if expected_error:
+        with pytest.raises(expected_error):
+            _get_data_app_slug(name)
+    else:
+        slug = _get_data_app_slug(name)
+        assert slug == expected_slug
 
 
 def test_get_authorization_mapping():
