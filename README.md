@@ -28,16 +28,20 @@ With the AI Agent and MCP Server, you can:
 
 ## 🚀 Quick Start: Remote MCP Server (Easiest Way)
 
+<div class="alert alert-warning" role="alert">
+<strong>⚠️ SSE Transport Decommissioning:</strong> The SSE transport is deprecated and will be removed from the Keboola MCP Server on 2026-Mar-31. Please migrate to the Streamable HTTP transport and use the <code>/mcp</code> endpoints instead of <code>/sse</code>.
+</div>
+
 The easiest way to use Keboola MCP Server is through our **Remote MCP Server**. This hosted solution eliminates the need for local setup, configuration, or installation.
 
 ### What is the Remote MCP Server?
 
-Our remote server is hosted on every multi-tenant Keboola stack and supports OAuth authentication. You can connect to it from any AI assistant that supports remote SSE connection and OAuth authentication.
+Our remote server is hosted on every multi-tenant Keboola stack and supports OAuth authentication. You can connect to it from any AI assistant that supports remote Streamable HTTP connection and OAuth authentication.
 
 ### How to Connect
 
 1. **Get your remote server URL**: Navigate to your Keboola Project Settings → `MCP Server` tab
-2. **Copy the server URL**: It will look like `https://mcp.<YOUR_REGION>.keboola.com/sse`
+2. **Copy the server URL**: It will look like `https://mcp.<YOUR_REGION>.keboola.com/mcp`
 3. **Configure your AI assistant**: Paste the URL into your AI assistant's MCP settings
 4. **Authenticate**: You'll be prompted to authenticate with your Keboola account and select your project
 
@@ -45,7 +49,7 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 
 - **[Cursor](https://cursor.com)**: Use the "Install In Cursor" button in your project's MCP Server settings or click
   this button
-  [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vc3NlIn0%3D)
+  [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](cursor://anysphere.cursor-deeplink/mcp/install?name=keboola&config=eyJ1cmwiOiJodHRwczovL21jcC51cy1lYXN0NC5nY3Aua2Vib29sYS5jb20vbWNwIn0%3D)
 - **[Claude Desktop](https://claude.ai)**: Add the integration via Settings → Integrations
 - **[Claude Code](https://www.anthropic.com/)**: Install using `claude mcp add --transport http keboola <URL>` (see below for details)
 - **[Windsurf](https://windsurf.ai)**: Configure with the remote server URL
@@ -129,8 +133,8 @@ Run the MCP server on your own machine for full control and easy development. Ch
 The server supports multiple **transport** options, which can be selected by providing the `--transport <transport>` argument when starting the server:
 - `stdio` - Default when `--transport` is not specified. Standard input/output, typically used for local deployment with a single client.
 - `streamable-http` - Runs the server remotely over HTTP with a bidirectional streaming channel, allowing the client and server to continuously exchange messages. Connect via <url>/mcp (e.g., http://localhost:8000/mcp).
-- `sse` - Deprecated, use `streamable-http` instead. Runs the server remotely using Server-Sent Events (SSE) for one-way event streaming from server to client. Connect via <url>/sse (e.g., http://localhost:8000/sse).
-- `http-compat` - A custom transport supporting both `SSE` and `streamable-http`. It is currently used on Keboola remote servers but will soon be replaced by `streamable-http` only.
+- `sse` - **Deprecated (will be removed on 2026-Mar-31)**, use `streamable-http` instead. Runs the server remotely using Server-Sent Events (SSE) for one-way event streaming from server to client. Connect via <url>/sse (e.g., http://localhost:8000/sse).
+- `http-compat` - A custom transport supporting both `SSE` and `streamable-http`. It is currently used on Keboola remote servers but will be replaced by `streamable-http` only when SSE is removed.
 
 For client–server communication, Keboola credentials must be provided to enable working with your project in your Keboola Region. The following are required: `KBC_STORAGE_TOKEN`, `KBC_STORAGE_API_URL`, `KBC_WORKSPACE_SCHEMA` and optionally `KBC_BRANCH_ID`. You can provide these in two ways:
 - For personal use (mainly with stdio transport): set the environment variables before starting the server. All requests will reuse these predefined credentials.
@@ -341,13 +345,13 @@ export KBC_STORAGE_TOKEN=your_keboola_storage_token
 export KBC_WORKSPACE_SCHEMA=your_workspace_schema
 export KBC_BRANCH_ID=your_branch_id_optional
 
-uvx keboola_mcp_server --transport sse
+uvx keboola_mcp_server --transport streamable-http
 ```
 
 > **Note**: This mode is primarily for debugging or testing. For normal use with Claude or Cursor,
 > you do not need to manually run the server.
 
-> **Note**: The server will use the SSE transport and listen on `localhost:8000` for the incoming SSE connections.
+> **Note**: The server will use the Streamable HTTP transport and listen on `localhost:8000` for incoming connections at `/mcp`.
 > You can use `--port` and `--host` parameters to make it listen elsewhere.
 
 ### Option D: Using Docker
@@ -365,11 +369,11 @@ docker run \
   -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
   -e KBC_BRANCH_ID="YOUR_BRANCH_ID_OPTIONAL" \
   keboola/mcp-server:latest \
-  --transport sse \
+  --transport streamable-http \
   --host 0.0.0.0
 ```
 
-> **Note**: The server will use the SSE transport and listen on `localhost:8000` for the incoming SSE connections.
+> **Note**: The server will use the Streamable HTTP transport and listen on `localhost:8000` for incoming connections at `/mcp`.
 > You can change `-p` to map the container's port somewhere else.
 
 ### Do I Need to Start the Server Myself?
