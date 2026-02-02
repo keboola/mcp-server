@@ -17,7 +17,13 @@ from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_proper
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, process_concurrently, toon_serializer, unwrap_results
+from keboola_mcp_server.mcp import (
+    KeboolaMcpServer,
+    process_concurrently,
+    toon_serializer,
+    toon_serializer_compact,
+    unwrap_results,
+)
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.storage.usage import (
     ComponentUsageReference,
@@ -42,7 +48,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             get_buckets,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer,
+            serializer=toon_serializer_compact,
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -50,7 +56,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             get_tables,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer,
+            serializer=toon_serializer_compact,
             tags={STORAGE_TOOLS_TAG},
         )
     )
