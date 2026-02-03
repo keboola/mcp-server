@@ -1712,7 +1712,7 @@ updating, set `authentication_type` to `default` to keep the existing authentica
 {
   "properties": {
     "name": {
-      "description": "Name of the data app.",
+      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
       "type": "string"
     },
     "description": {

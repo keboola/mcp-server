@@ -248,7 +248,7 @@ class GetDataAppsOutput(BaseModel):
 @tool_errors()
 async def modify_data_app(
     ctx: Context,
-    name: Annotated[str, Field(description='Name of the data app.')],
+    name: Annotated[str, Field(description='Name of the data app (max ~50 chars to fit DNS label limit).')],
     description: Annotated[str, Field(description='Description of the data app.')],
     source_code: Annotated[str, Field(description='Complete Python/Streamlit source code for the data app.')],
     packages: Annotated[
@@ -670,8 +670,36 @@ def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
         }
 
 
+# Maximum length for DNS labels per RFC 1035
+MAX_DNS_LABEL_LENGTH = 63
+
+
+class DataAppSlugTooLongError(ValueError):
+    """Raised when the generated data app slug exceeds the DNS label length limit."""
+
+    pass
+
+
 def _get_data_app_slug(name: str) -> str:
-    return re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-'))
+    """Generate a URL-safe slug from the data app name.
+
+    The slug is used as part of the data app URL prefix, which is a DNS label.
+    DNS labels have a maximum length of 63 characters per RFC 1035.
+
+    :param name: The name of the data app
+    :return: A URL-safe slug
+    :raises DataAppSlugTooLongError: If the generated slug exceeds 63 characters
+    """
+    slug = re.sub(r'[^a-z0-9\-]', '', name.strip().lower().replace(' ', '-'))
+    if len(slug) > MAX_DNS_LABEL_LENGTH:
+        raise DataAppSlugTooLongError(
+            f'Data app name "{name}" generates a URL slug that is {len(slug)} characters long, '
+            f'which exceeds the maximum DNS label length of {MAX_DNS_LABEL_LENGTH} characters. '
+            f'Please use a shorter name (the slug "{slug[:20]}..." is too long). '
+            f'The name should generate a slug of at most {MAX_DNS_LABEL_LENGTH} characters after '
+            f'converting to lowercase, replacing spaces with hyphens, and removing special characters.'
+        )
+    return slug
 
 
 def _uses_basic_authentication(authorization: dict[str, Any]) -> bool:
