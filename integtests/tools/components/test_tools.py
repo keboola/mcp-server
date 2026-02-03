@@ -267,7 +267,7 @@ async def initial_cmpconf(
         configuration_id = config_output.configuration_id
         yield config_output
 
-    except Exception as e:
+    except Exception:
         # If tool creation fails but returned a configuration_id, try to extract it
         if 'tool_result' in locals() and hasattr(tool_result, 'structured_content'):
             try:
@@ -287,9 +287,7 @@ async def initial_cmpconf(
                     skip_trash=True,
                 )
             except Exception as cleanup_error:
-                LOG.error(
-                    f'Failed to clean up component configuration {configuration_id}: {cleanup_error}'
-                )
+                LOG.error(f'Failed to clean up component configuration {configuration_id}: {cleanup_error}')
 
 
 @pytest.mark.asyncio

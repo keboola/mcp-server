@@ -489,10 +489,7 @@ class ToolsFilteringMiddlewareTests:
         tool.annotations.readOnlyHint = tool_read_only
 
         mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
-        context = SimpleNamespace(
-            fastmcp_context=mcp_context_client,
-            message=SimpleNamespace(name=tool_name)
-        )
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool_name))
 
         expected = MagicMock()
 

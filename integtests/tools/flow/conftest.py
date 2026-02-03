@@ -23,10 +23,7 @@ LOG = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope='session')
-def ensure_clean_flows(
-    storage_api_token: str,
-    storage_api_url: str
-) -> Generator[None, Any, None]:
+def _ensure_clean_flows(storage_api_token: str, storage_api_url: str) -> Generator[None, Any, None]:
     """
     Ensure the project has no flows before and after flow tests.
     This prevents leftover flows from failed tests affecting new test runs.
@@ -36,18 +33,14 @@ def ensure_clean_flows(
     # Check for and clean up any leftover flows before tests
     orchestrator_configs = client.configurations.list(component_id=ORCHESTRATOR_COMPONENT_ID)
     if orchestrator_configs:
-        LOG.warning(
-            f'Found {len(orchestrator_configs)} leftover orchestrator flows. Cleaning up...'
-        )
+        LOG.warning(f'Found {len(orchestrator_configs)} leftover orchestrator flows. Cleaning up...')
         for config in orchestrator_configs:
             LOG.info(f'Deleting leftover orchestrator flow: {config["id"]}')
             client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'], skip_trash=True)
 
     conditional_configs = client.configurations.list(component_id=CONDITIONAL_FLOW_COMPONENT_ID)
     if conditional_configs:
-        LOG.warning(
-            f'Found {len(conditional_configs)} leftover conditional flows. Cleaning up...'
-        )
+        LOG.warning(f'Found {len(conditional_configs)} leftover conditional flows. Cleaning up...')
         for config in conditional_configs:
             LOG.info(f'Deleting leftover conditional flow: {config["id"]}')
             client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'], skip_trash=True)
@@ -94,7 +87,7 @@ async def initial_lf(
     mcp_client: Client,
     configs: list[ConfigDef],
     keboola_client: KeboolaClient,
-    ensure_clean_flows: None,
+    _ensure_clean_flows: None,
 ) -> AsyncGenerator[FlowToolOutput, None]:
     configuration_id: str | None = None
 
@@ -126,7 +119,7 @@ async def initial_lf(
         configuration_id = flow_output.configuration_id
         yield flow_output
 
-    except Exception as e:
+    except Exception:
         # If tool creation fails but returned a configuration_id, try to extract it
         if 'tool_result' in locals() and hasattr(tool_result, 'structured_content'):
             try:
@@ -146,9 +139,7 @@ async def initial_lf(
                     skip_trash=True,
                 )
             except Exception as cleanup_error:
-                LOG.error(
-                    f'Failed to clean up flow configuration {configuration_id}: {cleanup_error}'
-                )
+                LOG.error(f'Failed to clean up flow configuration {configuration_id}: {cleanup_error}')
 
 
 @pytest_asyncio.fixture
@@ -194,7 +185,7 @@ async def initial_cf(
         configuration_id = flow_output.configuration_id
         yield flow_output
 
-    except Exception as e:
+    except Exception:
         # If tool creation fails but returned a configuration_id, try to extract it
         if 'tool_result' in locals() and hasattr(tool_result, 'structured_content'):
             try:
@@ -214,6 +205,4 @@ async def initial_cf(
                     skip_trash=True,
                 )
             except Exception as cleanup_error:
-                LOG.error(
-                    f'Failed to clean up conditional flow configuration {configuration_id}: {cleanup_error}'
-                )
+                LOG.error(f'Failed to clean up conditional flow configuration {configuration_id}: {cleanup_error}')
