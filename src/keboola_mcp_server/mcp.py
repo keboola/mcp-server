@@ -33,6 +33,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
+from keboola_mcp_server.utils import is_read_only_tool
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -260,10 +261,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     that is not available in the current project.
 
     Role-based access control:
-    - Admin: Full access to all tools
     - Guest: Read-only access (only tools with readOnlyHint=True)
     - Read: Read-only access (only tools with readOnlyHint=True)
-    - Other roles: Standard access (write tools available)
+    - Other non-admin roles: Write tools available, with specific tools (e.g., `modify_flow`) explicitly restricted
+    - Admin: Broad access to tools, with specific write tools (e.g., `update_flow`) explicitly restricted
     """
 
     @staticmethod
@@ -287,33 +288,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             if isinstance(role, str):
                 return role
         return ''
-
-    @staticmethod
-    def is_guest_role(token_info: JsonDict) -> bool:
-        """Check if the token belongs to a guest user."""
-        role = ToolsFilteringMiddleware.get_token_role(token_info).lower()
-        return role == 'guest'
-
-    @staticmethod
-    def is_read_only_role(token_info: JsonDict) -> bool:
-        """Check if the token belongs to a read-only user."""
-        role = ToolsFilteringMiddleware.get_token_role(token_info).lower()
-        return role == 'readonly'
-
-    @staticmethod
-    def requires_read_only_access(token_info: JsonDict) -> bool:
-        """Check if the token requires read-only tool access."""
-        return (
-            ToolsFilteringMiddleware.is_guest_role(token_info)
-            or ToolsFilteringMiddleware.is_read_only_role(token_info)
-        )
-
-    @staticmethod
-    def _is_read_only_tool(tool: Tool) -> bool:
-        """Check if a tool has readOnlyHint=True annotation."""
-        if tool.annotations is None:
-            return False
-        return tool.annotations.readOnlyHint is True
 
     @staticmethod
     def is_client_using_main_branch(ctx: Context) -> bool:
@@ -349,9 +323,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
 
         # Role-based filtering: read-only access for guest and read roles
-        if self.requires_read_only_access(token_info):
-            tools = [t for t in tools if self._is_read_only_tool(t)]
-            LOG.info(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
+        if token_role in ['guest', 'readonly']:
+            tools = [t for t in tools if is_read_only_tool(t)]
+            LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
         return tools
 
@@ -366,9 +340,8 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         token_role = self.get_token_role(token_info).lower()
 
         # Block non-read-only tools for guest and read-only roles
-        if self.requires_read_only_access(token_info):
-            if not self._is_read_only_tool(tool):
-                LOG.info(f'Tool access denied: {tool.name} is not read-only for role={token_role}')
+        if token_role in ['guest', 'readonly']:
+            if not is_read_only_tool(tool):
                 raise ToolError(
                     f'Access denied: The tool "{tool.name}" requires write permissions. '
                     f'Your current role ({token_role}) only allows read-only operations. '
