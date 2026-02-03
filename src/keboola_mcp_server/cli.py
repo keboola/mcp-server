@@ -169,6 +169,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 http_app: StarletteWithLifespan = mcp_server.http_app(
                     path='/',
                     transport='streamable-http',
+                    stateless_http=True,
                 )
                 mount_paths['/mcp'] = http_app
                 transports.append('Streamable-HTTP')
