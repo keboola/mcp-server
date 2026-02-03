@@ -57,15 +57,14 @@ async def test_get_buckets_output_format(mcp_client: Client, buckets: list[Bucke
     assert len(result.content) == 1
     assert result.content[0].type == 'text'
     result_text = result.content[0].text
-    assert GetBucketsOutput.model_validate(toon_format.decode(result_text)) == GetBucketsOutput.model_validate(
-        result.structured_content
+    structured_output = GetBucketsOutput.model_validate(result.structured_content)
+    assert GetBucketsOutput.model_validate(toon_format.decode(result_text)) == structured_output
+
+    # check that the buckets are presented in tabular format
+    expected_keys = list(
+        {k: 'foo' for b in structured_output.buckets for k in b.model_dump(exclude_none=True).keys()}.keys()
     )
-    # check that the tables are presented in tabular format
-    assert result_text.startswith(
-        f'buckets[{len(buckets)}]'
-        '{id,name,display_name,description,stage,created,data_size_bytes,tables_count,links,source_project,'
-        'created_by,last_updated_by}:'
-    )
+    assert result_text.startswith(f"buckets[2]{{{','.join(expected_keys)}}}:")
 
 
 @pytest.mark.asyncio
@@ -130,13 +129,12 @@ async def test_get_tables_output_format(mcp_client: Client, tables: list[TableDe
     assert len(result.content) == 1
     assert result.content[0].type == 'text'
     result_text = result.content[0].text
-    assert GetTablesOutput.model_validate(toon_format.decode(result_text)) == GetTablesOutput.model_validate(
-        result.structured_content
-    )
-    assert result_text.startswith(
-        'tables[1]{id,name,display_name,description,primary_key,created,rows_count,'
-        'data_size_bytes,columns,fully_qualified_name,links,source_project,used_by,created_by,last_updated_by}:'
-    )
+    structured_output = GetTablesOutput.model_validate(result.structured_content)
+    assert GetTablesOutput.model_validate(toon_format.decode(result_text)) == structured_output
+
+    first_table = structured_output.tables[0]
+    expected_keys = list(first_table.model_dump(exclude_none=True).keys())
+    assert result_text.startswith(f"tables[1]{{{','.join(expected_keys)}}}:")
 
 
 @pytest.mark.asyncio

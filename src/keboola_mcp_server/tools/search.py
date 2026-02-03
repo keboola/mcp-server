@@ -20,7 +20,7 @@ from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import toon_serializer
+from keboola_mcp_server.mcp import toon_serializer_compact
 from keboola_mcp_server.tools.components.utils import get_nested
 
 LOG = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ def add_search_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             find_component_id,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer,
+            serializer=toon_serializer_compact,
             tags={SEARCH_TOOLS_TAG},
         )
     )
@@ -93,7 +93,7 @@ def add_search_tools(mcp: FastMCP) -> None:
             search,
             name=SEARCH_TOOL_NAME,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer,
+            serializer=toon_serializer_compact,
             tags={SEARCH_TOOLS_TAG},
         )
     )
