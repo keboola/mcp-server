@@ -14,6 +14,7 @@ dependencies = [
     "fastmcp == 2.14.1",
     "mcp == 1.24.0",
     "httpx ~= 0.28",
+    "httpx-retries~=0.4",
     "jsonpath-ng ~= 1.7",
     "jsonschema ~= 4.25",
     "pyjwt ~= 2.10",
