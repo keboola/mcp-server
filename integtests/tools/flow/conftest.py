@@ -36,14 +36,18 @@ def _ensure_clean_flows(storage_api_token: str, storage_api_url: str) -> Generat
         LOG.warning(f'Found {len(orchestrator_configs)} leftover orchestrator flows. Cleaning up...')
         for config in orchestrator_configs:
             LOG.info(f'Deleting leftover orchestrator flow: {config["id"]}')
-            client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'], skip_trash=True)
+            # Call delete twice for permanent deletion (first to trash, second to remove from trash)
+            client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'])
+            client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'])
 
     conditional_configs = client.configurations.list(component_id=CONDITIONAL_FLOW_COMPONENT_ID)
     if conditional_configs:
         LOG.warning(f'Found {len(conditional_configs)} leftover conditional flows. Cleaning up...')
         for config in conditional_configs:
             LOG.info(f'Deleting leftover conditional flow: {config["id"]}')
-            client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'], skip_trash=True)
+            # Call delete twice for permanent deletion (first to trash, second to remove from trash)
+            client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'])
+            client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'])
 
     yield
 
@@ -51,12 +55,16 @@ def _ensure_clean_flows(storage_api_token: str, storage_api_url: str) -> Generat
     orchestrator_configs = client.configurations.list(component_id=ORCHESTRATOR_COMPONENT_ID)
     for config in orchestrator_configs:
         LOG.info(f'Cleaning up orchestrator flow: {config["id"]}')
-        client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'], skip_trash=True)
+        # Call delete twice for permanent deletion (first to trash, second to remove from trash)
+        client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'])
+        client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'])
 
     conditional_configs = client.configurations.list(component_id=CONDITIONAL_FLOW_COMPONENT_ID)
     for config in conditional_configs:
         LOG.info(f'Cleaning up conditional flow: {config["id"]}')
-        client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'], skip_trash=True)
+        # Call delete twice for permanent deletion (first to trash, second to remove from trash)
+        client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'])
+        client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'])
 
 
 @pytest.fixture
@@ -147,7 +155,7 @@ async def initial_cf(
     mcp_client: Client,
     configs: list[ConfigDef],
     keboola_client: KeboolaClient,
-    ensure_clean_flows: None,
+    _ensure_clean_flows: None,
 ) -> AsyncGenerator[FlowToolOutput, None]:
     configuration_id: str | None = None
 

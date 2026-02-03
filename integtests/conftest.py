@@ -237,21 +237,44 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
 
+    # Clean up any leftover buckets from interrupted test runs
     current_buckets = storage_client.buckets.list()
     if current_buckets:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_buckets)} buckets')
+        LOG.warning(
+            f'Found {len(current_buckets)} buckets in project {project_id} (expected empty). '
+            f'Cleaning up from previous interrupted test run...'
+        )
+        for bucket in current_buckets:
+            bucket_id = bucket['id']
+            LOG.info(f'Deleting existing bucket with ID={bucket_id}')
+            storage_client.buckets.delete(bucket_id, force=True)
 
     buckets = _create_buckets(storage_client)
 
+    # Clean up any leftover tables from interrupted test runs
     current_tables = storage_client.tables.list()
     if current_tables:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_tables)} tables')
+        LOG.warning(
+            f'Found {len(current_tables)} tables in project {project_id} (expected empty). '
+            f'Tables should have been deleted with buckets.'
+        )
 
     tables = _create_tables(storage_client)
 
-    current_configs = storage_client.configurations.list(component_id='ex-generic-v2')
-    if current_configs:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_configs)} configs')
+    # Clean up any leftover configs from interrupted test runs
+    component_ids = ['ex-generic-v2', 'keboola.snowflake-transformation']
+    for component_id in component_ids:
+        current_configs = storage_client.configurations.list(component_id=component_id)
+        if current_configs:
+            LOG.warning(
+                f'Found {len(current_configs)} configs for component {component_id} in project {project_id} '
+                f'(expected empty). Cleaning up from previous interrupted test run...'
+            )
+            for config in current_configs:
+                LOG.info(f'Deleting existing config with component ID={component_id} and config ID={config["id"]}')
+                storage_client.configurations.delete(component_id, config['id'])
+                # Double delete because the first delete moves the configuration to the trash
+                storage_client.configurations.delete(component_id, config['id'])
 
     configs = _create_configs(storage_client)
 
@@ -353,3 +376,44 @@ def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: s
 async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
     async with Client(mcp_server) as client:
         yield client
+
+
+@pytest.fixture(scope='session')
+def hostname_suffix(storage_api_url: str) -> str:
+    """Extract hostname suffix from storage API URL (e.g., 'europe-west3.gcp.keboola.com')"""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(storage_api_url)
+    if not parsed.hostname or not parsed.hostname.startswith('connection.'):
+        raise ValueError(f'Invalid storage API URL: {storage_api_url}')
+    return parsed.hostname.split('connection.')[1]
+
+
+@pytest.fixture(scope='session')
+def connection_url(hostname_suffix: str) -> str:
+    """Base connection URL for the region (e.g., 'https://connection.europe-west3.gcp.keboola.com')"""
+    return f'https://connection.{hostname_suffix}'
+
+
+@pytest.fixture(scope='session')
+def queue_url(hostname_suffix: str) -> str:
+    """Queue API URL for the region (e.g., 'https://queue.europe-west3.gcp.keboola.com')"""
+    return f'https://queue.{hostname_suffix}'
+
+
+@pytest.fixture(scope='session')
+def ai_url(hostname_suffix: str) -> str:
+    """AI service URL for the region (e.g., 'https://ai.europe-west3.gcp.keboola.com')"""
+    return f'https://ai.{hostname_suffix}'
+
+
+@pytest.fixture
+def links_manager(keboola_client: KeboolaClient, keboola_project: ProjectDef):
+    """ProjectLinksManager instance for generating region-aware UI links"""
+    from keboola_mcp_server.links import ProjectLinksManager
+
+    return ProjectLinksManager(
+        base_url=keboola_client.storage_api_url,
+        project_id=str(keboola_project.project_id),
+        branch_id=keboola_client.branch_id,
+    )
