@@ -9,7 +9,8 @@ wheels/
 # IDE related files
 .cursor/
 .idea/
-.vscode/
+.vscode
+.claude/
 
 # Virtual environments
 .venv
