@@ -393,6 +393,55 @@ def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
         return None
 
 
+def _filter_toon_nulls(data: Any) -> Any:
+    """
+    Drops None fields while keeping TOON's list-of-dicts alignment.
+    Single-item lists drop keys that have None assigned.
+    Multi-item lists drop keys that have None assigned in all items.
+    """
+    if isinstance(data, list):
+        if not data:
+            return data
+
+        elif all(isinstance(item, dict) for item in data):
+            if len(data) == 1:
+                return [_filter_toon_nulls(data[0])]
+
+            ordered_keys_with_values: list[str] = []
+            seen_keys_with_values: set[str] = set()
+            for item in data:
+                for key, value in item.items():
+                    if value is not None and key not in seen_keys_with_values:
+                        seen_keys_with_values.add(key)
+                        ordered_keys_with_values.append(key)
+
+            cleaned_items: list[dict[str, Any]] = []
+            for item in data:
+                cleaned_item: dict[str, Any] = {}
+                for key in ordered_keys_with_values:
+                    value = item.get(key)
+                    if value is None:
+                        cleaned_item[key] = None
+                    else:
+                        cleaned_item[key] = _filter_toon_nulls(value)
+                cleaned_items.append(cleaned_item)
+
+            return cleaned_items
+
+        else:
+            return [_filter_toon_nulls(item) if item is not None else None for item in data]
+
+    if isinstance(data, dict):
+        cleaned: dict[str, Any] = {}
+        for key, value in data.items():
+            if value is None:
+                continue
+            cleaned[key] = _filter_toon_nulls(value)
+        return cleaned
+
+    return data
+
+
 def _exclude_none_serializer(data: Any) -> str:
     if (cleaned := _to_python(data)) is not None:
         return to_json(cleaned, fallback=str).decode('utf-8')
@@ -402,6 +451,10 @@ def _exclude_none_serializer(data: Any) -> str:
 
 def toon_serializer(data: Any) -> str:
     return toon_format.encode(_to_python(data, exclude_none=False))
+
+
+def toon_serializer_compact(data: Any) -> str:
+    return toon_format.encode(_filter_toon_nulls(_to_python(data, exclude_none=False)))
 
 
 async def process_concurrently(
