@@ -1,11 +1,12 @@
 import logging
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Generator
 from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 from fastmcp import Client, FastMCP
 from fastmcp.server.middleware import CallNext, MiddlewareContext
+from kbcstorage.client import Client as SyncStorageClient
 from mcp import types as mt
 
 from integtests.conftest import ConfigDef
@@ -19,6 +20,50 @@ from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.flow.tools import FlowToolOutput
 
 LOG = logging.getLogger(__name__)
+
+
+@pytest.fixture(scope='session')
+def ensure_clean_flows(
+    storage_api_token: str,
+    storage_api_url: str
+) -> Generator[None, Any, None]:
+    """
+    Ensure the project has no flows before and after flow tests.
+    This prevents leftover flows from failed tests affecting new test runs.
+    """
+    client = SyncStorageClient(storage_api_url, storage_api_token)
+
+    # Check for and clean up any leftover flows before tests
+    orchestrator_configs = client.configurations.list(component_id=ORCHESTRATOR_COMPONENT_ID)
+    if orchestrator_configs:
+        LOG.warning(
+            f'Found {len(orchestrator_configs)} leftover orchestrator flows. Cleaning up...'
+        )
+        for config in orchestrator_configs:
+            LOG.info(f'Deleting leftover orchestrator flow: {config["id"]}')
+            client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'], skip_trash=True)
+
+    conditional_configs = client.configurations.list(component_id=CONDITIONAL_FLOW_COMPONENT_ID)
+    if conditional_configs:
+        LOG.warning(
+            f'Found {len(conditional_configs)} leftover conditional flows. Cleaning up...'
+        )
+        for config in conditional_configs:
+            LOG.info(f'Deleting leftover conditional flow: {config["id"]}')
+            client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'], skip_trash=True)
+
+    yield
+
+    # Clean up after all tests complete
+    orchestrator_configs = client.configurations.list(component_id=ORCHESTRATOR_COMPONENT_ID)
+    for config in orchestrator_configs:
+        LOG.info(f'Cleaning up orchestrator flow: {config["id"]}')
+        client.configurations.delete(ORCHESTRATOR_COMPONENT_ID, config['id'], skip_trash=True)
+
+    conditional_configs = client.configurations.list(component_id=CONDITIONAL_FLOW_COMPONENT_ID)
+    for config in conditional_configs:
+        LOG.info(f'Cleaning up conditional flow: {config["id"]}')
+        client.configurations.delete(CONDITIONAL_FLOW_COMPONENT_ID, config['id'], skip_trash=True)
 
 
 @pytest.fixture
@@ -46,81 +91,129 @@ async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
 
 @pytest_asyncio.fixture
 async def initial_lf(
-    mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
+    mcp_client: Client,
+    configs: list[ConfigDef],
+    keboola_client: KeboolaClient,
+    ensure_clean_flows: None,
 ) -> AsyncGenerator[FlowToolOutput, None]:
-    # Create the initial component configuration test data
-    tool_result = await mcp_client.call_tool(
-        name='create_flow',
-        arguments={
-            'name': 'Initial Test Flow',
-            'description': 'Initial test flow created by automated test',
-            'phases': [{'name': 'Phase1', 'dependsOn': [], 'description': 'First phase'}],
-            'tasks': [
-                {
-                    'id': 20001,
-                    'name': 'Task1',
-                    'phase': 1,
-                    'continueOnFailure': False,
-                    'enabled': False,
-                    'task': {
-                        'componentId': configs[0].component_id,
-                        'configId': configs[0].configuration_id,
-                        'mode': 'run',
-                    },
-                }
-            ],
-        },
-    )
+    configuration_id: str | None = None
+
     try:
-        yield FlowToolOutput.model_validate(tool_result.structured_content)
-    finally:
-        # Clean up: Delete the configuration
-        await keboola_client.storage_client.configuration_delete(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
-            configuration_id=tool_result.structured_content['configuration_id'],
-            skip_trash=True,
+        LOG.debug('Creating initial test flow (orchestrator)')
+        tool_result = await mcp_client.call_tool(
+            name='create_flow',
+            arguments={
+                'name': 'Initial Test Flow',
+                'description': 'Initial test flow created by automated test',
+                'phases': [{'name': 'Phase1', 'dependsOn': [], 'description': 'First phase'}],
+                'tasks': [
+                    {
+                        'id': 20001,
+                        'name': 'Task1',
+                        'phase': 1,
+                        'continueOnFailure': False,
+                        'enabled': False,
+                        'task': {
+                            'componentId': configs[0].component_id,
+                            'configId': configs[0].configuration_id,
+                            'mode': 'run',
+                        },
+                    }
+                ],
+            },
         )
+        flow_output = FlowToolOutput.model_validate(tool_result.structured_content)
+        configuration_id = flow_output.configuration_id
+        yield flow_output
+
+    except Exception as e:
+        # If tool creation fails but returned a configuration_id, try to extract it
+        if 'tool_result' in locals() and hasattr(tool_result, 'structured_content'):
+            try:
+                configuration_id = tool_result.structured_content.get('configuration_id')
+            except Exception:
+                pass
+        raise
+
+    finally:
+        # Clean up if we have a configuration_id
+        if configuration_id:
+            try:
+                LOG.debug(f'Cleaning up flow configuration: {configuration_id}')
+                await keboola_client.storage_client.configuration_delete(
+                    component_id=ORCHESTRATOR_COMPONENT_ID,
+                    configuration_id=configuration_id,
+                    skip_trash=True,
+                )
+            except Exception as cleanup_error:
+                LOG.error(
+                    f'Failed to clean up flow configuration {configuration_id}: {cleanup_error}'
+                )
 
 
 @pytest_asyncio.fixture
 async def initial_cf(
-    mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
+    mcp_client: Client,
+    configs: list[ConfigDef],
+    keboola_client: KeboolaClient,
+    ensure_clean_flows: None,
 ) -> AsyncGenerator[FlowToolOutput, None]:
-    # Create the initial component configuration test data
-    tool_result = await mcp_client.call_tool(
-        name='create_conditional_flow',
-        arguments={
-            'name': 'Initial Test Flow',
-            'description': 'Initial test flow created by automated test',
-            'phases': [
-                {
-                    'id': 'phase1',
-                    'name': 'Phase1',
-                    'description': 'First phase',
-                    'next': [{'id': 'phase1_end', 'name': 'End Flow', 'goto': None}],
-                },
-            ],
-            'tasks': [
-                {
-                    'id': 'task1',
-                    'name': 'Task1',
-                    'phase': 'phase1',
-                    'task': {
-                        'type': 'job',
-                        'componentId': configs[0].component_id,
-                        'configId': configs[0].configuration_id,
-                        'mode': 'run',
-                    },
-                },
-            ],
-        },
-    )
+    configuration_id: str | None = None
+
     try:
-        yield FlowToolOutput.model_validate(tool_result.structured_content)
-    finally:
-        # Clean up: Delete the configuration
-        await keboola_client.storage_client.configuration_delete(
-            component_id=CONDITIONAL_FLOW_COMPONENT_ID,
-            configuration_id=tool_result.structured_content['configuration_id'],
-            skip_trash=True,
+        LOG.debug('Creating initial test flow (conditional)')
+        tool_result = await mcp_client.call_tool(
+            name='create_conditional_flow',
+            arguments={
+                'name': 'Initial Test Flow',
+                'description': 'Initial test flow created by automated test',
+                'phases': [
+                    {
+                        'id': 'phase1',
+                        'name': 'Phase1',
+                        'description': 'First phase',
+                        'next': [{'id': 'phase1_end', 'name': 'End Flow', 'goto': None}],
+                    },
+                ],
+                'tasks': [
+                    {
+                        'id': 'task1',
+                        'name': 'Task1',
+                        'phase': 'phase1',
+                        'task': {
+                            'type': 'job',
+                            'componentId': configs[0].component_id,
+                            'configId': configs[0].configuration_id,
+                            'mode': 'run',
+                        },
+                    },
+                ],
+            },
         )
+        flow_output = FlowToolOutput.model_validate(tool_result.structured_content)
+        configuration_id = flow_output.configuration_id
+        yield flow_output
+
+    except Exception as e:
+        # If tool creation fails but returned a configuration_id, try to extract it
+        if 'tool_result' in locals() and hasattr(tool_result, 'structured_content'):
+            try:
+                configuration_id = tool_result.structured_content.get('configuration_id')
+            except Exception:
+                pass
+        raise
+
+    finally:
+        # Clean up if we have a configuration_id
+        if configuration_id:
+            try:
+                LOG.debug(f'Cleaning up conditional flow configuration: {configuration_id}')
+                await keboola_client.storage_client.configuration_delete(
+                    component_id=CONDITIONAL_FLOW_COMPONENT_ID,
+                    configuration_id=configuration_id,
+                    skip_trash=True,
+                )
+            except Exception as cleanup_error:
+                LOG.error(
+                    f'Failed to clean up conditional flow configuration {configuration_id}: {cleanup_error}'
+                )

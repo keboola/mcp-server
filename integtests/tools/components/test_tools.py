@@ -248,26 +248,48 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
 async def initial_cmpconf(
     mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
 ) -> AsyncGenerator[ConfigToolOutput, None]:
-    # Create the initial component configuration test data
-    tool_result = await mcp_client.call_tool(
-        name='create_config',
-        arguments={
-            'name': 'Initial Test Configuration',
-            'description': 'Initial test configuration created by automated test',
-            'component_id': configs[0].component_id,
-            'parameters': {'initial_param': 'initial_value'},
-            'storage': {'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}},
-        },
-    )
+    configuration_id: str | None = None
+    component_id: str = configs[0].component_id
+
     try:
-        yield ConfigToolOutput.model_validate(tool_result.structured_content)
-    finally:
-        # Clean up: Delete the configuration
-        await keboola_client.storage_client.configuration_delete(
-            component_id=configs[0].component_id,
-            configuration_id=tool_result.structured_content['configuration_id'],
-            skip_trash=True,
+        LOG.debug(f'Creating initial test configuration for component: {component_id}')
+        tool_result = await mcp_client.call_tool(
+            name='create_config',
+            arguments={
+                'name': 'Initial Test Configuration',
+                'description': 'Initial test configuration created by automated test',
+                'component_id': component_id,
+                'parameters': {'initial_param': 'initial_value'},
+                'storage': {'input': {'tables': [{'source': 'in.c-bucket.table', 'destination': 'input.csv'}]}},
+            },
         )
+        config_output = ConfigToolOutput.model_validate(tool_result.structured_content)
+        configuration_id = config_output.configuration_id
+        yield config_output
+
+    except Exception as e:
+        # If tool creation fails but returned a configuration_id, try to extract it
+        if 'tool_result' in locals() and hasattr(tool_result, 'structured_content'):
+            try:
+                configuration_id = tool_result.structured_content.get('configuration_id')
+            except Exception:
+                pass
+        raise
+
+    finally:
+        # Clean up if we have a configuration_id
+        if configuration_id:
+            try:
+                LOG.debug(f'Cleaning up component configuration: {configuration_id}')
+                await keboola_client.storage_client.configuration_delete(
+                    component_id=component_id,
+                    configuration_id=configuration_id,
+                    skip_trash=True,
+                )
+            except Exception as cleanup_error:
+                LOG.error(
+                    f'Failed to clean up component configuration {configuration_id}: {cleanup_error}'
+                )
 
 
 @pytest.mark.asyncio
