@@ -5,6 +5,7 @@
 - Branch names must start with the Linear issue ID and be short (e.g., `AI-2480-whitelist-n8n-domains`)
 - Commit messages should reference the Linear issue ID (e.g., `AI-2480: description`)
 - When creating PRs, use the template at `.github/pull_request_template.md`
+- **Never use `git push --force`** or rebase commits that have already been pushed - use merge commits instead to avoid rewriting history for others
 
 ## Testing
 - **Use tox** for final testing - it runs pytest, black (formatting), flake8 (linter), and check-tools-docs (verifies TOOLS.md is up-to-date)
