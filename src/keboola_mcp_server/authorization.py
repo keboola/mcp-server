@@ -23,6 +23,7 @@ from fastmcp.tools import Tool
 from mcp import types as mt
 
 from keboola_mcp_server.mcp import get_http_request_or_none
+from keboola_mcp_server.utils import is_read_only_tool
 
 LOG = logging.getLogger(__name__)
 
@@ -82,13 +83,6 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         return allowed_tools, disallowed_tools, read_only_mode
 
     @staticmethod
-    def _is_read_only_tool(tool: Tool) -> bool:
-        """Check if a tool has readOnlyHint=True annotation."""
-        if tool.annotations is None:
-            return False
-        return tool.annotations.readOnlyHint is True
-
-    @staticmethod
     def _is_tool_authorized(
         tool: Tool, allowed_tools: set[str] | None, disallowed_tools: set[str] | None, read_only_mode: bool
     ) -> bool:
@@ -97,7 +91,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         if disallowed_tools and tool.name in disallowed_tools:
             return False
         # Check read-only mode - only allow tools with readOnlyHint=True
-        if read_only_mode and not ToolAuthorizationMiddleware._is_read_only_tool(tool):
+        if read_only_mode and not is_read_only_tool(tool):
             return False
         # Then check if tool is in allowed list (if specified)
         if allowed_tools is not None and tool.name not in allowed_tools:

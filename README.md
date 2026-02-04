@@ -124,6 +124,17 @@ X-Read-Only-Mode: true
 
 For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control](https://developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control).
 
+#### Role-Based Access Control
+
+The MCP Server automatically restricts tool access based on your Keboola token role:
+
+- **Guest**: Read-only access limited to tools marked as read-only (no modifying operations)
+- **Read**: Similar to guest, users with read role can only access tools marked as read-only (no modifying operations)
+- **Other non-admin roles**: Standard write access with some administrative tools restricted (e.g., `modify_flow` for scheduling)
+- **Admin**: Broad tool access for administrative operations, with specific tools restricted (e.g., `update_flow` is blocked, use `modify_flow` for scheduling)
+
+The role is determined by your Storage API token and automatically enforced. Admin role specifically allows access to the Scheduler API for managing flow scheduling.
+
 ---
 
 ## Local MCP Server Setup (Custom or Dev Way)

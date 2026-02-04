@@ -438,3 +438,76 @@ class ToolsFilteringMiddlewareTests:
         else:
             result = await middleware.on_call_tool(context, call_next)
             assert result is expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('token_role', 'tool_name', 'tool_read_only', 'should_allow'),
+        [
+            # Guest role - allow read-only, block write
+            ('guest', 'get_buckets', True, True),
+            ('guest', 'create_config', False, False),
+            # Read role - allow read-only, block write
+            ('readOnly', 'get_flows', True, True),
+            ('readOnly', 'update_descriptions', False, False),
+            # Admin role - allow all
+            ('admin', 'get_buckets', True, True),
+            ('admin', 'create_config', False, True),
+            # Other role - allow all
+            ('developer', 'query_data', True, True),
+            ('developer', 'delete_bucket', False, True),
+        ],
+        ids=[
+            'guest_read_allowed',
+            'guest_write_blocked',
+            'readonly_read_allowed',
+            'readonly_write_blocked',
+            'admin_read_allowed',
+            'admin_write_allowed',
+            'developer_read_allowed',
+            'developer_write_allowed',
+        ],
+    )
+    async def test_on_call_tool_role_blocking(
+        self,
+        mcp_context_client,
+        token_role: str,
+        tool_name: str,
+        tool_read_only: bool,
+        should_allow: bool,
+    ) -> None:
+        """Test on_call_tool() blocks write operations for guest/read roles."""
+        # Setup token info
+        token_info = {'owner': {'features': []}, 'admin': {'role': token_role}}
+
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.verify_token = AsyncMock(return_value=token_info)
+        keboola_client.branch_id = None  # Use main branch to avoid data app filtering
+
+        # Create mock tool with read-only annotation
+        tool = _tool(tool_name)
+        tool.annotations = MagicMock()
+        tool.annotations.readOnlyHint = tool_read_only
+
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool_name))
+
+        expected = MagicMock()
+
+        async def call_next(_):
+            return expected
+
+        middleware = ToolsFilteringMiddleware()
+
+        if should_allow:
+            # Should not raise an error
+            result = await middleware.on_call_tool(context, call_next)
+            assert result is expected
+        else:
+            # Should raise ToolError
+            with pytest.raises(ToolError) as exc_info:
+                await middleware.on_call_tool(context, call_next)
+            # Verify error message contains tool name and role info
+            error_msg = str(exc_info.value)
+            assert tool_name in error_msg
+            assert 'write permissions' in error_msg
+            assert token_role in error_msg

@@ -6,7 +6,6 @@ from mcp.server.fastmcp import Context
 
 from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components import create_config
 from keboola_mcp_server.tools.jobs import (
     GetJobsDetailOutput,
@@ -95,10 +94,10 @@ async def test_get_jobs_listing_with_component_and_config_filter(mcp_context: Co
 
 
 @pytest.mark.asyncio
-async def test_run_job_and_get_jobs(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+async def test_run_job_and_get_jobs(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef, links_manager
+):
     """Tests that `run_job` creates a job and `get_jobs` retrieves its details."""
-
-    project_id = keboola_project.project_id
 
     test_config = configs[0]
     component_id = test_config.component_id
@@ -114,16 +113,8 @@ async def test_run_job_and_get_jobs(mcp_context: Context, configs: list[ConfigDe
     assert started_job.status is not None
     assert frozenset(started_job.links) == frozenset(
         [
-            Link(
-                type='ui-detail',
-                title=f'Job: {started_job.id}',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{started_job.id}',
-            ),
-            Link(
-                type='ui-dashboard',
-                title='Jobs in the project',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
-            ),
+            links_manager.get_job_detail_link(started_job.id),
+            links_manager.get_jobs_dashboard_link(),
         ]
     )
 
@@ -141,25 +132,17 @@ async def test_run_job_and_get_jobs(mcp_context: Context, configs: list[ConfigDe
     assert job_detail.url is not None
     assert frozenset(job_detail.links) == frozenset(
         [
-            Link(
-                type='ui-detail',
-                title=f'Job: {job_detail.id}',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{job_detail.id}',
-            ),
-            Link(
-                type='ui-dashboard',
-                title='Jobs in the project',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
-            ),
+            links_manager.get_job_detail_link(job_detail.id),
+            links_manager.get_jobs_dashboard_link(),
         ]
     )
 
 
 @pytest.mark.asyncio
-async def test_get_jobs_detail(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+async def test_get_jobs_detail(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef, links_manager
+):
     """Tests `get_jobs` by creating a job and then retrieving its details."""
-
-    project_id = keboola_project.project_id
 
     # Use first config to create a specific job
     test_config = configs[0]
@@ -182,27 +165,17 @@ async def test_get_jobs_detail(mcp_context: Context, configs: list[ConfigDef], k
     assert job_detail.status is not None
     assert frozenset(job_detail.links) == frozenset(
         [
-            Link(
-                type='ui-detail',
-                title=f'Job: {created_job.id}',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{created_job.id}',
-            ),
-            Link(
-                type='ui-dashboard',
-                title='Jobs in the project',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
-            ),
+            links_manager.get_job_detail_link(created_job.id),
+            links_manager.get_jobs_dashboard_link(),
         ]
     )
 
 
 @pytest.mark.asyncio
 async def test_run_job_with_newly_created_config(
-    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef, links_manager
 ):
     """Tests that `run_job` works with a newly created configuration."""
-
-    project_id = keboola_project.project_id
 
     test_config = configs[0]
     component_id = test_config.component_id
@@ -231,16 +204,8 @@ async def test_run_job_with_newly_created_config(
         assert started_job.status is not None
         assert frozenset(started_job.links) == frozenset(
             [
-                Link(
-                    type='ui-detail',
-                    title=f'Job: {started_job.id}',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{started_job.id}',
-                ),
-                Link(
-                    type='ui-dashboard',
-                    title='Jobs in the project',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
-                ),
+                links_manager.get_job_detail_link(started_job.id),
+                links_manager.get_jobs_dashboard_link(),
             ]
         )
 

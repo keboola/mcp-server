@@ -18,7 +18,7 @@ from keboola_mcp_server.clients.client import (
 )
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import ToolError
-from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.tools.flow.model import ConditionalFlowPhase, Flow, GetFlowsDetailOutput, GetFlowsListOutput
 from keboola_mcp_server.tools.flow.tools import (
@@ -409,6 +409,7 @@ async def test_update_flow(
     mcp_client: Client,
     keboola_project: ProjectDef,
     keboola_client: KeboolaClient,
+    links_manager,
 ) -> None:
     """Tests that 'update_flow' tool works as expected."""
     flow_id = initial_lf.configuration_id if flow_type == ORCHESTRATOR_COMPONENT_ID else initial_cf.configuration_id
@@ -425,7 +426,6 @@ async def test_update_flow(
     else:
         tool_name = UPDATE_FLOW_TOOL_NAME
 
-    project_id = keboola_project.project_id
     tool_result = await mcp_client.call_tool(
         name=tool_name,
         arguments={
@@ -447,25 +447,11 @@ async def test_update_flow(
     expected_name = updates.get('name') or 'Initial Test Flow'
     expected_description = updates.get('description') or initial_flow.description
     assert updated_flow.description == expected_description
-    if flow_type == ORCHESTRATOR_COMPONENT_ID:
-        flow_path = 'flows'
-        flow_label = 'Flows'
-    else:
-        flow_path = 'flows-v2'
-        flow_label = 'Conditional Flows'
     assert frozenset(updated_flow.links) == frozenset(
         [
-            Link(
-                type='ui-detail',
-                title=f'Flow: {expected_name}',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/{flow_path}/{flow_id}',
-            ),
-            Link(
-                type='ui-dashboard',
-                title=f'{flow_label} in the project',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/{flow_path}',
-            ),
-            Link(type='docs', title='Documentation for Keboola Flows', url='https://help.keboola.com/flows/'),
+            links_manager.get_flow_detail_link(flow_id, expected_name, flow_type),
+            links_manager.get_flows_dashboard_link(flow_type),
+            links_manager.get_flows_docs_link(),
         ]
     )
 
@@ -549,7 +535,11 @@ async def test_get_flows_empty(mcp_context: Context) -> None:
 
 @pytest.mark.asyncio
 async def test_get_flows_list(
-    keboola_project: ProjectDef, mcp_client: Client, initial_lf: FlowToolOutput, initial_cf: FlowToolOutput
+    keboola_project: ProjectDef,
+    mcp_client: Client,
+    initial_lf: FlowToolOutput,
+    initial_cf: FlowToolOutput,
+    links_manager,
 ) -> None:
     """Tests that `get_flows` tool works as expected when listing all flows."""
     tool_call_result = await mcp_client.call_tool(name='get_flows', arguments={})
@@ -558,16 +548,8 @@ async def test_get_flows_list(
     assert len(flows.flows) == 2
     assert frozenset(flows.links) == frozenset(
         [
-            Link(
-                type='ui-dashboard',
-                title='Flows in the project',
-                url=f'https://connection.keboola.com/admin/projects/{keboola_project.project_id}/flows',
-            ),
-            Link(
-                type='ui-dashboard',
-                title='Conditional Flows in the project',
-                url=f'https://connection.keboola.com/admin/projects/{keboola_project.project_id}/flows-v2',
-            ),
+            links_manager.get_flows_dashboard_link(ORCHESTRATOR_COMPONENT_ID),
+            links_manager.get_flows_dashboard_link(CONDITIONAL_FLOW_COMPONENT_ID),
         ]
     )
     assert flows.flows[0].configuration_id == initial_cf.configuration_id
