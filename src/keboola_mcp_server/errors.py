@@ -5,6 +5,7 @@ import time
 from functools import wraps
 from typing import Any, Callable, Mapping, Optional, Type, TypeVar, cast
 
+import httpx
 import yaml
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
@@ -170,7 +171,14 @@ def tool_errors(
                     await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start)
                 except Exception as e:
                     LOG.exception(f'Failed to trigger tool event for "{func.__name__}" tool: {e}')
-                    raise
+                    # Only swallow 403 Forbidden errors (expected for guest/read-only roles)
+                    # Re-raise other errors as they indicate genuine problems
+                    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 403:
+                        # Expected for restricted roles (guest, read-only) - don't fail the tool call
+                        pass
+                    else:
+                        # Unexpected error - re-raise to alert about the problem
+                        raise
 
         return cast(F, wrapped)
 
