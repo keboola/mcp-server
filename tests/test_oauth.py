@@ -158,10 +158,23 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://global.consent.azure-apim.net'), True),
             (AnyUrl('https://global.consent.azure-apim.net/oauth/callback'), True),
             (AnyUrl('https://foo.global.consent.azure-apim.net/bar'), False),  # no subdomains allowed
-            # n8n (no subdomains allowed)
+            # n8n at Groupon (no subdomains allowed)
+            (AnyUrl('https://n8n.groupondev.com'), True),
+            (AnyUrl('https://n8n.groupondev.com/rest/oauth2-credential/callback'), True),
+            (AnyUrl('https://n8n-business.groupondev.com'), True),
+            (AnyUrl('https://n8n-business.groupondev.com/rest/oauth2-credential/callback'), True),
+            (AnyUrl('https://n8n-merchant.groupondev.com'), True),
+            (AnyUrl('https://n8n-merchant.groupondev.com/rest/oauth2-credential/callback'), True),
+            (AnyUrl('https://n8n-llm-traffic.groupondev.com'), True),
+            (AnyUrl('https://n8n-llm-traffic.groupondev.com/rest/oauth2-credential/callback'), True),
+            (AnyUrl('https://n8n-finance.groupondev.com'), True),
+            (AnyUrl('https://n8n-finance.groupondev.com/rest/oauth2-credential/callback'), True),
             (AnyUrl('https://n8n-playground.groupondev.com'), True),
             (AnyUrl('https://n8n-playground.groupondev.com/rest/oauth2-credential/callback'), True),
+            (AnyUrl('https://n8n-staging.groupondev.com'), True),
+            (AnyUrl('https://n8n-staging.groupondev.com/rest/oauth2-credential/callback'), True),
             (AnyUrl('https://foo.n8n-playground.groupondev.com/bar'), False),  # no subdomains allowed
+            (AnyUrl('https://n8n-unknown.groupondev.com'), False),  # not whitelisted
             # Unknown HTTPS domains should be rejected
             (AnyUrl('https://foo.bar.com/callback'), False),
             (AnyUrl('https://evil.com/callback'), False),
