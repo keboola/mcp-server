@@ -343,7 +343,7 @@ class _SnowflakeWorkspace(_Workspace):
                 message = results['message']
                 total_query_rows = results.get('numberOfRows')
 
-                if status in ['failed', 'canceled']:
+                if status in ['failed', 'canceled', 'cancelled']:
                     return QueryResult(status='error', data=None, message=message)
                 elif status != 'completed':
                     raise ValueError(f'Unexpected query status: {status}')
