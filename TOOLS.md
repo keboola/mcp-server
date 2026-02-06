@@ -2565,12 +2565,12 @@ WHEN TO USE:
 - Use this tool to trace lineage by searching for IDs referenced in configurations, or to find flows using a
 specific component, or find usage of a bucket/table in transformations, or to find items with specific parameters.
 - You need to discover items before performing operations on them
-- User assks to "what is the genesis of this item?" or "explain me bussiness logic of this item?"
+- User asks to "what is the genesis of this item?" or "explain me business logic of this item?"
 - User asks to "list all items with [name] or [configuration value/part] in it"
 - DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
 
 HOW IT WORKS:
-- mode: "regex" (default) or "literal" (escape special characters)
+- mode: "literal" (default) or "regex" (regular expressions)
 - case_sensitive: false by default; set true for exact casing
 - search_type:
   - "textual": matches id/name/display_name/description fields

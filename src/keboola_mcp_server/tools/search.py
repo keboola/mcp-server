@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Annotated, Any, AsyncGenerator, Literal, Mapping, Sequence
+from typing import Annotated, Any, AsyncGenerator, Iterable, Literal, Mapping, Sequence
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -195,7 +195,8 @@ class SearchSpec(BaseModel):
     @model_validator(mode='after')
     def _validate_item_types(self) -> 'SearchSpec':
         if 'component' in self.item_types:
-            self.item_types = list(set(self.item_types + ['configuration', 'configuration-row']))
+            self.item_types = list({*self.item_types, 'configuration', 'configuration-row'})
+        return self
 
     @staticmethod
     def _stringify(value: JsonDict) -> str:
@@ -246,7 +247,7 @@ class SearchSpec(BaseModel):
             return [PatternMatch(scope=None, patterns=matched)]
         return []
 
-    def match_texts(self, texts: Sequence[str]) -> list[PatternMatch]:
+    def match_texts(self, texts: Iterable[str]) -> list[PatternMatch]:
         """
         Matches a sequence of strings against the patterns.
 
@@ -278,7 +279,7 @@ def _check_column_match(table: JsonDict, cfg: SearchSpec) -> list[PatternMatch]:
 
     if col_metadata := table.get('columnMetadata', {}):
         col_descs = (get_metadata_property(col_meta, MetadataField.DESCRIPTION) for col_meta in col_metadata.values())
-        if matched := cfg.match_texts(col_descs):
+        if matched := cfg.match_texts(filter(None, col_descs)):
             return matched
     return []
 
@@ -324,9 +325,9 @@ async def _fetch_tables(client: KeboolaClient, spec: SearchSpec) -> list[SearchH
             table_display_name = table.get('displayName')
             table_description = get_metadata_property(table.get('metadata', []), MetadataField.DESCRIPTION)
 
-            if matches := spec.match_texts(
-                [table_id, table_name, table_display_name, table_description]
-            ) or _check_column_match(table, spec):
+            matches = spec.match_texts([table_id, table_name, table_display_name, table_description])
+            matches.extend(_check_column_match(table, spec))
+            if matches:
                 hits.append(
                     SearchHit(
                         table_id=table_id,
@@ -375,27 +376,27 @@ async def _fetch_configs(
 
         current_component_type = component.get('type')
         if component_id in [ORCHESTRATOR_COMPONENT_ID, CONDITIONAL_FLOW_COMPONENT_ID]:
-            item_type = 'flow'
+            item_type: SearchItemType = 'flow'
             if not allowed_flows:
                 continue
         elif current_component_type == 'transformation':
-            item_type = 'transformation'
+            item_type: SearchItemType = 'transformation'
             if not allowed_transformations:
                 continue
         elif component_id == 'keboola.sandboxes':
-            item_type = 'workspace'
+            item_type: SearchItemType = 'workspace'
             if not allowed_workspaces:
                 continue
         elif component_id == DATA_APP_COMPONENT_ID:
-            item_type = 'data-app'
+            item_type: SearchItemType = 'data-app'
             if not allowed_data_apps:
                 continue
         elif current_component_type in ['extractor', 'writer', 'application']:
-            item_type = 'configuration'
+            item_type: SearchItemType = 'configuration'
             if not allowed_components:
                 continue
         else:
-            item_type = 'configuration'
+            item_type: SearchItemType = 'configuration'
 
         for config in component.get('configurations', []):
             if not (config_id := config.get('id')):
@@ -531,12 +532,12 @@ async def search(
     - Use this tool to trace lineage by searching for IDs referenced in configurations, or to find flows using a
     specific component, or find usage of a bucket/table in transformations, or to find items with specific parameters.
     - You need to discover items before performing operations on them
-    - User assks to "what is the genesis of this item?" or "explain me bussiness logic of this item?"
+    - User asks to "what is the genesis of this item?" or "explain me business logic of this item?"
     - User asks to "list all items with [name] or [configuration value/part] in it"
     - DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
 
     HOW IT WORKS:
-    - mode: "regex" (default) or "literal" (escape special characters)
+    - mode: "literal" (default) or "regex" (regular expressions)
     - case_sensitive: false by default; set true for exact casing
     - search_type:
       - "textual": matches id/name/display_name/description fields
