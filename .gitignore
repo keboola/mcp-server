@@ -7,6 +7,7 @@ wheels/
 *.egg-info
 
 # IDE related files
+.claude/
 .cursor/
 .idea/
 .vscode/
