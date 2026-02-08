@@ -1,7 +1,8 @@
+import copy
 import importlib.resources as resources
 import logging
 import re
-from typing import Annotated, Any, Literal, Optional, Sequence, Union, cast
+from typing import Annotated, Any, Literal, Mapping, Optional, Sequence, Union, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -15,7 +16,7 @@ from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppRespon
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import process_concurrently, toon_serializer
+from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
 from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -40,7 +41,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
             get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer,
+            serializer=toon_serializer_compact,
         )
     )
     mcp.add_tool(
@@ -166,10 +167,8 @@ class DataApp(BaseModel):
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
     )
-    parameters: dict[str, Any] = Field(description='The parameters settings of the data app.')
-    authorization: dict[str, Any] = Field(description='The authorization settings of the data app.')
-    storage: dict[str, Any] = Field(
-        description='The storage input/output mapping of the data app.', default_factory=dict
+    configuration: dict[str, Any] = Field(
+        description='The nested configuration object containing parameters, storage and authorization'
     )
     deployment_info: Optional[DeploymentInfo] = Field(
         description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.',
@@ -183,9 +182,6 @@ class DataApp(BaseModel):
         api_response: DataAppResponse,
         api_configuration: ConfigurationAPIResponse,
     ) -> 'DataApp':
-        parameters = api_configuration.configuration.get('parameters', {}) or {}
-        authorization = api_configuration.configuration.get('authorization', {}) or {}
-        storage = api_configuration.configuration.get('storage', {}) or {}
         return cls(
             component_id=api_configuration.component_id,
             configuration_id=api_configuration.configuration_id,
@@ -199,9 +195,7 @@ class DataApp(BaseModel):
             auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
             name=api_configuration.name,
             description=api_configuration.description,
-            parameters=parameters,
-            authorization=authorization,
-            storage=storage,
+            configuration=api_configuration.configuration,
             deployment_info=None,
             links=[],
         )
@@ -254,7 +248,7 @@ class GetDataAppsOutput(BaseModel):
 @tool_errors()
 async def modify_data_app(
     ctx: Context,
-    name: Annotated[str, Field(description='Name of the data app.')],
+    name: Annotated[str, Field(description='Name of the data app (max ~50 chars to fit DNS label limit).')],
     description: Annotated[str, Field(description='Description of the data app.')],
     source_code: Annotated[str, Field(description='Complete Python/Streamlit source code for the data app.')],
     packages: Annotated[
@@ -345,7 +339,7 @@ async def modify_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         response = (
             'updated (redeploy required to apply changes in the running app)'
@@ -398,11 +392,7 @@ async def modify_data_app_internal(
         branch_id=str(await workspace_manager.get_branch_id()),
     )
     data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-    existing_config = {
-        'parameters': data_app.parameters,
-        'authorization': data_app.authorization,
-        'storage': data_app.storage,
-    }
+    existing_config = data_app.configuration
     updated_config = _update_existing_data_app_config(
         existing_config,
         name,
@@ -494,7 +484,7 @@ async def deploy_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
@@ -507,7 +497,7 @@ async def deploy_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=None,
-            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=None)
     else:
@@ -543,7 +533,7 @@ def _build_data_app_config(
 
 
 def _update_existing_data_app_config(
-    existing_config: dict[str, Any],
+    existing_config: Mapping[str, Any],
     name: str,
     source_code: str,
     packages: list[str],
@@ -551,15 +541,12 @@ def _update_existing_data_app_config(
     secrets: dict[str, Any],
     sql_dialect: str,
 ) -> dict[str, Any]:
-    new_config = existing_config.copy()
+    new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config['parameters']['dataApp']['slug'] = (
         _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
     )
-    new_config['parameters']['script'] = (
-        [_inject_query_to_source_code(source_code, sql_dialect)]
-        if source_code
-        else existing_config['parameters']['script']
-    )
+    if source_code:
+        new_config['parameters']['script'] = [_inject_query_to_source_code(source_code, sql_dialect)]
     new_config['parameters']['packages'] = (
         sorted(list[str](set[str](packages + _DEFAULT_PACKAGES)))
         if packages
@@ -646,11 +633,12 @@ async def _fetch_data_app_details_task(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authentication=_uses_basic_authentication(data_app.authorization),
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         logs = await _fetch_logs(client, data_app.data_app_id)
         return data_app.with_links(links).with_deployment_info(logs)
     except Exception:
+        LOG.exception(f'Failed to fetch data app by configuration ID: {configuration_id}')
         return configuration_id
 
 
@@ -682,8 +670,36 @@ def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
         }
 
 
+# Maximum length for DNS labels per RFC 1035
+MAX_DNS_LABEL_LENGTH = 63
+
+
+class DataAppSlugTooLongError(ValueError):
+    """Raised when the generated data app slug exceeds the DNS label length limit."""
+
+    pass
+
+
 def _get_data_app_slug(name: str) -> str:
-    return re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-'))
+    """Generate a URL-safe slug from the data app name.
+
+    The slug is used as part of the data app URL prefix, which is a DNS label.
+    DNS labels have a maximum length of 63 characters per RFC 1035.
+
+    :param name: The name of the data app
+    :return: A URL-safe slug
+    :raises DataAppSlugTooLongError: If the generated slug exceeds 63 characters
+    """
+    slug = re.sub(r'[^a-z0-9\-]', '', name.strip().lower().replace(' ', '-'))
+    if len(slug) > MAX_DNS_LABEL_LENGTH:
+        raise DataAppSlugTooLongError(
+            f'Data app name "{name}" generates a URL slug that is {len(slug)} characters long, '
+            f'which exceeds the maximum DNS label length of {MAX_DNS_LABEL_LENGTH} characters. '
+            f'Please use a shorter name (the slug "{slug[:20]}..." is too long). '
+            f'The name should generate a slug of at most {MAX_DNS_LABEL_LENGTH} characters after '
+            f'converting to lowercase, replacing spaces with hyphens, and removing special characters.'
+        )
+    return slug
 
 
 def _uses_basic_authentication(authorization: dict[str, Any]) -> bool:

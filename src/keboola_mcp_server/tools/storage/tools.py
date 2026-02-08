@@ -17,7 +17,13 @@ from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_proper
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, process_concurrently, toon_serializer, unwrap_results
+from keboola_mcp_server.mcp import (
+    KeboolaMcpServer,
+    process_concurrently,
+    toon_serializer,
+    toon_serializer_compact,
+    unwrap_results,
+)
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.storage.usage import (
     ComponentUsageReference,
@@ -42,7 +48,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             get_buckets,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer,
+            serializer=toon_serializer_compact,
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -50,7 +56,7 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             get_tables,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer,
+            serializer=toon_serializer_compact,
             tags={STORAGE_TOOLS_TAG},
         )
     )
@@ -149,6 +155,14 @@ class BucketDetail(BaseModel):
             changes['links'] = links if links else None
         return self.model_copy(update=changes)
 
+    def with_lineage_metadata(self, values: dict[str, Any]) -> 'BucketDetail':
+        metadata = values.get('metadata', [])
+        if not metadata or not isinstance(metadata, list):
+            return self
+        return self.model_copy(
+            update={'created_by': get_created_by(metadata), 'last_updated_by': get_last_updated_by(metadata)}
+        )
+
     @model_validator(mode='before')
     @classmethod
     def set_table_count(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -156,14 +170,6 @@ class BucketDetail(BaseModel):
             values['tables_count'] = len(values['tables'])
         else:
             values['tables_count'] = None
-        return values
-
-    @model_validator(mode='before')
-    @classmethod
-    def set_lineage_metadata(cls, values: dict[str, Any]) -> dict[str, Any]:
-        metadata = values.get('metadata', [])
-        values['created_by'] = get_created_by(metadata)
-        values['last_updated_by'] = get_last_updated_by(metadata)
         return values
 
     @model_validator(mode='before')
@@ -285,13 +291,13 @@ class TableDetail(BaseModel):
     branch_id: str | None = Field(default=None, exclude=True, description='The ID of the branch the bucket belongs to.')
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
 
-    @model_validator(mode='before')
-    @classmethod
-    def set_lineage_metadata(cls, values: dict[str, Any]) -> dict[str, Any]:
+    def with_lineage_metadata(self, values: dict[str, Any]) -> 'TableDetail':
         metadata = values.get('metadata', [])
-        values['created_by'] = get_created_by(metadata)
-        values['last_updated_by'] = get_last_updated_by(metadata)
-        return values
+        if not metadata or not isinstance(metadata, list):
+            return self
+        return self.model_copy(
+            update={'created_by': get_created_by(metadata), 'last_updated_by': get_last_updated_by(metadata)}
+        )
 
     @model_validator(mode='before')
     @classmethod
@@ -405,7 +411,7 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
     dev_bucket: BucketDetail | None = None
 
     if raw := await _get_bucket_detail(client.storage_client, bucket_id):
-        bucket = BucketDetail.model_validate(raw)
+        bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
         if not bucket.branch_id:
             prod_bucket = bucket
         elif bucket.branch_id == client.branch_id:
@@ -415,14 +421,14 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
         if not dev_bucket:
             dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
             if raw := await _get_bucket_detail(client.storage_client, dev_id):
-                bucket = BucketDetail.model_validate(raw)
+                bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
                 if bucket.branch_id == client.branch_id:
                     dev_bucket = bucket
 
         if not prod_bucket and f'.c-{client.branch_id}-' in bucket_id:
             prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
             if raw := await _get_bucket_detail(client.storage_client, prod_id):
-                bucket = BucketDetail.model_validate(raw)
+                bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
                 if not bucket.branch_id:
                     prod_bucket = bucket
 
@@ -716,7 +722,7 @@ async def _get_table(
             'fully_qualified_name': db_table_info.fqn.identifier if db_table_info else None,
             'links': links,
         }
-    )
+    ).with_lineage_metadata(raw_table)
     return table.model_copy(update={'id': table.prod_id, 'branch_id': None})
 
 

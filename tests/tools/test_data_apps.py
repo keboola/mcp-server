@@ -10,7 +10,9 @@ from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
     _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
     _STORAGE_QUERY_DATA_FUNCTION_CODE,
+    MAX_DNS_LABEL_LENGTH,
     DataApp,
+    DataAppSlugTooLongError,
     DataAppSummary,
     _build_data_app_config,
     _fetch_data_app,
@@ -38,8 +40,7 @@ def data_app() -> DataApp:
         config_version='test',
         type='test',
         auto_suspend_after_seconds=3600,
-        parameters={},
-        authorization={},
+        configuration={},
         state='test',
     )
 
@@ -93,6 +94,25 @@ def test_get_data_app_slug():
     assert _get_data_app_slug('My Cool App') == 'my-cool-app'
     assert _get_data_app_slug('App 123') == 'app-123'
     assert _get_data_app_slug('Weird!@# Name$$$') == 'weird-name'
+
+
+@pytest.mark.parametrize(
+    ('name', 'expected_slug', 'expected_error'),
+    [
+        pytest.param('a' * MAX_DNS_LABEL_LENGTH, 'a' * MAX_DNS_LABEL_LENGTH, None, id='at_max_length'),
+        pytest.param('a' * (MAX_DNS_LABEL_LENGTH + 1), None, DataAppSlugTooLongError, id='exceeds_max_length'),
+        pytest.param('a' * 70 + '!!!', None, DataAppSlugTooLongError, id='long_name_with_special_chars'),
+        pytest.param('a' * 30 + '!' * 50 + 'b' * 30, 'a' * 30 + 'b' * 30, None, id='shortened_by_special_chars'),
+    ],
+)
+def test_get_data_app_slug_length_validation(name, expected_slug, expected_error):
+    """Test DNS label length validation in slug generation."""
+    if expected_error:
+        with pytest.raises(expected_error):
+            _get_data_app_slug(name)
+    else:
+        slug = _get_data_app_slug(name)
+        assert slug == expected_slug
 
 
 def test_get_authorization_mapping():

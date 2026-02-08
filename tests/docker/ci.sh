@@ -38,15 +38,13 @@ main() {
 
         http_code=$(echo "$response" | tail -n1)
         body=$(echo "$response" | sed '$d')
-        mcp_session_id=$(cat "headers.txt" | grep -i "mcp-session-id" | cut -d: -f2 | sed -r 's/\s//g')
 
-        if [ "$http_code" = "200" ] && [ -n "$body" ] && [ -n "$mcp_session_id" ]; then
-            echo "✓ MCP server initialized successfully, session ID $mcp_session_id"
+        if [ "$http_code" = "200" ] && [ -n "$body" ]; then
+            echo "✓ MCP server initialized successfully, session-less mode"
 
             response=$(curl -s -w "\n%{http_code}" -X POST \
                -H "Content-Type: application/json" \
                -H "Accept: application/json, text/event-stream" \
-               -H "mcp-session-id: $mcp_session_id" \
                -d '{"jsonrpc": "2.0", "method": "notifications/initialized"}' \
                "http://localhost:8080/mcp" 2>/dev/null)
 
@@ -59,7 +57,6 @@ main() {
                 response=$(curl -s -w "\n%{http_code}" -X POST \
                    -H "Content-Type: application/json" \
                    -H "Accept: application/json, text/event-stream" \
-                   -H "mcp-session-id: $mcp_session_id" \
                    -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_project_info", "arguments": {}}}' \
                    "http://localhost:8080/mcp" 2>/dev/null)
 

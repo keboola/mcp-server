@@ -15,7 +15,7 @@ from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer, toon_serializer
+from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer, toon_serializer, toon_serializer_compact
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
@@ -94,7 +94,7 @@ class TestServer:
         for tool in tools.values():
             if not tool.serializer:
                 missing_serializer.append(tool.name)
-            if tool.serializer not in (_exclude_none_serializer, toon_serializer):
+            if tool.serializer not in (_exclude_none_serializer, toon_serializer, toon_serializer_compact):
                 missing_serializer.append(tool.name)
 
         missing_serializer.sort()
@@ -117,7 +117,12 @@ class TestServer:
 
             required = tool.parameters.get('required') or []
             for prop_name, prop_def in properties.items():
-                if 'type' not in prop_def:
+                if all(
+                    [
+                        'type' not in prop_def,
+                        ('anyOf' not in prop_def or any('type' not in t for t in prop_def['anyOf'])),
+                    ]
+                ):
                     missing_type.append(f'{tool.name}.{prop_name}')
                 if prop_name not in required and 'default' not in prop_def:
                     missing_default.append(f'{tool.name}.{prop_name}')
