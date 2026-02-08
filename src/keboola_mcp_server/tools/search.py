@@ -557,40 +557,39 @@ async def search(
 
     USAGE EXAMPLES:
     - user_input: "Find all tables with 'customer' in the name"
-      → patterns=["customer"], search_type="textual", mode="literal", item_types=["table"]
+      → `patterns=["customer"], search_type="textual", mode="literal", item_types=["table"]`
 
     - user_input: "Find tables with 'email' column"
-      → patterns=["email"], search_type="textual", mode="literal", item_types=["table"]
+      → `patterns=["email"], search_type="textual", mode="literal", item_types=["table"]`
 
     - user_input: "Search for the sales transformation"
-      → patterns=["sales"], search_type="textual", mode="literal", item_types=["transformation"]
-      → Returns transformations with "sales" in any searchable field
+      → `patterns=["sales"], search_type="textual", mode="literal", item_types=["transformation"]`
 
     - user_input: "Find items named 'daily report' or 'weekly summary'"
-      → patterns=["daily.*report", "weekly.*summary"], search_type="textual", mode="regex", item_types=[]
+      → `patterns=["daily.*report", "weekly.*summary"], search_type="textual", mode="regex", item_types=[]`
 
     - user_input: "Show me all configurations/components related to Google Analytics"
-      → patterns=["google.*analytics"], search_type="textual", mode="regex", item_types=["component"]
+      → `patterns=["google.*analytics"], search_type="textual", mode="regex", item_types=["component"]`
 
     - user_input: "Find storage input mappings referencing specific tables:"
-      → patterns=["\"storage\"\\.*\"input\"\\.*:\\s*\"in\\.*\\.customers\""], search_type="config-based", mode="regex",
-      item_types=["transformation", "component"]
+      → `patterns=["\\"storage\\".*\\"input\\".*:\\s*\\"in\\..*\\.customers\\""], search_type="config-based",
+      mode="regex", item_types=["transformation", "component"]`
 
     - user input: "Find components or transformations using 'my_bucket' in output mappings"
-      → patterns=["my_bucket"], item_types=["component", "transformation"], search_type="config-based",
-        scopes=["storage.output"], mode="literal"
+      → `patterns=["my_bucket"], item_types=["component", "transformation"], search_type="config-based",
+        scopes=["storage.output"], mode="literal"`
 
     - user input: "Find configs with specific authentication type"
-      → patterns=["\"authentication\":\\s*\\{.*\"type\":\\s*\"oauth20\""], search_type="config-based", mode="regex",
-      item_types=["component"]
+      → `patterns=["\\"authentication\\":\\s*\\{.*\\"type\\":\\s*\\"oauth20\\""], search_type="config-based",
+      mode="regex", item_types=["component"]`
 
     - user input: "Find flows using this configuration ID: 01k9cz233cvd1rga3zzx40g8qj"
-      → patterns=["01k9cz233cvd1rga3zzx40g8qj"], search_type="config-based", item_types=["flow"], mode="literal",
-      scopes=["tasks"]
+      → `patterns=["01k9cz233cvd1rga3zzx40g8qj"], search_type="config-based", item_types=["flow"], mode="literal",
+      scopes=["tasks"]`
 
     - user input: "Find data apps using specific code part ..."
-      → patterns=["regex-representing-the-code-part"], search_type="config-based", item_types=["data-app"],
-      mode="regex"], scopes=["script"]
+      → `patterns=["regex-representing-the-code-part"], search_type="config-based", item_types=["data-app"],
+      mode="regex"], scopes=["script"]`
     """
 
     spec = SearchSpec(
