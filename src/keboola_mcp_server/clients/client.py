@@ -81,7 +81,7 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
-    async def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
+    async def with_branch_id(self, branch_id: str | None, validate: bool = True) -> 'KeboolaClient':
         if branch_id == self.branch_id:
             return self
         elif branch_id is None:
@@ -94,19 +94,20 @@ class KeboolaClient:
             )
         else:
             is_default = False
-            try:
-                detail = await self.storage_client.dev_branch_detail(branch_id)
-                is_default = detail.get('isDefault') is True
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
-                    LOG.error(f'Branch not found: {branch_id}: {exc.response.text}')
-                    raise ValueError(
-                        f'Branch with ID "{branch_id}" was not found. '
-                        f'Please verify the branch ID exists in your project.'
-                    ) from exc
-                else:
-                    LOG.error(f'Failed to get branch detail for {branch_id}: {exc.response.text}')
-                    raise exc
+            if validate:
+                try:
+                    detail = await self.storage_client.dev_branch_detail(branch_id)
+                    is_default = detail.get('isDefault') is True
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 404:
+                        LOG.error(f'Branch not found: {branch_id}: {exc.response.text}')
+                        raise ValueError(
+                            f'Branch with ID "{branch_id}" was not found. '
+                            f'Please verify the branch ID exists in your project.'
+                        ) from exc
+                    else:
+                        LOG.error(f'Failed to get branch detail for {branch_id}: {exc.response.text}')
+                        raise exc
 
             # Converts the branch id referring to the main/production branch to None as we expect
             normalized_branch_id = None if is_default else branch_id
