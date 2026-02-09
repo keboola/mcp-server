@@ -334,10 +334,10 @@ class TestKeboolaClient:
             response.status_code = 404
             response.is_error = True
             response.text = '{"error":"Branch not found"}'
-            response.json.return_value = {"error": "Branch not found"}
+            response.json.return_value = {'error': 'Branch not found'}
             response.request = Mock(spec=httpx.Request)
             response.raise_for_status.side_effect = httpx.HTTPStatusError(
-                "Not Found", request=response.request, response=response
+                'Not Found', request=response.request, response=response
             )
 
             mock_client.get.return_value = response
