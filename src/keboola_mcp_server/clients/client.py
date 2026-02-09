@@ -100,9 +100,13 @@ class KeboolaClient:
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
                     LOG.error(f'Branch not found: {branch_id}: {exc.response.text}')
+                    raise ValueError(
+                        f'Branch with ID "{branch_id}" was not found. '
+                        f'Please verify the branch ID exists in your project.'
+                    ) from exc
                 else:
                     LOG.error(f'Failed to get branch detail for {branch_id}: {exc.response.text}')
-                raise exc
+                    raise exc
 
             # Converts the branch id referring to the main/production branch to None as we expect
             normalized_branch_id = None if is_default else branch_id
