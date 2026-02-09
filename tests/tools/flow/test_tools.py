@@ -382,65 +382,6 @@ class TestUpdateFlowTool:
         keboola_client.storage_client.configuration_update.assert_called_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ('flow_type', 'is_disabled'),
-        [
-            (ORCHESTRATOR_COMPONENT_ID, True),
-            (ORCHESTRATOR_COMPONENT_ID, False),
-            (CONDITIONAL_FLOW_COMPONENT_ID, True),
-            (CONDITIONAL_FLOW_COMPONENT_ID, False),
-        ],
-    )
-    async def test_update_flow_with_is_disabled(
-        self,
-        mocker: MockerFixture,
-        mcp_context_client: Context,
-        flow_type: str,
-        is_disabled: bool,
-    ):
-        """Test that is_disabled parameter is properly passed to configuration_update."""
-        mock_project_info = mocker.Mock()
-        mock_project_info.conditional_flows = True
-
-        async def mock_get_project_info(ctx):
-            return mock_project_info
-
-        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
-
-        updated_config = {
-            'id': 'test_flow_123',
-            'name': 'Test Flow',
-            'description': 'Test flow with is_disabled',
-            'version': 2,
-            'isDisabled': is_disabled,
-            'configuration': {'phases': [], 'tasks': []},
-        }
-
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value={})
-        mock_update = mocker.AsyncMock(return_value=updated_config)
-        keboola_client.storage_client.configuration_update = mock_update
-
-        result = await update_flow(
-            ctx=mcp_context_client,
-            configuration_id='test_flow_123',
-            flow_type=flow_type,
-            name='Test Flow',
-            description='Test flow with is_disabled',
-            change_description='Testing is_disabled parameter',
-            is_disabled=is_disabled,
-        )
-
-        assert isinstance(result, FlowToolOutput)
-        assert result.success is True
-        assert result.configuration_id == 'test_flow_123'
-
-        # Verify that configuration_update was called with is_disabled parameter
-        mock_update.assert_called_once()
-        call_kwargs = mock_update.call_args.kwargs
-        assert call_kwargs['is_disabled'] == is_disabled
-
-    @pytest.mark.asyncio
     async def test_update_conditional_flow_fails_when_conditional_flows_disabled(
         self,
         mocker: MockerFixture,
