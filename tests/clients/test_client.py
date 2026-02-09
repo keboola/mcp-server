@@ -323,6 +323,28 @@ class TestKeboolaClient:
                 },
             )
 
+    @pytest.mark.asyncio
+    async def test_with_branch_id_raises_clear_error_for_nonexistent_branch(self, keboola_client: KeboolaClient):
+        """Test that with_branch_id raises a clear ValueError when branch ID doesn't exist."""
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
+
+            # Create a proper mock response
+            response = Mock(spec=httpx.Response)
+            response.status_code = 404
+            response.is_error = True
+            response.text = '{"error":"Branch not found"}'
+            response.json.return_value = {"error": "Branch not found"}
+            response.request = Mock(spec=httpx.Request)
+            response.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "Not Found", request=response.request, response=response
+            )
+
+            mock_client.get.return_value = response
+
+            with pytest.raises(ValueError, match='Branch with ID "non-existent-branch" was not found'):
+                await keboola_client.with_branch_id('non-existent-branch')
+
 
 @pytest.mark.parametrize(
     ('metadata', 'key', 'provider', 'preferred_providers', 'default', 'expected'),
