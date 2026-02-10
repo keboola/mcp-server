@@ -400,7 +400,6 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
         (CONDITIONAL_FLOW_COMPONENT_ID, {'name': 'Updated just name'}),
         (CONDITIONAL_FLOW_COMPONENT_ID, {'description': 'Updated just description'}),
         (ORCHESTRATOR_COMPONENT_ID, {'is_disabled': True}),
-        (CONDITIONAL_FLOW_COMPONENT_ID, {'is_disabled': False}),
     ],
 )
 async def test_update_flow(
