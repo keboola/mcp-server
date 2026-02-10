@@ -339,7 +339,7 @@ class TestKeboolaClient:
             )
             mock_client.get.return_value = response
 
-            with pytest.raises(ValueError, match='Branch with ID "non-existent-branch" was not found'):
+            with pytest.raises(httpx.HTTPStatusError, match='Branch "non-existent-branch" not found'):
                 await keboola_client.with_branch_id('non-existent-branch')
             mock_client.get.assert_called_once()
 

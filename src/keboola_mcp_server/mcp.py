@@ -160,9 +160,13 @@ class SessionStateMiddleware(fmw.Middleware):
             # Skip branch validation for /list requests (tools/list, resources/list, prompts/list, etc.)
             # so that clients can discover available tools even when the configured branch ID doesn't
             # exist yet. For these requests the client is created without a branch ID. Otherwise, the branch is
-            # validated via an API call.
-            validate_branch = not context.method.endswith('/list')
-            state = await self.create_session_state(config, runtime_info, validate_branch=validate_branch)
+            # validated via a SAPI call.
+            if context.method.endswith('/list'):
+                if config.branch_id:
+                    LOG.info(f'Skipping branch validation for {context.method} request.')
+                config = dataclasses.replace(config, branch_id=None)
+
+            state = await self.create_session_state(config, runtime_info)
             ctx.session.state = state
 
         try:
@@ -215,7 +219,6 @@ class SessionStateMiddleware(fmw.Middleware):
         config: Config,
         runtime_info: ServerRuntimeInfo,
         readonly: bool | None = None,
-        validate_branch: bool = True,
     ) -> dict[str, Any]:
         """
         Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
@@ -223,9 +226,6 @@ class SessionStateMiddleware(fmw.Middleware):
         :param config: The MCP server configuration.
         :param runtime_info: The MCP server runtime information.
         :param readonly: If True, the `KeboolaClient` will only use HTTP GET, HEAD operations.
-        :param validate_branch: If True, calls `KeboolaClient.with_branch_id` to verify the branch exists
-            via an API call. If False (e.g. for ``/list`` requests), the client is created without a branch ID
-            so that tools are discoverable even when the configured branch doesn't exist yet.
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
         LOG.info(f'Creating SessionState from config: {config}.')
@@ -237,22 +237,13 @@ class SessionStateMiddleware(fmw.Middleware):
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
-            if validate_branch:
-                client = await KeboolaClient(
-                    storage_api_url=config.storage_api_url,
-                    storage_api_token=config.storage_token,
-                    bearer_token=config.bearer_token,
-                    headers=cls._get_headers(runtime_info),
-                    readonly=readonly,
-                ).with_branch_id(config.branch_id)
-            else:
-                client = KeboolaClient(
-                    storage_api_url=config.storage_api_url,
-                    storage_api_token=config.storage_token,
-                    bearer_token=config.bearer_token,
-                    headers=cls._get_headers(runtime_info),
-                    readonly=readonly,
-                )
+            client = await KeboolaClient(
+                storage_api_url=config.storage_api_url,
+                storage_api_token=config.storage_token,
+                bearer_token=config.bearer_token,
+                headers=cls._get_headers(runtime_info),
+                readonly=readonly,
+            ).with_branch_id(config.branch_id)
 
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
