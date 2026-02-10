@@ -323,6 +323,36 @@ class TestKeboolaClient:
                 },
             )
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('status_code', 'expected_match'),
+        [
+            (404, 'Branch "non-existent-branch" not found'),
+            (500, 'Internal Server Error'),
+        ],
+        ids=['not_found', 'server_error'],
+    )
+    async def test_with_branch_id_http_error(
+        self, keboola_client: KeboolaClient, status_code: int, expected_match: str
+    ):
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
+
+            response = Mock(spec=httpx.Response)
+            response.status_code = status_code
+            response.is_error = True
+            response.text = '{"error":"some error"}'
+            response.json.return_value = {'error': 'some error'}
+            response.request = Mock(spec=httpx.Request)
+            response.raise_for_status.side_effect = httpx.HTTPStatusError(
+                'Internal Server Error', request=response.request, response=response
+            )
+            mock_client.get.return_value = response
+
+            with pytest.raises(httpx.HTTPStatusError, match=expected_match):
+                await keboola_client.with_branch_id('non-existent-branch')
+            mock_client.get.assert_called_once()
+
 
 @pytest.mark.parametrize(
     ('metadata', 'key', 'provider', 'preferred_providers', 'default', 'expected'),
