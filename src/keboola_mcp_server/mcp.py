@@ -137,7 +137,6 @@ class SessionStateMiddleware(fmw.Middleware):
         :returns: Result from executing the middleware chain.
         """
         # Skip session setup for initialize request - session state is only needed for actual operations
-        LOG.info(f'DOPCIE: context.method: {context.method}')
         if context.method == 'initialize':
             return await call_next(context)
 
@@ -158,10 +157,12 @@ class SessionStateMiddleware(fmw.Middleware):
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
 
-            # Skip branch validation when listing tools - validation will happen when tools are actually called
-            LOG.info(f'DOPCIE: context.method: {context.method}')
-            validate_branch = context.method in ['tools/call']
-            state = await self.create_session_state(config, runtime_info, validate_branch=validate_branch)
+            # Only validate the branch ID for tools/call requests. For all other methods (tools/list,
+            # resources/list, prompts/list, etc.) we intentionally skip validation so that clients can
+            # still discover available tools even when the configured branch ID doesn't exist yet.
+            # Branch validation will occur when a tool is actually invoked via tools/call.
+            validate_branch_id = context.method in ['tools/call']
+            state = await self.create_session_state(config, runtime_info, validate_branch_id=validate_branch_id)
             ctx.session.state = state
 
         try:
@@ -214,7 +215,7 @@ class SessionStateMiddleware(fmw.Middleware):
         config: Config,
         runtime_info: ServerRuntimeInfo,
         readonly: bool | None = None,
-        validate_branch: bool = True,
+        validate_branch_id: bool = True,
     ) -> dict[str, Any]:
         """
         Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
@@ -222,7 +223,9 @@ class SessionStateMiddleware(fmw.Middleware):
         :param config: The MCP server configuration.
         :param runtime_info: The MCP server runtime information.
         :param readonly: If True, the `KeboolaClient` will only use HTTP GET, HEAD operations.
-        :param validate_branch: If True, validates that the branch ID exists. Set to False for tools/list requests.
+        :param validate_branch_id: Passed to `KeboolaClient.with_branch_id`. If True, validates that the
+            branch ID exists via an API call. Should be True only for ``tools/call`` requests other requests should be
+            discoverable even when the branch ID doesn't exist yet.
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
         LOG.info(f'Creating SessionState from config: {config}.')
@@ -234,29 +237,13 @@ class SessionStateMiddleware(fmw.Middleware):
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
-            # Create base client
-            base_client = KeboolaClient(
+            client = await KeboolaClient(
                 storage_api_url=config.storage_api_url,
                 storage_api_token=config.storage_token,
                 bearer_token=config.bearer_token,
                 headers=cls._get_headers(runtime_info),
                 readonly=readonly,
-            )
-
-            # Apply branch ID with or without validation
-            if validate_branch:
-                # Validate branch exists and normalize (default branch -> None)
-                client = await base_client.with_branch_id(config.branch_id)
-            else:
-                # Skip validation - use branch ID directly without checking if it exists
-                client = KeboolaClient(
-                    storage_api_url=config.storage_api_url,
-                    storage_api_token=config.storage_token,
-                    bearer_token=config.bearer_token,
-                    branch_id=config.branch_id,
-                    headers=cls._get_headers(runtime_info),
-                    readonly=readonly,
-                )
+            ).with_branch_id(config.branch_id, validate=validate_branch_id)
 
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
