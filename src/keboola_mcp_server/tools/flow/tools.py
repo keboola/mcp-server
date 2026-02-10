@@ -422,7 +422,7 @@ async def modify_flow(
     client = KeboolaClient.from_state(ctx.session.state)
 
     response_message = None
-    has_config_changes = bool(name) or bool(description) or phases is not None or tasks is not None
+    has_config_changes = bool(name) or bool(description) or phases is not None or tasks is not None or is_disabled is not None
 
     if has_config_changes:
         LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
