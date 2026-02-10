@@ -292,6 +292,17 @@ async def modify_data_app(
     - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
     updating, set `authentication_type` to `default` to keep the existing authentication type configuration
     (including OIDC setups) unless explicitly specified otherwise.
+
+    SQL & DATA TYPE RULES:
+    - SNOWFLAKE COLUMN ALIASES are auto-uppercased unless quoted. Quote aliases to preserve case:
+    `CAST("downloads" AS INTEGER) as "downloads"`. Match exact case in Python code.
+    - `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
+    `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
+    `df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
+    - Pattern:
+    `df = query_data('SELECT "model_id", "downloads", "created_at" FROM "DB"."SCHEMA"."TABLE"')`
+    `df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
+    `df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)

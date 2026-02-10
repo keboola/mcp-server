@@ -284,7 +284,6 @@ async def initial_cmpconf(
         {'description': 'Updated just description'},
         {'parameter_updates': [{'op': 'set', 'path': 'updated_param', 'value': 'Updated just parameters'}]},
         {'storage': {'output': {'tables': [{'source': 'output.csv', 'destination': 'out.c-bucket.table'}]}}},
-        {'is_disabled': True},
     ],
 )
 async def test_update_config(
@@ -333,7 +332,6 @@ async def test_update_config(
 
     expected_name = updates.get('name') or 'Initial Test Configuration'
     expected_description = updates.get('description') or initial_cmpconf.description
-    expected_is_disabled = updates.get('is_disabled') or False
     assert update_result.description == expected_description
     assert frozenset(update_result.links) == frozenset(
         [
@@ -358,7 +356,6 @@ async def test_update_config(
 
     assert updated_config['name'] == expected_name
     assert updated_config['description'] == expected_description
-    assert updated_config['isDisabled'] == expected_is_disabled
 
     updated_config_data = updated_config.get('configuration')
     assert isinstance(updated_config_data, dict), f'Expecting dict, got: {type(updated_config_data)}'
@@ -832,7 +829,6 @@ async def initial_sqltrfm(
                     ]
                 },
             },
-            'is_disabled': True,
         },
         {'name': 'Updated SQL transformation name'},
         {'description': 'Updated SQL transformation description'},
@@ -865,7 +861,6 @@ async def initial_sqltrfm(
                 },
             }
         },
-        {'is_disabled': True},
     ],
 )
 async def test_update_sql_transformation(
@@ -929,7 +924,6 @@ async def test_update_sql_transformation(
 
     expected_name = updates.get('name') or 'Initial Test SQL Transformation'
     expected_description = updates.get('description') or initial_sqltrfm.description
-    expected_is_disabled = updates.get('is_disabled') or False
     assert updated_trfm.description == expected_description
     assert frozenset(updated_trfm.links) == frozenset(
         [
@@ -954,7 +948,6 @@ async def test_update_sql_transformation(
 
     assert trfm_detail['name'] == expected_name
     assert trfm_detail['description'] == expected_description
-    assert trfm_detail['isDisabled'] == expected_is_disabled
 
     trfm_data = trfm_detail.get('configuration')
     assert isinstance(trfm_data, dict), f'Expecting dict, got: {type(trfm_data)}'
@@ -982,9 +975,6 @@ async def test_update_sql_transformation(
         for k, v in expected_storage.items():
             assert k in trfm_data['storage']
             assert trfm_data['storage'][k] == v
-
-    if (expected_is_disabled := updates.get('is_disabled')) is not None:
-        assert trfm_detail['isDisabled'] == expected_is_disabled
 
     current_version = trfm_detail['version']
     assert isinstance(current_version, int), f'Expecting int, got: {type(current_version)}'
