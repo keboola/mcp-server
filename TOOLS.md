@@ -53,7 +53,7 @@ including essential context and base instructions for working with it
 
 ### Search Tools
 - [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
-- [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.
+- [search](#search): Searches for Keboola items (tables, buckets, configurations, transformations, flows, data-apps etc.
 
 ### Storage Tools
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
@@ -2587,53 +2587,80 @@ USAGE EXAMPLES:
 
 **Description**:
 
-Searches for Keboola items (tables, buckets, configurations, transformations, flows, etc.) in the current project
-by matching patterns against item ID, name, display name, or description. Returns matching items grouped by type
-with their IDs and metadata.
+Searches for Keboola items (tables, buckets, configurations, transformations, flows, data-apps etc.) in the current
+project. Returns matching items with IDs and metadata.
+Supports two modes:
+- textual: match patterns against ID, name, display name, description (and table columns)
+- config-based: match patterns against stringified configuration payloads, optionally limited to specific scopes
+which can be derived from the configuration schemas or objects.
+
 
 WHEN TO USE:
-- User asks to "find", "locate", or "search for" something by name
+- User asks to "find", "locate", or "search for" something by name or text
 - User mentions a partial name and you need to find the full item (e.g., "find the customer table")
 - User asks "what tables/configs/flows do I have with X in the name?"
+- User asks to find configs containing a value in parameters (use config-based + scopes and regex patterns)
+- Use this tool to trace lineage by searching for IDs referenced in configurations, or to find flows using a
+specific component, or find usage of a bucket/table in transformations, or to find items with specific parameters.
 - You need to discover items before performing operations on them
-- User asks to "list all items with [name] in it"
+- User asks to "what is the genesis of this item?" or "explain me business logic of this item?"
+- User asks to "list all items with [name] or [configuration value/part] in it"
 - DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
 
 HOW IT WORKS:
-- Searches by regex pattern matching against id, name, displayName, and description fields
-- For tables, also searches column names and column descriptions
-- Case-insensitive search
-- Multiple patterns work as OR condition - matches items containing ANY of the patterns
-- Returns grouped results by item type (tables, buckets, configurations, flows, etc.)
-- Each result includes the item's ID, name, creation date, and relevant metadata
+- mode: "literal" (default) or "regex" (regular expressions)
+- case_sensitive: false by default; set true for exact casing
+- search_type:
+  - "textual": matches id/name/display_name/description fields
+  - "config-based": matches stringified configuration payloads (JSON) via scopes or the whole config using
+  regex patterns.
+- scopes: dot-separated paths (e.g., "parameters", "storage.input", "parameters.script")
+- For tables, textual search also checks column names and column descriptions
+- Multiple patterns are ORed: any match includes the item
+- Results are ordered by update time, newest first, and can be paginated via limit/offset
 
 IMPORTANT:
 - Always use this tool when the user mentions a name but you don't have the exact ID
 - The search returns IDs that you can use with other tools (e.g., get_table, get_configs, get_flows)
-- Results are ordered by update time. The most recently updated items are returned first.
+- Use item_types to make the search more efficient when you know the type; scanning buckets and tables can be
+expensive
 - For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
-- Use find_component_id and get_configs tools to find configurations related to a specific component
 
 USAGE EXAMPLES:
 - user_input: "Find all tables with 'customer' in the name"
-  → patterns=["customer"], item_types=["table"]
-  → Returns all tables whose id, name, displayName, or description contains "customer"
+  → `patterns=["customer"], search_type="textual", mode="literal", item_types=["table"]`
 
 - user_input: "Find tables with 'email' column"
-  → patterns=["email"], item_types=["table"]
-  → Returns all tables that have a column named "email" or with "email" in column description
+  → `patterns=["email"], search_type="textual", mode="literal", item_types=["table"]`
 
 - user_input: "Search for the sales transformation"
-  → patterns=["sales"], item_types=["transformation"]
-  → Returns transformations with "sales" in any searchable field
+  → `patterns=["sales"], search_type="textual", mode="literal", item_types=["transformation"]`
 
 - user_input: "Find items named 'daily report' or 'weekly summary'"
-  → patterns=["daily.*report", "weekly.*summary"], item_types=[]
-  → Returns all items matching any of these patterns
+  → `patterns=["daily.*report", "weekly.*summary"], search_type="textual", mode="regex", item_types=[]`
 
-- user_input: "Show me all configurations related to Google Analytics"
-  → patterns=["google.*analytics"], item_types=["configuration"]
-  → Returns configurations with matching patterns
+- user_input: "Show me all configurations/components related to Google Analytics"
+  → `patterns=["google.*analytics"], search_type="textual", mode="regex", item_types=["component"]`
+
+- user_input: "Find storage input mappings referencing specific tables:"
+  → `patterns=["\"storage\".*\"input\".*:\s*\"in\..*\.customers\""], search_type="config-based",
+  mode="regex", item_types=["transformation", "component"]`
+
+- user input: "Find components or transformations using 'my_bucket' in output mappings"
+  → `patterns=["my_bucket"], item_types=["component", "transformation"], search_type="config-based",
+    scopes=["storage.output"], mode="literal"`
+
+- user input: "Find configs with specific authentication type"
+  → `patterns=["\"authentication\":\s*\{.*\"type\":\s*\"oauth20\""], search_type="config-based",
+  mode="regex", item_types=["component"]`
+
+- user input: "Find flows using this configuration ID: 01k9cz233cvd1rga3zzx40g8qj"
+  → `patterns=["01k9cz233cvd1rga3zzx40g8qj"], search_type="config-based", item_types=["flow"], mode="literal",
+  scopes=["tasks"]`
+
+- user input: "Find data apps using specific code part ..."
+  → `patterns=["regex-representing-the-code-part"], search_type="config-based", item_types=["data-app"],
+  mode="regex"], scopes=["script"]`
 
 
 **Input JSON Schema**:
@@ -2641,7 +2668,7 @@ USAGE EXAMPLES:
 {
   "properties": {
     "patterns": {
-      "description": "One or more search patterns to match against item ID, name, display name, or description. Supports regex patterns. Case-insensitive. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"test.*table\"]. Do not use empty strings or empty lists.",
+      "description": "One or more search patterns to match against item ID, name, display name, or description. Supports regex patterns. Case-insensitive by default. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"test.*table\"], [\"key1.*:.*key2.*:.*value.*\"]. Do not use empty strings or empty lists.",
       "items": {
         "type": "string"
       },
@@ -2649,13 +2676,15 @@ USAGE EXAMPLES:
     },
     "item_types": {
       "default": [],
-      "description": "Optional filter for specific Keboola item types. Leave empty to search all types. Common values: \"table\" (data tables), \"bucket\" (table containers), \"transformation\" (SQL/Python transformations), \"configuration\" (extractor/writer configs), \"flow\" (orchestration flows). Use when you know what type of item you're looking for.",
+      "description": "Filter for specific Keboola item types. Common values: \"table\" (data tables), \"bucket\" (table containers), \"transformation\" (SQL/Python transformations), \"component\" (extractor/writer/application components), \"data-app\" (data apps), \"flow\" (orchestration flows). Use when you know what type of item you're looking for or leave empty to search all types.",
       "items": {
         "enum": [
-          "flow",
           "bucket",
           "table",
+          "data-app",
+          "flow",
           "transformation",
+          "component",
           "configuration",
           "configuration-row",
           "workspace",
@@ -2666,6 +2695,37 @@ USAGE EXAMPLES:
         "type": "string"
       },
       "type": "array"
+    },
+    "search_type": {
+      "default": "textual",
+      "description": "Search mode: \"textual\" (name/id/description) or \"config-based\" (stringified configuration payloads).",
+      "enum": [
+        "textual",
+        "config-based"
+      ],
+      "type": "string"
+    },
+    "scopes": {
+      "default": [],
+      "description": "Dot-separated keys to search in configuration payloads, used with \"config-based\" search. Example: \"parameters.field\", \"storage.input\", \"storage.output\", \"processors.before\", \"processors.after\", \"authorization\", \"tasks\", \"phases\". Leave empty to search the whole configuration.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "mode": {
+      "default": "literal",
+      "description": "How to interpret patterns: \"regex\" for regular expressions or \"literal\" for exact text (default: \"literal\").",
+      "enum": [
+        "regex",
+        "literal"
+      ],
+      "type": "string"
+    },
+    "case_sensitive": {
+      "default": false,
+      "description": "If true, match patterns with case sensitivity (default: false).",
+      "type": "boolean"
     },
     "limit": {
       "default": 50,

@@ -9,11 +9,11 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.clients.ai_service import ComponentSuggestionResponse, SuggestedComponent
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.clients.storage import ItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.search import (
     SearchHit,
+    SearchItemType,
     SearchSpec,
     SuggestedComponentOutput,
     find_component_id,
@@ -83,7 +83,7 @@ class TestSearch:
         result = await search(
             ctx=mcp_context_client,
             patterns=['test'],
-            item_types=(cast(ItemType, 'table'), cast(ItemType, 'configuration')),
+            item_types=(cast(SearchItemType, 'table'), cast(SearchItemType, 'configuration')),
             limit=20,
             offset=0,
         )
@@ -144,7 +144,12 @@ class TestSearch:
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
-        result = await search(ctx=mcp_context_client, patterns=['customer.*'], item_types=(cast(ItemType, 'bucket'),))
+        result = await search(
+            ctx=mcp_context_client,
+            patterns=['customer.*'],
+            item_types=(cast(SearchItemType, 'bucket'),),
+            mode='regex',
+        )
 
         assert isinstance(result, list)
         assert result == [
@@ -361,7 +366,7 @@ class TestSearch:
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
-        result = await search(ctx=mcp_context_client, patterns=['test'], item_types=(cast(ItemType, 'bucket'),))
+        result = await search(ctx=mcp_context_client, patterns=['test'], item_types=(cast(SearchItemType, 'bucket'),))
 
         assert isinstance(result, list)
         assert result == [
@@ -680,7 +685,9 @@ class TestSearch:
         # Mock bucket_table_list with provided test data
         keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=tables_data)
 
-        result = await search(ctx=mcp_context_client, patterns=[search_pattern], item_types=(cast(ItemType, 'table'),))
+        result = await search(
+            ctx=mcp_context_client, patterns=[search_pattern], item_types=(cast(SearchItemType, 'table'),)
+        )
 
         assert isinstance(result, list)
         assert len(result) == expected_count

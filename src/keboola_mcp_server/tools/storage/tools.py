@@ -623,7 +623,7 @@ async def get_tables(
             usage_by_ids = await find_id_usage(
                 client,
                 list(prod_ids_to_ids.keys()),
-                ['component', 'transformation'],
+                ['configuration', 'configuration-row', 'transformation'],
                 ['storage.input', 'storage.output'],
             )
             # Initialize the used_by list for all tables to avoid None values which could confuse the model.
