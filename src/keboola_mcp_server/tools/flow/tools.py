@@ -37,6 +37,7 @@ from keboola_mcp_server.tools.flow.model import (
     GetFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.scheduler import (
+    validate_and_compute_scheduler_preview,
     fetch_schedules_for_flows,
     process_schedule_request,
 )
@@ -404,7 +405,7 @@ async def modify_flow(
 
     if has_config_changes:
         LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
-        _, flow_configuration = await update_flow_internal(
+        _, flow_configuration, *_ = await update_flow_internal(
             client=client,
             configuration_id=configuration_id,
             flow_type=flow_type,
@@ -413,6 +414,7 @@ async def modify_flow(
             tasks=tasks,
             name=name,
             description=description,
+            schedules=None,
         )
         updated_raw_configuration = await client.storage_client.configuration_update(
             component_id=flow_type,
@@ -474,6 +476,7 @@ async def update_flow_internal(
     tasks: list[dict[str, Any]] | None = None,
     name: str = '',
     description: str = '',
+    schedules: Sequence[ScheduleRequest] = tuple(),
 ) -> tuple[JsonDict, JsonDict]:
     current_config = await client.storage_client.configuration_detail(
         component_id=flow_type, configuration_id=configuration_id

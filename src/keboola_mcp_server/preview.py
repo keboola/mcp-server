@@ -18,6 +18,8 @@ from keboola_mcp_server.tools.components.model import ConfigParamUpdate, TfParam
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.tools.flow import tools as flow_tools
+from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest
+from keboola_mcp_server.tools.flow import scheduler as scheduler_tools
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -209,7 +211,9 @@ def _prepare_mutator(
 
     elif preview_rq.tool_name in {UPDATE_FLOW_TOOL_NAME, MODIFY_FLOW_TOOL_NAME}:
         mutator_fn = flow_tools.update_flow_internal
-        mutator_params.pop('schedules', None)
+        if schedules := mutator_params.get('schedules'):
+            type_adapter = TypeAdapter(list[ScheduleRequest])
+            mutator_params['schedules'] = type_adapter.validate_python(schedules)
 
     elif preview_rq.tool_name == 'modify_data_app':
         mutator_fn = data_app_tools.modify_data_app_internal
@@ -274,6 +278,12 @@ async def preview_config_diff(rq: Request) -> Response:
             updated_config['isDisabled'] = is_disabled
         if change_description := preview_rq.tool_params.get('change_description'):
             updated_config['changeDescription'] = change_description
+        if preview_rq.tool_params.get('schedules') is not None:
+            original_schedulers, updated_schedulers = await scheduler_tools.validate_and_compute_scheduler_preview(
+                **mutator_params
+            )
+            original_config['schedulers'] = original_schedulers
+            updated_config['schedulers'] = updated_schedulers
 
         preview_resp = PreviewConfigDiffResp(
             coordinates=coordinates,
@@ -284,7 +294,7 @@ async def preview_config_diff(rq: Request) -> Response:
         )
 
     except (pydantic.ValidationError, jsonschema.ValidationError, ValueError) as ex:
-        LOG.exception(f'[preview_config_diff] {ex}')
+        LOG.exception(f'[preview_config_diff] {str(ex)}')
         preview_resp = PreviewConfigDiffResp(
             coordinates=coordinates,
             original_config={},

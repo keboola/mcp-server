@@ -510,6 +510,233 @@ class TestPreviewConfigDiff:
         assert result['updatedConfig']['name'] == 'Updated Flow'
         assert result['updatedConfig']['description'] == 'Updated flow description'
 
+    @pytest.mark.parametrize(
+        'existing_schedule_dicts,schedules_request,expected_original,expected_updated',
+        [
+            pytest.param(
+                # add: no existing schedulers → new one appears only in updated
+                [],
+                [{'action': 'add', 'cronTab': '0 8 * * 1-5', 'timezone': 'Europe/Prague', 'state': 'enabled'}],
+                [],
+                [{'cronTab': '0 8 * * 1-5', 'timezone': 'Europe/Prague', 'state': 'enabled'}],
+                id='add',
+            ),
+            pytest.param(
+                # update: existing scheduler's cron changes; original must keep old value
+                [{'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [{'action': 'update', 'scheduleId': 'sched-1', 'cronTab': '0 10 * * 1-5'}],
+                [{'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [{'scheduleId': 'sched-1', 'cronTab': '0 10 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
+                id='update',
+            ),
+            pytest.param(
+                # remove: existing scheduler disappears in updated; original must still have it
+                [{'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [{'action': 'remove', 'scheduleId': 'sched-1'}],
+                [{'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [],
+                id='remove',
+            ),
+            pytest.param(
+                # multiple actions in one request: update one, remove another, add a new one
+                [
+                    {'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'},
+                    {'schedule_id': 'sched-2', 'cron_tab': '0 20 * * 1-5', 'timezone': 'UTC', 'state': 'disabled'},
+                ],
+                [
+                    {'action': 'update', 'scheduleId': 'sched-1', 'state': 'disabled'},
+                    {'action': 'remove', 'scheduleId': 'sched-2'},
+                    {'action': 'add', 'cronTab': '0 6 * * 1', 'timezone': 'US/Eastern', 'state': 'enabled'},
+                ],
+                [
+                    {'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'},
+                    {'scheduleId': 'sched-2', 'cronTab': '0 20 * * 1-5', 'timezone': 'UTC', 'state': 'disabled'},
+                ],
+                [
+                    {'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'disabled'},
+                    {'cronTab': '0 6 * * 1', 'timezone': 'US/Eastern', 'state': 'enabled'},
+                ],
+                id='multiple_actions',
+            ),
+        ],
+    )
+    def test_preview_modify_flow_with_schedules_success(
+        self,
+        test_client: TestClient,
+        mocker,
+        existing_schedule_dicts: list[dict],
+        schedules_request: list[dict],
+        expected_original: list[dict],
+        expected_updated: list[dict],
+    ):
+        """Test that preview returns the correct scheduler diff for add/update/remove actions."""
+        from keboola_mcp_server.tools.flow.scheduler_model import ScheduleDetail
+
+        original_config_data = {
+            'id': 'flow-123',
+            'name': 'My Flow',
+            'description': 'A test flow',
+            'configuration': {
+                'phases': [
+                    {
+                        'id': 'phase1',
+                        'name': 'Phase 1',
+                        'next': [{'id': 't1', 'name': 'End', 'goto': None}],
+                    }
+                ],
+                'tasks': [
+                    {
+                        'id': 'task1',
+                        'name': 'Task 1',
+                        'phase': 'phase1',
+                        'enabled': True,
+                        'task': {'type': 'job', 'componentId': 'keboola.ex-test', 'configId': 'cfg-1', 'mode': 'run'},
+                    }
+                ],
+            },
+        }
+
+        mock_client = mocker.AsyncMock(KeboolaClient)
+        mock_client.storage_client.configuration_detail = mocker.AsyncMock(
+            side_effect=lambda **_: copy.deepcopy(original_config_data)
+        )
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
+
+        existing_schedules = [
+            ScheduleDetail.model_construct(
+                schedule_id=s['schedule_id'],
+                cron_tab=s['cron_tab'],
+                timezone=s['timezone'],
+                state=s['state'],
+                target_executions=[],
+            )
+            for s in existing_schedule_dicts
+        ]
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.scheduler.list_schedules_for_config',
+            new=mocker.AsyncMock(return_value=existing_schedules),
+        )
+
+        response = test_client.post(
+            '/preview/configuration',
+            json={
+                'toolName': 'modify_flow',
+                'toolParams': {
+                    'flow_type': 'keboola.flow',
+                    'configuration_id': 'flow-123',
+                    'change_description': 'Update schedules',
+                    'schedules': schedules_request,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result['isValid'] is True
+        assert result['coordinates']['componentId'] == 'keboola.flow'
+        assert result['coordinates']['configurationId'] == 'flow-123'
+        # Scheduler diff: original must reflect the state before, updated must reflect the state after
+        assert result['originalConfig']['schedulers'] == expected_original
+        assert result['updatedConfig']['schedulers'] == expected_updated
+
+    @pytest.mark.parametrize(
+        'existing_schedule_dicts,schedules_request,expected_error_fragment',
+        [
+            pytest.param(
+                [],
+                [{'action': 'remove', 'scheduleId': 'sched-missing'}],
+                'sched-missing',
+                id='remove_nonexistent',
+            ),
+            pytest.param(
+                [],
+                [{'action': 'update', 'scheduleId': 'sched-missing', 'cronTab': '0 8 * * 1-5'}],
+                'sched-missing',
+                id='update_nonexistent',
+            ),
+            pytest.param(
+                [],
+                [{'action': 'add', 'cronTab': 'not-a-cron', 'state': 'enabled'}],
+                'Invalid cron tab',
+                id='add_invalid_cron',
+            ),
+        ],
+    )
+    def test_preview_modify_flow_with_schedules_errors(
+        self,
+        test_client: TestClient,
+        mocker,
+        existing_schedule_dicts: list[dict],
+        schedules_request: list[dict],
+        expected_error_fragment: str,
+    ):
+        """Test that scheduler validation errors are surfaced as isValid=False responses."""
+        from keboola_mcp_server.tools.flow.scheduler_model import ScheduleDetail
+
+        original_config_data = {
+            'id': 'flow-123',
+            'name': 'My Flow',
+            'description': 'A test flow',
+            'configuration': {
+                'phases': [
+                    {
+                        'id': 'phase1',
+                        'name': 'Phase 1',
+                        'next': [{'id': 't1', 'name': 'End', 'goto': None}],
+                    }
+                ],
+                'tasks': [
+                    {
+                        'id': 'task1',
+                        'name': 'Task 1',
+                        'phase': 'phase1',
+                        'enabled': True,
+                        'task': {'type': 'job', 'componentId': 'keboola.ex-test', 'configId': 'cfg-1', 'mode': 'run'},
+                    }
+                ],
+            },
+        }
+
+        mock_client = mocker.AsyncMock(KeboolaClient)
+        mock_client.storage_client.configuration_detail = mocker.AsyncMock(
+            side_effect=lambda **_: copy.deepcopy(original_config_data)
+        )
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
+
+        existing_schedules = [
+            ScheduleDetail.model_construct(
+                schedule_id=s['schedule_id'],
+                cron_tab=s['cron_tab'],
+                timezone=s['timezone'],
+                state=s['state'],
+                target_executions=[],
+            )
+            for s in existing_schedule_dicts
+        ]
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.scheduler.list_schedules_for_config',
+            new=mocker.AsyncMock(return_value=existing_schedules),
+        )
+
+        response = test_client.post(
+            '/preview/configuration',
+            json={
+                'toolName': 'modify_flow',
+                'toolParams': {
+                    'flow_type': 'keboola.flow',
+                    'configuration_id': 'flow-123',
+                    'change_description': 'Update schedules',
+                    'schedules': schedules_request,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        print('TADY CUA', result['validationErrors'])
+        assert result['isValid'] is False
+        assert expected_error_fragment in str(result.get('validationErrors', ''))
+
     def test_preview_modify_data_app_success(self, test_client: TestClient, mocker):
         """Test successful preview of modify_data_app tool."""
         from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
