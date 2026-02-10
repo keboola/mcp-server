@@ -324,8 +324,7 @@ class TestKeboolaClient:
             )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize('validate', [True, False])
-    async def test_with_branch_id_validation(self, keboola_client: KeboolaClient, validate: bool):
+    async def test_with_branch_id_validation(self, keboola_client: KeboolaClient):
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
 
@@ -340,14 +339,9 @@ class TestKeboolaClient:
             )
             mock_client.get.return_value = response
 
-            if validate:
-                with pytest.raises(ValueError, match='Branch with ID "non-existent-branch" was not found'):
-                    await keboola_client.with_branch_id('non-existent-branch', validate=validate)
-                mock_client.get.assert_called_once()
-            else:
-                result = await keboola_client.with_branch_id('non-existent-branch', validate=validate)
-                mock_client.get.assert_not_called()
-                assert result.branch_id == 'non-existent-branch'
+            with pytest.raises(ValueError, match='Branch with ID "non-existent-branch" was not found'):
+                await keboola_client.with_branch_id('non-existent-branch')
+            mock_client.get.assert_called_once()
 
 
 @pytest.mark.parametrize(
