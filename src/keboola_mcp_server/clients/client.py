@@ -81,9 +81,24 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
-    async def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
-        if branch_id == self.branch_id:
-            return self
+    async def with_branch_id(self, branch_id: str | None, validate: bool = True) -> 'KeboolaClient':
+        """Return a new client configured for the given branch.
+
+        :param branch_id: Branch ID to use. None means the main/production branch.
+        :param validate: If True (default), verifies the branch exists via an API call and normalizes
+            the default-branch ID to None. Set to False to skip the network call and use the branch ID
+            as-is (e.g. for tools/list requests where tools should be discoverable even with an invalid branch).
+        """
+        if not validate:
+            if branch_id == self.branch_id:
+                return self
+            return KeboolaClient(
+                storage_api_url=self.storage_api_url,
+                storage_api_token=self.token,
+                bearer_token=self._bearer_token,
+                branch_id=branch_id,
+                headers=self._headers,
+            )
         elif branch_id is None:
             return KeboolaClient(
                 storage_api_url=self.storage_api_url,
