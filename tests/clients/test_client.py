@@ -324,22 +324,32 @@ class TestKeboolaClient:
             )
 
     @pytest.mark.asyncio
-    async def test_with_branch_id_validation(self, keboola_client: KeboolaClient):
+    @pytest.mark.parametrize(
+        ('status_code', 'expected_match'),
+        [
+            (404, 'Branch "non-existent-branch" not found'),
+            (500, 'Internal Server Error'),
+        ],
+        ids=['not_found', 'server_error'],
+    )
+    async def test_with_branch_id_http_error(
+        self, keboola_client: KeboolaClient, status_code: int, expected_match: str
+    ):
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
 
             response = Mock(spec=httpx.Response)
-            response.status_code = 404
+            response.status_code = status_code
             response.is_error = True
-            response.text = '{"error":"Branch not found"}'
-            response.json.return_value = {'error': 'Branch not found'}
+            response.text = '{"error":"some error"}'
+            response.json.return_value = {'error': 'some error'}
             response.request = Mock(spec=httpx.Request)
             response.raise_for_status.side_effect = httpx.HTTPStatusError(
-                'Not Found', request=response.request, response=response
+                'Internal Server Error', request=response.request, response=response
             )
             mock_client.get.return_value = response
 
-            with pytest.raises(httpx.HTTPStatusError, match='Branch "non-existent-branch" not found'):
+            with pytest.raises(httpx.HTTPStatusError, match=expected_match):
                 await keboola_client.with_branch_id('non-existent-branch')
             mock_client.get.assert_called_once()
 

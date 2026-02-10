@@ -1,15 +1,19 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     AggregateError,
+    ServerState,
+    SessionStateMiddleware,
     ToolsFilteringMiddleware,
     _exclude_none_serializer,
     _filter_toon_nulls,
@@ -365,7 +369,7 @@ def test_unwrap_results_all_exceptions():
     assert str(err) == 'Multiple errors occurred (2 errors): ValueError: error 1; ValueError: error 2'
 
 
-class ToolsFilteringMiddlewareTests:
+class TestToolsFilteringMiddleware:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('branch_id', 'expect_filtered'),
@@ -438,3 +442,59 @@ class ToolsFilteringMiddlewareTests:
         else:
             result = await middleware.on_call_tool(context, call_next)
             assert result is expected
+
+
+class TestSessionStateMiddleware:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('method', 'expected_branch_id'),
+        [
+            ('tools/list', None),
+            ('resources/list', None),
+            ('prompts/list', None),
+            ('tools/call', '999'),
+            ('resources/read', '999'),
+        ],
+        ids=['tools_list', 'resources_list', 'prompts_list', 'tools_call', 'resources_read'],
+    )
+    async def test_on_request_branch_handling(self, method: str, expected_branch_id: str | None):
+        config = Config(
+            storage_api_url='https://connection.test.keboola.com',
+            storage_token='test-token',
+            branch_id='999',
+        )
+        runtime_info = ServerRuntimeInfo(transport='stdio')
+        server_state = ServerState(config=config, runtime_info=runtime_info)
+
+        # Use a non-MagicMock session so the middleware enters the branch-handling code path
+        session = SimpleNamespace(state={})
+
+        # ctx must pass isinstance(ctx, Context) check, so we use MagicMock(spec=Context).
+        # However ctx.session must NOT be a MagicMock (line 146 guard), so we override it.
+        ctx = MagicMock(spec=Context)
+        ctx.session = session
+        ctx.request_context.lifespan_context = server_state
+
+        context = SimpleNamespace(method=method, fastmcp_context=ctx)
+        expected_result = object()
+
+        async def call_next(_):
+            return expected_result
+
+        captured_configs: list[Config] = []
+
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None):
+            captured_configs.append(cfg)
+            return {'fake': 'state'}
+
+        middleware = SessionStateMiddleware()
+
+        with (
+            patch.object(middleware, 'create_session_state', side_effect=fake_create_session_state),
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=None),
+        ):
+            result = await middleware.on_request(context, call_next)
+
+        assert result is expected_result
+        assert len(captured_configs) == 1
+        assert captured_configs[0].branch_id == expected_branch_id
