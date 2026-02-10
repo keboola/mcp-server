@@ -288,6 +288,16 @@ async def update_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
     name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
+    is_disabled: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Enable or disable the flow. Set to True to disable execution (flow won't run), "
+                'False to enable execution (flow will run). Only provide if changing the status, '
+                'leave as null to preserve current state.'
+            ),
+        ),
+    ] = None,
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
@@ -312,7 +322,8 @@ async def update_flow(
     - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
     WHEN TO USE:
-    - Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
+    - Renaming a flow, updating descriptions, adding/removing phases or tasks, adjusting dependencies,
+    or enabling/disabling flow execution
     """
     return await modify_flow(
         ctx=ctx,
@@ -324,6 +335,7 @@ async def update_flow(
         name=name,
         description=description,
         schedules=tuple(),
+        is_disabled=is_disabled,
     )
 
 
@@ -357,6 +369,16 @@ async def modify_flow(
             )
         ),
     ] = tuple(),
+    is_disabled: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Enable or disable the flow. Set to True to disable execution (flow won't run), "
+                'False to enable execution (flow will run). Only provide if changing the status, '
+                'leave as null to preserve current state.'
+            ),
+        ),
+    ] = None,
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
@@ -384,8 +406,8 @@ async def modify_flow(
     - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
     WHEN TO USE:
-    - Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules or
-    adjusting dependencies
+    - Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules,
+    adjusting dependencies, or enabling/disabling flow execution
     """
 
     project_info = await get_project_info(ctx)
@@ -400,7 +422,9 @@ async def modify_flow(
     client = KeboolaClient.from_state(ctx.session.state)
 
     response_message = None
-    has_config_changes = bool(name) or bool(description) or phases is not None or tasks is not None
+    has_config_changes = (
+        bool(name) or bool(description) or phases is not None or tasks is not None or is_disabled is not None
+    )
 
     if has_config_changes:
         LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
@@ -413,6 +437,7 @@ async def modify_flow(
             tasks=tasks,
             name=name,
             description=description,
+            is_disabled=is_disabled,
         )
         updated_raw_configuration = await client.storage_client.configuration_update(
             component_id=flow_type,
@@ -421,6 +446,7 @@ async def modify_flow(
             change_description=change_description,
             updated_name=name,
             updated_description=description,
+            is_disabled=is_disabled,
         )
         api_config = CreateConfigurationAPIResponse.model_validate(updated_raw_configuration)
         await set_cfg_update_metadata(
@@ -474,6 +500,7 @@ async def update_flow_internal(
     tasks: list[dict[str, Any]] | None = None,
     name: str = '',
     description: str = '',
+    is_disabled: bool | None = None,
 ) -> tuple[JsonDict, JsonDict]:
     current_config = await client.storage_client.configuration_detail(
         component_id=flow_type, configuration_id=configuration_id

@@ -724,18 +724,6 @@ WORKFLOW:
         "type": "object"
       },
       "type": "array"
-    },
-    "is_disabled": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Enable or disable the configuration. Set to True to disable execution (configuration won't run), False to enable execution (configuration will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -1012,7 +1000,6 @@ WHEN TO USE:
 - Updating transformation block or code block names
 - Changing input/output table mappings for the transformation
 - Updating the transformation name or description
-- Enabling or disabling the transformation
 - Any combination of the above
 
 PREREQUISITES:
@@ -1567,18 +1554,6 @@ Example 4 - Update storage mappings:
       "default": null,
       "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
-    },
-    "is_disabled": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Enable or disable the transformation. Set to True to disable execution (transformation won't run), False to enable execution (transformation will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -2082,8 +2057,8 @@ LEGACY FLOWS (`keboola.orchestrator`):
 - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
 WHEN TO USE:
-- Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules or
-adjusting dependencies
+- Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules,
+adjusting dependencies, or enabling/disabling flow execution
 
 
 **Input JSON Schema**:
@@ -2212,6 +2187,18 @@ adjusting dependencies
         "$ref": "#/$defs/ScheduleRequest"
       },
       "type": "array"
+    },
+    "is_disabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -2254,7 +2241,8 @@ LEGACY FLOWS (`keboola.orchestrator`):
 - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
 WHEN TO USE:
-- Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
+- Renaming a flow, updating descriptions, adding/removing phases or tasks, adjusting dependencies,
+or enabling/disabling flow execution
 
 
 **Input JSON Schema**:
@@ -2304,6 +2292,18 @@ WHEN TO USE:
       "default": "",
       "description": "Updated flow description. Only updated if provided.",
       "type": "string"
+    },
+    "is_disabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
