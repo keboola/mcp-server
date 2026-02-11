@@ -174,7 +174,7 @@ class BucketDetail(BaseModel):
             description = get_metadata_property(metadata, MetadataField.SHARED_DESCRIPTION)
         if not description:
             description = get_metadata_property(metadata, MetadataField.DESCRIPTION)
-        values['description'] = description if description else None
+        values['description'] = description or None
         return values
 
     @model_validator(mode='before')
@@ -308,7 +308,7 @@ class TableDetail(BaseModel):
         if not description:
             metadata = get_nested(values, 'sourceTable.metadata', default=[])
             description = get_metadata_property(metadata, MetadataField.DESCRIPTION)
-        values['description'] = description if description else None
+        values['description'] = description or None
         return values
 
     @model_validator(mode='before')
