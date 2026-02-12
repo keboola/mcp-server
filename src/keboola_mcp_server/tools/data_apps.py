@@ -432,6 +432,11 @@ async def get_data_apps(
     """Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
     providing their configuration IDs.
 
+    WHEN NOT TO USE:
+    - Do NOT list all data apps just to find one by name. Use `search` with
+      item_types=["data-app"] instead.
+    - Only list all data apps when you need a complete inventory.
+
     Considerations:
     - If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
     - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.

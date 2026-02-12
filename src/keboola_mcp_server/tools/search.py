@@ -478,13 +478,17 @@ async def search(
     by matching patterns against item ID, name, display name, or description. Returns matching items grouped by type
     with their IDs and metadata.
 
+    THIS IS THE PRIMARY DISCOVERY TOOL. Always use it BEFORE any get_* tool when you need to find items
+    by name. Do NOT enumerate items with get_buckets, get_tables, get_configs, get_flows, or get_data_apps
+    just to locate a specific item — use this tool instead.
+
     WHEN TO USE:
     - User asks to "find", "locate", or "search for" something by name
     - User mentions a partial name and you need to find the full item (e.g., "find the customer table")
     - User asks "what tables/configs/flows do I have with X in the name?"
     - You need to discover items before performing operations on them
     - User asks to "list all items with [name] in it"
-    - DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
+    - DO NOT use for listing all items of a specific type. Use get_configs, get_tables, get_flows, etc instead.
 
     HOW IT WORKS:
     - Searches by regex pattern matching against id, name, displayName, and description fields
@@ -496,10 +500,11 @@ async def search(
 
     IMPORTANT:
     - Always use this tool when the user mentions a name but you don't have the exact ID
-    - The search returns IDs that you can use with other tools (e.g., get_table, get_configs, get_flows)
+    - The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
     - Results are ordered by update time. The most recently updated items are returned first.
-    - For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
+    - For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
     - Use find_component_id and get_configs tools to find configurations related to a specific component
+    - If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
 
     USAGE EXAMPLES:
     - user_input: "Find all tables with 'customer' in the name"

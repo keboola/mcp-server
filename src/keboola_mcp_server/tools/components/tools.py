@@ -236,6 +236,12 @@ async def get_configs(
     - For listing: Use component_types/component_ids.
     - For details: Use configs (can handle multiple).
 
+    WHEN NOT TO USE:
+    - Do NOT list all configs just to find a configuration by name. Use `search` with
+      item_types=["configuration", "transformation"] instead.
+    - Only use broad listing (empty component_types and component_ids) when you need
+      a complete inventory of all configurations in the project.
+
     EXAMPLES:
     - List all configs (summaries): component_types=[], component_ids=[]
     - List extractors (summaries): component_types=["extractor"]
@@ -513,7 +519,7 @@ async def update_sql_transformation(
                 'Each operation modifies specific elements using block_id and code_id identifiers. '
                 'Only provide if updating SQL code or block structure - do not use for description or storage changes. '
                 '\n\n'
-                'IMPORTANT: Use get_config first to retrieve the current transformation structure and identify '
+                'IMPORTANT: Use get_configs first to retrieve the current transformation structure and identify '
                 'the block_id and code_id values needed for your operations. IDs are automatically assigned.\n'
                 '\n'
                 'Available operations:\n'
@@ -556,7 +562,7 @@ async def update_sql_transformation(
                 'Important:\n'
                 '- Must conform to transformation storage schema (input/output tables)\n'
                 '- Replaces ALL existing storage config - include all mappings you want to keep\n'
-                '- Use get_config first to see current storage configuration\n'
+                '- Use get_configs first to see current storage configuration\n'
                 '- Leave unfilled to preserve existing storage configuration'
             )
         ),
@@ -581,7 +587,7 @@ async def update_sql_transformation(
     - Transformation must already exist (use create_sql_transformation for new transformations)
     - You must know the configuration_id of the transformation
     - SQL dialect is determined automatically from the workspace
-    - CRITICAL: Use get_config first to see the current transformation structure and get block_id/code_id values
+    - CRITICAL: Use get_configs first to see the current transformation structure and get block_id/code_id values
 
     TRANSFORMATION STRUCTURE:
     A transformation has this hierarchy:
@@ -592,7 +598,7 @@ async def update_sql_transformation(
             └─ code.name - Descriptive name for the code block
             └─ code.script - SQL script (string with SQL statements)
 
-    Example structure from get_config:
+    Example structure from get_configs:
     {
       "blocks": [
         {
@@ -610,7 +616,7 @@ async def update_sql_transformation(
     }
 
     PARAMETER UPDATE OPERATIONS:
-    All operations use block_id and code_id to identify elements (get these from get_config first).
+    All operations use block_id and code_id to identify elements (get these from get_configs first).
 
     ID Format:
     - block_id: "b0", "b1", "b2", etc. (format: b{index})
@@ -661,7 +667,7 @@ async def update_sql_transformation(
       Non-destructive changes (adding columns) typically do not require table deletion.
 
     WORKFLOW:
-    1. Call get_config to retrieve current transformation structure and identify block_id/code_id values
+    1. Call get_configs to retrieve current transformation structure and identify block_id/code_id values
     2. Identify what needs to change (SQL code, storage, description)
     3. For SQL changes: Prepare parameter_updates list with targeted operations
     4. For storage changes: Build complete storage configuration (include all mappings)
@@ -671,7 +677,7 @@ async def update_sql_transformation(
 
     Example 1 - Update SQL script in existing code block:
     Step 1: Get current config
-      result = get_config(component_id="keboola.snowflake-transformation", configuration_id="12345")
+      result = get_configs(component_id="keboola.snowflake-transformation", configuration_id="12345")
       # Note the block_id (e.g., "b0") and code_id (e.g., "b0.c1") from result
 
     Step 2: Update the SQL
@@ -910,7 +916,7 @@ async def create_config(
     CONSIDERATIONS:
     - The configuration JSON object must follow the root_configuration_schema of the specified component.
     - Make sure the configuration parameters always adhere to the root_configuration_schema,
-      which is available via the component_detail tool.
+      which is available via the get_components tool.
     - The configuration JSON object should adhere to the component's configuration examples if found.
 
     USAGE:
@@ -1044,7 +1050,7 @@ async def add_config_row(
     CONSIDERATIONS:
     - The configuration JSON object must follow the row_configuration_schema of the specified component.
     - Make sure the configuration parameters always adhere to the row_configuration_schema,
-      which is available via the component_detail tool.
+      which is available via the get_components tool.
     - The configuration JSON object should adhere to the component's configuration examples if found.
 
     USAGE:
@@ -1200,7 +1206,7 @@ async def update_config(
                 '- Not applicable for row-based components (they use row-level storage)\n'
                 '- Must conform to the Keboola storage schema\n'
                 '- Replaces ALL existing storage config - include all mappings you want to keep\n'
-                '- Use get_config first to see current storage configuration\n'
+                '- Use get_configs first to see current storage configuration\n'
                 '- Leave unfilled to preserve existing storage configuration'
             )
         ),
@@ -1241,7 +1247,7 @@ async def update_config(
     - For row-based components, this updates the ROOT only (use update_config_row for individual rows)
 
     WORKFLOW:
-    1. Retrieve current configuration using get_config (to understand current state)
+    1. Retrieve current configuration using get_configs (to understand current state)
     2. Identify specific parameters/storage mappings to modify
     3. Prepare parameter_updates list with targeted operations
     4. Call update_config with only the fields to change
@@ -1424,7 +1430,7 @@ async def update_config_row(
                 'Important:\n'
                 "- Must conform to the component's row storage schema\n"
                 '- Replaces ALL existing storage config for this row - include all mappings you want to keep\n'
-                '- Use get_config first to see current row storage configuration\n'
+                '- Use get_configs first to see current row storage configuration\n'
                 '- Leave unfilled to preserve existing storage configuration'
             )
         ),
@@ -1477,7 +1483,7 @@ async def update_config_row(
     - Row-level storage is separate from root-level storage configuration
 
     WORKFLOW:
-    1. Retrieve current configuration using get_config to see existing rows
+    1. Retrieve current configuration using get_configs to see existing rows
     2. Identify the specific row to modify by its configuration_row_id
     3. Prepare parameter_updates list with targeted operations for this row
     4. Call update_config_row with only the fields to change

@@ -539,6 +539,11 @@ async def get_flows(
     """
     Lists flows or retrieves full details for specific flows.
 
+    WHEN NOT TO USE:
+    - Do NOT call with `flow_ids=[]` just to find a flow by name. Use `search` with
+      item_types=["flow"] instead.
+    - Only use `flow_ids=[]` when you need a complete list of all flows in the project.
+
     OPTIONS:
     - `flow_ids=[]` → summaries of all flows in the project
     - `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows
