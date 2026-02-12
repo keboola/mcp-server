@@ -79,7 +79,7 @@ component ID, configuration JSON, and description.
 CONSIDERATIONS:
 - The configuration JSON object must follow the row_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the row_configuration_schema,
-  which is available via the component_detail tool.
+  which is available via the get_components tool.
 - The configuration JSON object should adhere to the component's configuration examples if found.
 
 USAGE:
@@ -166,7 +166,7 @@ Creates a root component configuration using the specified name, component ID, c
 CONSIDERATIONS:
 - The configuration JSON object must follow the root_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the root_configuration_schema,
-  which is available via the component_detail tool.
+  which is available via the get_components tool.
 - The configuration JSON object should adhere to the component's configuration examples if found.
 
 USAGE:
@@ -551,7 +551,7 @@ IMPORTANT CONSIDERATIONS:
 - For row-based components, this updates the ROOT only (use update_config_row for individual rows)
 
 WORKFLOW:
-1. Retrieve current configuration using get_config (to understand current state)
+1. Retrieve current configuration using get_configs (to understand current state)
 2. Identify specific parameters/storage mappings to modify
 3. Prepare parameter_updates list with targeted operations
 4. Call update_config with only the fields to change
@@ -710,7 +710,7 @@ WORKFLOW:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
     },
     "processors_before": {
@@ -778,7 +778,7 @@ IMPORTANT CONSIDERATIONS:
 - Row-level storage is separate from root-level storage configuration
 
 WORKFLOW:
-1. Retrieve current configuration using get_config to see existing rows
+1. Retrieve current configuration using get_configs to see existing rows
 2. Identify the specific row to modify by its configuration_row_id
 3. Prepare parameter_updates list with targeted operations for this row
 4. Call update_config_row with only the fields to change
@@ -941,7 +941,7 @@ WORKFLOW:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_config first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
+      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_configs first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
     },
     "processors_before": {
@@ -1012,7 +1012,7 @@ PREREQUISITES:
 - Transformation must already exist (use create_sql_transformation for new transformations)
 - You must know the configuration_id of the transformation
 - SQL dialect is determined automatically from the workspace
-- CRITICAL: Use get_config first to see the current transformation structure and get block_id/code_id values
+- CRITICAL: Use get_configs first to see the current transformation structure and get block_id/code_id values
 
 TRANSFORMATION STRUCTURE:
 A transformation has this hierarchy:
@@ -1023,7 +1023,7 @@ A transformation has this hierarchy:
         └─ code.name - Descriptive name for the code block
         └─ code.script - SQL script (string with SQL statements)
 
-Example structure from get_config:
+Example structure from get_configs:
 {
   "blocks": [
     {
@@ -1041,7 +1041,7 @@ Example structure from get_config:
 }
 
 PARAMETER UPDATE OPERATIONS:
-All operations use block_id and code_id to identify elements (get these from get_config first).
+All operations use block_id and code_id to identify elements (get these from get_configs first).
 
 ID Format:
 - block_id: "b0", "b1", "b2", etc. (format: b{index})
@@ -1092,7 +1092,7 @@ IMPORTANT CONSIDERATIONS:
   Non-destructive changes (adding columns) typically do not require table deletion.
 
 WORKFLOW:
-1. Call get_config to retrieve current transformation structure and identify block_id/code_id values
+1. Call get_configs to retrieve current transformation structure and identify block_id/code_id values
 2. Identify what needs to change (SQL code, storage, description)
 3. For SQL changes: Prepare parameter_updates list with targeted operations
 4. For storage changes: Build complete storage configuration (include all mappings)
@@ -1102,7 +1102,7 @@ EXAMPLE WORKFLOWS:
 
 Example 1 - Update SQL script in existing code block:
 Step 1: Get current config
-  result = get_config(component_id="keboola.snowflake-transformation", configuration_id="12345")
+  result = get_configs(component_id="keboola.snowflake-transformation", configuration_id="12345")
   # Note the block_id (e.g., "b0") and code_id (e.g., "b0.c1") from result
 
 Step 2: Update the SQL
@@ -1507,7 +1507,7 @@ Example 4 - Update storage mappings:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_config first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
+      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_configs first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
       "items": {
         "discriminator": {
           "mapping": {
@@ -1558,7 +1558,7 @@ Example 4 - Update storage mappings:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
+      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
     }
   },
@@ -2645,9 +2645,9 @@ HOW IT WORKS:
 
 IMPORTANT:
 - Always use this tool when the user mentions a name but you don't have the exact ID
-- The search returns IDs that you can use with other tools (e.g., get_table, get_configs, get_flows)
+- The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
 - Results are ordered by update time. The most recently updated items are returned first.
-- For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
+- For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
 - Use find_component_id and get_configs tools to find configurations related to a specific component
 - If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
 

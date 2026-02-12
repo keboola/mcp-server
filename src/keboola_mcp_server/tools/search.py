@@ -500,9 +500,9 @@ async def search(
 
     IMPORTANT:
     - Always use this tool when the user mentions a name but you don't have the exact ID
-    - The search returns IDs that you can use with other tools (e.g., get_table, get_configs, get_flows)
+    - The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
     - Results are ordered by update time. The most recently updated items are returned first.
-    - For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
+    - For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
     - Use find_component_id and get_configs tools to find configurations related to a specific component
     - If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
 
