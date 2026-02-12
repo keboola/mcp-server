@@ -236,6 +236,12 @@ async def get_configs(
     - For listing: Use component_types/component_ids.
     - For details: Use configs (can handle multiple).
 
+    WHEN NOT TO USE:
+    - Do NOT list all configs just to find a configuration by name. Use `search` with
+      item_types=["configuration", "transformation"] instead.
+    - Only use broad listing (empty component_types and component_ids) when you need
+      a complete inventory of all configurations in the project.
+
     EXAMPLES:
     - List all configs (summaries): component_types=[], component_ids=[]
     - List extractors (summaries): component_types=["extractor"]

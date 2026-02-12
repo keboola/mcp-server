@@ -444,6 +444,12 @@ WHEN TO USE:
 - For listing: Use component_types/component_ids.
 - For details: Use configs (can handle multiple).
 
+WHEN NOT TO USE:
+- Do NOT list all configs just to find a configuration by name. Use `search` with
+  item_types=["configuration", "transformation"] instead.
+- Only use broad listing (empty component_types and component_ids) when you need
+  a complete inventory of all configurations in the project.
+
 EXAMPLES:
 - List all configs (summaries): component_types=[], component_ids=[]
 - List extractors (summaries): component_types=["extractor"]
@@ -1621,6 +1627,11 @@ because it needs to restart.
 Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 
+WHEN NOT TO USE:
+- Do NOT list all data apps just to find one by name. Use `search` with
+  item_types=["data-app"] instead.
+- Only list all data apps when you need a complete inventory.
+
 Considerations:
 - If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
 - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
@@ -2001,6 +2012,11 @@ RULES:
 
 Lists flows or retrieves full details for specific flows.
 
+WHEN NOT TO USE:
+- Do NOT call with `flow_ids=[]` just to find a flow by name. Use `search` with
+  item_types=["flow"] instead.
+- Only use `flow_ids=[]` when you need a complete list of all flows in the project.
+
 OPTIONS:
 - `flow_ids=[]` → summaries of all flows in the project
 - `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows
@@ -2351,6 +2367,11 @@ DECISION GUIDE:
 - If you already know job IDs → use MODE 1 directly
 - For monitoring/browsing → use MODE 2 with filters
 
+NOTE: Jobs cannot be found by name using the `search` tool. However, always use the filtering
+parameters (status, component_id, config_id) to narrow results rather than listing all jobs
+with no filters. If you need to find jobs for a specific configuration but only know its name,
+first use `search` to find the configuration ID, then filter jobs by that config_id.
+
 COMMON WORKFLOWS:
 1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1
 2. Check recent runs: job_ids=[], component_id="...", limit=10 → see latest executions
@@ -2602,13 +2623,17 @@ Searches for Keboola items (tables, buckets, configurations, transformations, fl
 by matching patterns against item ID, name, display name, or description. Returns matching items grouped by type
 with their IDs and metadata.
 
+THIS IS THE PRIMARY DISCOVERY TOOL. Always use it BEFORE any get_* tool when you need to find items
+by name. Do NOT enumerate items with get_buckets, get_tables, get_configs, get_flows, or get_data_apps
+just to locate a specific item — use this tool instead.
+
 WHEN TO USE:
 - User asks to "find", "locate", or "search for" something by name
 - User mentions a partial name and you need to find the full item (e.g., "find the customer table")
 - User asks "what tables/configs/flows do I have with X in the name?"
 - You need to discover items before performing operations on them
 - User asks to "list all items with [name] in it"
-- DO NOT use for listing all items of a specific type. Use get_configs, list_tables, get_flows, etc instead.
+- DO NOT use for listing all items of a specific type. Use get_configs, get_tables, get_flows, etc instead.
 
 HOW IT WORKS:
 - Searches by regex pattern matching against id, name, displayName, and description fields
@@ -2624,6 +2649,7 @@ IMPORTANT:
 - Results are ordered by update time. The most recently updated items are returned first.
 - For exact ID lookups, use specific tools like get_table, get_configs, get_flows instead
 - Use find_component_id and get_configs tools to find configurations related to a specific component
+- If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
 
 USAGE EXAMPLES:
 - user_input: "Find all tables with 'customer' in the name"
@@ -2787,6 +2813,11 @@ DATA VALIDATION:
 Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
 
+WHEN NOT TO USE:
+- Do NOT call with `bucket_ids=[]` just to find a bucket by name. Use `search` with
+  item_types=["bucket"] instead.
+- Only use `bucket_ids=[]` when you need a complete inventory of all buckets in the project.
+
 EXAMPLES:
 - `bucket_ids=[]` → summaries of all buckets in the project
 - `bucket_ids=["id1", ...]` → full details of the buckets with the specified IDs
@@ -2820,6 +2851,11 @@ EXAMPLES:
 
 Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, lineage references (created/updated by) and links.
+
+WHEN NOT TO USE:
+- Do NOT list tables across buckets just to find a table by name. Use `search` with
+  item_types=["table"] instead — it also matches column names and descriptions.
+- Only use `bucket_ids` listing when you need all tables in specific known buckets.
 
 RETURNS:
 - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
