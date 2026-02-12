@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from keboola_mcp_server.clients.scheduler import Schedule, ScheduleApiResponse, TargetConfiguration, TargetExecution
 from keboola_mcp_server.tools.flow.scheduler_model import ScheduleDetail
 
@@ -107,3 +109,75 @@ class TestScheduleDetail:
         assert schedule_detail.cron_tab == '*/30 * * * *'
         assert isinstance(schedule_detail.target_executions, list)
         assert len(schedule_detail.target_executions) == 0
+
+
+class TestTargetExecution:
+    """Test TargetExecution model validation with missing or nullable fields."""
+
+    @pytest.mark.parametrize(
+        ('raw_execution', 'expected_job_id', 'expected_execution_time'),
+        [
+            pytest.param(
+                {'jobId': '38562456', 'executionTime': '2026-02-11T10:10:07+00:00'},
+                '38562456',
+                datetime.fromisoformat('2026-02-11T10:10:07+00:00'),
+                id='all_fields_present',
+            ),
+            pytest.param(
+                {},
+                None,
+                None,
+                id='all_fields_missing',
+            ),
+            pytest.param(
+                {'jobId': '38562456'},
+                '38562456',
+                None,
+                id='execution_time_missing',
+            ),
+            pytest.param(
+                {'executionTime': '2026-02-11T10:10:07+00:00'},
+                None,
+                datetime.fromisoformat('2026-02-11T10:10:07+00:00'),
+                id='job_id_missing',
+            ),
+            pytest.param(
+                {'job-id': '38562456', 'execution-time': '2026-02-11T10:10:07+00:00'},
+                '38562456',
+                datetime.fromisoformat('2026-02-11T10:10:07+00:00'),
+                id='kebab_case_keys',
+            ),
+        ],
+    )
+    def test_target_execution_nullable_fields(
+        self,
+        raw_execution: dict,
+        expected_job_id: str | None,
+        expected_execution_time: datetime | None,
+    ):
+        """TargetExecution should not raise when API response is missing jobId or executionTime."""
+        execution = TargetExecution.model_validate(raw_execution)
+        assert execution.job_id == expected_job_id
+        assert execution.execution_time == expected_execution_time
+
+    def test_schedule_api_response_with_incomplete_executions(self):
+        """ScheduleApiResponse should not raise when executions have missing fields."""
+        raw_response = {
+            'id': '123',
+            'tokenId': 'token-abc',
+            'configurationId': 'config-456',
+            'configurationVersionId': '1',
+            'schedule': {'cronTab': '10 10 * * 2,3,4', 'timezone': 'UTC', 'state': 'enabled'},
+            'target': {'componentId': 'keboola.flow', 'configurationId': 'config-456', 'mode': 'run'},
+            'executions': [
+                {'job_id': '38562456', 'executionTime': '2026-02-11T10:10:07+00:00'},
+                {'jobId': '38487917', 'executionTime': '2026-02-10T10:10:05+00:00'},
+                {},
+            ],
+        }
+        schedule = ScheduleApiResponse.model_validate(raw_response)
+        assert len(schedule.executions) == 3
+        assert schedule.executions[0].job_id == '38562456'  # accepted via 'job_id' alias
+        assert schedule.executions[1].job_id == '38487917'
+        assert schedule.executions[2].job_id is None
+        assert schedule.executions[2].execution_time is None

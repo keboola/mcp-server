@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 
@@ -18,15 +18,27 @@ LOG = logging.getLogger(__name__)
 
 class Schedule(BaseModel):
 
-    cron_tab: str = Field(alias='cronTab', description='Cron expression for scheduling')
+    cron_tab: str = Field(
+        validation_alias=AliasChoices('cronTab', 'cron_tab', 'cron-tab'),
+        serialization_alias='cronTab',
+        description='Cron expression for scheduling',
+    )
     timezone: str = Field(description='Timezone for the schedule')
     state: str = Field(description='Schedule state (enabled/disabled)')
 
 
 class TargetConfiguration(BaseModel):
 
-    component_id: str = Field(alias='componentId', description='Component ID to execute')
-    configuration_id: str = Field(alias='configurationId', description='Configuration ID to execute')
+    component_id: str = Field(
+        validation_alias=AliasChoices('componentId', 'component_id', 'component-id'),
+        serialization_alias='componentId',
+        description='Component ID to execute',
+    )
+    configuration_id: str = Field(
+        validation_alias=AliasChoices('configurationId', 'configuration_id', 'configuration-id'),
+        serialization_alias='configurationId',
+        description='Configuration ID to execute',
+    )
     mode: str = Field(description='Execution mode (run)')
     tag: str | None = Field(default=None, description='Optional tag version')
 
@@ -34,17 +46,39 @@ class TargetConfiguration(BaseModel):
 class TargetExecution(BaseModel):
     """Target execution model having information about the execution of the target component configuration."""
 
-    job_id: str = Field(alias='jobId', description='Job ID of the execution')
-    execution_time: datetime = Field(alias='executionTime', description='Execution time')
+    job_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices('jobId', 'job_id', 'job-id'),
+        serialization_alias='jobId',
+        description='Job ID of the execution',
+    )
+    execution_time: datetime | None = Field(
+        default=None,
+        validation_alias=AliasChoices('executionTime', 'execution_time', 'execution-time'),
+        serialization_alias='executionTime',
+        description='Execution time',
+    )
 
 
 class ScheduleApiResponse(BaseModel):
     """Schedule API response model."""
 
     id: str = Field(description='Schedule ID (numeric string)')
-    token_id: str = Field(alias='tokenId', description='Token ID used for authentication')
-    configuration_id: str = Field(alias='configurationId', description='Configuration ID from Storage API')
-    configuration_version_id: str = Field(alias='configurationVersionId', description='Configuration version ID')
+    token_id: str = Field(
+        validation_alias=AliasChoices('tokenId', 'token_id', 'token-id'),
+        serialization_alias='tokenId',
+        description='Token ID used for authentication',
+    )
+    configuration_id: str = Field(
+        validation_alias=AliasChoices('configurationId', 'configuration_id', 'configuration-id'),
+        serialization_alias='configurationId',
+        description='Configuration ID from Storage API',
+    )
+    configuration_version_id: str = Field(
+        validation_alias=AliasChoices('configurationVersionId', 'configuration_version_id', 'configuration-version-id'),
+        serialization_alias='configurationVersionId',
+        description='Configuration version ID',
+    )
     schedule: Schedule = Field(description='Schedule configuration')
     target: TargetConfiguration = Field(description='Target configuration')
     executions: list[TargetExecution] = Field(default_factory=list, description='List of recent executions')
