@@ -511,37 +511,42 @@ class TestPreviewConfigDiff:
         assert result['updatedConfig']['description'] == 'Updated flow description'
 
     @pytest.mark.parametrize(
-        'existing_schedule_dicts,schedules_request,expected_original,expected_updated',
+        ('existing_schedule_dicts', 'schedules_request', 'expected_original', 'expected_updated'),
         [
             pytest.param(
                 # add: no existing schedulers → new one appears only in updated
                 [],
-                [{'action': 'add', 'cronTab': '0 8 * * 1-5', 'timezone': 'Europe/Prague', 'state': 'enabled'}],
+                [{'action': 'add', 'cronTab': '0 8 * * 1,2,3,4,5', 'timezone': 'Europe/Prague', 'state': 'enabled'}],
                 [],
-                [{'cronTab': '0 8 * * 1-5', 'timezone': 'Europe/Prague', 'state': 'enabled'}],
+                [{'scheduleId': None, 'cronTab': '0 8 * * 1,2,3,4,5', 'timezone': 'Europe/Prague', 'state': 'enabled'}],
                 id='add',
             ),
             pytest.param(
                 # update: existing scheduler's cron changes; original must keep old value
-                [{'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
-                [{'action': 'update', 'scheduleId': 'sched-1', 'cronTab': '0 10 * * 1-5'}],
-                [{'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
-                [{'scheduleId': 'sched-1', 'cronTab': '0 10 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [{'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [{'action': 'update', 'scheduleId': 'sched-1', 'cronTab': '0 10 * * 1,2,3,4,5'}],
+                [{'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [{'scheduleId': 'sched-1', 'cronTab': '0 10 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'enabled'}],
                 id='update',
             ),
             pytest.param(
                 # remove: existing scheduler disappears in updated; original must still have it
-                [{'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [{'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'enabled'}],
                 [{'action': 'remove', 'scheduleId': 'sched-1'}],
-                [{'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'}],
+                [{'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'enabled'}],
                 [],
                 id='remove',
             ),
             pytest.param(
                 # multiple actions in one request: update one, remove another, add a new one
                 [
-                    {'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'},
-                    {'schedule_id': 'sched-2', 'cron_tab': '0 20 * * 1-5', 'timezone': 'UTC', 'state': 'disabled'},
+                    {'schedule_id': 'sched-1', 'cron_tab': '0 8 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'enabled'},
+                    {
+                        'schedule_id': 'sched-2',
+                        'cron_tab': '0 20 * * 1,2,3,4,5',
+                        'timezone': 'UTC',
+                        'state': 'disabled',
+                    },
                 ],
                 [
                     {'action': 'update', 'scheduleId': 'sched-1', 'state': 'disabled'},
@@ -549,12 +554,12 @@ class TestPreviewConfigDiff:
                     {'action': 'add', 'cronTab': '0 6 * * 1', 'timezone': 'US/Eastern', 'state': 'enabled'},
                 ],
                 [
-                    {'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'enabled'},
-                    {'scheduleId': 'sched-2', 'cronTab': '0 20 * * 1-5', 'timezone': 'UTC', 'state': 'disabled'},
+                    {'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'enabled'},
+                    {'scheduleId': 'sched-2', 'cronTab': '0 20 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'disabled'},
                 ],
                 [
-                    {'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1-5', 'timezone': 'UTC', 'state': 'disabled'},
-                    {'cronTab': '0 6 * * 1', 'timezone': 'US/Eastern', 'state': 'enabled'},
+                    {'scheduleId': 'sched-1', 'cronTab': '0 8 * * 1,2,3,4,5', 'timezone': 'UTC', 'state': 'disabled'},
+                    {'scheduleId': None, 'cronTab': '0 6 * * 1', 'timezone': 'US/Eastern', 'state': 'enabled'},
                 ],
                 id='multiple_actions',
             ),
@@ -640,7 +645,7 @@ class TestPreviewConfigDiff:
         assert result['updatedConfig']['schedulers'] == expected_updated
 
     @pytest.mark.parametrize(
-        'existing_schedule_dicts,schedules_request,expected_error_fragment',
+        ('existing_schedule_dicts', 'schedules_request', 'expected_error_fragment'),
         [
             pytest.param(
                 [],
@@ -650,7 +655,7 @@ class TestPreviewConfigDiff:
             ),
             pytest.param(
                 [],
-                [{'action': 'update', 'scheduleId': 'sched-missing', 'cronTab': '0 8 * * 1-5'}],
+                [{'action': 'update', 'scheduleId': 'sched-missing', 'cronTab': '0 8 * * 1,2,3,4,5'}],
                 'sched-missing',
                 id='update_nonexistent',
             ),

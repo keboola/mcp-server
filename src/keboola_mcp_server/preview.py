@@ -17,9 +17,9 @@ from keboola_mcp_server.tools.components import tools as components_tools
 from keboola_mcp_server.tools.components.model import ConfigParamUpdate, TfParamUpdate
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
+from keboola_mcp_server.tools.flow import scheduler as scheduler_tools
 from keboola_mcp_server.tools.flow import tools as flow_tools
 from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest
-from keboola_mcp_server.tools.flow import scheduler as scheduler_tools
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -279,8 +279,11 @@ async def preview_config_diff(rq: Request) -> Response:
         if change_description := preview_rq.tool_params.get('change_description'):
             updated_config['changeDescription'] = change_description
         if preview_rq.tool_params.get('schedules') is not None:
-            original_schedulers, updated_schedulers = await scheduler_tools.validate_and_compute_scheduler_preview(
-                **mutator_params
+            original_schedulers, updated_schedulers = await scheduler_tools.compute_schedulers_preview(
+                client=mutator_params['client'],
+                configuration_id=mutator_params['configuration_id'],
+                flow_type=mutator_params['flow_type'],
+                schedules=mutator_params.get('schedules', tuple()),
             )
             original_config['schedulers'] = original_schedulers
             updated_config['schedulers'] = updated_schedulers

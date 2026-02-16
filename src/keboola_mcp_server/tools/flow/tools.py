@@ -37,7 +37,6 @@ from keboola_mcp_server.tools.flow.model import (
     GetFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.scheduler import (
-    validate_and_compute_scheduler_preview,
     fetch_schedules_for_flows,
     process_schedule_request,
 )

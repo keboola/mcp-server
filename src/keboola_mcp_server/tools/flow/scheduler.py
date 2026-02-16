@@ -1,10 +1,9 @@
 """Scheduler management functions for creating, updating, and deleting schedulers."""
 
-import copy
 import logging
-from typing import Any, Sequence, TypedDict
+from typing import Any, Sequence
 
-from pydantic.config import JsonDict
+from pydantic import AliasChoices, BaseModel, Field
 
 from keboola_mcp_server.clients.client import FlowType, KeboolaClient
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
@@ -86,83 +85,138 @@ def validate_cron_tab(cron_tab: str | None) -> None:
         raise ValueError(f'Invalid cron tab expression: {str(e)}.\n{CRON_TAB_INSTRUCTIONS}') from e
 
 
-class SimplifiedScheduleDict(TypedDict):
+class SimplifiedSchedule(BaseModel):
     """Simplified schedule dictionary."""
 
-    schedule_id: str | None
-    cron_tab: str | None
-    timezone: str | None
-    state: str | None
+    schedule_id: str | None = Field(
+        description='The schedule ID',
+        validation_alias=AliasChoices('scheduleId', 'schedule_id'),
+        serialization_alias='scheduleId',
+    )
+    cron_tab: str | None = Field(
+        description='The cron tab', validation_alias=AliasChoices('cronTab', 'cron_tab'), serialization_alias='cronTab'
+    )
+    timezone: str | None = Field(
+        description='The timezone',
+        validation_alias=AliasChoices('timezone', 'timezone'),
+        serialization_alias='timezone',
+    )
+    state: str | None = Field(
+        description='The state', validation_alias=AliasChoices('state', 'state'), serialization_alias='state'
+    )
+
+    def merge(self, other: 'SimplifiedSchedule') -> 'SimplifiedSchedule':
+        """Merge the current schedule with the other schedule."""
+        return SimplifiedSchedule.model_construct(
+            schedule_id=self.schedule_id,
+            cron_tab=self.cron_tab if other.cron_tab is None else other.cron_tab,
+            timezone=self.timezone if other.timezone is None else other.timezone,
+            state=self.state if other.state is None else other.state,
+        )
 
 
-async def validate_and_compute_scheduler_preview(
+async def _update_schedulers_internal(
     *,
     client: KeboolaClient,
     configuration_id: str,
     flow_type: FlowType,
     schedules: Sequence[ScheduleRequest] = tuple(),
-) -> tuple[list[JsonDict], list[JsonDict]]:
+) -> tuple[dict[str, SimplifiedSchedule], dict[str, SimplifiedSchedule | None], list[SimplifiedSchedule]]:
     """
-    Compute original and updated scheduler lists for preview by adding/updating/removing schedules.
+    Compute original, updated and new schedulers for preview by adding/updating/removing schedules.
 
     :param client: KeboolaClient instance
     :param configuration_id: The configuration ID to schedule
     :param flow_type: The type of flow to schedule
     :param schedules: The list of schedule requests to compute the preview for
-    :return: A tuple of the original and updated scheduler lists
+    :return: A tuple of the original, updated and new schedulers
     """
 
     current_schedulers = await list_schedules_for_config(
         client=client, component_id=flow_type, configuration_id=configuration_id
     )
 
-    def _to_dict_schedule(s: ScheduleDetail | ScheduleRequest) -> SimplifiedScheduleDict:
-        return {'scheduleId': s.schedule_id, 'cronTab': s.cron_tab, 'timezone': s.timezone, 'state': s.state}
-
-    def _merge_dict_schedules(existing: SimplifiedScheduleDict, new: SimplifiedScheduleDict) -> SimplifiedScheduleDict:
-        return {
-            'scheduleId': existing['scheduleId'],
-            'cronTab': new.get('cronTab', existing['cronTab']),
-            'timezone': new.get('timezone', existing['timezone']),
-            'state': new.get('state', existing['state']),
-        }
-
-    original_schedulers: dict[str, Any] = {
-        schedule.schedule_id: _to_dict_schedule(schedule)
-        for schedule in sorted(current_schedulers, key=lambda x: x.schedule_id)
+    original_schedulers: dict[str, SimplifiedSchedule] = {
+        schedule.schedule_id: SimplifiedSchedule.model_construct(
+            schedule_id=schedule.schedule_id,
+            cron_tab=schedule.cron_tab,
+            timezone=schedule.timezone,
+            state=schedule.state,
+        )
+        for schedule in current_schedulers
     }
-    new_schedulers: list[dict[str, Any]] = []
-    updated_schedulers: dict[str, Any] = copy.deepcopy(original_schedulers)
-    for request in schedules:
-        if request.action == 'add':
-            if request.cron_tab is None:
-                raise ValueError('Cron tab is required when creating a new schedule')
-            validate_cron_tab(request.cron_tab)
-            new_schedulers.append(
-                _merge_dict_schedules(
-                    existing={'scheduleId': None, 'cronTab': None, 'timezone': 'UTC', 'state': 'enabled'},
-                    new=_to_dict_schedule(request),
+    new_schedulers: list[SimplifiedSchedule] = []
+    updated_schedulers: dict[str, SimplifiedSchedule | None] = {}
+    try:
+        for request in schedules:
+            if request.action == 'add':
+                if request.cron_tab is None:
+                    raise ValueError('Cron tab is required when creating a new schedule')
+                validate_cron_tab(request.cron_tab)
+                new_schedulers.append(
+                    SimplifiedSchedule.model_construct(
+                        schedule_id=None, cron_tab=None, timezone='UTC', state='enabled'
+                    ).merge(request)
                 )
-            )
-        elif request.action == 'remove':
-            if request.schedule_id not in updated_schedulers:
-                raise ValueError(
-                    f'Schedule {request.schedule_id} cannot be removed because it was not found in the current '
-                    'schedulers.'
-                )
-            updated_schedulers.pop(request.schedule_id)
-        elif request.action == 'update':
-            if request.schedule_id not in updated_schedulers:
-                raise ValueError(
-                    f'Schedule (ID: {request.schedule_id}) cannot be updated because it was not found in the current '
-                    'schedulers.'
-                )
-            validate_cron_tab(request.cron_tab)
-            updated_schedulers[request.schedule_id] = _merge_dict_schedules(
-                existing=updated_schedulers[request.schedule_id], new=_to_dict_schedule(request)
-            )
+            elif request.action == 'update':
+                if request.schedule_id not in original_schedulers:
+                    raise ValueError(
+                        f'Schedule (ID: {request.schedule_id}) cannot be updated because it was not found in the '
+                        'current original schedulers.'
+                    )
+                validate_cron_tab(request.cron_tab)
+                updated_schedulers[request.schedule_id] = original_schedulers[request.schedule_id].merge(request)
+            elif request.action == 'remove':
+                if request.schedule_id not in original_schedulers:
+                    raise ValueError(
+                        f'Schedule (ID: {request.schedule_id}) cannot be removed because it was not found in the '
+                        'current original schedulers.'
+                    )
+                updated_schedulers[request.schedule_id] = None
+            else:
+                raise ValueError(f'Invalid action for schedulers: {request.action}.')
+    except ValueError as e:
+        raise e
+    except Exception as e:
+        raise ValueError(f'Error when processing scheduler requests: {str(e)}') from e
+    return original_schedulers, updated_schedulers, new_schedulers
 
-    return list(original_schedulers.values()), list(updated_schedulers.values()) + new_schedulers
+
+async def compute_schedulers_preview(
+    *,
+    client: KeboolaClient,
+    configuration_id: str,
+    flow_type: str,
+    schedules: Sequence[ScheduleRequest],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Compute the preview of the schedulers for a configuration.
+
+    :param client: KeboolaClient instance
+    :param configuration_id: The configuration ID to schedule
+    :param flow_type: The type of flow to schedule
+    :param schedules: The list of schedule requests to compute the preview for
+    :return: A tuple of original, updated (original - removed + new) shedules in lists
+    """
+    original_schedulers, updated_schedulers, new_schedulers = await _update_schedulers_internal(
+        client=client, configuration_id=configuration_id, flow_type=flow_type, schedules=schedules
+    )
+
+    # Sync the updated schedulers with the original schedulers and sort them by schedule_id for diff preview
+    synced_updated_list = []
+    original_list = []
+    for prev in sorted(original_schedulers.values(), key=lambda x: x.schedule_id):
+        if prev.schedule_id in updated_schedulers:
+            if updated_schedulers[prev.schedule_id] is not None:
+                synced_updated_list.append(
+                    updated_schedulers[prev.schedule_id].model_dump(by_alias=True, exclude_none=False)
+                )
+        else:
+            synced_updated_list.append(prev.model_dump(by_alias=True, exclude_none=False))
+        original_list.append(prev.model_dump(by_alias=True, exclude_none=False))
+
+    new_list = [s.model_dump(by_alias=True, exclude_none=False) for s in new_schedulers]
+    return original_list, synced_updated_list + new_list
 
 
 async def process_schedule_request(
@@ -182,48 +236,42 @@ async def process_schedule_request(
     :return: ScheduleDetail for the created/modified schedule
     """
 
-    _, _ = await validate_and_compute_scheduler_preview(
+    _, updated_schedulers, new_schedulers = await _update_schedulers_internal(
         client=client, configuration_id=target_configuration_id, flow_type=target_component_id, schedules=requests
     )
     responses: list[str] = []
-    for request in requests:
-        action = request.action
-        schedule_id = request.schedule_id
-        cron_tab = request.cron_tab
-        timezone = request.timezone
-        state = request.state
-        try:
-            if action == 'add':
-                schedule_name = f'Schedule for {target_configuration_id}'
-                response = await create_schedule(
-                    client=client,
-                    target_component_id=target_component_id,
-                    target_configuration_id=target_configuration_id,
-                    cron_tab=cron_tab,
-                    timezone=timezone or 'UTC',
-                    state=state or 'enabled',
-                    schedule_name=schedule_name,
-                    schedule_description=f'Automated schedule for {target_configuration_id}',
-                    target_mode='run',
-                )
-                responses.append(f'Created schedule: {response.schedule_id}')
-            elif action == 'update':
-                await update_schedule(
-                    client=client,
-                    schedule_config_id=schedule_id,
-                    cron_tab=cron_tab,
-                    timezone=timezone,
-                    state=state,
-                    change_description='Schedule Updated',
-                )
-                responses.append(f'Updated schedule: {schedule_id}')
-            elif action == 'remove':
+    try:
+        for schedule_id, schedule in updated_schedulers.items():
+            if schedule is None:
+                # Remove schedule
                 await remove_schedule(client=client, schedule_config_id=schedule_id)
                 responses.append(f'Removed schedule: {schedule_id}')
             else:
-                raise ValueError(f'Invalid action for schedulers: {action}.')
-        except Exception as e:
-            raise ValueError(f'Error processing schedule request ({request.model_dump()}): {str(e)}') from e
+                # Update schedule
+                await update_schedule(
+                    client=client,
+                    schedule_config_id=schedule_id,
+                    cron_tab=schedule['cronTab'],
+                    timezone=schedule['timezone'],
+                    state=schedule['state'],
+                    change_description='Schedule Updated',
+                )
+                responses.append(f'Updated schedule: {schedule_id}')
+        for new_scheduler in new_schedulers:
+            response = await create_schedule(
+                client=client,
+                target_component_id=target_component_id,
+                target_configuration_id=target_configuration_id,
+                cron_tab=new_scheduler['cronTab'],
+                timezone=new_scheduler['timezone'],
+                state=new_scheduler['state'],
+                schedule_name=f'Schedule for {target_configuration_id}',
+                schedule_description=f'Automated schedule for {target_configuration_id}',
+                target_mode='run',
+            )
+            responses.append(f'Created schedule: {response.schedule_id}')
+    except Exception as e:
+        raise ValueError(f'Error processing schedule requests: {str(e)}') from e
     return responses
 
 
