@@ -2628,12 +2628,11 @@ by name. Do NOT enumerate items with get_buckets, get_tables, get_configs, get_f
 just to locate a specific item — use this tool instead.
 
 WHEN TO USE:
-- User asks to "find", "locate", or "search for" something by name
+- User asks to "find", "locate", or "search for" something by name, keyword, or text pattern
 - User mentions a partial name and you need to find the full item (e.g., "find the customer table")
 - User asks "what tables/configs/flows do I have with X in the name?"
 - You need to discover items before performing operations on them
 - User asks to "list all items with [name] in it"
-- DO NOT use for listing all items of a specific type. Use get_configs, get_tables, get_flows, etc instead.
 
 HOW IT WORKS:
 - Searches by regex pattern matching against id, name, displayName, and description fields
