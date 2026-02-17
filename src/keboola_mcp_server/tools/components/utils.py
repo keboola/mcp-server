@@ -425,6 +425,31 @@ def get_nested(obj: Mapping[str, Any] | None, key: str, *, default: T | None = N
     return d
 
 
+# Regex matching valid unquoted JSONPath field names (letters, digits, underscores, starting with letter/underscore)
+_VALID_JSONPATH_FIELD = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
+
+def _normalize_jsonpath(path: str) -> str:
+    """Normalize a dot-notation path by quoting segments that contain special characters.
+
+    jsonpath_ng cannot parse field names with characters like '#' unless they are quoted.
+    This function auto-quotes such segments so that e.g. '#anthropic_api_key' becomes
+    '"#anthropic_api_key"' and 'parameters.#key' becomes 'parameters."#key"'.
+
+    :param path: Dot-separated path (e.g., 'parameters.#anthropic_api_key')
+    :return: Path with special-character segments quoted for jsonpath_ng
+    """
+    segments = []
+    for segment in path.split('.'):
+        if segment.startswith('"') or segment.startswith("'") or '[' in segment or segment == '$':
+            segments.append(segment)
+        elif not _VALID_JSONPATH_FIELD.match(segment):
+            segments.append(f'"{segment}"')
+        else:
+            segments.append(segment)
+    return '.'.join(segments)
+
+
 def set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
     """
     Sets a value in a nested dictionary using a dot-separated path.
@@ -463,13 +488,13 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
     :return: The modified parameters dictionary
     :raises ValueError: If trying to set a nested value through a non-dict value in the path
     """
+    normalized_path = _normalize_jsonpath(update.path)
     try:
-        jsonpath_expr = jsonpath_ng.parse(update.path)
+        jsonpath_expr = jsonpath_ng.parse(normalized_path)
     except (JSONPathError, TypeError) as e:
         raise ValueError(
             f'Invalid JSONPath expression "{update.path}": {e}. '
-            f'Ensure the path only contains valid JSONPath characters (letters, digits, dots, underscores, '
-            f'brackets). Characters like "#" are not supported.'
+            f'Ensure the path contains valid field names separated by dots.'
         ) from e
 
     if update.op == 'set':
