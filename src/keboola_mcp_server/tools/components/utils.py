@@ -28,6 +28,7 @@ from typing import Any, Mapping, Sequence, TypeVar, cast
 
 import jsonpath_ng
 from httpx import HTTPStatusError
+from jsonpath_ng.exceptions import JSONPathError
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import (
@@ -462,7 +463,14 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
     :return: The modified parameters dictionary
     :raises ValueError: If trying to set a nested value through a non-dict value in the path
     """
-    jsonpath_expr = jsonpath_ng.parse(update.path)
+    try:
+        jsonpath_expr = jsonpath_ng.parse(update.path)
+    except (JSONPathError, TypeError) as e:
+        raise ValueError(
+            f'Invalid JSONPath expression "{update.path}": {e}. '
+            f'Ensure the path only contains valid JSONPath characters (letters, digits, dots, underscores, '
+            f'brackets). Characters like "#" are not supported.'
+        ) from e
 
     if update.op == 'set':
         try:
