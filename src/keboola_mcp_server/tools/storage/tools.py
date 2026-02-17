@@ -477,6 +477,11 @@ async def get_buckets(
     Lists buckets or retrieves full details of specific buckets, including descriptions,
     lineage references (created/updated by), and links.
 
+    WHEN NOT TO USE:
+    - Do NOT call with `bucket_ids=[]` just to find a bucket by name. Use `search` with
+      item_types=["bucket"] instead.
+    - Only use `bucket_ids=[]` when you need a complete inventory of all buckets in the project.
+
     EXAMPLES:
     - `bucket_ids=[]` → summaries of all buckets in the project
     - `bucket_ids=["id1", ...]` → full details of the buckets with the specified IDs
@@ -571,6 +576,11 @@ async def get_tables(
     """
     Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
     column definitions, lineage references (created/updated by) and links.
+
+    WHEN NOT TO USE:
+    - Do NOT list tables across buckets just to find a table by name. Use `search` with
+      item_types=["table"] instead — it also matches column names and descriptions.
+    - Only use `bucket_ids` listing when you need all tables in specific known buckets.
 
     RETURNS:
     - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).
