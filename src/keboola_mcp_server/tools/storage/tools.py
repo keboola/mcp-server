@@ -79,13 +79,6 @@ def _sum(a: int | None, b: int | None) -> int | None:
         return (a or 0) + (b or 0)
 
 
-def _extract_description(values: dict[str, Any]) -> str | None:
-    """Extracts the description from values or metadata."""
-    if not (description := values.get('description')):
-        description = get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
-    return description or None
-
-
 class BucketDetail(BaseModel):
     id: str = Field(description='Unique identifier for the bucket.')
     name: str = Field(description='Name of the bucket.')
@@ -175,7 +168,13 @@ class BucketDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        values['description'] = _extract_description(values)
+        description = values.get('description')
+        metadata = values.get('metadata', [])
+        if not description:
+            description = get_metadata_property(metadata, MetadataField.SHARED_DESCRIPTION)
+        if not description:
+            description = get_metadata_property(metadata, MetadataField.DESCRIPTION)
+        values['description'] = description or None
         return values
 
     @model_validator(mode='before')
@@ -302,7 +301,14 @@ class TableDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        values['description'] = _extract_description(values)
+        description = values.get('description')
+        if not description:
+            metadata = values.get('metadata', [])
+            description = get_metadata_property(metadata, MetadataField.DESCRIPTION)
+        if not description:
+            metadata = get_nested(values, 'sourceTable.metadata', default=[])
+            description = get_metadata_property(metadata, MetadataField.DESCRIPTION)
+        values['description'] = description or None
         return values
 
     @model_validator(mode='before')
@@ -511,7 +517,7 @@ async def get_buckets(
 
 async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManager) -> GetBucketsOutput:
     """Retrieves information about all buckets in the project."""
-    raw_bucket_data = await client.storage_client.bucket_list(include=['metadata'])
+    raw_bucket_data = await client.storage_client.bucket_list(include=['metadata', 'linkedBuckets'])
 
     # group buckets by their ID as it would appear on the production branch
     buckets_by_prod_id: dict[str, list[BucketDetail]] = defaultdict(list)
@@ -675,6 +681,9 @@ async def _get_table(
 
     raw_columns = cast(list[str], raw_table.get('columns', []))
     raw_column_metadata = cast(dict[str, list[dict[str, Any]]], raw_table.get('columnMetadata', {}))
+    raw_source_column_metadata = cast(
+        dict[str, list[dict[str, Any]]], get_nested(raw_table, 'sourceTable.columnMetadata', default={})
+    )
     raw_primary_key = cast(list[str], raw_table.get('primaryKey', []))
 
     sql_dialect = await workspace_manager.get_sql_dialect()
@@ -683,10 +692,20 @@ async def _get_table(
     column_info = []
     for col_name in raw_columns:
         col_meta = raw_column_metadata.get(col_name, [])
+        source_col_meta = raw_source_column_metadata.get(col_name, [])
+
         description: str | None = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
+        if not description:
+            description = get_metadata_property(source_col_meta, MetadataField.DESCRIPTION)
+
         base_type: str | None = get_metadata_property(
             col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
         )
+        if not base_type:
+            base_type = get_metadata_property(
+                source_col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
+            )
+
         if db_table_info and (db_column_info := db_table_info.columns.get(col_name)):
             native_type = db_column_info.native_type
             nullable = db_column_info.nullable
@@ -733,6 +752,7 @@ async def _list_tables(
 ) -> Iterable[TableDetail]:
     """Retrieves all tables in a specific bucket with their basic information."""
     tables_by_prod_id: dict[str, TableDetail] = {}
+    sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
 
     for bucket_id in bucket_ids:
         prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
@@ -743,7 +763,7 @@ async def _list_tables(
         #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
 
         if prod_bucket:
-            raw_table_data = await client.storage_client.bucket_table_list(prod_bucket.id, include=['metadata'])
+            raw_table_data = await client.storage_client.bucket_table_list(prod_bucket.id, include=sapi_includes)
             for raw in raw_table_data:
                 table_name = cast(str, raw.get('name', ''))
                 table = TableDetail.model_validate(
@@ -753,7 +773,7 @@ async def _list_tables(
                 tables_by_prod_id[table.id] = table
 
         if dev_bucket:
-            raw_table_data = await client.storage_client.bucket_table_list(dev_bucket.id, include=['metadata'])
+            raw_table_data = await client.storage_client.bucket_table_list(dev_bucket.id, include=sapi_includes)
             for raw in raw_table_data:
                 table = TableDetail.model_validate(raw)
                 tables_by_prod_id[table.prod_id] = table.model_copy(

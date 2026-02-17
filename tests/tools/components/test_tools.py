@@ -784,7 +784,6 @@ async def test_update_sql_transformation(
         configuration=expected_config,
         updated_name=updated_name,
         updated_description=updated_description,
-        is_disabled=None,
     )
 
 
@@ -1092,7 +1091,6 @@ async def test_update_config(
         change_description=change_description,
         updated_name=updated_name,
         updated_description=updated_description,
-        is_disabled=None,
     )
 
 

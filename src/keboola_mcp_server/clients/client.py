@@ -82,9 +82,13 @@ class KeboolaClient:
         return instance
 
     async def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
+        """
+        Gets a KeboolaClient configured for the given branch. It verifies that the branch exists
+        and normalizes the default-branch ID to None.
+        """
         if branch_id == self.branch_id:
             return self
-        elif branch_id is None:
+        elif not branch_id:
             return KeboolaClient(
                 storage_api_url=self.storage_api_url,
                 storage_api_token=self.token,
@@ -93,16 +97,18 @@ class KeboolaClient:
                 headers=self._headers,
             )
         else:
-            is_default = False
             try:
                 detail = await self.storage_client.dev_branch_detail(branch_id)
                 is_default = detail.get('isDefault') is True
+
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
-                    LOG.error(f'Branch not found: {branch_id}: {exc.response.text}')
+                    message = f'Branch "{branch_id}" not found'
+                    LOG.error(f'{message}: {exc.response.text}')
+                    raise httpx.HTTPStatusError(message, request=exc.request, response=exc.response) from exc
                 else:
-                    LOG.error(f'Failed to get branch detail for {branch_id}: {exc.response.text}')
-                raise exc
+                    LOG.error(f'Failed to get details of "{branch_id}" branch: {exc.response.text}')
+                    raise exc
 
             # Converts the branch id referring to the main/production branch to None as we expect
             normalized_branch_id = None if is_default else branch_id

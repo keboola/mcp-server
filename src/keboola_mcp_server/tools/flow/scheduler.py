@@ -135,6 +135,8 @@ async def _update_schedulers_internal(
     current_schedulers = await list_schedules_for_config(
         client=client, component_id=flow_type, configuration_id=configuration_id
     )
+    for scheduler in current_schedulers:
+        print(scheduler.model_dump(by_alias=True, exclude_none=False))
 
     original_schedulers: dict[str, SimplifiedSchedule] = {
         schedule.schedule_id: SimplifiedSchedule.model_construct(
@@ -251,9 +253,9 @@ async def process_schedule_request(
                 await update_schedule(
                     client=client,
                     schedule_config_id=schedule_id,
-                    cron_tab=schedule['cronTab'],
-                    timezone=schedule['timezone'],
-                    state=schedule['state'],
+                    cron_tab=schedule.cron_tab,
+                    timezone=schedule.timezone,
+                    state=schedule.state,
                     change_description='Schedule Updated',
                 )
                 responses.append(f'Updated schedule: {schedule_id}')
@@ -262,9 +264,9 @@ async def process_schedule_request(
                 client=client,
                 target_component_id=target_component_id,
                 target_configuration_id=target_configuration_id,
-                cron_tab=new_scheduler['cronTab'],
-                timezone=new_scheduler['timezone'],
-                state=new_scheduler['state'],
+                cron_tab=new_scheduler.cron_tab,
+                timezone=new_scheduler.timezone,
+                state=new_scheduler.state,
                 schedule_name=f'Schedule for {target_configuration_id}',
                 schedule_description=f'Automated schedule for {target_configuration_id}',
                 target_mode='run',

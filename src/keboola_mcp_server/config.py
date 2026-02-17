@@ -165,6 +165,7 @@ class MetadataField:
 
     DESCRIPTION = 'KBC.description'
     PROJECT_DESCRIPTION = 'KBC.projectDescription'
+    SHARED_DESCRIPTION = 'KBC.sharedDescription'  # set when sharing a bucket via Data Catalog
 
     # set for configurations created by MCP tools;
     # expected value: 'true'
