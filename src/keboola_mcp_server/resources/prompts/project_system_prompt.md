@@ -1,4 +1,4 @@
-### Finding Items by Name
+### Finding Items
 
 When looking for specific items (tables, buckets, configurations, flows, data apps) by name, description,
 partial match, or configuration content/reference, **always use the `search` tool first** rather than listing all
