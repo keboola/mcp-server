@@ -738,7 +738,6 @@ class TestPreviewConfigDiff:
 
         assert response.status_code == 200
         result = response.json()
-        print('TADY CUA', result['validationErrors'])
         assert result['isValid'] is False
         assert expected_error_fragment in str(result.get('validationErrors', ''))
 

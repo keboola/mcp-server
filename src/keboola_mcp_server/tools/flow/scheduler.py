@@ -130,7 +130,7 @@ async def _update_schedulers_internal(
     *,
     client: KeboolaClient,
     configuration_id: str,
-    flow_type: FlowType,
+    component_id: str,
     schedules: Sequence[ScheduleRequest] = tuple(),
 ) -> tuple[dict[str, SimplifiedSchedule], dict[str, SimplifiedSchedule | None], list[SimplifiedSchedule]]:
     """
@@ -138,13 +138,13 @@ async def _update_schedulers_internal(
 
     :param client: KeboolaClient instance
     :param configuration_id: The configuration ID to schedule
-    :param flow_type: The type of flow to schedule
+    :param component_id: The component ID to schedule
     :param schedules: The list of schedule requests to compute the preview for
     :return: A tuple of the original, updated and new schedulers
     """
 
     current_schedulers = await list_schedules_for_config(
-        client=client, component_id=flow_type, configuration_id=configuration_id
+        client=client, component_id=component_id, configuration_id=configuration_id
     )
 
     original_schedulers: dict[str, SimplifiedSchedule] = {
@@ -188,7 +188,7 @@ async def compute_schedulers_preview(
     *,
     client: KeboolaClient,
     configuration_id: str,
-    flow_type: str,
+    flow_type: FlowType,
     schedules: Sequence[ScheduleRequest],
 ) -> dict[str, list[dict[str, Any]]]:
     """
@@ -201,7 +201,7 @@ async def compute_schedulers_preview(
     :return: A mutator preview payload with original and updated schedulers
     """
     original_schedulers, updated_schedulers, new_schedulers = await _update_schedulers_internal(
-        client=client, configuration_id=configuration_id, flow_type=flow_type, schedules=schedules
+        client=client, configuration_id=configuration_id, component_id=flow_type, schedules=schedules
     )
 
     # Sync the updated schedulers with the original schedulers and sort them by schedule_id for diff preview
@@ -246,7 +246,7 @@ async def process_schedule_request(
     """
 
     _, updated_schedulers, new_schedulers = await _update_schedulers_internal(
-        client=client, configuration_id=target_configuration_id, flow_type=target_component_id, schedules=requests
+        client=client, configuration_id=target_configuration_id, component_id=target_component_id, schedules=requests
     )
     responses: list[str] = []
     try:
