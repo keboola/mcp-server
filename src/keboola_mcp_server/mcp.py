@@ -321,7 +321,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         else:
             tools = [t for t in tools if t.name != 'create_flow']
 
-        if token_role == 'admin':
+        if token_role in ('admin', 'share'):
             tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
         else:
             tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
@@ -357,7 +357,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     'please use"create_conditional_flow" tool instead.'
                 )
 
-        if token_role == 'admin':
+        if token_role in ('admin', 'share'):
             if tool.name == UPDATE_FLOW_TOOL_NAME:
                 raise ToolError(
                     'The "update_flow" tool is not available for admin tokens. '
