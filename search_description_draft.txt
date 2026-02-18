@@ -1,0 +1,112 @@
+Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.)
+in the current project and returns matching ID + metadata.
+
+This tool supports two complementary search types:
+
+1) textual
+- Searches item metadata fields by matching patterns against id, name, displayName, and description.
+- For tables, also searches column names and column descriptions.
+
+2) config-based
+- Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
+to a string, optionally narrowed by JSON path `scopes`.
+- Returns also `match_scopes` with JSON paths in configuration where a pattern was found.
+
+THIS IS THE PRIMARY DISCOVERY TOOL. Always use it BEFORE any get_* tool when you need to find items
+by name or specific configuration content. Do NOT enumerate items with get_buckets, get_tables, get_configs,
+get_flows, or get_data_apps just to locate a specific item — use this tool instead.
+
+WHEN TO USE:
+- User asks to "find", "locate", or "search for" something by name, keyword, text pattern, configuration content or
+value
+- User mentions a partial name and you need to find the full item (e.g., "find the customer table")
+- User asks "what tables/configs/flows do I have with X in the name?"
+- You need to discover items before performing operations on them
+- User asks to "list all items with [name] or [configuration value/part] in it"
+- User asks where a value, table, component, specific configuration ID, or specific settings is used in components,
+data-apps, flows, or transformations
+- You need to trace lineage by searching for IDs referenced in configurations, or to find flows using a
+  specific component, or find usage of a bucket/table in transformations or components, or to find items with
+  specific parameters.
+- User asks to "what is the genesis of this item?" or "explain me business logic of this item?"
+
+HOW IT WORKS:
+- Supports two types:
+  - search_type="textual": matches against id, name, displayName, and description, for tables also column names
+  and column descriptions
+  - search_type="config-based": matches inside configuration JSON objects, optionally narrowed by JSON path `scopes`
+- case-insensitive search (default)
+- mode for pattern search: `literal` (default) or `regex
+- Multiple patterns work as OR condition - matches items containing ANY of the patterns
+- Each result includes the item's ID, name, creation date, and relevant metadata
+- scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
+against the stringified JSON node content in those areas.
+
+IMPORTANT:
+- Always use this tool when the user mentions a name but you don't have the exact ID
+- The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
+- Results are ordered by update time. The most recently updated items are returned first.
+- Fill `item_types` to make the search more efficient when you know the item type; scanning buckets and tables can be
+expensive
+- For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
+- Use specific `scopes` only when you know the config structure (schema or real example); otherwise run config-based
+search without scopes.
+- Use find_component_id and get_configs tools to find configurations related to a specific component
+- If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
+
+USAGE EXAMPLES:
+1) textual search examples:
+  - user_input: "Find all tables with 'customer' in the name"
+    → patterns=["customer"], item_types=["table"]
+    → Returns all tables whose id, name, displayName, or description contains "customer"
+
+  - user_input: "Find tables with 'email' column"
+    → patterns=["email"], item_types=["table"]
+    → Returns all tables that have a column named "email" or with "email" in column description
+
+  - user_input: "Search for the sales transformation"
+    → patterns=["sales"], item_types=["transformation"]
+    → Returns transformations with "sales" in any searchable field
+
+  - user_input: "Find items named 'daily report' or 'weekly summary'"
+    → patterns=["daily.*report", "weekly.*summary"], item_types=[], mode="regex"
+    → Returns all items matching any of these patterns
+
+  - user_input: "Show me all configurations related to Google Analytics"
+    → patterns=["google.*analytics"], item_types=["configuration"], mode="regex"
+    → Returns configurations with matching patterns
+
+2) config-based search examples:
+  - user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
+    -> patterns=["in.c-prod.customers"], item_types=["transformation", "configuration"], search_type="config-based"
+    -> No scopes = search whole stringified config; result includes `match_scopes` with exact paths
+
+  - user_input: "Find configurations (etc.) using specific setting / id anywhere"
+    -> patterns=["setting", "id], item_types=["configuration"], search_type="config-based",
+
+  - user_input: "Find configurations (etc.) using specific setting /id in parameters"
+  -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based", scopes=["storage"]
+
+  - user_input: "Find configurations (etc.) using specific setting / id in storage"
+  -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based", scopes=["storage"]
+
+  - user_input: "Find configurations (etc.) using specific setting / id in authorization"
+    -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based",
+      scopes=["parameters.authorization", "authorization"]
+
+  - user_input: "Find components/transformations using my_bucket in input or output mappings"
+    -> patterns=["my_bucket"], item_types=["configuration", "transformation"], search_type="config-based",
+      scopes=["storage.input", "storage.output"],  return_all_matches=true
+    -> Returns matches with paths like `storage.input[0].source` or `storage.output[0].target`
+
+  - user_input: "Find flows using configuration ID 01k9cz233cvd1rga3zzx40g8qj"
+    -> patterns=["01k9cz233cvd1rga3zzx40g8qj"], item_types=["flow"], search_type="config-based",
+      scopes=["tasks", "phases"], return_all_matches=true
+    
+  - user_input: "Find transformations using this table / column / specific code in its script"
+    -> patterns=["element"], item_types=["transformation"], search_type="config-based",
+      scopes=["parameters"], return_all_matches=true
+
+  - user_input: "Find data apps using something in its config / python code / setting"
+    -> patterns=["something"], item_types=["data-app"], search_type="config-based", return_all_matches=true
+    -> Returns data apps where script/config sections contain the keyword and includes `match_scopes`
