@@ -18,6 +18,7 @@ from keboola_mcp_server.tools.components.model import ConfigParamUpdate, TfParam
 from keboola_mcp_server.tools.components.utils import get_sql_transformation_id_from_sql_dialect
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.tools.flow import tools as flow_tools
+from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -209,7 +210,9 @@ def _prepare_mutator(
 
     elif preview_rq.tool_name in {UPDATE_FLOW_TOOL_NAME, MODIFY_FLOW_TOOL_NAME}:
         mutator_fn = flow_tools.update_flow_internal
-        mutator_params.pop('schedules', None)
+        if schedules := mutator_params.get('schedules'):
+            type_adapter = TypeAdapter(list[ScheduleRequest])
+            mutator_params['schedules'] = type_adapter.validate_python(schedules)
 
     elif preview_rq.tool_name == 'modify_data_app':
         mutator_fn = data_app_tools.modify_data_app_internal
@@ -259,7 +262,8 @@ async def preview_config_diff(rq: Request) -> Response:
     mutator_fn, mutator_params = _prepare_mutator(preview_rq, client, workspace_manager)
 
     try:
-        original_config, new_config, *_ = await mutator_fn(**mutator_params)
+        original_config, new_config, *mutator_preview = await mutator_fn(**mutator_params)
+        mutator_preview = mutator_preview[0] if mutator_preview else None
         if isinstance(original_config, BaseModel):
             original_config = original_config.model_dump()
 
@@ -274,6 +278,14 @@ async def preview_config_diff(rq: Request) -> Response:
             updated_config['isDisabled'] = is_disabled
         if change_description := preview_rq.tool_params.get('change_description'):
             updated_config['changeDescription'] = change_description
+        if mutator_preview is not None and isinstance(mutator_preview, dict):
+            for key, value in mutator_preview.items():
+                if key.startswith('original_'):
+                    original_config[key.replace('original_', '')] = value
+                elif key.startswith('updated_'):
+                    updated_config[key.replace('updated_', '')] = value
+                else:
+                    raise ValueError(f'Invalid mutator preview key: "{key}"')
 
         preview_resp = PreviewConfigDiffResp(
             coordinates=coordinates,
