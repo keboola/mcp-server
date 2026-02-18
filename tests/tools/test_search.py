@@ -694,6 +694,135 @@ class TestSearch:
         if expected_count > 0:
             assert result[0].table_id == expected_first_table_id
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        (
+            'patterns',
+            'scopes',
+            'component_configurations',
+            'expected_hits',
+        ),
+        [
+            (
+                ['alpha', 'beta'],
+                ('parameters', 'storage.input'),
+                [
+                    {
+                        'id': 'test-config',
+                        'name': 'Test Config',
+                        'created': '2024-01-02T00:00:00Z',
+                        'configuration': {
+                            'parameters': {'query': 'alpha'},
+                            'storage': {'input': [{'source': 'beta'}]},
+                        },
+                        'rows': [],
+                    }
+                ],
+                [('test-config', ['parameters.query', 'storage.input[0].source'])],
+            ),
+            (
+                ['gamma'],
+                tuple(),
+                [
+                    {
+                        'id': 'test-config',
+                        'name': 'Test Config',
+                        'created': '2024-01-02T00:00:00Z',
+                        'configuration': {
+                            'parameters': {'query': 'alpha'},
+                            'storage': {
+                                'input': [{'source': 'beta'}, {'source': 'gamma'}],
+                                'output': [{'destination': 'gamma'}],
+                            },
+                        },
+                        'rows': [],
+                    }
+                ],
+                [('test-config', ['storage.input[1].source', 'storage.output[0].destination'])],
+            ),
+            (
+                ['alpha', 'gamma'],
+                tuple(),
+                [
+                    {
+                        'id': 'test-config-a',
+                        'name': 'Test Config A',
+                        'created': '2024-01-02T00:00:00Z',
+                        'configuration': {
+                            'parameters': {'query': 'alpha'},
+                            'storage': {'input': [{'source': 'beta'}]},
+                        },
+                        'rows': [],
+                    },
+                    {
+                        'id': 'test-config-b',
+                        'name': 'Test Config B',
+                        'created': '2024-01-03T00:00:00Z',
+                        'configuration': {
+                            'storage': {'output': [{'destination': 'gamma'}]},
+                        },
+                        'rows': [],
+                    },
+                    {
+                        'id': 'test-config-c',
+                        'name': 'Test Config C',
+                        'created': '2024-01-01T00:00:00Z',
+                        'configuration': {
+                            'parameters': {'query': 'nomatch'},
+                        },
+                        'rows': [],
+                    },
+                ],
+                [
+                    ('test-config-b', ['storage.output[0].destination']),
+                    ('test-config-a', ['parameters.query']),
+                ],
+            ),
+        ],
+        ids=[
+            'all_matches_in_scopes',
+            'most_specific_scope_only',
+            'multiple_configurations_returned',
+        ],
+    )
+    async def test_search_config_based_match_scopes(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+        patterns: list[str],
+        scopes: tuple[str, ...],
+        component_configurations: list[dict[str, Any]],
+        expected_hits: list[tuple[str, list[str]]],
+    ):
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+        keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.component_list = mocker.AsyncMock(
+            side_effect=lambda component_type, include=None: (
+                [
+                    {
+                        'id': 'keboola.ex-db-mysql',
+                        'type': 'extractor',
+                        'configurations': component_configurations,
+                    }
+                ]
+                if component_type == 'extractor'
+                else []
+            )
+        )
+        keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
+
+        result = await search(
+            ctx=mcp_context_client,
+            patterns=patterns,
+            item_types=(cast(SearchItemType, 'configuration'),),
+            search_type='config-based',
+            scopes=scopes,
+        )
+
+        assert [(hit.configuration_id, hit.match_scopes) for hit in result] == expected_hits
+
 
 @pytest.mark.parametrize(
     ('spec_kwargs', 'texts', 'expected'),
@@ -774,6 +903,7 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
     ('spec_kwargs', 'configuration', 'expected'),
     [
         (
+            # Scopes provided; each scope has one matching leaf – returns the exact leaf path.
             {
                 'patterns': ['alpha', 'beta'],
                 'item_types': ('configuration',),
@@ -785,11 +915,12 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
                 'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
             },
             [
-                {'scope': 'parameters', 'patterns': ['alpha']},
-                {'scope': 'storage.input', 'patterns': ['beta']},
+                {'scope': 'parameters.query', 'patterns': ['alpha']},
+                {'scope': 'storage.input[0].source', 'patterns': ['beta']},
             ],
         ),
         (
+            # Both patterns match across two leaves inside the same scope; each leaf gets its own entry.
             {
                 'patterns': ['alpha', 'beta'],
                 'item_types': ('configuration',),
@@ -801,11 +932,13 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
                 'storage': {'input': [{'source': 'beta'}, {'source': 'alpha'}], 'output': [{'destination': 'gamma'}]},
             },
             [
-                {'scope': 'parameters', 'patterns': ['alpha']},
-                {'scope': 'storage.input', 'patterns': ['alpha', 'beta']},
+                {'scope': 'parameters.query', 'patterns': ['alpha']},
+                {'scope': 'storage.input[0].source', 'patterns': ['beta']},
+                {'scope': 'storage.input[1].source', 'patterns': ['alpha']},
             ],
         ),
         (
+            # Pattern not present in any of the specified scopes → empty result.
             {
                 'patterns': ['gamma'],
                 'item_types': ('configuration',),
@@ -819,6 +952,7 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
             [],
         ),
         (
+            # No scopes → walk the whole config; can match parent nodes containing the searched fragment.
             {
                 'patterns': ['gamma'],
                 'item_types': ('configuration',),
@@ -828,9 +962,14 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
                 'parameters': {'query': 'alpha'},
                 'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
             },
-            [{'scope': None, 'patterns': ['gamma']}],
+            [
+                {'scope': 'storage', 'patterns': ['gamma']},
+                {'scope': 'storage.output', 'patterns': ['gamma']},
+                {'scope': 'storage.output[0].destination', 'patterns': ['gamma']},
+            ],
         ),
         (
+            # return_all_matched_patterns=False → stop after first matching leaf.
             {
                 'patterns': ['alpha', 'beta'],
                 'item_types': ('configuration',),
@@ -841,7 +980,29 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
                 'parameters': {'query': 'alpha'},
                 'storage': {'input': [{'source': 'beta'}], 'output': [{'destination': 'gamma'}]},
             },
-            [{'scope': 'parameters', 'patterns': ['alpha']}],
+            [{'scope': 'parameters.query', 'patterns': ['alpha']}],
+        ),
+        (
+            # Overlapping scopes should not return duplicate leaf hits.
+            {
+                'patterns': ['alpha'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters', 'parameters.query'),
+                'return_all_matched_patterns': True,
+            },
+            {'parameters': {'query': 'alpha'}},
+            [{'scope': 'parameters.query', 'patterns': ['alpha']}],
+        ),
+        (
+            # Scope pointing directly to scalar should still match (self-scope fallback).
+            {
+                'patterns': ['wttr.in'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters.api.baseUrl',),
+                'return_all_matched_patterns': True,
+            },
+            {'parameters': {'api': {'baseUrl': 'https://wttr.in'}}},
+            [{'scope': 'parameters.api.baseUrl', 'patterns': ['wttr.in']}],
         ),
     ],
     ids=[
@@ -850,6 +1011,8 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
         'no_patterns_in_scope',
         'all_patterns_no_scope',
         'any_patterns_return_first_match',
+        'overlapping_scopes_deduplicated',
+        'scalar_scope_matches_self',
     ],
 )
 def test_match_configuration_scopes(spec_kwargs: dict[str, Any], configuration: dict[str, Any], expected: list[dict]):
