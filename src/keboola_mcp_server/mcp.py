@@ -44,6 +44,13 @@ T = TypeVar('T')
 DEFAULT_CONCURRENCY = 10
 
 
+def is_read_only_tool(tool: Tool) -> bool:
+    """Check if a tool has readOnlyHint=True annotation."""
+    if tool.annotations is None:
+        return False
+    return tool.annotations.readOnlyHint is True
+
+
 @dataclasses.dataclass(frozen=True)
 class ServerState:
     config: Config
@@ -330,6 +337,11 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
 
+        # Role-based filtering: read-only access for guest and read roles
+        if token_role in ['guest', 'readonly']:
+            tools = [t for t in tools if is_read_only_tool(t)]
+            LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
+
         return tools
 
     async def on_call_tool(
@@ -341,6 +353,15 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         token_info = await self.get_token_info(context.fastmcp_context)
         features = self.get_project_features(token_info)
         token_role = self.get_token_role(token_info).lower()
+
+        # Block non-read-only tools for guest and read-only roles
+        if token_role in ['guest', 'readonly']:
+            if not is_read_only_tool(tool):
+                raise ToolError(
+                    f'Access denied: The tool "{tool.name}" requires write permissions. '
+                    f'Your current role ({token_role}) only allows read-only operations. '
+                    f'Contact your administrator to request write access.'
+                )
 
         if 'hide-conditional-flows' in features:
             if tool.name == 'create_conditional_flow':
