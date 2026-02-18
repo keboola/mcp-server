@@ -37,6 +37,7 @@ from keboola_mcp_server.tools.flow.model import (
     GetFlowsOutput,
 )
 from keboola_mcp_server.tools.flow.scheduler import (
+    compute_schedulers_preview,
     fetch_schedules_for_flows,
     process_schedule_request,
 )
@@ -428,7 +429,7 @@ async def modify_flow(
 
     if has_config_changes:
         LOG.info(f'Updating flow configuration: {configuration_id} (type: {flow_type})')
-        _, flow_configuration = await update_flow_internal(
+        _, flow_configuration, *_ = await update_flow_internal(
             client=client,
             configuration_id=configuration_id,
             flow_type=flow_type,
@@ -437,6 +438,7 @@ async def modify_flow(
             tasks=tasks,
             name=name,
             description=description,
+            schedules=None,
             is_disabled=is_disabled,
         )
         updated_raw_configuration = await client.storage_client.configuration_update(
@@ -500,8 +502,9 @@ async def update_flow_internal(
     tasks: list[dict[str, Any]] | None = None,
     name: str = '',
     description: str = '',
+    schedules: Sequence[ScheduleRequest] | None = tuple(),
     is_disabled: bool | None = None,
-) -> tuple[JsonDict, JsonDict]:
+) -> tuple[JsonDict, JsonDict, dict[str, Any] | None]:
     current_config = await client.storage_client.configuration_detail(
         component_id=flow_type, configuration_id=configuration_id
     )
@@ -519,7 +522,16 @@ async def update_flow_internal(
     # Validate flow configuration against schema to catch syntax errors in the configuration
     validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
 
-    return current_config, flow_configuration
+    mutator_preview: dict[str, Any] | None = None
+    if schedules is not None and len(schedules) > 0:
+        mutator_preview = await compute_schedulers_preview(
+            client=client,
+            configuration_id=configuration_id,
+            flow_type=flow_type,
+            schedules=schedules,
+        )
+
+    return current_config, flow_configuration, mutator_preview
 
 
 @tool_errors()
