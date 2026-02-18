@@ -15,9 +15,9 @@ import pytest_asyncio
 from dotenv import load_dotenv
 from fastmcp import Client, Context, FastMCP
 from kbcstorage.client import Client as SyncStorageClient
-from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
+from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -37,9 +37,7 @@ WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
 DEV_STORAGE_API_URL_ENV_VAR = 'STORAGE_API_URL'
 DEV_STORAGE_TOKEN_ENV_VAR = 'KBC_STORAGE_TOKEN'
 DEV_WORKSPACE_SCHEMA_ENV_VAR = 'KBC_WORKSPACE_SCHEMA'
-INTEGTEST_CLIENT_INFO = Implementation(
-    name='integtest/mcp', version=importlib.metadata.version('keboola_mcp_server')
-)
+INTEGTEST_CLIENT_INFO = Implementation(name='integtest/mcp', version=importlib.metadata.version('keboola_mcp_server'))
 INTEGTEST_USER_AGENT = f'{INTEGTEST_CLIENT_INFO.name}/{INTEGTEST_CLIENT_INFO.version}'
 
 
