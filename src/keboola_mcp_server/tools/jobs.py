@@ -276,6 +276,11 @@ async def get_jobs(
     - If you already know job IDs → use MODE 1 directly
     - For monitoring/browsing → use MODE 2 with filters
 
+    NOTE: Jobs cannot be found by name using the `search` tool. However, always use the filtering
+    parameters (status, component_id, config_id) to narrow results rather than listing all jobs
+    with no filters. If you need to find jobs for a specific configuration but only know its name,
+    first use `search` to find the configuration ID, then filter jobs by that config_id.
+
     COMMON WORKFLOWS:
     1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1
     2. Check recent runs: job_ids=[], component_id="...", limit=10 → see latest executions

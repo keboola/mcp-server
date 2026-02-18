@@ -1,3 +1,16 @@
+### Finding Items by Name
+
+When looking for specific items (tables, buckets, configurations, flows, data apps) by name, description,
+or partial match, **always use the `search` tool first** rather than listing all items with `get_*` tools.
+
+- `search` matches by regex against names, IDs, descriptions, and (for tables) column names.
+- Listing all items with empty IDs (e.g., `get_buckets(bucket_ids=[])`, `get_configs()`, `get_flows(flow_ids=[])`)
+  is wasteful on large projects and should only be used when you genuinely need a complete inventory.
+- If the user mentions a name but you do not have the exact ID, call `search` with an appropriate pattern
+  and `item_types` filter.
+- If `search` returns too many results or zero results, ask the user to be more specific rather than
+  falling back to enumerating all items.
+
 ### When Creating Configurations
 - Before generating any component configuration: fetch details via `get_components` to pull `configuration_schema` / `configuration_row_schema`, and review `get_config_examples` if both unknown to you. Keep generated parameters aligned to the retrieved schema.
 - Before generating any legacy flow or conditional flow configuration: fetch the correct schema with `get_flow_schema` (use the matching flow type) and review `get_flow_examples` so phases/tasks follow the required structure if both unknown to you.
