@@ -24,6 +24,7 @@ from keboola_mcp_server.tools.components.model import (
 )
 from keboola_mcp_server.tools.components.utils import (
     _apply_param_update,
+    _normalize_jsonpath,
     clean_bucket_name,
     create_transformation_configuration,
     expand_component_types,
@@ -209,6 +210,36 @@ def test_clean_bucket_name(input_str: str, expected_str: str):
 
 
 @pytest.mark.parametrize(
+    ('path', 'expected'),
+    [
+        # Valid unquoted name passes through unchanged
+        ('api_key', 'api_key'),
+        # Nested valid names pass through unchanged
+        ('database.host', 'database.host'),
+        # Root '$' token is preserved
+        ('$.api_key', '$.api_key'),
+        # Hash-prefix segment gets quoted
+        ('#anthropic_api_key', '"#anthropic_api_key"'),
+        # Hash in nested path: only the special segment gets quoted
+        ('parameters.#key', 'parameters."#key"'),
+        # Already double-quoted segment is not re-quoted
+        ('"#key"', '"#key"'),
+        # Already single-quoted segment is not re-quoted
+        ("'key'", "'key'"),
+        # Bracket notation is preserved (contains '[')
+        ('items[0].name', 'items[0].name'),
+        # Digit-leading segment gets quoted
+        ('123key', '"123key"'),
+        # Empty string segment gets quoted
+        ('', '""'),
+    ],
+)
+def test_normalize_jsonpath(path: str, expected: str):
+    """Test _normalize_jsonpath quotes segments with special characters for jsonpath_ng."""
+    assert _normalize_jsonpath(path) == expected
+
+
+@pytest.mark.parametrize(
     ('params', 'update', 'expected'),
     [
         # Test 'set' operation on simple key
@@ -371,6 +402,36 @@ def test_clean_bucket_name(input_str: str, expected_str: str):
             {'config': {'entries': [{'id': 1}]}},
             ConfigParamListAppend(op='list_append', path='config.entries', value={'id': 2}),
             {'config': {'entries': [{'id': 1}, {'id': 2}]}},
+        ),
+        # Test 'set' operation on existing '#'-prefixed key
+        (
+            {'#anthropic_api_key': 'old'},
+            ConfigParamSet(op='set', path='#anthropic_api_key', value='new'),
+            {'#anthropic_api_key': 'new'},
+        ),
+        # Test 'set' operation creating a new '#'-prefixed key
+        (
+            {},
+            ConfigParamSet(op='set', path='#anthropic_api_key', value='val'),
+            {'#anthropic_api_key': 'val'},
+        ),
+        # Test 'set' operation on nested '#'-prefixed key
+        (
+            {'params': {'#key': 'old'}},
+            ConfigParamSet(op='set', path='params.#key', value='new'),
+            {'params': {'#key': 'new'}},
+        ),
+        # Test 'str_replace' operation on '#'-prefixed key
+        (
+            {'#key': 'old_value'},
+            ConfigParamReplace(op='str_replace', path='#key', search_for='old', replace_with='new'),
+            {'#key': 'new_value'},
+        ),
+        # Test 'remove' operation on '#'-prefixed key
+        (
+            {'#key': 'value', 'other': 'data'},
+            ConfigParamRemove(op='remove', path='#key'),
+            {'other': 'data'},
         ),
     ],
 )
