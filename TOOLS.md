@@ -79,7 +79,7 @@ component ID, configuration JSON, and description.
 CONSIDERATIONS:
 - The configuration JSON object must follow the row_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the row_configuration_schema,
-  which is available via the component_detail tool.
+  which is available via the get_components tool.
 - The configuration JSON object should adhere to the component's configuration examples if found.
 
 USAGE:
@@ -166,7 +166,7 @@ Creates a root component configuration using the specified name, component ID, c
 CONSIDERATIONS:
 - The configuration JSON object must follow the root_configuration_schema of the specified component.
 - Make sure the configuration parameters always adhere to the root_configuration_schema,
-  which is available via the component_detail tool.
+  which is available via the get_components tool.
 - The configuration JSON object should adhere to the component's configuration examples if found.
 
 USAGE:
@@ -444,6 +444,12 @@ WHEN TO USE:
 - For listing: Use component_types/component_ids.
 - For details: Use configs (can handle multiple).
 
+WHEN NOT TO USE:
+- Do NOT list all configs just to find a configuration by name. Use `search` with
+  item_types=["configuration", "transformation"] instead.
+- Only use broad listing (empty component_types and component_ids) when you need
+  a complete inventory of all configurations in the project.
+
 EXAMPLES:
 - List all configs (summaries): component_types=[], component_ids=[]
 - List extractors (summaries): component_types=["extractor"]
@@ -545,7 +551,7 @@ IMPORTANT CONSIDERATIONS:
 - For row-based components, this updates the ROOT only (use update_config_row for individual rows)
 
 WORKFLOW:
-1. Retrieve current configuration using get_config (to understand current state)
+1. Retrieve current configuration using get_configs (to understand current state)
 2. Identify specific parameters/storage mappings to modify
 3. Prepare parameter_updates list with targeted operations
 4. Call update_config with only the fields to change
@@ -704,7 +710,7 @@ WORKFLOW:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
     },
     "processors_before": {
@@ -724,18 +730,6 @@ WORKFLOW:
         "type": "object"
       },
       "type": "array"
-    },
-    "is_disabled": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Enable or disable the configuration. Set to True to disable execution (configuration won't run), False to enable execution (configuration will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -784,7 +778,7 @@ IMPORTANT CONSIDERATIONS:
 - Row-level storage is separate from root-level storage configuration
 
 WORKFLOW:
-1. Retrieve current configuration using get_config to see existing rows
+1. Retrieve current configuration using get_configs to see existing rows
 2. Identify the specific row to modify by its configuration_row_id
 3. Prepare parameter_updates list with targeted operations for this row
 4. Call update_config_row with only the fields to change
@@ -947,7 +941,7 @@ WORKFLOW:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_config first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
+      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_configs first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
     },
     "processors_before": {
@@ -1012,14 +1006,13 @@ WHEN TO USE:
 - Updating transformation block or code block names
 - Changing input/output table mappings for the transformation
 - Updating the transformation name or description
-- Enabling or disabling the transformation
 - Any combination of the above
 
 PREREQUISITES:
 - Transformation must already exist (use create_sql_transformation for new transformations)
 - You must know the configuration_id of the transformation
 - SQL dialect is determined automatically from the workspace
-- CRITICAL: Use get_config first to see the current transformation structure and get block_id/code_id values
+- CRITICAL: Use get_configs first to see the current transformation structure and get block_id/code_id values
 
 TRANSFORMATION STRUCTURE:
 A transformation has this hierarchy:
@@ -1030,7 +1023,7 @@ A transformation has this hierarchy:
         └─ code.name - Descriptive name for the code block
         └─ code.script - SQL script (string with SQL statements)
 
-Example structure from get_config:
+Example structure from get_configs:
 {
   "blocks": [
     {
@@ -1048,7 +1041,7 @@ Example structure from get_config:
 }
 
 PARAMETER UPDATE OPERATIONS:
-All operations use block_id and code_id to identify elements (get these from get_config first).
+All operations use block_id and code_id to identify elements (get these from get_configs first).
 
 ID Format:
 - block_id: "b0", "b1", "b2", etc. (format: b{index})
@@ -1099,7 +1092,7 @@ IMPORTANT CONSIDERATIONS:
   Non-destructive changes (adding columns) typically do not require table deletion.
 
 WORKFLOW:
-1. Call get_config to retrieve current transformation structure and identify block_id/code_id values
+1. Call get_configs to retrieve current transformation structure and identify block_id/code_id values
 2. Identify what needs to change (SQL code, storage, description)
 3. For SQL changes: Prepare parameter_updates list with targeted operations
 4. For storage changes: Build complete storage configuration (include all mappings)
@@ -1109,7 +1102,7 @@ EXAMPLE WORKFLOWS:
 
 Example 1 - Update SQL script in existing code block:
 Step 1: Get current config
-  result = get_config(component_id="keboola.snowflake-transformation", configuration_id="12345")
+  result = get_configs(component_id="keboola.snowflake-transformation", configuration_id="12345")
   # Note the block_id (e.g., "b0") and code_id (e.g., "b0.c1") from result
 
 Step 2: Update the SQL
@@ -1514,7 +1507,7 @@ Example 4 - Update storage mappings:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_config first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
+      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_configs first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
       "items": {
         "discriminator": {
           "mapping": {
@@ -1565,20 +1558,8 @@ Example 4 - Update storage mappings:
     "storage": {
       "additionalProperties": true,
       "default": null,
-      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_config first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
+      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
-    },
-    "is_disabled": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Enable or disable the transformation. Set to True to disable execution (transformation won't run), False to enable execution (transformation will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -1646,6 +1627,11 @@ because it needs to restart.
 Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 
+WHEN NOT TO USE:
+- Do NOT list all data apps just to find one by name. Use `search` with
+  item_types=["data-app"] instead.
+- Only list all data apps when you need a complete inventory.
+
 Considerations:
 - If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
 - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
@@ -1705,6 +1691,17 @@ appropriately based on the parameter type.
 - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
 updating, set `authentication_type` to `default` to keep the existing authentication type configuration
 (including OIDC setups) unless explicitly specified otherwise.
+
+SQL & DATA TYPE RULES:
+- SNOWFLAKE COLUMN ALIASES are auto-uppercased unless quoted. Quote aliases to preserve case:
+`CAST("downloads" AS INTEGER) as "downloads"`. Match exact case in Python code.
+- `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
+`df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
+`df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
+- Pattern:
+`df = query_data('SELECT "model_id", "downloads", "created_at" FROM "DB"."SCHEMA"."TABLE"')`
+`df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
+`df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
 
 
 **Input JSON Schema**:
@@ -2015,6 +2012,11 @@ RULES:
 
 Lists flows or retrieves full details for specific flows.
 
+WHEN NOT TO USE:
+- Do NOT call with `flow_ids=[]` just to find a flow by name. Use `search` with
+  item_types=["flow"] instead.
+- Only use `flow_ids=[]` when you need a complete list of all flows in the project.
+
 OPTIONS:
 - `flow_ids=[]` → summaries of all flows in the project
 - `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows
@@ -2071,8 +2073,8 @@ LEGACY FLOWS (`keboola.orchestrator`):
 - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
 WHEN TO USE:
-- Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules or
-adjusting dependencies
+- Renaming a flow, updating descriptions, adding/removing phases or tasks, updating schedules,
+adjusting dependencies, or enabling/disabling flow execution
 
 
 **Input JSON Schema**:
@@ -2201,6 +2203,18 @@ adjusting dependencies
         "$ref": "#/$defs/ScheduleRequest"
       },
       "type": "array"
+    },
+    "is_disabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -2243,7 +2257,8 @@ LEGACY FLOWS (`keboola.orchestrator`):
 - Use `continueOnFailure` or best-effort patterns only when the user explicitly asks for them
 
 WHEN TO USE:
-- Renaming a flow, updating descriptions, adding/removing phases or tasks, or adjusting dependencies
+- Renaming a flow, updating descriptions, adding/removing phases or tasks, adjusting dependencies,
+or enabling/disabling flow execution
 
 
 **Input JSON Schema**:
@@ -2293,6 +2308,18 @@ WHEN TO USE:
       "default": "",
       "description": "Updated flow description. Only updated if provided.",
       "type": "string"
+    },
+    "is_disabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
     }
   },
   "required": [
@@ -2339,6 +2366,11 @@ DECISION GUIDE:
 - Start with MODE 2 (list) to find jobs → then use MODE 1 (details) if you need full information
 - If you already know job IDs → use MODE 1 directly
 - For monitoring/browsing → use MODE 2 with filters
+
+NOTE: Jobs cannot be found by name using the `search` tool. However, always use the filtering
+parameters (status, component_id, config_id) to narrow results rather than listing all jobs
+with no filters. If you need to find jobs for a specific configuration but only know its name,
+first use `search` to find the configuration ID, then filter jobs by that config_id.
 
 COMMON WORKFLOWS:
 1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1
@@ -2646,58 +2678,61 @@ search without scopes.
 
 USAGE EXAMPLES:
 1) textual search examples:
-  - user_input: "Find all tables with 'customer' in the name"
+- user_input: "Find all tables with 'customer' in the name"
     → patterns=["customer"], item_types=["table"]
     → Returns all tables whose id, name, displayName, or description contains "customer"
 
-  - user_input: "Find tables with 'email' column"
+- user_input: "Find tables with 'email' column"
     → patterns=["email"], item_types=["table"]
     → Returns all tables that have a column named "email" or with "email" in column description
 
-  - user_input: "Search for the sales transformation"
+- user_input: "Search for the sales transformation"
     → patterns=["sales"], item_types=["transformation"]
     → Returns transformations with "sales" in any searchable field
 
-  - user_input: "Find items named 'daily report' or 'weekly summary'"
+- user_input: "Find items named 'daily report' or 'weekly summary'"
     → patterns=["daily.*report", "weekly.*summary"], item_types=[], mode="regex"
     → Returns all items matching any of these patterns
 
-  - user_input: "Show me all configurations related to Google Analytics"
+- user_input: "Show me all configurations related to Google Analytics"
     → patterns=["google.*analytics"], item_types=["configuration"], mode="regex"
     → Returns configurations with matching patterns
 
 2) config-based search examples:
-  - user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
-    -> patterns=["in.c-prod.customers"], item_types=["transformation", "configuration"], search_type="config-based"
+- user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
+    -> patterns=["in.c-prod.customers"], item_types=["transformation", "configuration"],
+    search_type="config-based"
     -> No scopes = search whole stringified config; result includes `match_scopes` with exact paths
 
-  - user_input: "Find configurations (etc.) using specific setting / id anywhere"
-    -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based",
+- user_input: "Find configurations/transformations (etc.) using specific setting / id anywhere"
+    -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
 
-  - user_input: "Find configurations (etc.) using specific setting /id in parameters"
-  -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based", scopes=["parameters"]
+- user_input: "Find configurations/transformations (etc.) using specific setting / id in parameters"
+-> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
+scopes=["parameters"]
 
-  - user_input: "Find configurations (etc.) using specific setting / id in storage"
-  -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based", scopes=["storage"]
+- user_input: "Find configurations/transformations (etc.) using specific setting / id in storage"
+-> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
+scopes=["storage"]
 
-  - user_input: "Find configurations (etc.) using specific setting / id in authorization"
-    -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based",
-      scopes=["parameters.authorization", "authorization"]
+- user_input: "Find configurations/transformations (etc.) using specific setting / id in authorization"
+    -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
+    scopes=["parameters.authorization", "authorization"]
 
-  - user_input: "Find components/transformations using my_bucket in input or output mappings"
+- user_input: "Find components/transformations using my_bucket in input or output mappings"
     -> patterns=["my_bucket"], item_types=["configuration", "transformation"], search_type="config-based",
-      scopes=["storage.input", "storage.output"]
+    scopes=["storage.input", "storage.output"]
     -> Returns matches with paths like `storage.input[0].source` or `storage.output[0].target`
 
-  - user_input: "Find flows using configuration ID 01k9cz233cvd1rga3zzx40g8qj"
+- user_input: "Find flows using configuration ID 01k9cz233cvd1rga3zzx40g8qj"
     -> patterns=["01k9cz233cvd1rga3zzx40g8qj"], item_types=["flow"], search_type="config-based",
-      scopes=["tasks", "phases"]
+    scopes=["tasks", "phases"]
 
-  - user_input: "Find transformations using this table / column / specific code in its script"
+- user_input: "Find transformations using this table / column / specific code in its script"
     -> patterns=["element"], item_types=["transformation"], search_type="config-based",
-      scopes=["parameters"]
+    scopes=["parameters"]
 
-  - user_input: "Find data apps using something in its config / python code / setting"
+- user_input: "Find data apps using something in its config / python code / setting"
     -> patterns=["something"], item_types=["data-app"], search_type="config-based"
     -> Returns data apps where script/config sections contain the keyword and includes `match_scopes`
 
@@ -2870,6 +2905,11 @@ DATA VALIDATION:
 Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
 
+WHEN NOT TO USE:
+- Do NOT call with `bucket_ids=[]` just to find a bucket by name. Use `search` with
+  item_types=["bucket"] instead.
+- Only use `bucket_ids=[]` when you need a complete inventory of all buckets in the project.
+
 EXAMPLES:
 - `bucket_ids=[]` → summaries of all buckets in the project
 - `bucket_ids=["id1", ...]` → full details of the buckets with the specified IDs
@@ -2903,6 +2943,11 @@ EXAMPLES:
 
 Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, lineage references (created/updated by) and links.
+
+WHEN NOT TO USE:
+- Do NOT list tables across buckets just to find a table by name. Use `search` with
+  item_types=["table"] instead — it also matches column names and descriptions.
+- Only use `bucket_ids` listing when you need all tables in specific known buckets.
 
 RETURNS:
 - With `bucket_ids`: Summaries of tables (ID, name, description, primary key).

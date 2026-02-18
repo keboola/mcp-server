@@ -655,58 +655,61 @@ async def search(
 
     USAGE EXAMPLES:
     1) textual search examples:
-      - user_input: "Find all tables with 'customer' in the name"
+    - user_input: "Find all tables with 'customer' in the name"
         → patterns=["customer"], item_types=["table"]
         → Returns all tables whose id, name, displayName, or description contains "customer"
 
-      - user_input: "Find tables with 'email' column"
+    - user_input: "Find tables with 'email' column"
         → patterns=["email"], item_types=["table"]
         → Returns all tables that have a column named "email" or with "email" in column description
 
-      - user_input: "Search for the sales transformation"
+    - user_input: "Search for the sales transformation"
         → patterns=["sales"], item_types=["transformation"]
         → Returns transformations with "sales" in any searchable field
 
-      - user_input: "Find items named 'daily report' or 'weekly summary'"
+    - user_input: "Find items named 'daily report' or 'weekly summary'"
         → patterns=["daily.*report", "weekly.*summary"], item_types=[], mode="regex"
         → Returns all items matching any of these patterns
 
-      - user_input: "Show me all configurations related to Google Analytics"
+    - user_input: "Show me all configurations related to Google Analytics"
         → patterns=["google.*analytics"], item_types=["configuration"], mode="regex"
         → Returns configurations with matching patterns
 
     2) config-based search examples:
-      - user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
-        -> patterns=["in.c-prod.customers"], item_types=["transformation", "configuration"], search_type="config-based"
+    - user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
+        -> patterns=["in.c-prod.customers"], item_types=["transformation", "configuration"],
+        search_type="config-based"
         -> No scopes = search whole stringified config; result includes `match_scopes` with exact paths
 
-      - user_input: "Find configurations (etc.) using specific setting / id anywhere"
-        -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based",
+    - user_input: "Find configurations/transformations (etc.) using specific setting / id anywhere"
+        -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
 
-      - user_input: "Find configurations (etc.) using specific setting /id in parameters"
-      -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based", scopes=["parameters"]
+    - user_input: "Find configurations/transformations (etc.) using specific setting / id in parameters"
+    -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
+    scopes=["parameters"]
 
-      - user_input: "Find configurations (etc.) using specific setting / id in storage"
-      -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based", scopes=["storage"]
+    - user_input: "Find configurations/transformations (etc.) using specific setting / id in storage"
+    -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
+    scopes=["storage"]
 
-      - user_input: "Find configurations (etc.) using specific setting / id in authorization"
-        -> patterns=["setting", "id"], item_types=["configuration"], search_type="config-based",
-          scopes=["parameters.authorization", "authorization"]
+    - user_input: "Find configurations/transformations (etc.) using specific setting / id in authorization"
+        -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
+        scopes=["parameters.authorization", "authorization"]
 
-      - user_input: "Find components/transformations using my_bucket in input or output mappings"
+    - user_input: "Find components/transformations using my_bucket in input or output mappings"
         -> patterns=["my_bucket"], item_types=["configuration", "transformation"], search_type="config-based",
-          scopes=["storage.input", "storage.output"]
+        scopes=["storage.input", "storage.output"]
         -> Returns matches with paths like `storage.input[0].source` or `storage.output[0].target`
 
-      - user_input: "Find flows using configuration ID 01k9cz233cvd1rga3zzx40g8qj"
+    - user_input: "Find flows using configuration ID 01k9cz233cvd1rga3zzx40g8qj"
         -> patterns=["01k9cz233cvd1rga3zzx40g8qj"], item_types=["flow"], search_type="config-based",
-          scopes=["tasks", "phases"]
+        scopes=["tasks", "phases"]
 
-      - user_input: "Find transformations using this table / column / specific code in its script"
+    - user_input: "Find transformations using this table / column / specific code in its script"
         -> patterns=["element"], item_types=["transformation"], search_type="config-based",
-          scopes=["parameters"]
+        scopes=["parameters"]
 
-      - user_input: "Find data apps using something in its config / python code / setting"
+    - user_input: "Find data apps using something in its config / python code / setting"
         -> patterns=["something"], item_types=["data-app"], search_type="config-based"
         -> Returns data apps where script/config sections contain the keyword and includes `match_scopes`
     """

@@ -24,7 +24,7 @@ F = TypeVar('F', bound=Callable[..., Any])
 
 _USER_AGENT_TO_COMPONENT_ID: Mapping[str, str] = {
     'read-only-chat': 'keboola.ai-chat',
-    'in-platform-chat': 'keboola.kai-assistant',
+    'kai-assistant': 'keboola.kai-assistant',
 }
 
 

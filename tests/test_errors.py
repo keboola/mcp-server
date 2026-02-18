@@ -115,7 +115,7 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error, mcp_
     [
         ('http', None, 'keboola.mcp-server-tool'),
         ('stdio', Implementation(name='read-only-chat', version='1.2.3'), 'keboola.ai-chat'),
-        ('stdio', Implementation(name='in-platform-chat', version='x.y.z'), 'keboola.kai-assistant'),
+        ('stdio', Implementation(name='kai-assistant', version='x.y.z'), 'keboola.kai-assistant'),
     ],
 )
 async def test_get_session_id(

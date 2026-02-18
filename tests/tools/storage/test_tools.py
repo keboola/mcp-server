@@ -1125,19 +1125,217 @@ async def test_get_tables(
     ).pack_links()
     assert result == expected_result
 
+    sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
     if branch_id:
         keboola_client.storage_client.bucket_detail.assert_has_calls(
             [call(bucket_id), call(bucket_id.replace('c-', f'c-{branch_id}-'))]
         )
         keboola_client.storage_client.bucket_table_list.assert_has_calls(
             [
-                call(bucket_id, include=['metadata']),
-                call(bucket_id.replace('c-', f'c-{branch_id}-'), include=['metadata']),
+                call(bucket_id, include=sapi_includes),
+                call(bucket_id.replace('c-', f'c-{branch_id}-'), include=sapi_includes),
             ]
         )
     else:
         keboola_client.storage_client.bucket_detail.assert_called_once_with(bucket_id)
-        keboola_client.storage_client.bucket_table_list.assert_called_once_with(bucket_id, include=['metadata'])
+        keboola_client.storage_client.bucket_table_list.assert_called_once_with(bucket_id, include=sapi_includes)
+
+
+@pytest.mark.parametrize(
+    ('raw_data', 'expected_description'),
+    [
+        # direct description field takes priority over all metadata
+        (
+            {
+                'description': 'Direct desc',
+                'metadata': [
+                    {'key': 'KBC.sharedDescription', 'value': 'Shared desc'},
+                    {'key': 'KBC.description', 'value': 'Meta desc'},
+                ],
+            },
+            'Direct desc',
+        ),
+        # KBC.sharedDescription is preferred over KBC.description
+        (
+            {
+                'description': '',
+                'metadata': [
+                    {'key': 'KBC.sharedDescription', 'value': 'Shared desc'},
+                    {'key': 'KBC.description', 'value': 'Meta desc'},
+                ],
+            },
+            'Shared desc',
+        ),
+        # KBC.description used when no sharedDescription
+        (
+            {
+                'description': '',
+                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
+            },
+            'Meta desc',
+        ),
+        # None when nothing is available
+        (
+            {'description': '', 'metadata': []},
+            None,
+        ),
+    ],
+)
+def test_bucket_detail_description_fallback(raw_data: dict[str, Any], expected_description: str | None) -> None:
+    """Test BucketDetail description resolution priority."""
+    base = {
+        'id': 'in.c-test',
+        'name': 'c-test',
+        'displayName': 'test',
+        'stage': 'in',
+        'created': '2025-01-01T00:00:00+0000',
+        'dataSizeBytes': 0,
+    }
+    bucket = BucketDetail.model_validate(base | raw_data)
+    assert bucket.description == expected_description
+
+
+@pytest.mark.parametrize(
+    ('raw_data', 'expected_description'),
+    [
+        # direct description field takes priority
+        (
+            {
+                'description': 'Direct desc',
+                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
+                'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
+            },
+            'Direct desc',
+        ),
+        # own KBC.description is preferred over sourceTable metadata
+        (
+            {
+                'description': '',
+                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
+                'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
+            },
+            'Meta desc',
+        ),
+        # sourceTable.metadata used as final fallback
+        (
+            {
+                'description': '',
+                'metadata': [],
+                'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
+            },
+            'Source desc',
+        ),
+        # None when nothing is available
+        (
+            {'description': '', 'metadata': []},
+            None,
+        ),
+    ],
+)
+def test_table_detail_description_fallback(raw_data: dict[str, Any], expected_description: str | None) -> None:
+    """Test TableDetail description resolution priority."""
+    base = {
+        'id': 'in.c-test.table1',
+        'name': 'table1',
+        'displayName': 'table1',
+    }
+    table = TableDetail.model_validate(base | raw_data)
+    assert table.description == expected_description
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('column_metadata', 'source_column_metadata', 'expected_description', 'expected_base_type'),
+    [
+        # own column metadata takes priority over source
+        (
+            [
+                {'key': 'KBC.description', 'value': 'Own desc'},
+                {'key': 'KBC.datatype.basetype', 'value': 'STRING'},
+            ],
+            [
+                {'key': 'KBC.description', 'value': 'Source desc'},
+                {'key': 'KBC.datatype.basetype', 'value': 'INTEGER'},
+            ],
+            'Own desc',
+            'STRING',
+        ),
+        # falls back to source column metadata when own is empty
+        (
+            [],
+            [
+                {'key': 'KBC.description', 'value': 'Source desc'},
+                {'key': 'KBC.datatype.basetype', 'value': 'INTEGER'},
+            ],
+            'Source desc',
+            'INTEGER',
+        ),
+        # mixed: own description, source base type
+        (
+            [{'key': 'KBC.description', 'value': 'Own desc'}],
+            [{'key': 'KBC.datatype.basetype', 'value': 'INTEGER'}],
+            'Own desc',
+            'INTEGER',
+        ),
+        # neither has metadata
+        (
+            [],
+            [],
+            None,
+            None,
+        ),
+    ],
+)
+async def test_get_table_column_metadata_fallback(
+    column_metadata: list[dict[str, Any]],
+    source_column_metadata: list[dict[str, Any]],
+    expected_description: str | None,
+    expected_base_type: str | None,
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+) -> None:
+    """Test column description and base type fallback from sourceTable.columnMetadata."""
+    raw_table = {
+        'id': 'in.c-test.t1',
+        'name': 't1',
+        'displayName': 't1',
+        'primaryKey': [],
+        'created': '2025-01-01T00:00:00+0000',
+        'rowsCount': 1,
+        'dataSizeBytes': 100,
+        'columns': ['col1'],
+        'columnMetadata': {'col1': column_metadata},
+        'metadata': [],
+        'bucket': {'id': 'in.c-test', 'name': 'c-test'},
+        'sourceTable': {'columnMetadata': {'col1': source_column_metadata}},
+    }
+
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = None
+    keboola_client.storage_client.table_detail = mocker.AsyncMock(return_value=raw_table)
+
+    workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
+    workspace_manager.get_table_info = mocker.AsyncMock(
+        return_value=DbTableInfo(
+            id='in.c-test.t1',
+            fqn=TableFqn(db_name='DB', schema_name='in.c-test', table_name='t1', quote_char='"'),
+            columns={
+                'col1': DbColumnInfo(name='col1', quoted_name='"col1"', native_type='VARCHAR', nullable=True),
+            },
+        ),
+    )
+    workspace_manager.get_quoted_name = mocker.AsyncMock(return_value='"col1"')
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+
+    result = await get_tables(mcp_context_client, table_ids=['in.c-test.t1'])
+    assert isinstance(result, GetTablesOutput)
+    assert len(result.tables) == 1
+
+    columns = result.tables[0].columns
+    assert columns is not None
+    assert len(columns) == 1
+    assert columns[0].description == expected_description
+    assert columns[0].keboola_base_type == expected_base_type
 
 
 @pytest.mark.asyncio

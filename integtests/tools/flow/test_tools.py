@@ -399,6 +399,8 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
         ),
         (CONDITIONAL_FLOW_COMPONENT_ID, {'name': 'Updated just name'}),
         (CONDITIONAL_FLOW_COMPONENT_ID, {'description': 'Updated just description'}),
+        (ORCHESTRATOR_COMPONENT_ID, {'is_disabled': True}),
+        (CONDITIONAL_FLOW_COMPONENT_ID, {'is_disabled': True}),
     ],
 )
 async def test_update_flow(
@@ -478,6 +480,11 @@ async def test_update_flow(
     assert flow_detail.name == expected_name
     assert flow_detail.description == expected_description
 
+    # Verify is_disabled if it was updated
+    expected_is_disabled = updates.get('is_disabled')
+    if expected_is_disabled is not None:
+        assert flow_detail.is_disabled == expected_is_disabled
+
     flow_data = flow_detail.configuration.model_dump(exclude_unset=True, by_alias=True)
 
     # Check that ids, names, and transitions match for phases using assert all
@@ -522,6 +529,13 @@ async def test_update_flow(
 
     current_version = flow_detail.version
     assert current_version == 2
+
+    # Verify is_disabled in the raw API configuration if it was updated
+    if expected_is_disabled is not None:
+        raw_config = await keboola_client.storage_client.configuration_detail(
+            component_id=flow_type, configuration_id=flow_id
+        )
+        assert raw_config.get('isDisabled') == expected_is_disabled
 
     # Check that KBC.MCP.updatedBy.version.{version} is set to 'true'
     metadata = await keboola_client.storage_client.configuration_metadata_get(
