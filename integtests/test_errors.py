@@ -9,8 +9,9 @@ from typing import Any, Mapping
 import httpx
 import pytest
 from fastmcp import Context
-from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
+from mcp.types import ClientCapabilities, InitializeRequestParams
 
+from integtests.conftest import INTEGTEST_CLIENT_INFO, INTEGTEST_USER_AGENT
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import CONVERSATION_ID, AggregateError
@@ -116,7 +117,7 @@ class TestStorageEvents:
         mcp_context.session.client_params = InitializeRequestParams(
             protocolVersion='1',
             capabilities=ClientCapabilities(),
-            clientInfo=Implementation(name='integtest', version='1.2.3'),
+            clientInfo=INTEGTEST_CLIENT_INFO,
         )
         mcp_context.session.state[CONVERSATION_ID] = '#987654321'
         unique = uuid.uuid4().hex
@@ -145,7 +146,7 @@ class TestStorageEvents:
         assert emitted_event['params']['mcpServerContext'] == {
             'appEnv': 'DEV',
             'version': distribution('keboola_mcp_server').version,
-            'userAgent': 'integtest/1.2.3',
+            'userAgent': INTEGTEST_USER_AGENT,
             'sessionId': 'deadbee',
             'serverTransport': 'stdio',
             'conversationId': '#987654321',

@@ -1,4 +1,5 @@
 import dataclasses
+import importlib.metadata
 import json
 import logging
 import os
@@ -14,12 +15,13 @@ import pytest_asyncio
 from dotenv import load_dotenv
 from fastmcp import Client, Context, FastMCP
 from kbcstorage.client import Client as SyncStorageClient
+from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -35,6 +37,10 @@ WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
 DEV_STORAGE_API_URL_ENV_VAR = 'STORAGE_API_URL'
 DEV_STORAGE_TOKEN_ENV_VAR = 'KBC_STORAGE_TOKEN'
 DEV_WORKSPACE_SCHEMA_ENV_VAR = 'KBC_WORKSPACE_SCHEMA'
+INTEGTEST_CLIENT_INFO = Implementation(
+    name='integtest/mcp', version=importlib.metadata.version('keboola_mcp_server')
+)
+INTEGTEST_USER_AGENT = f'{INTEGTEST_CLIENT_INFO.name}/{INTEGTEST_CLIENT_INFO.version}'
 
 
 @dataclass(frozen=True)
@@ -82,6 +88,44 @@ class ProjectDef:
 @pytest.fixture(scope='session')
 def env_file_loaded() -> bool:
     return load_dotenv()
+
+
+@pytest.fixture(scope='session', autouse=True)
+def _patch_fastmcp_client_default_info() -> Generator[None, None, None]:
+    # Ensure all fastmcp.Client instances in integration tests use a distinct identity
+    # unless a test intentionally provides a different client_info.
+    monkeypatch = pytest.MonkeyPatch()
+    original_init = Client.__init__
+
+    def _init_with_integtest_client_info(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault('client_info', INTEGTEST_CLIENT_INFO)
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(Client, '__init__', _init_with_integtest_client_info)
+    try:
+        yield
+    finally:
+        monkeypatch.undo()
+
+
+@pytest.fixture(scope='session', autouse=True)
+def _patch_session_middleware_user_agent() -> Generator[None, None, None]:
+    # Force a distinct User-Agent for outbound Keboola API requests during integration tests.
+    monkeypatch = pytest.MonkeyPatch()
+    original_get_headers = SessionStateMiddleware._get_headers.__func__
+
+    def _get_headers_with_integtest_ua(
+        cls: type[SessionStateMiddleware], runtime_info: ServerRuntimeInfo
+    ) -> dict[str, Any]:
+        headers = original_get_headers(cls, runtime_info)
+        headers['User-Agent'] = INTEGTEST_USER_AGENT
+        return headers
+
+    monkeypatch.setattr(SessionStateMiddleware, '_get_headers', classmethod(_get_headers_with_integtest_ua))
+    try:
+        yield
+    finally:
+        monkeypatch.undo()
 
 
 @pytest.fixture(scope='session')
@@ -300,7 +344,11 @@ def sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncSto
 
 @pytest.fixture
 def keboola_client(sync_storage_client: SyncStorageClient) -> KeboolaClient:
-    return KeboolaClient(storage_api_token=sync_storage_client.token, storage_api_url=sync_storage_client.root_url)
+    return KeboolaClient(
+        storage_api_token=sync_storage_client.token,
+        storage_api_url=sync_storage_client.root_url,
+        headers={'User-Agent': INTEGTEST_USER_AGENT},
+    )
 
 
 @pytest.fixture
@@ -332,8 +380,12 @@ def mcp_context(
         KeboolaClient.STATE_KEY: keboola_client,
         WorkspaceManager.STATE_KEY: workspace_manager,
     }
-    client_context.session.client_params = None
-    client_context.client_id = None
+    client_context.session.client_params = InitializeRequestParams(
+        protocolVersion='1',
+        capabilities=ClientCapabilities(),
+        clientInfo=INTEGTEST_CLIENT_INFO,
+    )
+    client_context.client_id = INTEGTEST_USER_AGENT
     client_context.session_id = None
     client_context.request_context = mocker.MagicMock(RequestContext)
     client_context.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeInfo(transport='stdio'))
@@ -351,5 +403,5 @@ def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: s
 
 @pytest_asyncio.fixture
 async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
-    async with Client(mcp_server) as client:
+    async with Client(mcp_server, client_info=INTEGTEST_CLIENT_INFO) as client:
         yield client
