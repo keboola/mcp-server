@@ -337,8 +337,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
 
-        # Role-based filtering: read-only access for guest and read roles
-        if token_role in ['guest', 'readonly']:
+        if token_role == 'readonly':
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
@@ -354,8 +353,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         features = self.get_project_features(token_info)
         token_role = self.get_token_role(token_info).lower()
 
-        # Block non-read-only tools for guest and read-only roles
-        if token_role in ['guest', 'readonly']:
+        if token_role == 'readonly':
             if not is_read_only_tool(tool):
                 raise ToolError(
                     f'Access denied: The tool "{tool.name}" requires write permissions. '
@@ -391,7 +389,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
                 )
 
-        if tool.name in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}:
+        if tool.name in ('modify_data_app', 'get_data_apps', 'deploy_data_app'):
             if not self.is_client_using_main_branch(context.fastmcp_context):
                 raise ToolError('Data apps are supported only in the main production branch.')
 

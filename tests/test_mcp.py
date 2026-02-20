@@ -416,11 +416,11 @@ class TestToolsFilteringMiddleware:
     @pytest.mark.parametrize(
         ('token_role', 'hidden_tools', 'visible_tools'),
         [
-            ('admin', {'update_flow'}, {'modify_flow'}),
-            ('share', {'update_flow'}, {'modify_flow'}),
-            ('', {'modify_flow'}, {'update_flow'}),
+            ('admin', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('share', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
             ('readOnly', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
-            ('guest', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
+            ('guest', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
         ],
     )
     async def test_list_tools_filters_flow_tools_by_role(
@@ -465,7 +465,7 @@ class TestToolsFilteringMiddleware:
             ('share', 'update_flow', False, True),
             ('', 'modify_flow', False, True),
             ('', 'update_flow', False, False),
-            ('guest', 'write_tool', False, True),
+            ('guest', 'write_tool', False, False),
             ('guest', 'read_only_tool', True, False),
             ('readOnly', 'write_tool', False, True),
             ('readOnly', 'read_only_tool', True, False),
