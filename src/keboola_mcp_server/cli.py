@@ -12,7 +12,6 @@ import traceback
 from typing import Optional
 
 import pydantic
-import requests
 from fastmcp import FastMCP
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
@@ -95,7 +94,6 @@ _bad_request_handler = _create_exception_handler(status_code=400)
 _exception_handlers = {
     HTTPException: _http_exception_handler,
     json.JSONDecodeError: _bad_request_handler,
-    requests.JSONDecodeError: _bad_request_handler,
     pydantic.ValidationError: _bad_request_handler,
     ValueError: _bad_request_handler,
     Exception: _create_exception_handler(status_code=500, log_exception=True),
