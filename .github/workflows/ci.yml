@@ -153,8 +153,6 @@ jobs:
     # Run only for same-repo pushes (not fork PRs, which lack secrets)
     if: github.event_name == 'push' && github.repository == 'keboola/mcp-server'
     uses: ./.github/workflows/kaibench.yml
-    with:
-      kai_assistant_image_tag: ${{ vars.KAI_ASSISTANT_IMAGE_TAG }}
     secrets: inherit
 
   deploy_to_pypi:

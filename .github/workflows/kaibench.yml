@@ -15,9 +15,10 @@ on:
         type: boolean
         default: false
       kai_assistant_image_tag:
-        description: 'Pre-built kai-assistant Docker Hub tag'
-        required: true
+        description: 'Pre-built kai-assistant Docker Hub tag (leave empty to auto-resolve latest production tag)'
+        required: false
         type: string
+        default: ''
   workflow_call:
     inputs:
       question_types:
@@ -31,9 +32,10 @@ on:
         type: boolean
         default: false
       kai_assistant_image_tag:
-        description: 'Pre-built kai-assistant Docker Hub tag'
-        required: true
+        description: 'Pre-built kai-assistant Docker Hub tag (leave empty to auto-resolve latest production tag)'
+        required: false
         type: string
+        default: ''
     secrets:
       KAIBENCH_STATIC_TOKEN:
         required: true
@@ -131,8 +133,32 @@ jobs:
           cache-to: type=gha,mode=max
 
       # ── kai-assistant image ────────────────────────────────────
-      - name: Pull pre-built kai-assistant image
-        run: docker pull keboola/kai-assistant:${{ inputs.kai_assistant_image_tag }}
+      - name: Resolve kai-assistant image tag
+        id: resolve-kai-image
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "${{ inputs.kai_assistant_image_tag }}" ]; then
+            echo "tag=${{ inputs.kai_assistant_image_tag }}" >> $GITHUB_OUTPUT
+            echo "Using provided tag: ${{ inputs.kai_assistant_image_tag }}"
+          else
+            echo "No tag provided, resolving latest production tag from Docker Hub..."
+            TOKEN=$(curl -sf -H "Content-Type: application/json" \
+              -X POST -d "{\"username\":\"keboolabot\",\"password\":\"$DOCKERHUB_TOKEN\"}" \
+              https://hub.docker.com/v2/users/login/ | jq -r .token)
+            TAG=$(curl -sf -H "Authorization: JWT $TOKEN" \
+              "https://hub.docker.com/v2/repositories/keboola/kai-assistant/tags/?page_size=1&ordering=-last_updated&name=production-kai-assi" \
+              | jq -r '.results[0].name')
+            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+              echo "::error::Failed to resolve latest kai-assistant production tag"
+              exit 1
+            fi
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "Resolved latest production tag: $TAG"
+          fi
+
+      - name: Pull kai-assistant image
+        run: docker pull keboola/kai-assistant:${{ steps.resolve-kai-image.outputs.tag }}
 
       # ── Start services ─────────────────────────────────────────
       - name: Start MCP server
@@ -156,7 +182,7 @@ jobs:
 
       - name: Run database migrations
         env:
-          KAI_IMAGE_TAG: ${{ inputs.kai_assistant_image_tag }}
+          KAI_IMAGE_TAG: ${{ steps.resolve-kai-image.outputs.tag }}
         run: |
           docker run --rm --network host \
             -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
@@ -166,7 +192,7 @@ jobs:
 
       - name: Start kai-assistant
         env:
-          KAI_IMAGE_TAG: ${{ inputs.kai_assistant_image_tag }}
+          KAI_IMAGE_TAG: ${{ steps.resolve-kai-image.outputs.tag }}
           KAIBENCH_API_URL: ${{ secrets.KAIBENCH_API_URL }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.KAI_GOOGLE_VERTEX_CREDENTIALS }}
           GOOGLE_VERTEX_PROJECT: ${{ secrets.KAI_GOOGLE_VERTEX_PROJECT }}
