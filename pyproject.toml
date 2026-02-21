@@ -24,6 +24,7 @@ dependencies = [
     "sqlglot ~= 28.5",
     "toon-format ~= 0.9.0b1",
     "pyyaml ~= 6.0",
+    "requests ~= 2.32",
 ]
 [project.optional-dependencies]
 codestyle = [
