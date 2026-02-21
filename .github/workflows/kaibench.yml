@@ -15,10 +15,9 @@ on:
         type: boolean
         default: false
       kai_assistant_image_tag:
-        description: 'Pre-built kai-assistant Docker Hub tag (leave empty to build from main)'
-        required: false
+        description: 'Pre-built kai-assistant Docker Hub tag'
+        required: true
         type: string
-        default: ''
   workflow_call:
     inputs:
       question_types:
@@ -32,10 +31,9 @@ on:
         type: boolean
         default: false
       kai_assistant_image_tag:
-        description: 'Pre-built kai-assistant Docker Hub tag (leave empty to build from main)'
-        required: false
+        description: 'Pre-built kai-assistant Docker Hub tag'
+        required: true
         type: string
-        default: ''
     secrets:
       KAIBENCH_STATIC_TOKEN:
         required: true
@@ -53,8 +51,6 @@ on:
         required: true
       KAI_GOOGLE_VERTEX_LOCATION:
         required: true
-      TURBO_TOKEN:
-        required: false
     outputs:
       status:
         description: 'Test status (passed, failed, error)'
@@ -113,15 +109,6 @@ jobs:
           token: ${{ secrets.KAIBENCH_REPO_TOKEN }}
           path: kaibench
 
-      - name: Checkout UI repo (for kai-assistant build)
-        if: inputs.kai_assistant_image_tag == ''
-        uses: actions/checkout@v4
-        with:
-          repository: keboola/ui
-          token: ${{ secrets.KAIBENCH_REPO_TOKEN }}
-          ref: main
-          path: ui
-
       # ── Docker setup ───────────────────────────────────────────
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -144,35 +131,8 @@ jobs:
           cache-to: type=gha,mode=max
 
       # ── kai-assistant image ────────────────────────────────────
-      - name: Build kai-assistant from main
-        if: inputs.kai_assistant_image_tag == ''
-        uses: docker/build-push-action@v6
-        with:
-          load: true
-          tags: keboola/kai-assistant:kaibench-test
-          context: ./ui
-          file: ./ui/apps/kai-assistant-backend/Dockerfile
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            VERSION=kaibench-test
-            KEBOOLA_STACK=dev-keboola-canary-orion
-            KEBOOLA_STORAGE_API_URL=${{ secrets.KAIBENCH_API_URL }}
-          secrets: |
-            turbo_token=${{ secrets.TURBO_TOKEN }}
-
       - name: Pull pre-built kai-assistant image
-        if: inputs.kai_assistant_image_tag != ''
         run: docker pull keboola/kai-assistant:${{ inputs.kai_assistant_image_tag }}
-
-      - name: Resolve kai-assistant image tag
-        id: resolve-kai-image
-        run: |
-          if [ -n "${{ inputs.kai_assistant_image_tag }}" ]; then
-            echo "tag=${{ inputs.kai_assistant_image_tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=kaibench-test" >> $GITHUB_OUTPUT
-          fi
 
       # ── Start services ─────────────────────────────────────────
       - name: Start MCP server
@@ -196,7 +156,7 @@ jobs:
 
       - name: Run database migrations
         env:
-          KAI_IMAGE_TAG: ${{ steps.resolve-kai-image.outputs.tag }}
+          KAI_IMAGE_TAG: ${{ inputs.kai_assistant_image_tag }}
         run: |
           docker run --rm --network host \
             -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
@@ -206,7 +166,7 @@ jobs:
 
       - name: Start kai-assistant
         env:
-          KAI_IMAGE_TAG: ${{ steps.resolve-kai-image.outputs.tag }}
+          KAI_IMAGE_TAG: ${{ inputs.kai_assistant_image_tag }}
           KAIBENCH_API_URL: ${{ secrets.KAIBENCH_API_URL }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.KAI_GOOGLE_VERTEX_CREDENTIALS }}
           GOOGLE_VERTEX_PROJECT: ${{ secrets.KAI_GOOGLE_VERTEX_PROJECT }}
