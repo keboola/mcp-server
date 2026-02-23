@@ -404,10 +404,13 @@ class _SnowflakeWorkspace(_Workspace):
         if not real_branch_id:
             raise RuntimeError('Cannot determine the default branch ID')
 
+        # Prefer bearer token over storage token for Query Service
+        token = f'Bearer {self._client._bearer_token}' if self._client._bearer_token else self._client.token
+
         return QueryServiceClient.create(
             root_url=urlunparse(('https', f'query.{self._client.hostname_suffix}', '', '', '', '')),
             branch_id=real_branch_id,
-            token=self._client.token,
+            token=token,
             headers=self._client.headers,
         )
 
