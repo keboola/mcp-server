@@ -741,6 +741,40 @@ class TestSearch:
                 [('test-config', ['storage.input[1].source', 'storage.output[0].destination'])],
             ),
             (
+                ['alpha'],
+                ('parameters',),
+                [
+                    {
+                        'id': 'test-config',
+                        'name': 'Test Config',
+                        'created': '2024-01-02T00:00:00Z',
+                        'configuration': {
+                            'parameters': {'query': 'alpha'},
+                            'storage': {'input': [{'source': 'alpha'}]},
+                        },
+                        'rows': [],
+                    }
+                ],
+                [('test-config', ['parameters.query'])],
+            ),
+            (
+                ['alpha'],
+                ('authorization.#apiKey',),
+                [
+                    {
+                        'id': 'test-config',
+                        'name': 'Test Config',
+                        'created': '2024-01-02T00:00:00Z',
+                        'configuration': {
+                            'authorization': {'#apiKey': 'alpha'},
+                            'parameters': {'query': 'nomatch'},
+                        },
+                        'rows': [],
+                    }
+                ],
+                [('test-config', ['authorization.#apiKey'])],
+            ),
+            (
                 ['alpha', 'gamma'],
                 tuple(),
                 [
@@ -782,6 +816,8 @@ class TestSearch:
         ids=[
             'all_matches_in_scopes',
             'most_specific_scope_only',
+            'scope_constrains_same_value_in_other_path',
+            'hash_prefixed_scope_key_in_search_tool',
             'multiple_configurations_returned',
         ],
     )
@@ -1004,6 +1040,17 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
             {'parameters': {'api': {'baseUrl': 'https://wttr.in'}}},
             [{'scope': 'parameters.api.baseUrl', 'patterns': ['wttr.in']}],
         ),
+        (
+            # Scope with #-prefixed key should be normalized and parsed correctly.
+            {
+                'patterns': ['alpha'],
+                'item_types': ('configuration',),
+                'search_scopes': ('authorization.#apiKey',),
+                'return_all_matched_patterns': True,
+            },
+            {'authorization': {'#apiKey': 'alpha'}},
+            [{'scope': 'authorization.#apiKey', 'patterns': ['alpha']}],
+        ),
     ],
     ids=[
         'all_patterns_many_scopes',
@@ -1013,6 +1060,7 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
         'any_patterns_return_first_match',
         'overlapping_scopes_deduplicated',
         'scalar_scope_matches_self',
+        'hash_prefixed_scope_key_matches',
     ],
 )
 def test_match_configuration_scopes(spec_kwargs: dict[str, Any], configuration: dict[str, Any], expected: list[dict]):

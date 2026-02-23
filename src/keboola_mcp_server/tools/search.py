@@ -23,7 +23,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import toon_serializer_compact
-from keboola_mcp_server.tools.components.utils import get_nested
+from keboola_mcp_server.tools.components.utils import _normalize_jsonpath, get_nested
 
 LOG = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ class SearchHit(BaseModel):
 
         return self
 
-    def with_matches(self, matches: list['PatternMatch']) -> 'SearchHit':
+    def set_matches(self, matches: list['PatternMatch']) -> 'SearchHit':
         """Assign pattern matches to this search hit and return self for chaining."""
         self._matches = matches
         unique_scopes = list(dict.fromkeys(match.scope for match in matches if match.scope))
@@ -160,7 +160,7 @@ class SearchHit(BaseModel):
             scope
             for scope in unique_scopes
             if not any(
-                other != scope and other.startswith(scope) and other[len(scope) : len(scope) + 1] in {'.', '['}
+                other.startswith(scope) and len(other) > len(scope) and other[len(scope)] in ('.', '[')
                 for other in unique_scopes
             )
         ]
@@ -180,6 +180,7 @@ class SearchSpec(BaseModel):
     _compiled_patterns: list[re.Pattern] = PrivateAttr(default_factory=list)
     _clean_patterns: list[str] = PrivateAttr(default_factory=list)
     _all_nodes_expr: JSONPath | None = PrivateAttr(default=None)
+    # Tuple fields: (original_scope, parsed_scope_expr, parsed_descendants_expr)
     _scope_exprs: list[tuple[str, JSONPath, JSONPath]] = PrivateAttr(default_factory=list)
 
     @model_validator(mode='after')
@@ -222,7 +223,7 @@ class SearchSpec(BaseModel):
         self._all_nodes_expr = jsonpath_ng.parse('$..*')
         self._scope_exprs = []
         for scope in self.search_scopes:
-            normalized = scope if scope.startswith('$') else f'$.{scope}'
+            normalized = _normalize_jsonpath(scope if scope.startswith('$') else f'$.{scope}')
             try:
                 self._scope_exprs.append((scope, jsonpath_ng.parse(normalized), jsonpath_ng.parse(f'{normalized}..*')))
             except Exception as e:
@@ -258,28 +259,14 @@ class SearchSpec(BaseModel):
 
         return matches
 
-    def _find_matches_for_expr(self, configuration: JsonDict, parsed_expr: JSONPath) -> list[PatternMatch]:
-        """Find pattern matches on JSON nodes matched by a JSONPath expression."""
+    def _find_matches_for_expr(
+        self, configuration: JsonDict, parsed_expr: JSONPath, scalar_only: bool = False
+    ) -> list[PatternMatch]:
+        """Find pattern matches on JSON nodes matched by a JSONPath expression. If scalar_only is True, only scalar nodes are matched."""
         matches: list[PatternMatch] = []
         for jpath_match in parsed_expr.find(configuration):
             value = jpath_match.value
-            if matched := self.match_patterns(value):
-                matches.append(
-                    PatternMatch(
-                        scope=re.sub(r'\.\[', '[', str(jpath_match.full_path)),
-                        patterns=matched,
-                    )
-                )
-                if not self.return_all_matched_patterns:
-                    return matches
-        return matches
-
-    def _find_scalar_matches_for_expr(self, configuration: JsonDict, parsed_expr: JSONPath) -> list[PatternMatch]:
-        """Find pattern matches only on scalar nodes matched by a JSONPath expression."""
-        matches: list[PatternMatch] = []
-        for jpath_match in parsed_expr.find(configuration):
-            value = jpath_match.value
-            if value is None or isinstance(value, (dict, list)):
+            if scalar_only and isinstance(value, (dict, list)):
                 continue
             if matched := self.match_patterns(value):
                 matches.append(
@@ -310,12 +297,13 @@ class SearchSpec(BaseModel):
             # or the same logical scope is provided multiple times.
             seen: set[str | None] = set()
             for _scope, self_expr, desc_expr in self._scope_exprs:
-                # Include self scope only for scalar values. For objects/lists, include descendants only.
-                self_matches = self._find_scalar_matches_for_expr(configuration, self_expr)
-                desc_matches = self._find_matches_for_expr(configuration, desc_expr)
-
-                scope_matches = desc_matches if desc_matches else self_matches
-                for match in scope_matches:
+                # Search in self expression node for scalar matches first
+                self_matches = self._find_matches_for_expr(configuration, self_expr, scalar_only=True)
+                # If no scalar matches, search in descendants nodes
+                desc_matches: list[PatternMatch] = []
+                if not self_matches:
+                    desc_matches = self._find_matches_for_expr(configuration, desc_expr)
+                for match in self_matches or desc_matches:
                     if match.scope in seen:
                         continue
                     seen.add(match.scope)
@@ -323,11 +311,9 @@ class SearchSpec(BaseModel):
                     if not self.return_all_matched_patterns:
                         return all_matches
             return all_matches
-
-        # No scope provided – search all descendants and return exact match paths.
-        if self._all_nodes_expr is None:
-            self._all_nodes_expr = jsonpath_ng.parse('$..*')
-        return self._find_matches_for_expr(configuration, self._all_nodes_expr)
+        else:
+            # No scope provided – search all descendants and return exact match paths.
+            return self._find_matches_for_expr(configuration, self._all_nodes_expr)
 
     def match_texts(self, texts: Iterable[str]) -> list[PatternMatch]:
         """
@@ -386,7 +372,7 @@ async def _fetch_buckets(client: KeboolaClient, spec: SearchSpec) -> list[Search
                     name=bucket_name,
                     display_name=bucket_display_name,
                     description=bucket_description,
-                ).with_matches(matches)
+                ).set_matches(matches)
             )
     return hits
 
@@ -418,7 +404,7 @@ async def _fetch_tables(client: KeboolaClient, spec: SearchSpec) -> list[SearchH
                         name=table_name,
                         display_name=table_display_name,
                         description=table_description,
-                    ).with_matches(matches)
+                    ).set_matches(matches)
                 )
     return hits
 
@@ -497,7 +483,7 @@ async def _fetch_configs(
                         updated=config_updated,
                         name=config_name,
                         description=config_description,
-                    ).with_matches(matches)
+                    ).set_matches(matches)
             elif spec.search_type == 'config-based':
                 if matches := spec.match_configuration_scopes(config.get('configuration')):
                     yield SearchHit(
@@ -507,7 +493,7 @@ async def _fetch_configs(
                         updated=config_updated,
                         name=config_name,
                         description=config_description,
-                    ).with_matches(matches)
+                    ).set_matches(matches)
 
             for row in config.get('rows', []):
                 if not (row_id := row.get('id')):
@@ -526,7 +512,7 @@ async def _fetch_configs(
                             updated=config_updated or _get_field_value(row, ['created']),
                             name=row_name,
                             description=row_description,
-                        ).with_matches(matches)
+                        ).set_matches(matches)
 
                 elif spec.search_type == 'config-based':
                     if matches := spec.match_configuration_scopes(row.get('configuration')):
@@ -538,7 +524,7 @@ async def _fetch_configs(
                             updated=config_updated or _get_field_value(row, ['created']),
                             name=row_name,
                             description=row_description,
-                        ).with_matches(matches)
+                        ).set_matches(matches)
 
 
 @tool_errors()
@@ -699,7 +685,8 @@ async def search(
     - user_input: "Find components/transformations using my_bucket in input or output mappings"
         -> patterns=["my_bucket"], item_types=["configuration", "transformation"], search_type="config-based",
         scopes=["storage.input", "storage.output"]
-        -> Returns matches with paths like `storage.input[0].source` or `storage.output[0].target`
+        -> Returns matches with paths like `storage.input.tables[0].source`, `storage.input.files[0].source`,
+        or `storage.output.tables[0].destination`
 
     - user_input: "Find flows using configuration ID 01k9cz233cvd1rga3zzx40g8qj"
         -> patterns=["01k9cz233cvd1rga3zzx40g8qj"], item_types=["flow"], search_type="config-based",
@@ -707,7 +694,7 @@ async def search(
 
     - user_input: "Find transformations using this table / column / specific code in its script"
         -> patterns=["element"], item_types=["transformation"], search_type="config-based",
-        scopes=["parameters"]
+        scopes=["parameters", "storage"]
 
     - user_input: "Find data apps using something in its config / python code / setting"
         -> patterns=["something"], item_types=["data-app"], search_type="config-based"

@@ -24,14 +24,14 @@ def _sorted_usage(output: Sequence[storage_usage.UsageById]) -> list[storage_usa
                     item_type='configuration',
                     updated='2024-01-01T00:00:00Z',
                     name='Config 1',
-                ).with_matches([PatternMatch(scope='storage.input', patterns=['id-1', 'id-2'])]),
+                ).set_matches([PatternMatch(scope='storage.input', patterns=['id-1', 'id-2'])]),
                 SearchHit(
                     component_id='keboola.ex-db',
                     configuration_id='cfg-2',
                     item_type='configuration',
                     updated='2024-01-02T00:00:00Z',
                     name='Config 2',
-                ).with_matches([PatternMatch(scope='storage.output', patterns=['id-1'])]),
+                ).set_matches([PatternMatch(scope='storage.output', patterns=['id-1'])]),
             ],
             {
                 'id-1': [
