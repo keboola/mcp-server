@@ -3,7 +3,8 @@
 ## Git Workflow
 - **Always create a branch first** before committing changes
 - Branch names must start with the Linear issue ID and be short (e.g., `AI-2480-whitelist-n8n-domains`)
-- Commit messages should reference the Linear issue ID (e.g., `AI-2480: description`)
+- Commit messages must **start** with the Linear issue ID (e.g., `AI-2480: description`)
+- When working on a Linear task, **check the current branch first** (`git branch`). If not already on the correct task branch, create one before making any changes: `git checkout -b AI-XXXX-short-description`
 - When creating PRs, use the template at `.github/pull_request_template.md`
 - **Never use `git push --force`** or rebase commits that have already been pushed - use merge commits instead to avoid rewriting history for others
 
@@ -19,7 +20,26 @@
 ## Virtual Environments
 - Look for a venv folder in the project root (e.g., `3.10.venv/`, `.venv/`) that contains an editable install of the project, or ask the user which venv to use
 - Activate the venv before running tox or uv commands
-- After version bump in `pyproject.toml`, sync lock file: `uv lock`
+- After version bump in `pyproject.toml`, sync lock file: `uv lock` (no `--active` flag — unlike `uv sync`, `uv lock` does not accept it)
+
+## Setting Up a Fresh Clone
+Run these steps once after cloning the repository:
+```bash
+# 1. Create virtual environment (requires Python 3.10)
+python3.10 -m venv 3.10.venv
+
+# 2. Activate and install uv
+source 3.10.venv/bin/activate
+pip install --upgrade pip uv
+
+# 3. Sync all dependencies from the lock file
+#    --active is required so uv installs into the already-activated venv
+uv sync --active --extra dev --extra tests
+
+# 4. Verify everything works
+tox
+```
+All four tox environments (pytest, black, flake8, check-tools-docs) should exit 0.
 
 ## Security Considerations
 - When whitelisting domains in OAuth, prefer **explicit domain lists over regex patterns**

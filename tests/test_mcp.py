@@ -34,9 +34,13 @@ class NestedModel(BaseModel):
     field2: list[str] | None = None
 
 
-def _tool(name: str) -> MagicMock:
+def _tool(name: str, read_only: bool = False) -> MagicMock:
     tool = MagicMock()
     tool.name = name
+    if read_only:
+        tool.annotations.readOnlyHint = True
+    else:
+        tool.annotations = None
     return tool
 
 
@@ -407,6 +411,95 @@ class TestToolsFilteringMiddleware:
             assert 'get_data_apps' in result_names
             assert 'deploy_data_app' in result_names
         assert 'other_tool' in result_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('token_role', 'hidden_tools', 'visible_tools'),
+        [
+            ('admin', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('share', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('readOnly', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
+            ('guest', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+        ],
+    )
+    async def test_list_tools_filters_flow_tools_by_role(
+        self,
+        mcp_context_client,
+        token_role: str,
+        hidden_tools: set[str],
+        visible_tools: set[str],
+    ) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
+        )
+
+        tools = [
+            _tool('modify_flow'),
+            _tool('update_flow'),
+            _tool('other_tool'),
+            _tool('read_only_tool', read_only=True),
+        ]
+
+        async def call_next(_):
+            return tools
+
+        middleware = ToolsFilteringMiddleware()
+        context = SimpleNamespace(fastmcp_context=mcp_context_client)
+        result = await middleware.on_list_tools(context, call_next)
+
+        result_names = {t.name for t in result}
+        for tool_name in hidden_tools:
+            assert tool_name not in result_names
+        for tool_name in visible_tools:
+            assert tool_name in result_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('token_role', 'called_tool', 'tool_read_only', 'expect_error'),
+        [
+            ('admin', 'modify_flow', False, False),
+            ('admin', 'update_flow', False, True),
+            ('share', 'modify_flow', False, False),
+            ('share', 'update_flow', False, True),
+            ('', 'modify_flow', False, True),
+            ('', 'update_flow', False, False),
+            ('guest', 'write_tool', False, False),
+            ('guest', 'read_only_tool', True, False),
+            ('readOnly', 'write_tool', False, True),
+            ('readOnly', 'read_only_tool', True, False),
+        ],
+    )
+    async def test_call_tool_blocks_flow_tools_by_role(
+        self,
+        mcp_context_client,
+        token_role: str,
+        called_tool: str,
+        tool_read_only: bool,
+        expect_error: bool,
+    ) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
+        )
+
+        tool = _tool(called_tool, read_only=tool_read_only)
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=called_tool))
+
+        expected = MagicMock()
+
+        async def call_next(_):
+            return expected
+
+        middleware = ToolsFilteringMiddleware()
+        if expect_error:
+            with pytest.raises(ToolError):
+                await middleware.on_call_tool(context, call_next)
+        else:
+            result = await middleware.on_call_tool(context, call_next)
+            assert result is expected
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -44,6 +44,13 @@ T = TypeVar('T')
 DEFAULT_CONCURRENCY = 10
 
 
+def is_read_only_tool(tool: Tool) -> bool:
+    """Check if a tool has readOnlyHint=True annotation."""
+    if tool.annotations is None:
+        return False
+    return tool.annotations.readOnlyHint is True
+
+
 @dataclasses.dataclass(frozen=True)
 class ServerState:
     config: Config
@@ -321,7 +328,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         else:
             tools = [t for t in tools if t.name != 'create_flow']
 
-        if token_role == 'admin':
+        if token_role in ('admin', 'share'):
             tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
         else:
             tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
@@ -329,6 +336,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if not self.is_client_using_main_branch(context.fastmcp_context):
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
+
+        if token_role == 'readonly':
+            tools = [t for t in tools if is_read_only_tool(t)]
+            LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
         return tools
 
@@ -341,6 +352,14 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         token_info = await self.get_token_info(context.fastmcp_context)
         features = self.get_project_features(token_info)
         token_role = self.get_token_role(token_info).lower()
+
+        if token_role == 'readonly':
+            if not is_read_only_tool(tool):
+                raise ToolError(
+                    f'Access denied: The tool "{tool.name}" requires write permissions. '
+                    f'Your current role ({token_role}) only allows read-only operations. '
+                    f'Contact your administrator to request write access.'
+                )
 
         if 'hide-conditional-flows' in features:
             if tool.name == 'create_conditional_flow':
@@ -357,7 +376,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     'please use"create_conditional_flow" tool instead.'
                 )
 
-        if token_role == 'admin':
+        if token_role in ('admin', 'share'):
             if tool.name == UPDATE_FLOW_TOOL_NAME:
                 raise ToolError(
                     'The "update_flow" tool is not available for admin tokens. '
@@ -370,7 +389,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
                 )
 
-        if tool.name in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}:
+        if tool.name in ('modify_data_app', 'get_data_apps', 'deploy_data_app'):
             if not self.is_client_using_main_branch(context.fastmcp_context):
                 raise ToolError('Data apps are supported only in the main production branch.')
 
