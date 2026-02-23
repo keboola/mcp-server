@@ -718,7 +718,15 @@ class TestSearch:
                         'rows': [],
                     }
                 ],
-                [('test-config', ['parameters.query', 'storage.input[0].source'])],
+                [
+                    (
+                        'test-config',
+                        [
+                            {'scope': 'parameters.query', 'patterns': ['alpha']},
+                            {'scope': 'storage.input[0].source', 'patterns': ['beta']},
+                        ],
+                    )
+                ],
             ),
             (
                 ['gamma'],
@@ -738,7 +746,15 @@ class TestSearch:
                         'rows': [],
                     }
                 ],
-                [('test-config', ['storage.input[1].source', 'storage.output[0].destination'])],
+                [
+                    (
+                        'test-config',
+                        [
+                            {'scope': 'storage.input[1].source', 'patterns': ['gamma']},
+                            {'scope': 'storage.output[0].destination', 'patterns': ['gamma']},
+                        ],
+                    )
+                ],
             ),
             (
                 ['alpha'],
@@ -755,7 +771,7 @@ class TestSearch:
                         'rows': [],
                     }
                 ],
-                [('test-config', ['parameters.query'])],
+                [('test-config', [{'scope': 'parameters.query', 'patterns': ['alpha']}])],
             ),
             (
                 ['alpha'],
@@ -772,7 +788,31 @@ class TestSearch:
                         'rows': [],
                     }
                 ],
-                [('test-config', ['authorization.#apiKey'])],
+                [('test-config', [{'scope': 'authorization.#apiKey', 'patterns': ['alpha']}])],
+            ),
+            (
+                ['alpha', 'beta'],
+                ('parameters',),
+                [
+                    {
+                        'id': 'test-config',
+                        'name': 'Test Config',
+                        'created': '2024-01-02T00:00:00Z',
+                        'configuration': {
+                            'parameters': {'query': 'alpha beta', 'query2': 'beta'},
+                        },
+                        'rows': [],
+                    }
+                ],
+                [
+                    (
+                        'test-config',
+                        [
+                            {'scope': 'parameters.query', 'patterns': ['alpha', 'beta']},
+                            {'scope': 'parameters.query2', 'patterns': ['beta']},
+                        ],
+                    )
+                ],
             ),
             (
                 ['alpha', 'gamma'],
@@ -808,8 +848,8 @@ class TestSearch:
                     },
                 ],
                 [
-                    ('test-config-b', ['storage.output[0].destination']),
-                    ('test-config-a', ['parameters.query']),
+                    ('test-config-b', [{'scope': 'storage.output[0].destination', 'patterns': ['gamma']}]),
+                    ('test-config-a', [{'scope': 'parameters.query', 'patterns': ['alpha']}]),
                 ],
             ),
         ],
@@ -818,6 +858,7 @@ class TestSearch:
             'most_specific_scope_only',
             'scope_constrains_same_value_in_other_path',
             'hash_prefixed_scope_key_in_search_tool',
+            'group_two_patterns_in_one_scope',
             'multiple_configurations_returned',
         ],
     )
@@ -828,7 +869,7 @@ class TestSearch:
         patterns: list[str],
         scopes: tuple[str, ...],
         component_configurations: list[dict[str, Any]],
-        expected_hits: list[tuple[str, list[str]]],
+        expected_hits: list[tuple[str, list[dict[str, Any]]]],
     ):
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
@@ -857,7 +898,27 @@ class TestSearch:
             scopes=scopes,
         )
 
-        assert [(hit.configuration_id, hit.match_scopes) for hit in result] == expected_hits
+        normalized_actual = [
+            (
+                hit.configuration_id,
+                sorted(
+                    ({'scope': m.scope, 'patterns': sorted(m.patterns)} for m in hit.match_scopes),
+                    key=lambda x: x['scope'] or '',
+                ),
+            )
+            for hit in result
+        ]
+        normalized_expected = [
+            (
+                config_id,
+                sorted(
+                    ({'scope': m['scope'], 'patterns': sorted(m['patterns'])} for m in matches),
+                    key=lambda x: x['scope'] or '',
+                ),
+            )
+            for config_id, matches in expected_hits
+        ]
+        assert normalized_actual == normalized_expected
 
 
 @pytest.mark.parametrize(

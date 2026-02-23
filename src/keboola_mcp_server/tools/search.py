@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+from collections import defaultdict
 from typing import Annotated, Any, AsyncGenerator, Iterable, Literal, Mapping, Sequence
 
 import jsonpath_ng
@@ -116,10 +117,9 @@ class SearchHit(BaseModel):
     name: str | None = Field(default=None, description='Name of the item.')
     display_name: str | None = Field(default=None, description='Display name of the item.')
     description: str | None = Field(default=None, description='Description of the item.')
-    match_scopes: list[str] = Field(
+    match_scopes: list[PatternMatch] = Field(
         default_factory=list,
-        description='Most specific JSONPath scopes within the configuration where a pattern was matched '
-        '(config-based search only).',
+        description='Most specific JSONPath scopes with grouped matched patterns ' '(config-based search only).',
     )
     links: list[Link] = Field(default_factory=list, description='Links to the item.')
     _matches: list[PatternMatch] = PrivateAttr(default_factory=list)
@@ -155,14 +155,23 @@ class SearchHit(BaseModel):
     def set_matches(self, matches: list['PatternMatch']) -> 'SearchHit':
         """Assign pattern matches to this search hit and return self for chaining."""
         self._matches = matches
-        unique_scopes = list(dict.fromkeys(match.scope for match in matches if match.scope))
-        self.match_scopes = [
+        grouped_patterns_by_scope: dict[str, set[str]] = defaultdict(set)
+        for match in matches:
+            if not match.scope:
+                continue
+            grouped_patterns_by_scope[match.scope].update(match.patterns)
+
+        unique_scopes = list(grouped_patterns_by_scope)
+        most_specific_scopes = [
             scope
             for scope in unique_scopes
             if not any(
                 other.startswith(scope) and len(other) > len(scope) and other[len(scope)] in ('.', '[')
                 for other in unique_scopes
             )
+        ]
+        self.match_scopes = [
+            PatternMatch(scope=scope, patterns=list(grouped_patterns_by_scope[scope])) for scope in most_specific_scopes
         ]
         return self
 
@@ -594,7 +603,7 @@ async def search(
     2) config-based
     - Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
     to a string, optionally narrowed by JSON path `scopes`.
-    - Returns also `match_scopes` with JSON paths in configuration where a pattern was found.
+    - Returns also `match_scopes` with JSON paths and matched patterns per scope.
 
     THIS IS THE PRIMARY DISCOVERY TOOL. Always use it BEFORE any get_* tool when you need to find items
     by name or specific configuration content. Do NOT enumerate items with get_buckets, get_tables, get_configs,
@@ -625,7 +634,7 @@ async def search(
     - Each result includes the item's ID, name, creation date, and relevant metadata
     - scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
     against the stringified JSON node content in those areas.
-    - config-based always returns all matched paths per item in `match_scopes`
+    - config-based always returns all matched paths per item in `match_scopes` (including matched patterns)
 
     IMPORTANT:
     - Always use this tool when the user mentions a name but you don't have the exact ID
@@ -665,7 +674,7 @@ async def search(
     - user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
         -> patterns=["in.c-prod.customers"], item_types=["transformation", "configuration"],
         search_type="config-based"
-        -> No scopes = search whole stringified config; result includes `match_scopes` with exact paths
+        -> No scopes = search whole stringified config; result includes `match_scopes` with exact paths + patterns
 
     - user_input: "Find configurations/transformations (etc.) using specific setting / id anywhere"
         -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
