@@ -47,7 +47,7 @@ async def test_query_client_token_selection(bearer_token: str | None, storage_to
         mock_qs_create.assert_called_once()
         call_kwargs = mock_qs_create.call_args.kwargs
         assert call_kwargs['token'] == expected_token
-        assert 'query.keboola.com' in call_kwargs['root_url']
+        assert call_kwargs['root_url'].startswith('https://query.keboola.com')
         assert call_kwargs['branch_id'] == '12345'
         assert result == mock_qs_instance
 
