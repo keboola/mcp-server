@@ -269,7 +269,8 @@ class SearchSpec(BaseModel):
     def _find_matches_for_expr(
         self, configuration: JsonDict, parsed_expr: JSONPath, scalar_only: bool = False
     ) -> list[PatternMatch]:
-        """Find pattern matches on JSON nodes matched by a JSONPath expression. If scalar_only is True, only scalar nodes are matched."""
+        """Find pattern matches on JSON nodes matched by a JSONPath expression. If scalar_only is True, only scalar
+        nodes are matched."""
         matches: list[PatternMatch] = []
         for jpath_match in parsed_expr.find(configuration):
             value = jpath_match.value
