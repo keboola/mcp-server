@@ -2631,7 +2631,7 @@ This tool supports two complementary search types:
 2) config-based
 - Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
 to a string, optionally narrowed by JSON path `scopes`.
-- Returns also `match_scopes` with JSON paths in configuration where a pattern was found.
+- Returns also `match_scopes` with JSON paths and matched patterns per scope.
 
 THIS IS THE PRIMARY DISCOVERY TOOL. Always use it BEFORE any get_* tool when you need to find items
 by name or specific configuration content. Do NOT enumerate items with get_buckets, get_tables, get_configs,
@@ -2662,7 +2662,7 @@ HOW IT WORKS:
 - Each result includes the item's ID, name, creation date, and relevant metadata
 - scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
 against the stringified JSON node content in those areas.
-- config-based always returns all matched paths per item in `match_scopes`
+- config-based always returns all matched paths per item in `match_scopes` (including matched patterns)
 
 IMPORTANT:
 - Always use this tool when the user mentions a name but you don't have the exact ID
@@ -2702,7 +2702,7 @@ USAGE EXAMPLES:
 - user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
     -> patterns=["in.c-prod.customers"], item_types=["transformation", "configuration"],
     search_type="config-based"
-    -> No scopes = search whole stringified config; result includes `match_scopes` with exact paths
+    -> No scopes = search whole stringified config; result includes `match_scopes` with exact paths + patterns
 
 - user_input: "Find configurations/transformations (etc.) using specific setting / id anywhere"
     -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
@@ -2722,7 +2722,8 @@ scopes=["storage"]
 - user_input: "Find components/transformations using my_bucket in input or output mappings"
     -> patterns=["my_bucket"], item_types=["configuration", "transformation"], search_type="config-based",
     scopes=["storage.input", "storage.output"]
-    -> Returns matches with paths like `storage.input[0].source` or `storage.output[0].target`
+    -> Returns matches with paths like `storage.input.tables[0].source`, `storage.input.files[0].source`,
+    or `storage.output.tables[0].destination`
 
 - user_input: "Find flows using configuration ID 01k9cz233cvd1rga3zzx40g8qj"
     -> patterns=["01k9cz233cvd1rga3zzx40g8qj"], item_types=["flow"], search_type="config-based",
@@ -2730,7 +2731,7 @@ scopes=["storage"]
 
 - user_input: "Find transformations using this table / column / specific code in its script"
     -> patterns=["element"], item_types=["transformation"], search_type="config-based",
-    scopes=["parameters"]
+    scopes=["parameters", "storage"]
 
 - user_input: "Find data apps using something in its config / python code / setting"
     -> patterns=["something"], item_types=["data-app"], search_type="config-based"
