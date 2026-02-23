@@ -902,7 +902,7 @@ class TestSearch:
             (
                 hit.configuration_id,
                 sorted(
-                    ({'scope': m.scope, 'patterns': sorted(m.patterns)} for m in hit.match_scopes),
+                    ({'scope': m.scope, 'patterns': sorted(m.patterns)} for m in hit.matches),
                     key=lambda x: x['scope'] or '',
                 ),
             )

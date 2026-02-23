@@ -117,12 +117,11 @@ class SearchHit(BaseModel):
     name: str | None = Field(default=None, description='Name of the item.')
     display_name: str | None = Field(default=None, description='Display name of the item.')
     description: str | None = Field(default=None, description='Description of the item.')
-    match_scopes: list[PatternMatch] = Field(
+    matches: list[PatternMatch] = Field(
         default_factory=list,
         description='Most specific JSONPath scopes with grouped matched patterns ' '(config-based search only).',
     )
     links: list[Link] = Field(default_factory=list, description='Links to the item.')
-    _matches: list[PatternMatch] = PrivateAttr(default_factory=list)
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, SearchHit):
@@ -154,14 +153,13 @@ class SearchHit(BaseModel):
 
     def set_matches(self, matches: list['PatternMatch']) -> 'SearchHit':
         """Assign pattern matches to this search hit and return self for chaining."""
-        self._matches = matches
-        grouped_patterns_by_scope: dict[str, set[str]] = defaultdict(set)
+        patterns_by_scope: dict[str, set[str]] = defaultdict(set)
         for match in matches:
             if not match.scope:
                 continue
-            grouped_patterns_by_scope[match.scope].update(match.patterns)
+            patterns_by_scope[match.scope].update(match.patterns)
 
-        unique_scopes = list(grouped_patterns_by_scope)
+        unique_scopes = list(patterns_by_scope)
         most_specific_scopes = [
             scope
             for scope in unique_scopes
@@ -170,8 +168,8 @@ class SearchHit(BaseModel):
                 for other in unique_scopes
             )
         ]
-        self.match_scopes = [
-            PatternMatch(scope=scope, patterns=list(grouped_patterns_by_scope[scope])) for scope in most_specific_scopes
+        self.matches = [
+            PatternMatch(scope=scope, patterns=list(patterns_by_scope[scope])) for scope in most_specific_scopes
         ]
         return self
 
