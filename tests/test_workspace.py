@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, Mock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -22,7 +23,7 @@ async def test_query_client_token_selection(bearer_token: str | None, storage_to
     # Create mock KeboolaClient with different token configurations
     mock_client = Mock(spec=KeboolaClient)
     mock_client.token = storage_token
-    mock_client._bearer_token = bearer_token
+    mock_client.bearer_token = bearer_token
     mock_client.hostname_suffix = 'keboola.com'
     mock_client.branch_id = '12345'
     mock_client.headers = {}
@@ -47,7 +48,10 @@ async def test_query_client_token_selection(bearer_token: str | None, storage_to
         mock_qs_create.assert_called_once()
         call_kwargs = mock_qs_create.call_args.kwargs
         assert call_kwargs['token'] == expected_token
-        assert call_kwargs['root_url'].startswith('https://query.keboola.com')
+        # Use proper URL parsing instead of substring check to avoid security alerts
+        parsed_url = urlparse(call_kwargs['root_url'])
+        assert parsed_url.scheme == 'https'
+        assert parsed_url.netloc == 'query.keboola.com'
         assert call_kwargs['branch_id'] == '12345'
         assert result == mock_qs_instance
 
@@ -58,7 +62,7 @@ async def test_query_client_token_selection_with_branch_lookup():
     # Create mock KeboolaClient with bearer token but no branch_id
     mock_client = Mock(spec=KeboolaClient)
     mock_client.token = 'sapi_token_456'
-    mock_client._bearer_token = 'oauth_bearer_123'
+    mock_client.bearer_token = 'oauth_bearer_123'
     mock_client.hostname_suffix = 'keboola.com'
     mock_client.branch_id = None  # No branch_id, will trigger lookup
     mock_client.headers = {}

@@ -395,6 +395,13 @@ class _SnowflakeWorkspace(_Workspace):
         return self._qsclient.branch_id
 
     async def _create_qs_client(self) -> QueryServiceClient:
+        """
+        Creates a QueryServiceClient for the workspace.
+
+        Note: Currently, QueryServiceClient is not cached and sessions are not used, so bearer token
+        expiration is not an issue. If sessions and caching are reintroduced in the future, token
+        expiration handling will need to be considered.
+        """
         real_branch_id = self._client.branch_id
         if not real_branch_id:
             for branch in await self._client.storage_client.branches_list():
@@ -405,7 +412,7 @@ class _SnowflakeWorkspace(_Workspace):
             raise RuntimeError('Cannot determine the default branch ID')
 
         # Prefer bearer token over storage token for Query Service
-        token = f'Bearer {self._client._bearer_token}' if self._client._bearer_token else self._client.token
+        token = f'Bearer {self._client.bearer_token}' if self._client.bearer_token else self._client.token
 
         return QueryServiceClient.create(
             root_url=urlunparse(('https', f'query.{self._client.hostname_suffix}', '', '', '', '')),
