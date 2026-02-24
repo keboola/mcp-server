@@ -67,7 +67,7 @@ async def find_id_usage(
     # group usage references by pattern = target_id
     output: dict[str, list[ComponentUsageReference]] = defaultdict(list)
     for search_hit in search_hits:
-        for match in search_hit._matches:
+        for match in search_hit.matches:
             for target_id in match.patterns:
                 output[target_id].append(
                     # TODO: Consider whether adding configuration description is useful, it could overload context.
