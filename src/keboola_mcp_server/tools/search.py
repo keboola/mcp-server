@@ -119,7 +119,7 @@ class SearchHit(BaseModel):
     description: str | None = Field(default=None, description='Description of the item.')
     matches: list[PatternMatch] = Field(
         default_factory=list,
-        description='Most specific JSONPath scopes with grouped matched patterns ' '(config-based search only).',
+        description='Most specific JSONPath scopes with grouped matched patterns (config-based search only).',
     )
     links: list[Link] = Field(default_factory=list, description='Links to the item.')
 
