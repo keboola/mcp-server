@@ -34,6 +34,25 @@ def add_project_tools(mcp: FastMCP) -> None:
     LOG.info('Project tools initialized.')
 
 
+def _get_toolset_restrictions(role: str) -> str | None:
+    """
+    Returns a human-readable description of toolset restrictions for the given user role,
+    or None if no special restrictions apply.
+    """
+    role = role.lower()
+    if role == 'readonly':
+        return (
+            f'Your Keboola user role is "{role}". '
+            'Only read-only tools are available. '
+            'All write operations (creating, updating, or deleting resources) are disabled.'
+        )
+    if not role or role == 'unknown':
+        return 'Your Keboola user role is unknown. You can manage flows but cannot set their schedules.'
+    if role not in ('admin', 'share'):
+        return f'Your Keboola user role is "{role}". You can manage flows but cannot set their schedules.'
+    return None
+
+
 class ProjectInfo(BaseModel):
     project_id: str | int = Field(description='The id of the project.')
     project_name: str = Field(description='The name of the project.')
@@ -44,6 +63,16 @@ class ProjectInfo(BaseModel):
     sql_dialect: str = Field(description='The sql dialect used in the project.')
     conditional_flows: bool = Field(description='Whether the project supports conditional flows.')
     links: list[Link] = Field(description='The links relevant to the project.')
+    user_role: str = Field(
+        description='The Keboola role of the current user (e.g. "admin", "developer", "guest", "readonly").',
+    )
+    toolset_restrictions: str | None = Field(
+        default=None,
+        description=(
+            'Describes any restrictions on the available toolset implied by the user role. '
+            'None if no special restrictions apply.'
+        ),
+    )
     llm_instruction: str = Field(
         description=(
             'These are the base instructions for working on the project. '
@@ -77,6 +106,8 @@ async def get_project_info(
     organization_data = cast(JsonDict, token_data.get('organization', {}))
     organization_id = cast(str, organization_data.get('id', ''))
 
+    user_role = token_data.get('admin', {}).get('role') or 'unknown'
+
     metadata = await storage.branch_metadata_get()
     description = cast(
         str, next((item['value'] for item in metadata if item.get('key') == MetadataField.PROJECT_DESCRIPTION), '')
@@ -95,6 +126,8 @@ async def get_project_info(
         sql_dialect=sql_dialect,
         conditional_flows=conditional_flows,
         links=links,
+        user_role=user_role,
+        toolset_restrictions=_get_toolset_restrictions(user_role),
         llm_instruction=get_project_system_prompt(),
     )
 
