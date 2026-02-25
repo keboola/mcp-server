@@ -46,4 +46,4 @@ def __getattr__(name: str) -> Any:
         from keboola_mcp_server.tools.components import tools as _tools
 
         return getattr(_tools, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
