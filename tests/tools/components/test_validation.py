@@ -184,6 +184,92 @@ def test_recoverable_validation_error_str():
     assert '"foo": 1' not in s
 
 
+ROOT_SCHEMA_PATH = 'tests/resources/parameters/root_parameters_schema.json'
+ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
+
+
+@pytest.mark.parametrize(
+    ('schema_path', 'invalid_data', 'expected_in_str', 'not_expected_in_str'),
+    [
+        # Case 1: missing required property at root level
+        # Only the violated 'required' list should appear, not the full schema object
+        (
+            ROOT_SCHEMA_PATH,
+            {'qdrant_settings': {'url': 'http://localhost:6333', '#api_key': 'key'}},
+            [
+                "'embedding_settings' is a required property",
+                "Failed validating 'required' in schema",
+                '"embedding_settings"',  # the required list value is shown
+            ],
+            ['azure_settings', 'huggingface_settings', 'google_vertex_settings'],  # full schema not dumped
+        ),
+        # Case 2: invalid enum value for provider_type
+        # Only the 'enum' list should appear at the precise schema path, not the full provider_type subschema
+        (
+            ROOT_SCHEMA_PATH,
+            {'embedding_settings': {'provider_type': 'gpt-9000'}},
+            [
+                "'gpt-9000' is not one of",
+                "Failed validating 'enum' in schema['properties']['embedding_settings']['properties']['provider_type']"
+                "['enum']",
+                "On instance['embedding_settings']['provider_type']",
+                '"openai"',  # enum values are shown
+                '"gpt-9000"',  # the bad value is shown
+            ],
+            ['azure_settings', 'huggingface_settings', '"title"'],  # full subschema properties not dumped
+        ),
+        # Case 3: wrong type - batch_size must be integer, not string
+        # Only the 'type' constraint should appear at the precise schema path
+        (
+            ROW_SCHEMA_PATH,
+            {'text_column': 'notes', 'advanced_options': {'batch_size': 'not-a-number'}},
+            [
+                "is not of type 'integer'",
+                "Failed validating 'type' in schema['properties']['advanced_options']['properties']['batch_size']"
+                "['type']",
+                "On instance['advanced_options']['batch_size']",
+                '"type": "integer"',  # the type constraint value is shown
+                '"not-a-number"',  # the bad value is shown
+            ],
+            ['enable_chunking', 'chunking_settings', '"title"'],  # full subschema not dumped
+        ),
+        # Case 4: minimum constraint violation - batch_size below minimum of 1
+        # Only the 'minimum' constraint value should appear
+        (
+            ROW_SCHEMA_PATH,
+            {'text_column': 'notes', 'advanced_options': {'batch_size': 0}},
+            [
+                '0 is less than the minimum of 1',
+                "Failed validating 'minimum' in schema['properties']['advanced_options']['properties']['batch_size']"
+                "['minimum']",
+                "On instance['advanced_options']['batch_size']",
+                '"minimum": 1',  # the minimum value is shown
+            ],
+            ['enable_chunking', 'chunking_settings', '"title"'],  # full subschema not dumped
+        ),
+    ],
+)
+def test_recoverable_validation_error_compact_format(
+    schema_path: str,
+    invalid_data: JsonDict,
+    expected_in_str: list,
+    not_expected_in_str: list,
+):
+    """Verify that RecoverableValidationError.__str__ shows only the violated schema constraint,
+    not the entire schema object."""
+    with open(schema_path) as f:
+        schema = json.load(f)
+
+    with pytest.raises(validation.RecoverableValidationError) as exc_info:
+        validation._validate_parameters_configuration_against_schema(invalid_data, schema)
+
+    err_str = str(exc_info.value)
+    for fragment in expected_in_str:
+        assert fragment in err_str, f'Expected {fragment!r} to be in error string:\n{err_str}'
+    for fragment in not_expected_in_str:
+        assert fragment not in err_str, f'Expected {fragment!r} NOT to be in error string:\n{err_str}'
+
+
 @pytest.mark.parametrize(
     ('input_schema', 'expected_schema'),
     [

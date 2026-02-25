@@ -83,9 +83,20 @@ class RecoverableValidationError(jsonschema.ValidationError):
 
     def __str__(self) -> str:
         """
-        Build a compact string representation without embedding invalid input JSON payload.
+        Build a compact string representation showing only the violated schema constraint,
+        not the entire schema object.
         """
         str_repr = f'{self.message}\n'
+        # Show only the violated keyword and its value, not the full schema
+        if self.validator and self.validator_value is not None:
+            schema_path = ''.join(f'[{p!r}]' for p in self.absolute_schema_path)
+            str_repr += f'Failed validating {self.validator!r} in schema{schema_path}:\n'
+            str_repr += f'    {json.dumps({self.validator: self.validator_value}, indent=2)}\n'
+        # Show the path and value of the failing instance
+        if self.absolute_path:
+            instance_path = ''.join(f'[{p!r}]' for p in self.absolute_path)
+            str_repr += f'On instance{instance_path}:\n'
+            str_repr += f'    {json.dumps(self.instance, indent=4)}\n'
         if self.initial_message:
             str_repr += f'{self.initial_message}\n'
         if self.validation_context:
