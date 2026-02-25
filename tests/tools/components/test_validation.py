@@ -82,7 +82,7 @@ def test_validate_storage_invalid(invalid_storage_path: str):
         )
     err = exc_info.value
     assert 'This is a test message' in str(err)
-    assert f'{json.dumps(invalid_storage, indent=2)}' in str(err)
+    assert f'{json.dumps(invalid_storage, indent=2)}' not in str(err)
 
 
 @pytest.mark.parametrize(
@@ -165,13 +165,23 @@ def test_validate_json_against_schema_invalid_schema(caplog):
 def test_recoverable_validation_error_str():
     err = jsonschema.ValidationError('Validation error', instance={'foo': 1})
     rve = validation.RecoverableValidationError.create_from_values(
-        err, invalid_json={'foo': 1}, initial_message='Initial msg'
+        err,
+        initial_message='Initial msg',
+        validation_context=validation.ValidationContext(
+            component_id='keboola.ex-test',
+            configuration_id='cfg-1',
+            configuration_row_id='row-1',
+            scope='parameters',
+        ),
     )
     s = str(rve)
     assert 'Validation error' in s
     assert 'Initial msg' in s
-    assert 'Recovery instructions:' in s
-    assert '"foo": 1' in s
+    assert (
+        'Validation component context: '
+        'component_id=keboola.ex-test, configuration_id=cfg-1, configuration_row_id=row-1, scope=parameters' in s
+    )
+    assert '"foo": 1' not in s
 
 
 @pytest.mark.parametrize(
