@@ -17,6 +17,13 @@ from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 
+from integtests.project_lock import (
+    DEFAULT_MAX_WAIT_MINUTES,
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_TTL_MINUTES,
+    LockInfo,
+    ProjectLock,
+)
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
@@ -275,6 +282,30 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
         storage_client.configurations.delete(config.component_id, config.configuration_id)
         # Double delete because the first delete moves the configuration to the trash
         storage_client.configurations.delete(config.component_id, config.configuration_id)
+
+
+@pytest.fixture(scope='session')
+def project_lock(storage_api_url: str, storage_api_token: str) -> Generator[LockInfo, Any, None]:
+    """
+    Acquires a distributed lock on the Keboola test project via branch metadata.
+    Waits if an active lock is held by another runner; cleans up after stale locks.
+    This fixture is intentionally NOT a dependency of keboola_project yet — it runs
+    in parallel with the existing rudimentary system until fully validated.
+    """
+    lock = ProjectLock(
+        storage_api_url=storage_api_url,
+        storage_api_token=storage_api_token,
+        ttl_minutes=int(os.getenv('INTEGTEST_LOCK_TTL_MINUTES', str(DEFAULT_TTL_MINUTES))),
+        poll_interval_seconds=int(
+            os.getenv('INTEGTEST_LOCK_POLL_INTERVAL_SECONDS', str(DEFAULT_POLL_INTERVAL_SECONDS))
+        ),
+        max_wait_minutes=int(os.getenv('INTEGTEST_LOCK_MAX_WAIT_MINUTES', str(DEFAULT_MAX_WAIT_MINUTES))),
+    )
+    lock_info = lock.acquire()
+    try:
+        yield lock_info
+    finally:
+        lock.release(lock_info)
 
 
 @pytest.fixture(scope='session')
