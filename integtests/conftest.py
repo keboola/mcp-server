@@ -37,7 +37,7 @@ WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
 DEV_STORAGE_API_URL_ENV_VAR = 'STORAGE_API_URL'
 DEV_STORAGE_TOKEN_ENV_VAR = 'KBC_STORAGE_TOKEN'
 DEV_WORKSPACE_SCHEMA_ENV_VAR = 'KBC_WORKSPACE_SCHEMA'
-INTEGTEST_CLIENT_INFO = Implementation(name='integtest/mcp', version=importlib.metadata.version('keboola_mcp_server'))
+INTEGTEST_CLIENT_INFO = Implementation(name='kbc-mcp-integtests', version=importlib.metadata.version('keboola_mcp_server'))
 INTEGTEST_USER_AGENT = f'{INTEGTEST_CLIENT_INFO.name}/{INTEGTEST_CLIENT_INFO.version}'
 
 
@@ -88,22 +88,17 @@ def env_file_loaded() -> bool:
     return load_dotenv()
 
 
-@pytest.fixture(scope='session', autouse=True)
-def _patch_fastmcp_client_default_info() -> Generator[None, None, None]:
+@pytest.fixture(autouse=True)
+def _patch_fastmcp_client_default_info(mocker) -> None:
     # Ensure all fastmcp.Client instances in integration tests use a distinct identity
     # unless a test intentionally provides a different client_info.
-    monkeypatch = pytest.MonkeyPatch()
     original_init = Client.__init__
 
     def _init_with_integtest_client_info(self, *args: Any, **kwargs: Any) -> None:
         kwargs.setdefault('client_info', INTEGTEST_CLIENT_INFO)
         original_init(self, *args, **kwargs)
 
-    monkeypatch.setattr(Client, '__init__', _init_with_integtest_client_info)
-    try:
-        yield
-    finally:
-        monkeypatch.undo()
+    mocker.patch.object(Client, '__init__', _init_with_integtest_client_info)
 
 
 @pytest.fixture(scope='session', autouse=True)
