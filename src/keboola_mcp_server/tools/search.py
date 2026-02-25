@@ -279,7 +279,7 @@ class SearchSpec(BaseModel):
             if matched := self.match_patterns(value):
                 matches.append(
                     PatternMatch(
-                        scope=re.sub(r'\.\[', '[', str(jpath_match.full_path)),
+                        scope=_clean_jsonpath_path_str(str(jpath_match.full_path)),
                         patterns=matched,
                     )
                 )
@@ -337,6 +337,20 @@ class SearchSpec(BaseModel):
                 if not self.return_all_matched_patterns:
                     break
         return matches
+
+
+def _clean_jsonpath_path_str(path_str: str) -> str:
+    """Normalize a jsonpath_ng full_path string across library versions.
+
+    jsonpath_ng >= 1.8.0 wraps Child nodes in parentheses and single-quotes field names
+    with special characters, e.g. "(authorization.'#apiKey')" instead of "authorization.#apiKey".
+    """
+    # Strip parentheses added by jsonpath_ng >= 1.8.0
+    result = path_str.replace('(', '').replace(')', '')
+    # Remove surrounding quotes from field name segments, e.g. "'#apiKey'" -> "#apiKey"
+    result = re.sub(r"['\"]([^'\"]+)['\"]", r'\1', result)
+    # Normalize .[N] -> [N]
+    return re.sub(r'\.\[', '[', result)
 
 
 def _get_field_value(item: JsonDict, fields: Sequence[str]) -> Any | None:
