@@ -1335,6 +1335,7 @@ async def update_config_internal(
             component=component,
             storage=storage,
             initial_message='The "storage" field is not valid.',
+            configuration_id=configuration_id,
         )
         configuration_payload['storage'] = storage_cfg
 
@@ -1362,6 +1363,7 @@ async def update_config_internal(
             component=component,
             parameters=updated_params,
             initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
+            configuration_id=configuration_id,
         )
         configuration_payload['parameters'] = parameters_cfg
 
@@ -1583,6 +1585,8 @@ async def update_config_row_internal(
             component=component,
             storage=storage,
             initial_message='The "storage" field is not valid.',
+            configuration_id=configuration_id,
+            configuration_row_id=configuration_row_id,
         )
         configuration_payload['storage'] = storage_cfg
 
@@ -1610,6 +1614,8 @@ async def update_config_row_internal(
             component=component,
             parameters=updated_params,
             initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
+            configuration_id=configuration_id,
+            configuration_row_id=configuration_row_id,
         )
         configuration_payload['parameters'] = parameters_cfg
 
