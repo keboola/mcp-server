@@ -88,7 +88,7 @@ class RecoverableValidationError(jsonschema.ValidationError):
         """
         str_repr = f'{self.message}\n'
         # Show only the violated keyword and its value, not the full schema
-        if self.validator and self.validator_value is not None:
+        if isinstance(self.validator, str) and self.validator_value is not None:
             schema_path = ''.join(f'[{p!r}]' for p in self.absolute_schema_path)
             str_repr += f'Failed validating {self.validator!r} in schema{schema_path}:\n'
             str_repr += f'    {json.dumps({self.validator: self.validator_value}, indent=2)}\n'
