@@ -69,6 +69,23 @@ async def dynamic_manager(
         except requests.HTTPError as e:
             LOG.exception(f'Failed to delete workspace metadata {meta["id"]}: {e}')
 
+    # Clean up configurations created under the MCP workspace component
+    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_NAME
+    try:
+        configs = storage_client.configurations.list(component_id=component_id)
+        for cfg in configs:
+            cfg_id = cfg.get('id')
+            if cfg_id:
+                try:
+                    storage_client.configurations.delete(component_id, cfg_id)
+                    # Double delete to skip trash
+                    storage_client.configurations.delete(component_id, cfg_id)
+                    LOG.info(f'Deleted component config: {component_id}/{cfg_id}')
+                except requests.HTTPError:
+                    LOG.exception(f'Failed to delete component config {component_id}/{cfg_id}')
+    except requests.HTTPError:
+        LOG.exception(f'Failed to list configs for {component_id}')
+
 
 class TestWorkspaceManager:
 

@@ -910,6 +910,43 @@ class AsyncStorageClient(KeboolaServiceClient):
             ),
         )
 
+    async def workspace_create_for_config(
+        self,
+        component_id: str,
+        config_id: str,
+        login_type: str,
+        backend: str,
+        async_run: bool = True,
+        read_only_storage_access: bool = False,
+    ) -> JsonDict:
+        """
+        Creates a new workspace under a component configuration.
+
+        :param component_id: The component ID (e.g. 'keboola.mcp-server-tool').
+        :param config_id: The configuration ID returned from configuration_create.
+        :param login_type: The login type for the workspace.
+        :param backend: The backend type for the workspace.
+        :param async_run: If True, the workspace creation is run asynchronously.
+        :param read_only_storage_access: If True, the workspace has read-only access to the storage.
+        :return: The SAPI call response - created workspace or raise an error.
+        """
+        data: dict[str, Any] = {
+            'readOnlyStorageAccess': read_only_storage_access,
+            'loginType': login_type,
+            'backend': backend,
+        }
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=(
+                    f'branch/{self._branch_id}/components/{component_id}'
+                    f'/configs/{config_id}/workspaces'
+                ),
+                params={'async': async_run},
+                data=data,
+            ),
+        )
+
     async def workspace_detail(self, workspace_id: int) -> JsonDict:
         """
         Retrieves information about a given workspace.

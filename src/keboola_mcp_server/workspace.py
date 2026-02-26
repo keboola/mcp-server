@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
@@ -634,7 +635,11 @@ class WorkspaceManager:
 
     async def _create_ws(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
         """
-        Creates a new workspace in the current branch and returns its info.
+        Creates a new workspace under a component configuration and returns its info.
+
+        The workspace is created under the MCP_WORKSPACE_COMPONENT_NAME component so that
+        it is correctly attributed for billing. A new configuration is created first, then
+        the workspace is created under that configuration.
 
         :param timeout_sec: The number of seconds to wait for the workspace creation job to finish.
         :return: The workspace info if the workspace was created successfully, None otherwise.
@@ -650,21 +655,34 @@ class WorkspaceManager:
         # Cache the token ID from the already-fetched token info
         self._token_id = self._extract_token_id(token_info)
 
+        # Create a configuration under the component for billing attribution
+        config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
+        config_resp = await self._client.storage_client.configuration_create(
+            component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+            name=config_name,
+            description='Auto-created by MCP server for workspace billing.',
+            configuration={},
+        )
+        config_id = str(config_resp['id'])
+        LOG.info(f'Created configuration {config_id} ({config_name}) under {self.MCP_WORKSPACE_COMPONENT_NAME}')
+
         if default_backend == 'snowflake':
-            resp = await self._client.storage_client.workspace_create(
+            resp = await self._client.storage_client.workspace_create_for_config(
+                component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+                config_id=config_id,
                 login_type='snowflake-person-sso',
                 backend=default_backend,
                 async_run=True,
                 read_only_storage_access=True,
-                name=self.MCP_WORKSPACE_COMPONENT_NAME,
             )
         elif default_backend == 'bigquery':
-            resp = await self._client.storage_client.workspace_create(
+            resp = await self._client.storage_client.workspace_create_for_config(
+                component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+                config_id=config_id,
                 login_type='default',
                 backend=default_backend,
                 async_run=True,
                 read_only_storage_access=True,
-                name=self.MCP_WORKSPACE_COMPONENT_NAME,
             )
         else:
             raise ValueError(f'Unexpected default backend: {default_backend}')
