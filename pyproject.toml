@@ -95,11 +95,6 @@ packages = ["src/keboola_mcp_server"]
 addopts = [
     "--import-mode=importlib",
 ]
-# Adds the project root to sys.path so that `integtests` is importable as a
-# namespace package from unit tests in `tests/` (e.g. tests/test_project_lock.py
-# imports from integtests.project_lock). Without this, --import-mode=importlib
-# does not add the project root to sys.path automatically.
-pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
 log_cli = false
