@@ -46,10 +46,13 @@ class LockInfo:
 
 @dataclass(frozen=True)
 class ProjectEndpoint:
-    """A Keboola project identified by its Storage API URL and token."""
+    """A Keboola project identified by its Storage API URL, token, workspace schema, and metadata."""
 
     storage_api_url: str
     storage_api_token: str
+    workspace_schema: str
+    project_id: str
+    project_name: str
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,38 @@ class AcquiredProject:
 
     endpoint: ProjectEndpoint
     lock_info: LockInfo
+
+
+def verify_project_endpoint(
+    storage_api_url: str,
+    storage_api_token: str,
+    workspace_schema: str,
+) -> ProjectEndpoint:
+    """
+    Verify a Storage API token and return a fully populated ProjectEndpoint.
+
+    Calls GET /v2/storage/tokens/verify to confirm the token is valid and to
+    fetch the project name and ID.  Raises httpx.HTTPStatusError if the token
+    is invalid or the request fails.
+    """
+    base_url = storage_api_url.rstrip('/')
+    with httpx.Client(headers={'X-StorageApi-Token': storage_api_token}, timeout=30.0) as client:
+        resp = client.get(f'{base_url}/v2/storage/tokens/verify')
+        resp.raise_for_status()
+        token_info = resp.json()
+    project_id = str(token_info['owner']['id'])
+    project_name = token_info['owner']['name']
+    LOG.info(
+        f'[project_lock] Verified token ...{storage_api_token[-4:]} — '
+        f'project "{project_name}" ({project_id})'
+    )
+    return ProjectEndpoint(
+        storage_api_url=storage_api_url,
+        storage_api_token=storage_api_token,
+        workspace_schema=workspace_schema,
+        project_id=project_id,
+        project_name=project_name,
+    )
 
 
 class ProjectLock:
@@ -360,10 +395,16 @@ class ProjectPool:
                 )
 
             for endpoint in self._endpoints:
-                LOG.info(f'[project_pool] Trying to acquire lock for ...{endpoint.storage_api_token[-4:]}')
+                LOG.info(
+                    f'[project_pool] Trying to acquire lock for '
+                    f'"{endpoint.project_name}" ({endpoint.project_id}) (...{endpoint.storage_api_token[-4:]})'
+                )
                 lock_info = self._make_lock(endpoint)._try_acquire_once()
                 if lock_info is not None:
-                    LOG.info(f'[project_pool] Acquired project ...{endpoint.storage_api_token[-4:]}')
+                    LOG.info(
+                        f'[project_pool] Acquired project '
+                        f'"{endpoint.project_name}" ({endpoint.project_id}) (...{endpoint.storage_api_token[-4:]})'
+                    )
                     return AcquiredProject(endpoint=endpoint, lock_info=lock_info)
 
             LOG.info(
@@ -374,6 +415,10 @@ class ProjectPool:
 
     def release(self, acquired: AcquiredProject) -> None:
         """Release the lock held on acquired.endpoint."""
+        LOG.info(
+            f'[project_pool] Releasing lock on '
+            f'"{acquired.endpoint.project_name}" ({acquired.endpoint.project_id}) (...{acquired.endpoint.storage_api_token[-4:]})'
+        )
         self._make_lock(acquired.endpoint).release(acquired.lock_info)
 
     def _make_lock(self, endpoint: ProjectEndpoint) -> ProjectLock:

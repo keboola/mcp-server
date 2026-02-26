@@ -22,8 +22,8 @@ from integtests.project_lock import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     DEFAULT_TTL_MINUTES,
     AcquiredProject,
-    ProjectEndpoint,
     ProjectPool,
+    verify_project_endpoint,
 )
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -34,9 +34,8 @@ from keboola_mcp_server.workspace import WorkspaceManager
 LOG = logging.getLogger(__name__)
 
 STORAGE_API_URL_ENV_VAR = 'INTEGTEST_STORAGE_API_URL'
-STORAGE_API_TOKEN_ENV_VAR = 'INTEGTEST_STORAGE_TOKEN'
 STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool of tokens
-WORKSPACE_SCHEMA_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMA'
+WORKSPACE_SCHEMAS_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMAS'  # space-separated, same order as tokens
 # The second pair of token/schema for testing simultaneous access to two different projects.
 STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
 WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
@@ -114,10 +113,8 @@ def storage_api_url(env_file_loaded: bool) -> str:
 
 
 @pytest.fixture(scope='session')
-def storage_api_token(env_file_loaded: bool) -> str:
-    storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
-    assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
-    return storage_api_token
+def storage_api_token(project_lock: AcquiredProject) -> str:
+    return project_lock.endpoint.storage_api_token
 
 
 @pytest.fixture(scope='session')
@@ -126,10 +123,8 @@ def mcp_config(storage_api_token: str, storage_api_url: str) -> Config:
 
 
 @pytest.fixture(scope='session')
-def workspace_schema(env_file_loaded: bool) -> str:
-    workspace_schema = os.getenv(WORKSPACE_SCHEMA_ENV_VAR)
-    assert workspace_schema, f'{WORKSPACE_SCHEMA_ENV_VAR} must be set'
-    return workspace_schema
+def workspace_schema(project_lock: AcquiredProject) -> str:
+    return project_lock.endpoint.workspace_schema
 
 
 @pytest.fixture(scope='session')
@@ -291,23 +286,43 @@ def project_lock(storage_api_url: str, env_file_loaded: bool) -> Generator[Acqui
     """
     Acquires a distributed lock on a Keboola test project via branch metadata.
 
-    Supports a pool of projects: set INTEGTEST_STORAGE_TOKENS to a space-separated
-    list of tokens. Falls back to INTEGTEST_STORAGE_TOKEN (single-project mode) when
-    INTEGTEST_STORAGE_TOKENS is not set, preserving the existing behaviour exactly.
+    Requires INTEGTEST_STORAGE_TOKENS and INTEGTEST_WORKSPACE_SCHEMAS to be set to
+    space-separated lists of equal length: tokens and workspace schema IDs for each
+    project in the pool, in matching order.
 
     Yields AcquiredProject(endpoint, lock_info) so callers know which project was
-    selected. This fixture is intentionally NOT a dependency of keboola_project yet —
-    it runs in parallel with the existing rudimentary system until fully validated.
+    selected. storage_api_token and workspace_schema fixtures read their values from
+    the acquired endpoint.
     """
     tokens_raw = os.getenv(STORAGE_API_TOKENS_ENV_VAR, '').strip()
-    if tokens_raw:
-        tokens = tokens_raw.split()
-    else:
-        single = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
-        assert single, f'Either {STORAGE_API_TOKENS_ENV_VAR} or {STORAGE_API_TOKEN_ENV_VAR} must be set'
-        tokens = [single]
+    if not tokens_raw:
+        pytest.fail(
+            f'{STORAGE_API_TOKENS_ENV_VAR} must be set to a non-empty '
+            f'space-separated list of project tokens'
+        )
+    tokens = tokens_raw.split()
 
-    endpoints = [ProjectEndpoint(storage_api_url=storage_api_url, storage_api_token=t) for t in tokens]
+    schemas_raw = os.getenv(WORKSPACE_SCHEMAS_ENV_VAR, '').strip()
+    if not schemas_raw:
+        pytest.fail(
+            f'{WORKSPACE_SCHEMAS_ENV_VAR} must be set to a non-empty '
+            f'space-separated list of workspace schemas'
+        )
+    schemas = schemas_raw.split()
+
+    if len(tokens) != len(schemas):
+        pytest.fail(
+            f'{STORAGE_API_TOKENS_ENV_VAR} has {len(tokens)} token(s) but '
+            f'{WORKSPACE_SCHEMAS_ENV_VAR} has {len(schemas)} schema(s) — '
+            f'they must have the same number of entries'
+        )
+
+    endpoints = []
+    for t, s in zip(tokens, schemas):
+        try:
+            endpoints.append(verify_project_endpoint(storage_api_url, t, s))
+        except Exception as exc:
+            pytest.fail(f'Failed to verify Storage API token ...{t[-4:]}: {exc}')
     pool = ProjectPool(
         endpoints=endpoints,
         ttl_minutes=int(os.getenv('INTEGTEST_LOCK_TTL_MINUTES', str(DEFAULT_TTL_MINUTES))),

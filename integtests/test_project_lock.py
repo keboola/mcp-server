@@ -20,6 +20,7 @@ from integtests.project_lock import (
     ProjectEndpoint,
     ProjectLock,
     ProjectPool,
+    verify_project_endpoint,
 )
 
 # ---------------------------------------------------------------------------
@@ -418,8 +419,17 @@ def test_max_wait_exceeded_raises(mocker):
 def _make_endpoint(
     url: str = 'https://connection.keboola.com',
     token: str = 'test-token',
+    schema: str = 'WORKSPACE_TEST',
+    project_id: str = 'proj-001',
+    project_name: str = 'Test Project',
 ) -> ProjectEndpoint:
-    return ProjectEndpoint(storage_api_url=url, storage_api_token=token)
+    return ProjectEndpoint(
+        storage_api_url=url,
+        storage_api_token=token,
+        workspace_schema=schema,
+        project_id=project_id,
+        project_name=project_name,
+    )
 
 
 def _make_pool(**kwargs) -> ProjectPool:
@@ -789,3 +799,137 @@ def test_pool_release_delegates_to_lock(mocker):
 
     make_lock_mock.assert_called_once_with(endpoint)
     mock_lock.release.assert_called_once_with(lock_info)
+
+
+# ===========================================================================
+# workspace_schema tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# test_project_endpoint_stores_workspace_schema
+# ---------------------------------------------------------------------------
+
+
+def test_project_endpoint_stores_all_fields():
+    """ProjectEndpoint stores all five fields correctly."""
+    ep = ProjectEndpoint(
+        storage_api_url='https://connection.keboola.com',
+        storage_api_token='my-token',
+        workspace_schema='WORKSPACE_12345',
+        project_id='99',
+        project_name='My Project',
+    )
+    assert ep.workspace_schema == 'WORKSPACE_12345'
+    assert ep.project_id == '99'
+    assert ep.project_name == 'My Project'
+
+
+# ---------------------------------------------------------------------------
+# test_pool_acquired_project_carries_workspace_schema
+# ---------------------------------------------------------------------------
+
+
+def test_pool_acquired_project_carries_workspace_schema(mocker):
+    """AcquiredProject.endpoint carries the workspace_schema of the acquired endpoint."""
+    endpoint = _make_endpoint(schema='WORKSPACE_SCHEMA_A')
+    pool = _make_pool(endpoints=[endpoint])
+
+    lock_info = _make_lock_info('ws-schema-test-001')
+    mock_lock = mocker.MagicMock()
+    mock_lock._try_acquire_once.return_value = lock_info
+    mocker.patch.object(pool, '_make_lock', return_value=mock_lock)
+    mocker.patch('time.sleep')
+
+    result = pool.acquire()
+
+    assert result.endpoint.workspace_schema == 'WORKSPACE_SCHEMA_A'
+
+
+# ---------------------------------------------------------------------------
+# test_pool_selects_correct_schema_for_acquired_endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_pool_selects_correct_schema_for_acquired_endpoint(mocker):
+    """When the second endpoint is acquired, its schema is returned, not the first's."""
+    endpoint1 = _make_endpoint(token='token-aaa', schema='SCHEMA_AAA')
+    endpoint2 = _make_endpoint(token='token-bbb', schema='SCHEMA_BBB')
+    pool = _make_pool(endpoints=[endpoint1, endpoint2], poll_interval_seconds=30)
+
+    lock_info = _make_lock_info('ws-schema-second-001')
+    mock_lock1 = mocker.MagicMock()
+    mock_lock1._try_acquire_once.return_value = None
+    mock_lock2 = mocker.MagicMock()
+    mock_lock2._try_acquire_once.return_value = lock_info
+    mocker.patch.object(pool, '_make_lock', side_effect=[mock_lock1, mock_lock2])
+    mocker.patch('time.sleep')
+
+    result = pool.acquire()
+
+    assert result.endpoint == endpoint2
+    assert result.endpoint.workspace_schema == 'SCHEMA_BBB'
+
+
+# ===========================================================================
+# verify_project_endpoint tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# test_verify_project_endpoint_happy_path
+# ---------------------------------------------------------------------------
+
+
+def test_verify_project_endpoint_happy_path(mocker):
+    """verify_project_endpoint returns a fully populated ProjectEndpoint on success."""
+    token_info = {
+        'owner': {'id': 42, 'name': 'My CI Project'},
+    }
+    mock_resp = mocker.MagicMock()
+    mock_resp.json.return_value = token_info
+    mock_client = mocker.MagicMock()
+    mock_client.__enter__ = mocker.MagicMock(return_value=mock_client)
+    mock_client.__exit__ = mocker.MagicMock(return_value=False)
+    mock_client.get.return_value = mock_resp
+    mocker.patch('integtests.project_lock.httpx.Client', return_value=mock_client)
+
+    ep = verify_project_endpoint(
+        storage_api_url='https://connection.keboola.com',
+        storage_api_token='my-secret-token',
+        workspace_schema='WORKSPACE_99999',
+    )
+
+    assert ep.project_id == '42'
+    assert ep.project_name == 'My CI Project'
+    assert ep.workspace_schema == 'WORKSPACE_99999'
+    assert ep.storage_api_token == 'my-secret-token'
+    mock_client.get.assert_called_once_with('https://connection.keboola.com/v2/storage/tokens/verify')
+    mock_resp.raise_for_status.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# test_verify_project_endpoint_bad_token_raises
+# ---------------------------------------------------------------------------
+
+
+def test_verify_project_endpoint_bad_token_raises(mocker):
+    """verify_project_endpoint propagates HTTPStatusError on a bad token."""
+    import httpx
+
+    mock_resp = mocker.MagicMock()
+    mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        '401 Unauthorized', request=mocker.MagicMock(), response=mocker.MagicMock()
+    )
+    mock_client = mocker.MagicMock()
+    mock_client.__enter__ = mocker.MagicMock(return_value=mock_client)
+    mock_client.__exit__ = mocker.MagicMock(return_value=False)
+    mock_client.get.return_value = mock_resp
+    mocker.patch('integtests.project_lock.httpx.Client', return_value=mock_client)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        verify_project_endpoint(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='bad-token',
+            workspace_schema='WORKSPACE_00000',
+        )
