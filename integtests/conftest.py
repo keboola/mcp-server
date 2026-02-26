@@ -296,18 +296,12 @@ def project_lock(storage_api_url: str, env_file_loaded: bool) -> Generator[Acqui
     """
     tokens_raw = os.getenv(STORAGE_API_TOKENS_ENV_VAR, '').strip()
     if not tokens_raw:
-        pytest.fail(
-            f'{STORAGE_API_TOKENS_ENV_VAR} must be set to a non-empty '
-            f'space-separated list of project tokens'
-        )
+        pytest.fail(f'{STORAGE_API_TOKENS_ENV_VAR} must be set to a non-empty space-separated list of project tokens')
     tokens = tokens_raw.split()
 
     schemas_raw = os.getenv(WORKSPACE_SCHEMAS_ENV_VAR, '').strip()
     if not schemas_raw:
-        pytest.fail(
-            f'{WORKSPACE_SCHEMAS_ENV_VAR} must be set to a non-empty '
-            f'space-separated list of workspace schemas'
-        )
+        pytest.fail(f'{WORKSPACE_SCHEMAS_ENV_VAR} must be set to a non-empty space-separated list of workspace schemas')
     schemas = schemas_raw.split()
 
     if len(tokens) != len(schemas):

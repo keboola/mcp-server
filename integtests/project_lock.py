@@ -82,10 +82,7 @@ def verify_project_endpoint(
         token_info = resp.json()
     project_id = str(token_info['owner']['id'])
     project_name = token_info['owner']['name']
-    LOG.info(
-        f'[project_lock] Verified token ...{storage_api_token[-4:]} — '
-        f'project "{project_name}" ({project_id})'
-    )
+    LOG.info(f'[project_lock] Verified token ...{storage_api_token[-4:]} — project "{project_name}" ({project_id})')
     return ProjectEndpoint(
         storage_api_url=storage_api_url,
         storage_api_token=storage_api_token,
