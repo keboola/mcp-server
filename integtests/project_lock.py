@@ -417,7 +417,8 @@ class ProjectPool:
         """Release the lock held on acquired.endpoint."""
         LOG.info(
             f'[project_pool] Releasing lock on '
-            f'"{acquired.endpoint.project_name}" ({acquired.endpoint.project_id}) (...{acquired.endpoint.storage_api_token[-4:]})'
+            f'"{acquired.endpoint.project_name}" ({acquired.endpoint.project_id})'
+            f' (...{acquired.endpoint.storage_api_token[-4:]})'
         )
         self._make_lock(acquired.endpoint).release(acquired.lock_info)
 
