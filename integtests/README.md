@@ -63,7 +63,7 @@ The defaults work for both local and CI use. Override only if you have a reason 
 ### Running the tests
 
 ```bash
-source 3.10.venv/bin/activate
+source <your.venv>/bin/activate
 pytest integtests/ -v --log-cli-level=INFO
 ```
 
