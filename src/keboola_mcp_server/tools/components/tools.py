@@ -856,6 +856,7 @@ async def update_sql_transformation_internal(
             component=transformation,
             parameters=updated_raw_parameters.model_dump(exclude_none=True),
             initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
+            configuration_id=configuration_id,
         )
         updated_configuration['parameters'] = parameters_cfg
 
@@ -864,6 +865,7 @@ async def update_sql_transformation_internal(
             component=transformation,
             storage=storage,
             initial_message='The "storage" field is not valid.',
+            configuration_id=configuration_id,
         )
         updated_configuration['storage'] = storage_cfg
 
@@ -1078,11 +1080,13 @@ async def add_config_row(
         component=component,
         storage=storage,
         initial_message='The "storage" field is not valid.',
+        configuration_id=configuration_id,
     )
     parameters = validate_row_parameters_configuration(
         component=component,
         parameters=parameters,
         initial_message='The "parameters" field is not valid.',
+        configuration_id=configuration_id,
     )
 
     configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
