@@ -24,7 +24,7 @@ async def dynamic_manager(
     def _get_workspace_meta() -> list[Mapping[str, Any]]:
         metadata: list[Mapping[str, Any]] = []
         for m in storage_client.branches.metadata('default'):
-            if m.get('key') == WorkspaceManager.MCP_META_KEY:
+            if m.get('key', '').startswith(WorkspaceManager.MCP_META_KEY_PREFIX):
                 metadata.append(m)
         return metadata
 

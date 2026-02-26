@@ -536,7 +536,8 @@ class _WspInfo:
 
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
-    MCP_META_KEY = 'KBC.McpServer.workspaceId'
+    MCP_META_KEY_PREFIX = 'KBC.McpServer.workspaceId'
+    MCP_WORKSPACE_COMPONENT_NAME = 'keboola.mcp-server-tool'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'WorkspaceManager':
@@ -566,6 +567,7 @@ class WorkspaceManager:
         self._workspace_schema = workspace_schema
         self._workspace: _Workspace | None = None
         self._table_info_cache: dict[str, DbTableInfo] = {}
+        self._token_id: str | None = None
 
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
@@ -597,12 +599,25 @@ class WorkspaceManager:
             else:
                 raise e
 
-    async def _find_ws_in_branch(self) -> _WspInfo | None:
-        """Finds the workspace info in the current branch."""
+    async def _get_token_id(self) -> str:
+        """Returns the token ID, caching the result from verify_token."""
+        if self._token_id is None:
+            token_info = await self._client.storage_client.verify_token()
+            self._token_id = str(token_info['id'])
+        return self._token_id
 
+    def _meta_key(self, token_id: str) -> str:
+        """Returns the per-user metadata key for workspace lookup."""
+        return f'{self.MCP_META_KEY_PREFIX}.{token_id}'
+
+    async def _find_ws_in_branch(self) -> _WspInfo | None:
+        """Finds the workspace info in the current branch for the current token."""
+
+        token_id = await self._get_token_id()
+        meta_key = self._meta_key(token_id)
         metadata = await self._client.storage_client.branch_metadata_get()
         for m in metadata:
-            if m.get('key') == self.MCP_META_KEY:
+            if m.get('key') == meta_key:
                 workspace_id = m.get('value')
                 if workspace_id and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
                     return info
@@ -624,16 +639,24 @@ class WorkspaceManager:
         owner_info = token_info.get('owner', {})
         default_backend = owner_info.get('defaultBackend')
 
+        # Cache the token ID from the already-fetched token info
+        self._token_id = str(token_info['id'])
+
         if default_backend == 'snowflake':
             resp = await self._client.storage_client.workspace_create(
                 login_type='snowflake-person-sso',
                 backend=default_backend,
                 async_run=True,
                 read_only_storage_access=True,
+                name=self.MCP_WORKSPACE_COMPONENT_NAME,
             )
         elif default_backend == 'bigquery':
             resp = await self._client.storage_client.workspace_create(
-                login_type='default', backend=default_backend, async_run=True, read_only_storage_access=True
+                login_type='default',
+                backend=default_backend,
+                async_run=True,
+                read_only_storage_access=True,
+                name=self.MCP_WORKSPACE_COMPONENT_NAME,
             )
         else:
             raise ValueError(f'Unexpected default backend: {default_backend}')
@@ -724,8 +747,9 @@ class WorkspaceManager:
         # create a new workspace and note its ID to the branch
         LOG.info('Creating workspace in the default branch.')
         if info := await self._create_ws():
-            # update the branch metadata with the workspace ID
-            meta = await self._client.storage_client.branch_metadata_update({self.MCP_META_KEY: info.id})
+            # update the branch metadata with the workspace ID (per-user key)
+            token_id = await self._get_token_id()
+            meta = await self._client.storage_client.branch_metadata_update({self._meta_key(token_id): info.id})
             LOG.info(f'Set metadata in the default branch: {meta}')
             # use the newly created workspace
             self._workspace = self._init_workspace(info)
