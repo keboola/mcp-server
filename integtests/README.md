@@ -44,7 +44,11 @@ INTEGTEST_WORKSPACE_SCHEMA_PRJ2=<workspace-schema-of-second-project>
 ```
 
 These are read directly without locking and can be omitted if you are not running those
-tests.
+tests. No lock is needed because the only test that uses PRJ2
+(`test_http_multiple_clients_with_different_headers`) is strictly read-only against it —
+it calls `list_tools`, `list_resources`, and `get_project_info`, and never creates,
+modifies, or deletes any object. Any future test that writes to PRJ2 must acquire a lock
+for it first.
 
 ### Optional — lock tuning
 

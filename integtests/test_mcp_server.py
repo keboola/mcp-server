@@ -115,6 +115,10 @@ async def test_http_multiple_clients_with_different_headers(
 ):
     """
     Test that the server can handle multiple clients with different headers and checks the values of the headers.
+
+    This test accesses the second project (PRJ2) without a lock. That is safe only because
+    it is strictly read-only against PRJ2 (list_tools, list_resources, get_project_info).
+    Do not add any writes to PRJ2 here without acquiring a lock for it first.
     """
     if not storage_api_token_2 or not workspace_schema_2:
         pytest.skip('No SAPI token or workspace schema for the second client. Skipping test.')
