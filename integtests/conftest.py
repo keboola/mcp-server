@@ -21,8 +21,9 @@ from integtests.project_lock import (
     DEFAULT_MAX_WAIT_MINUTES,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DEFAULT_TTL_MINUTES,
-    LockInfo,
-    ProjectLock,
+    AcquiredProject,
+    ProjectEndpoint,
+    ProjectPool,
 )
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -34,6 +35,7 @@ LOG = logging.getLogger(__name__)
 
 STORAGE_API_URL_ENV_VAR = 'INTEGTEST_STORAGE_API_URL'
 STORAGE_API_TOKEN_ENV_VAR = 'INTEGTEST_STORAGE_TOKEN'
+STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool of tokens
 WORKSPACE_SCHEMA_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMA'
 # The second pair of token/schema for testing simultaneous access to two different projects.
 STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
@@ -285,27 +287,40 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
 
 
 @pytest.fixture(scope='session')
-def project_lock(storage_api_url: str, storage_api_token: str) -> Generator[LockInfo, Any, None]:
+def project_lock(storage_api_url: str, env_file_loaded: bool) -> Generator[AcquiredProject, Any, None]:
     """
-    Acquires a distributed lock on the Keboola test project via branch metadata.
-    Waits if an active lock is held by another runner; cleans up after stale locks.
-    This fixture is intentionally NOT a dependency of keboola_project yet — it runs
-    in parallel with the existing rudimentary system until fully validated.
+    Acquires a distributed lock on a Keboola test project via branch metadata.
+
+    Supports a pool of projects: set INTEGTEST_STORAGE_TOKENS to a space-separated
+    list of tokens. Falls back to INTEGTEST_STORAGE_TOKEN (single-project mode) when
+    INTEGTEST_STORAGE_TOKENS is not set, preserving the existing behaviour exactly.
+
+    Yields AcquiredProject(endpoint, lock_info) so callers know which project was
+    selected. This fixture is intentionally NOT a dependency of keboola_project yet —
+    it runs in parallel with the existing rudimentary system until fully validated.
     """
-    lock = ProjectLock(
-        storage_api_url=storage_api_url,
-        storage_api_token=storage_api_token,
+    tokens_raw = os.getenv(STORAGE_API_TOKENS_ENV_VAR, '').strip()
+    if tokens_raw:
+        tokens = tokens_raw.split()
+    else:
+        single = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
+        assert single, f'Either {STORAGE_API_TOKENS_ENV_VAR} or {STORAGE_API_TOKEN_ENV_VAR} must be set'
+        tokens = [single]
+
+    endpoints = [ProjectEndpoint(storage_api_url=storage_api_url, storage_api_token=t) for t in tokens]
+    pool = ProjectPool(
+        endpoints=endpoints,
         ttl_minutes=int(os.getenv('INTEGTEST_LOCK_TTL_MINUTES', str(DEFAULT_TTL_MINUTES))),
         poll_interval_seconds=int(
             os.getenv('INTEGTEST_LOCK_POLL_INTERVAL_SECONDS', str(DEFAULT_POLL_INTERVAL_SECONDS))
         ),
         max_wait_minutes=int(os.getenv('INTEGTEST_LOCK_MAX_WAIT_MINUTES', str(DEFAULT_MAX_WAIT_MINUTES))),
     )
-    lock_info = lock.acquire()
+    acquired = pool.acquire()
     try:
-        yield lock_info
+        yield acquired
     finally:
-        lock.release(lock_info)
+        pool.release(acquired)
 
 
 @pytest.fixture(scope='session')

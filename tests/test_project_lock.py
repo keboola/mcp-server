@@ -13,8 +13,11 @@ import pytest
 
 from integtests.project_lock import (
     LOCK_KEY_PREFIX,
+    AcquiredProject,
     LockInfo,
+    ProjectEndpoint,
     ProjectLock,
+    ProjectPool,
 )
 
 # ---------------------------------------------------------------------------
@@ -403,3 +406,384 @@ def test_max_wait_exceeded_raises(mocker):
 
     with pytest.raises(TimeoutError, match='Could not acquire project lock'):
         lock.acquire()
+
+
+# ===========================================================================
+# Helpers for ProjectPool / _try_acquire_once tests
+# ===========================================================================
+
+
+def _make_endpoint(
+    url: str = 'https://connection.keboola.com',
+    token: str = 'test-token',
+) -> ProjectEndpoint:
+    return ProjectEndpoint(storage_api_url=url, storage_api_token=token)
+
+
+def _make_pool(**kwargs) -> ProjectPool:
+    defaults = dict(
+        endpoints=[_make_endpoint()],
+        ttl_minutes=60,
+        poll_interval_seconds=1,
+        max_wait_minutes=5,
+        anti_collision_seconds=0,
+    )
+    defaults.update(kwargs)
+    return ProjectPool(**defaults)
+
+
+def _make_lock_info(lock_id: str = 'test-lock-id') -> LockInfo:
+    return LockInfo(
+        lock_id=lock_id,
+        acquired_at=datetime.now(timezone.utc),
+        runner_info='host/1',
+        metadata_key=LOCK_KEY_PREFIX + lock_id,
+    )
+
+
+# ===========================================================================
+# _try_acquire_once tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# test_try_acquire_once_happy_path
+# ---------------------------------------------------------------------------
+
+
+def test_try_acquire_once_happy_path(mocker):
+    """Single candidate, we are oldest → returns LockInfo."""
+    lock = _make_project_lock()
+    my_lock_id = 'try-once-happy-01'
+
+    mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, '_post', return_value=[])
+    my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
+    mocker.patch.object(lock, '_read_metadata', return_value=[my_entry])
+    sleep_mock = mocker.patch('time.sleep')
+
+    result = lock._try_acquire_once()
+
+    assert isinstance(result, LockInfo)
+    assert result.lock_id == my_lock_id
+    assert result.metadata_key == LOCK_KEY_PREFIX + my_lock_id
+    assert any(c == call(0) for c in sleep_mock.call_args_list)  # anti_collision=0
+
+
+# ---------------------------------------------------------------------------
+# test_try_acquire_once_loses_to_active_runner
+# ---------------------------------------------------------------------------
+
+
+def test_try_acquire_once_loses_to_active_runner(mocker):
+    """Other runner is older → returns None; our candidate is released."""
+    lock = _make_project_lock()
+    my_lock_id = 'try-once-lose-001'
+    other_lock_id = 'try-once-other-01'
+
+    mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    post_mock = mocker.patch.object(lock, '_post', return_value=[])
+    clean_mock = mocker.patch.object(lock, '_clean_project')
+
+    other_entry = _make_lock(lock_id=other_lock_id, minutes_ago=5)  # older
+    my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
+    mocker.patch.object(lock, '_read_metadata', return_value=[other_entry, my_entry])
+    mocker.patch('time.sleep')
+
+    result = lock._try_acquire_once()
+
+    assert result is None
+    # Our candidate must be released
+    released_keys = [
+        entry['key']
+        for c in post_mock.call_args_list
+        for entry in c.kwargs.get('data', {}).get('metadata', [])
+        if entry['key'].endswith('.released')
+    ]
+    assert LOCK_KEY_PREFIX + my_lock_id + '.released' in released_keys
+    clean_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# test_try_acquire_once_stale_then_wins
+# ---------------------------------------------------------------------------
+
+
+def test_try_acquire_once_stale_then_wins(mocker):
+    """Stale detected → cleans project, second candidate wins → returns LockInfo."""
+    lock = _make_project_lock(ttl_minutes=60)
+
+    stale_id = 'stale-entry-0001'
+    my_id_1 = 'my-first-cand-001'
+    my_id_2 = 'my-second-cand-01'
+
+    uuid_iter = iter([my_id_1, my_id_2])
+    mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
+
+    post_mock = mocker.patch.object(lock, '_post', return_value=[])
+    clean_mock = mocker.patch.object(lock, '_clean_project')
+
+    stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
+
+    read_call = [0]
+
+    def metadata_side_effect():
+        read_call[0] += 1
+        if read_call[0] == 1:
+            return [stale_entry, _make_lock(lock_id=my_id_1, minutes_ago=0)]
+        else:
+            return [_make_lock(lock_id=my_id_2, minutes_ago=0)]
+
+    mocker.patch.object(lock, '_read_metadata', side_effect=metadata_side_effect)
+    mocker.patch('time.sleep')
+
+    result = lock._try_acquire_once()
+
+    assert isinstance(result, LockInfo)
+    assert result.lock_id == my_id_2
+    clean_mock.assert_called_once()
+
+    released_keys = [
+        entry['key']
+        for c in post_mock.call_args_list
+        for entry in c.kwargs.get('data', {}).get('metadata', [])
+        if entry['key'].endswith('.released')
+    ]
+    assert LOCK_KEY_PREFIX + stale_id + '.released' in released_keys
+    assert LOCK_KEY_PREFIX + my_id_1 + '.released' in released_keys
+
+
+# ---------------------------------------------------------------------------
+# test_try_acquire_once_stale_then_loses
+# ---------------------------------------------------------------------------
+
+
+def test_try_acquire_once_stale_then_loses(mocker):
+    """Stale cleaned but second attempt loses to a racing runner → returns None."""
+    lock = _make_project_lock(ttl_minutes=60)
+
+    stale_id = 'stale-entry-0002'
+    my_id_1 = 'my-first-cand-002'
+    my_id_2 = 'my-second-cand-02'
+    other_id = 'other-racer-0001'
+
+    uuid_iter = iter([my_id_1, my_id_2])
+    mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
+
+    post_mock = mocker.patch.object(lock, '_post', return_value=[])
+    clean_mock = mocker.patch.object(lock, '_clean_project')
+
+    stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
+
+    read_call = [0]
+
+    def metadata_side_effect():
+        read_call[0] += 1
+        if read_call[0] == 1:
+            return [stale_entry, _make_lock(lock_id=my_id_1, minutes_ago=0)]
+        else:
+            # Another runner snuck in and is older than our second candidate
+            other_entry = _make_lock(lock_id=other_id, minutes_ago=1)
+            return [other_entry, _make_lock(lock_id=my_id_2, minutes_ago=0)]
+
+    mocker.patch.object(lock, '_read_metadata', side_effect=metadata_side_effect)
+    mocker.patch('time.sleep')
+
+    result = lock._try_acquire_once()
+
+    assert result is None
+    clean_mock.assert_called_once()
+
+    released_keys = [
+        entry['key']
+        for c in post_mock.call_args_list
+        for entry in c.kwargs.get('data', {}).get('metadata', [])
+        if entry['key'].endswith('.released')
+    ]
+    # Both candidates must be released
+    assert LOCK_KEY_PREFIX + my_id_1 + '.released' in released_keys
+    assert LOCK_KEY_PREFIX + my_id_2 + '.released' in released_keys
+
+
+# ---------------------------------------------------------------------------
+# test_acquire_still_works_via_try_acquire_once
+# ---------------------------------------------------------------------------
+
+
+def test_acquire_still_works_via_try_acquire_once(mocker):
+    """acquire() loops _try_acquire_once(); None on first call, LockInfo on second."""
+    lock = _make_project_lock(poll_interval_seconds=7)
+
+    lock_info = _make_lock_info('final-lock-0001')
+    mocker.patch.object(lock, '_try_acquire_once', side_effect=[None, lock_info])
+    sleep_mock = mocker.patch('time.sleep')
+
+    result = lock.acquire()
+
+    assert result == lock_info
+    assert call(7) in sleep_mock.call_args_list
+
+
+# ===========================================================================
+# ProjectPool tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# test_pool_empty_endpoints_raises
+# ---------------------------------------------------------------------------
+
+
+def test_pool_empty_endpoints_raises():
+    """ProjectPool(endpoints=[]) raises ValueError."""
+    with pytest.raises(ValueError, match='at least one endpoint'):
+        ProjectPool(endpoints=[])
+
+
+# ---------------------------------------------------------------------------
+# test_pool_single_endpoint_acquires
+# ---------------------------------------------------------------------------
+
+
+def test_pool_single_endpoint_acquires(mocker):
+    """Pool of one endpoint: _try_acquire_once wins on first try → AcquiredProject."""
+    endpoint = _make_endpoint()
+    pool = _make_pool(endpoints=[endpoint])
+
+    lock_info = _make_lock_info('pool-single-001')
+    mock_lock = mocker.MagicMock()
+    mock_lock._try_acquire_once.return_value = lock_info
+    mocker.patch.object(pool, '_make_lock', return_value=mock_lock)
+    mocker.patch('time.sleep')
+
+    result = pool.acquire()
+
+    assert isinstance(result, AcquiredProject)
+    assert result.endpoint == endpoint
+    assert result.lock_info == lock_info
+
+
+# ---------------------------------------------------------------------------
+# test_pool_first_busy_second_free
+# ---------------------------------------------------------------------------
+
+
+def test_pool_first_busy_second_free(mocker):
+    """First endpoint is locked; second is free → result uses second endpoint, no poll sleep."""
+    endpoint1 = _make_endpoint(token='token-aaa')
+    endpoint2 = _make_endpoint(token='token-bbb')
+    pool = _make_pool(endpoints=[endpoint1, endpoint2], poll_interval_seconds=30)
+
+    lock_info = _make_lock_info('pool-second-001')
+    mock_lock1 = mocker.MagicMock()
+    mock_lock1._try_acquire_once.return_value = None
+    mock_lock2 = mocker.MagicMock()
+    mock_lock2._try_acquire_once.return_value = lock_info
+
+    mocker.patch.object(pool, '_make_lock', side_effect=[mock_lock1, mock_lock2])
+    sleep_mock = mocker.patch('time.sleep')
+
+    result = pool.acquire()
+
+    assert result.endpoint == endpoint2
+    assert result.lock_info == lock_info
+    # No poll sleep — a project was found within the first pass
+    assert call(30) not in sleep_mock.call_args_list
+
+
+# ---------------------------------------------------------------------------
+# test_pool_all_busy_then_one_frees
+# ---------------------------------------------------------------------------
+
+
+def test_pool_all_busy_then_one_frees(mocker):
+    """Both endpoints busy on pass 1; first frees on pass 2 → poll sleep called once."""
+    endpoint1 = _make_endpoint(token='token-ccc')
+    endpoint2 = _make_endpoint(token='token-ddd')
+    pool = _make_pool(endpoints=[endpoint1, endpoint2], poll_interval_seconds=11)
+
+    lock_info = _make_lock_info('pool-retry-001')
+    # Pass 1: both locked
+    mock_lock1a = mocker.MagicMock()
+    mock_lock1a._try_acquire_once.return_value = None
+    mock_lock2a = mocker.MagicMock()
+    mock_lock2a._try_acquire_once.return_value = None
+    # Pass 2: endpoint1 succeeds
+    mock_lock1b = mocker.MagicMock()
+    mock_lock1b._try_acquire_once.return_value = lock_info
+
+    mocker.patch.object(pool, '_make_lock', side_effect=[mock_lock1a, mock_lock2a, mock_lock1b])
+    sleep_mock = mocker.patch('time.sleep')
+
+    result = pool.acquire()
+
+    assert result.endpoint == endpoint1
+    assert result.lock_info == lock_info
+    # Poll sleep must have been called between the two passes
+    assert call(11) in sleep_mock.call_args_list
+
+
+# ---------------------------------------------------------------------------
+# test_pool_stale_project_claimed_not_skipped
+# ---------------------------------------------------------------------------
+
+
+def test_pool_stale_project_claimed_not_skipped(mocker):
+    """
+    First endpoint's _try_acquire_once returns LockInfo (stale-path internal win)
+    → pool claims it immediately; second endpoint is never tried.
+    """
+    endpoint1 = _make_endpoint(token='token-eee')
+    endpoint2 = _make_endpoint(token='token-fff')
+    pool = _make_pool(endpoints=[endpoint1, endpoint2])
+
+    lock_info = _make_lock_info('pool-stale-win-01')
+    mock_lock1 = mocker.MagicMock()
+    mock_lock1._try_acquire_once.return_value = lock_info
+
+    make_lock_mock = mocker.patch.object(pool, '_make_lock', return_value=mock_lock1)
+    mocker.patch('time.sleep')
+
+    result = pool.acquire()
+
+    assert result.endpoint == endpoint1
+    assert result.lock_info == lock_info
+    # _make_lock called only once (endpoint2 was never tried)
+    assert make_lock_mock.call_count == 1
+    make_lock_mock.assert_called_once_with(endpoint1)
+
+
+# ---------------------------------------------------------------------------
+# test_pool_timeout_raises
+# ---------------------------------------------------------------------------
+
+
+def test_pool_timeout_raises(mocker):
+    """Raises TimeoutError when no project can be acquired within max_wait_minutes."""
+    pool = _make_pool(max_wait_minutes=0)
+    mocker.patch('time.sleep')
+
+    with pytest.raises(TimeoutError, match='Could not acquire any project lock'):
+        pool.acquire()
+
+
+# ---------------------------------------------------------------------------
+# test_pool_release_delegates_to_lock
+# ---------------------------------------------------------------------------
+
+
+def test_pool_release_delegates_to_lock(mocker):
+    """pool.release(acquired) delegates to _make_lock(endpoint).release(lock_info)."""
+    endpoint = _make_endpoint()
+    pool = _make_pool(endpoints=[endpoint])
+
+    lock_info = _make_lock_info('pool-release-001')
+    acquired = AcquiredProject(endpoint=endpoint, lock_info=lock_info)
+
+    mock_lock = mocker.MagicMock()
+    make_lock_mock = mocker.patch.object(pool, '_make_lock', return_value=mock_lock)
+
+    pool.release(acquired)
+
+    make_lock_mock.assert_called_once_with(endpoint)
+    mock_lock.release.assert_called_once_with(lock_info)

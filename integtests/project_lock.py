@@ -8,6 +8,9 @@ Lock state is represented by two metadata keys per runner:
   Active   : KBC.integtest.lock.<uuid>               (JSON payload)
   Released : KBC.integtest.lock.<uuid>.released      (ISO timestamp string)
 
+For a pool of projects, use ProjectPool, which tries each ProjectEndpoint in
+order and returns the first one that can be locked.
+
 This file has no dependency on the keboola_mcp_server package — it only uses
 httpx (already a project dependency) for direct Storage API calls.
 """
@@ -41,6 +44,22 @@ class LockInfo:
     metadata_key: str  # 'KBC.integtest.lock.<lock_id>'
 
 
+@dataclass(frozen=True)
+class ProjectEndpoint:
+    """A Keboola project identified by its Storage API URL and token."""
+
+    storage_api_url: str
+    storage_api_token: str
+
+
+@dataclass(frozen=True)
+class AcquiredProject:
+    """Result of acquiring a lock from a pool: which project was selected and its lock."""
+
+    endpoint: ProjectEndpoint
+    lock_info: LockInfo
+
+
 class ProjectLock:
     def __init__(
         self,
@@ -65,71 +84,16 @@ class ProjectLock:
     def acquire(self) -> LockInfo:
         """Block until this runner owns the project lock; return LockInfo."""
         deadline = datetime.now(timezone.utc).timestamp() + self._max_wait_minutes * 60
-        runner_info = self._runner_info()
 
         while True:
             if datetime.now(timezone.utc).timestamp() > deadline:
                 raise TimeoutError(f'Could not acquire project lock within {self._max_wait_minutes} minutes')
 
-            lock_id = str(uuid.uuid4())
-            acquired_at = datetime.now(timezone.utc)
-            key = LOCK_KEY_PREFIX + lock_id
-            payload = json.dumps(
-                {
-                    'lock_id': lock_id,
-                    'acquired_at': acquired_at.isoformat(),
-                    'runner_info': runner_info,
-                }
-            )
-            LOG.info(f'[project_lock] Writing candidate lock {lock_id} (runner: {runner_info})')
-            self._write_metadata({key: payload})
+            result = self._try_acquire_once()
+            if result is not None:
+                return result
 
-            # Anti-collision window: let concurrent writers finish their writes
-            time.sleep(self._anti_collision_seconds)
-
-            active = self._read_active_locks()
-
-            # Determine winner: oldest acquired_at; on exact tie, lowest lock_id string
-            winner = min(active, key=lambda li: (li.acquired_at, li.lock_id)) if active else None
-
-            if winner is not None and winner.lock_id == lock_id:
-                LOG.info(f'[project_lock] Acquired lock {lock_id}')
-                return LockInfo(
-                    lock_id=lock_id,
-                    acquired_at=acquired_at,
-                    runner_info=runner_info,
-                    metadata_key=key,
-                )
-
-            if winner is not None and self._is_stale(winner):
-                LOG.warning(
-                    f'[project_lock] Stale lock detected: {winner.lock_id} '
-                    f'(acquired_at={winner.acquired_at.isoformat()}). '
-                    'Releasing stale entries and cleaning project.'
-                )
-                for stale in active:
-                    if self._is_stale(stale):
-                        self._release_lock_entry(stale.lock_id)
-                self._clean_project()
-                # Release our pending entry so we retry cleanly
-                self._release_lock_entry(lock_id)
-                time.sleep(2)
-                continue
-
-            # Another runner holds an active (non-stale) lock
-            if winner is not None:
-                expires_approx = winner.acquired_at.timestamp() + self._ttl_minutes * 60
-                expires_str = datetime.fromtimestamp(expires_approx, tz=timezone.utc).isoformat()
-                LOG.info(
-                    f'[project_lock] Lock held by {winner.runner_info} '
-                    f'(id={winner.lock_id}), expires ~{expires_str}. '
-                    f'Releasing our candidate and waiting {self._poll_interval_seconds}s.'
-                )
-            else:
-                LOG.info(f'[project_lock] No winner determined yet. ' f'Waiting {self._poll_interval_seconds}s.')
-
-            # Withdraw our candidate so we don't block the winner
-            self._release_lock_entry(lock_id)
+            LOG.info(f'[project_lock] Waiting {self._poll_interval_seconds}s before retrying.')
             time.sleep(self._poll_interval_seconds)
 
     def release(self, lock: LockInfo) -> None:
@@ -141,6 +105,101 @@ class ProjectLock:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _try_acquire_once(self) -> LockInfo | None:
+        """
+        Single non-looping acquisition attempt.
+
+        Returns LockInfo if this runner wins the lock (including after cleaning
+        a stale lock).  Returns None if another runner holds an active non-stale
+        lock — signals the caller to try a different project or wait and retry.
+        """
+        runner_info = self._runner_info()
+        lock_id = str(uuid.uuid4())
+        acquired_at = datetime.now(timezone.utc)
+        key = LOCK_KEY_PREFIX + lock_id
+        payload = json.dumps(
+            {
+                'lock_id': lock_id,
+                'acquired_at': acquired_at.isoformat(),
+                'runner_info': runner_info,
+            }
+        )
+        LOG.info(f'[project_lock] Writing candidate lock {lock_id} (runner: {runner_info})')
+        self._write_metadata({key: payload})
+
+        # Anti-collision window: let concurrent writers finish their writes
+        time.sleep(self._anti_collision_seconds)
+
+        active = self._read_active_locks()
+        winner = min(active, key=lambda li: (li.acquired_at, li.lock_id)) if active else None
+
+        # Case 1: We are the winner
+        if winner is not None and winner.lock_id == lock_id:
+            LOG.info(f'[project_lock] Acquired lock {lock_id}')
+            return LockInfo(
+                lock_id=lock_id,
+                acquired_at=acquired_at,
+                runner_info=runner_info,
+                metadata_key=key,
+            )
+
+        # Case 2: The winner is stale — clean up and retry immediately once
+        if winner is not None and self._is_stale(winner):
+            LOG.warning(
+                f'[project_lock] Stale lock detected: {winner.lock_id} '
+                f'(acquired_at={winner.acquired_at.isoformat()}). '
+                'Releasing stale entries and cleaning project.'
+            )
+            for stale in active:
+                if self._is_stale(stale):
+                    self._release_lock_entry(stale.lock_id)
+            self._clean_project()
+            # Release our pending entry and write a fresh candidate
+            self._release_lock_entry(lock_id)
+            time.sleep(2)
+
+            lock_id2 = str(uuid.uuid4())
+            acquired_at2 = datetime.now(timezone.utc)
+            key2 = LOCK_KEY_PREFIX + lock_id2
+            payload2 = json.dumps(
+                {
+                    'lock_id': lock_id2,
+                    'acquired_at': acquired_at2.isoformat(),
+                    'runner_info': runner_info,
+                }
+            )
+            LOG.info(f'[project_lock] Post-stale-clean: writing candidate lock {lock_id2}')
+            self._write_metadata({key2: payload2})
+            time.sleep(self._anti_collision_seconds)
+
+            active2 = self._read_active_locks()
+            winner2 = min(active2, key=lambda li: (li.acquired_at, li.lock_id)) if active2 else None
+            if winner2 is not None and winner2.lock_id == lock_id2:
+                LOG.info(f'[project_lock] Acquired lock {lock_id2} after stale cleanup')
+                return LockInfo(
+                    lock_id=lock_id2,
+                    acquired_at=acquired_at2,
+                    runner_info=runner_info,
+                    metadata_key=key2,
+                )
+            # Another runner raced us after the cleanup — withdraw and signal the caller
+            self._release_lock_entry(lock_id2)
+            return None
+
+        # Case 3: Another runner holds an active (non-stale) lock
+        if winner is not None:
+            expires_approx = winner.acquired_at.timestamp() + self._ttl_minutes * 60
+            expires_str = datetime.fromtimestamp(expires_approx, tz=timezone.utc).isoformat()
+            LOG.info(
+                f'[project_lock] Lock held by {winner.runner_info} '
+                f'(id={winner.lock_id}), expires ~{expires_str}. '
+                'Releasing our candidate.'
+            )
+        else:
+            LOG.info('[project_lock] No winner determined yet. Releasing candidate.')
+        self._release_lock_entry(lock_id)
+        return None
 
     def _write_metadata(self, kv: dict[str, str]) -> None:
         payload = {'metadata': [{'key': k, 'value': v} for k, v in kv.items()]}
@@ -255,3 +314,74 @@ class ProjectLock:
         with self._client() as client:
             resp = client.delete(self._base_url + path, params=params or None)
             resp.raise_for_status()
+
+
+class ProjectPool:
+    """
+    Manages a pool of Keboola projects for integration tests.
+
+    Tries each endpoint in order on every acquisition pass; returns the first
+    project whose lock can be acquired.  If all projects are held by active
+    runners, sleeps poll_interval_seconds and retries the whole pool.
+    Raises TimeoutError after max_wait_minutes.
+
+    Stale locks on any project are detected and cleaned automatically before
+    claiming that project (handled inside ProjectLock._try_acquire_once).
+    """
+
+    def __init__(
+        self,
+        endpoints: list[ProjectEndpoint],
+        ttl_minutes: int = DEFAULT_TTL_MINUTES,
+        poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS,
+        max_wait_minutes: int = DEFAULT_MAX_WAIT_MINUTES,
+        anti_collision_seconds: int = DEFAULT_ANTI_COLLISION_SECONDS,
+    ) -> None:
+        if not endpoints:
+            raise ValueError('ProjectPool requires at least one endpoint')
+        self._endpoints = endpoints
+        self._ttl_minutes = ttl_minutes
+        self._poll_interval_seconds = poll_interval_seconds
+        self._max_wait_minutes = max_wait_minutes
+        self._anti_collision_seconds = anti_collision_seconds
+
+    def acquire(self) -> AcquiredProject:
+        """
+        Try each endpoint in order; return the first one successfully locked.
+        Retries the whole pool until max_wait_minutes is exceeded.
+        """
+        deadline = datetime.now(timezone.utc).timestamp() + self._max_wait_minutes * 60
+
+        while True:
+            if datetime.now(timezone.utc).timestamp() > deadline:
+                raise TimeoutError(
+                    f'Could not acquire any project lock within {self._max_wait_minutes} minutes '
+                    f'(pool size: {len(self._endpoints)})'
+                )
+
+            for endpoint in self._endpoints:
+                LOG.info(f'[project_pool] Trying to acquire lock for ...{endpoint.storage_api_token[-4:]}')
+                lock_info = self._make_lock(endpoint)._try_acquire_once()
+                if lock_info is not None:
+                    LOG.info(f'[project_pool] Acquired project ...{endpoint.storage_api_token[-4:]}')
+                    return AcquiredProject(endpoint=endpoint, lock_info=lock_info)
+
+            LOG.info(
+                f'[project_pool] All {len(self._endpoints)} projects busy. '
+                f'Sleeping {self._poll_interval_seconds}s before retry.'
+            )
+            time.sleep(self._poll_interval_seconds)
+
+    def release(self, acquired: AcquiredProject) -> None:
+        """Release the lock held on acquired.endpoint."""
+        self._make_lock(acquired.endpoint).release(acquired.lock_info)
+
+    def _make_lock(self, endpoint: ProjectEndpoint) -> ProjectLock:
+        return ProjectLock(
+            storage_api_url=endpoint.storage_api_url,
+            storage_api_token=endpoint.storage_api_token,
+            ttl_minutes=self._ttl_minutes,
+            poll_interval_seconds=self._poll_interval_seconds,
+            max_wait_minutes=self._max_wait_minutes,
+            anti_collision_seconds=self._anti_collision_seconds,
+        )
