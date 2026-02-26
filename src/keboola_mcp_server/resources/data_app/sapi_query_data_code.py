@@ -18,14 +18,23 @@ def query_data(query: str) -> pd.DataFrame:
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
 
+    # Support both bearer tokens and storage tokens
+    if token.startswith('Bearer '):
+        headers = {
+            'Authorization': token,
+            'Accept': 'application/json',
+        }
+    else:
+        headers = {
+            'X-StorageAPI-Token': token,
+            'Accept': 'application/json',
+        }
+
     with httpx.Client(timeout=timeout, limits=limits) as client:
         response = client.post(
             f'{kbc_url}/v2/storage/branch/{branch_id}/workspaces/{workspace_id}/query',
             json={'query': query},
-            headers={
-                'X-StorageAPI-Token': token,
-                'Accept': 'application/json',
-            },
+            headers=headers,
         )
         response.raise_for_status()
         response_json = response.json()

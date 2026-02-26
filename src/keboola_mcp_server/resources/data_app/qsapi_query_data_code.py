@@ -17,10 +17,18 @@ def query_data(query: str) -> pd.DataFrame:
         raise RuntimeError('Missing required environment variables: BRANCH_ID, WORKSPACE_ID, KBC_TOKEN, KBC_URL.')
 
     query_service_url = kbc_url.replace('connection.', 'query.', 1).rstrip('/') + '/api/v1'
-    headers = {
-        'X-StorageAPI-Token': token,
-        'Accept': 'application/json',
-    }
+
+    # Support both bearer tokens and storage tokens
+    if token.startswith('Bearer '):
+        headers = {
+            'Authorization': token,
+            'Accept': 'application/json',
+        }
+    else:
+        headers = {
+            'X-StorageAPI-Token': token,
+            'Accept': 'application/json',
+        }
 
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=None)
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)

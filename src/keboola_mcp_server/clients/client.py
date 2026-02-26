@@ -200,6 +200,14 @@ class KeboolaClient:
         return self._token
 
     @property
+    def bearer_token(self) -> str | None:
+        """
+        Gets the OAuth bearer token issued by Keboola OAuth server, if available.
+        Returns None if only storage token authentication is used.
+        """
+        return self._bearer_token
+
+    @property
     def branch_id(self) -> str | None:
         """
         Gets ID of the Keboola branch that the MCP server is bound to or None if it's bound
