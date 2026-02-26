@@ -536,7 +536,7 @@ class _WspInfo:
 
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
-    MCP_META_KEY_PREFIX = 'KBC.McpServer.workspaceId'
+    MCP_META_KEY_PREFIX = 'KBC.McpServer.v2.workspaceId'
     MCP_WORKSPACE_COMPONENT_NAME = 'keboola.mcp-server-tool'
 
     @classmethod
