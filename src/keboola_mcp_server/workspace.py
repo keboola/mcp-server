@@ -627,8 +627,17 @@ class WorkspaceManager:
         metadata = await self._client.storage_client.branch_metadata_get()
         for m in metadata:
             if m.get('key') == meta_key:
-                workspace_id = m.get('value')
-                if workspace_id and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
+                raw_workspace_id = m.get('value')
+                try:
+                    workspace_id = int(raw_workspace_id) if raw_workspace_id is not None else None
+                except (TypeError, ValueError):
+                    LOG.warning(
+                        'Ignoring invalid workspace_id metadata value %r for key %s',
+                        raw_workspace_id,
+                        meta_key,
+                    )
+                    continue
+                if workspace_id is not None and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
                     return info
 
         return None
@@ -657,35 +666,55 @@ class WorkspaceManager:
 
         # Create a configuration under the component for billing attribution
         config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
-        config_resp = await self._client.storage_client.configuration_create(
-            component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
-            name=config_name,
-            description='Auto-created by MCP server for workspace billing.',
-            configuration={},
-        )
-        config_id = str(config_resp['id'])
+        try:
+            config_resp = await self._client.storage_client.configuration_create(
+                component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+                name=config_name,
+                description='Auto-created by MCP server for workspace billing.',
+                configuration={},
+            )
+        except HTTPStatusError as e:
+            raise RuntimeError(
+                f'Failed to create configuration under component {self.MCP_WORKSPACE_COMPONENT_NAME}. '
+                f'Ensure the component is registered in SAPI. Status: {e.response.status_code}'
+            ) from e
+        config_id_raw = config_resp.get('id')
+        if not config_id_raw:
+            raise ValueError(f"Configuration creation response missing 'id': {config_resp!r}")
+        config_id = str(config_id_raw)
         LOG.info(f'Created configuration {config_id} ({config_name}) under {self.MCP_WORKSPACE_COMPONENT_NAME}')
 
-        if default_backend == 'snowflake':
-            resp = await self._client.storage_client.workspace_create_for_config(
-                component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
-                config_id=config_id,
-                login_type='snowflake-person-sso',
-                backend=default_backend,
-                async_run=True,
-                read_only_storage_access=True,
-            )
-        elif default_backend == 'bigquery':
-            resp = await self._client.storage_client.workspace_create_for_config(
-                component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
-                config_id=config_id,
-                login_type='default',
-                backend=default_backend,
-                async_run=True,
-                read_only_storage_access=True,
-            )
-        else:
-            raise ValueError(f'Unexpected default backend: {default_backend}')
+        try:
+            if default_backend == 'snowflake':
+                resp = await self._client.storage_client.workspace_create_for_config(
+                    component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+                    config_id=config_id,
+                    login_type='snowflake-person-sso',
+                    backend=default_backend,
+                    async_run=True,
+                    read_only_storage_access=True,
+                )
+            elif default_backend == 'bigquery':
+                resp = await self._client.storage_client.workspace_create_for_config(
+                    component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+                    config_id=config_id,
+                    login_type='default',
+                    backend=default_backend,
+                    async_run=True,
+                    read_only_storage_access=True,
+                )
+            else:
+                raise ValueError(f'Unexpected default backend: {default_backend}')
+        except Exception:
+            LOG.warning(f'Workspace creation failed; cleaning up configuration {config_id}')
+            try:
+                await self._client.storage_client.configuration_delete(
+                    component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+                    configuration_id=config_id,
+                )
+            except Exception:
+                LOG.exception(f'Failed to clean up configuration {config_id}')
+            raise
 
         assert 'id' in resp, f'Expected job ID in response: {resp}'
         assert isinstance(resp['id'], int)
