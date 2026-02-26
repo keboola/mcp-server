@@ -116,7 +116,7 @@ class TestStorageEvents:
         mcp_context.session.client_params = InitializeRequestParams(
             protocolVersion='1',
             capabilities=ClientCapabilities(),
-            clientInfo=Implementation(name='integtest', version='1.2.3'),
+            clientInfo=Implementation(name='kbc-mcp-integtests-test-events-emitted', version='1.2.3'),
         )
         mcp_context.session.state[CONVERSATION_ID] = '#987654321'
         unique = uuid.uuid4().hex
@@ -145,7 +145,7 @@ class TestStorageEvents:
         assert emitted_event['params']['mcpServerContext'] == {
             'appEnv': 'DEV',
             'version': distribution('keboola_mcp_server').version,
-            'userAgent': 'integtest/1.2.3',
+            'userAgent': 'kbc-mcp-integtests-test-events-emitted/1.2.3',
             'sessionId': 'deadbee',
             'serverTransport': 'stdio',
             'conversationId': '#987654321',
