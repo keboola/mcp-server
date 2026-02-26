@@ -599,11 +599,19 @@ class WorkspaceManager:
             else:
                 raise e
 
+    @staticmethod
+    def _extract_token_id(token_info: Mapping[str, Any]) -> str:
+        """Extracts the token ID from the verify_token response."""
+        token_id = token_info.get('id')
+        if token_id is None:
+            raise RuntimeError(f'Unexpected verify_token response, missing top-level id: {token_info!r}')
+        return str(token_id)
+
     async def _get_token_id(self) -> str:
         """Returns the token ID, caching the result from verify_token."""
         if self._token_id is None:
             token_info = await self._client.storage_client.verify_token()
-            self._token_id = str(token_info['id'])
+            self._token_id = self._extract_token_id(token_info)
         return self._token_id
 
     def _meta_key(self, token_id: str) -> str:
@@ -640,7 +648,7 @@ class WorkspaceManager:
         default_backend = owner_info.get('defaultBackend')
 
         # Cache the token ID from the already-fetched token info
-        self._token_id = str(token_info['id'])
+        self._token_id = self._extract_token_id(token_info)
 
         if default_backend == 'snowflake':
             resp = await self._client.storage_client.workspace_create(
