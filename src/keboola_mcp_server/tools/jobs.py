@@ -261,6 +261,37 @@ async def get_jobs(
             ),
         ),
     ] = 'desc',
+    include_logs: Annotated[
+        bool,
+        Field(
+            description=(
+                'Whether to include execution logs for each job. Only used when job_ids is provided (MODE 1). '
+                'Logs are fetched from the Storage API events endpoint using the job\'s runId. '
+                'Default is False.'
+            ),
+        ),
+    ] = False,
+    log_tail_lines: Annotated[
+        int,
+        Field(
+            description=(
+                'Maximum number of log events to return per job (most recent first). '
+                'Only used when include_logs=True. Default = 50, max = 500.'
+            ),
+            ge=1,
+            le=500,
+        ),
+    ] = 50,
+    log_event_types: Annotated[
+        Optional[Sequence[Literal['info', 'warn', 'error', 'success']]],
+        Field(
+            description=(
+                'Filter log events by type. Only used when include_logs=True. '
+                'If None, all event types are included. '
+                'Example: ["error"] to only show errors, ["error", "warn"] for errors and warnings.'
+            ),
+        ),
+    ] = None,
 ) -> GetJobsOutput:
     """
     Retrieves job execution information from the Keboola project.
@@ -329,6 +360,28 @@ async def get_jobs(
 
         results = await process_concurrently(job_ids, fetch_job_detail)
         jobs = unwrap_results(results, 'Failed to fetch one or more jobs')
+
+        # Fetch logs if requested
+        if include_logs:
+
+            async def fetch_logs_for_job(job: JobDetail) -> JobDetail:
+                if not job.run_id:
+                    return job
+                raw_events = await client.storage_client.list_events(
+                    run_id=job.run_id,
+                    limit=log_tail_lines,
+                )
+                # Filter by event type client-side if requested
+                if log_event_types:
+                    type_set = set(log_event_types)
+                    raw_events = [e for e in raw_events if e.get('type') in type_set]
+                # Events come newest-first from API; reverse to chronological order
+                raw_events.reverse()
+                job.logs = [JobLogEvent.model_validate(e) for e in raw_events]
+                return job
+
+            log_results = await process_concurrently(jobs, fetch_logs_for_job)
+            jobs = unwrap_results(log_results, 'Failed to fetch logs for one or more jobs')
 
         LOG.info(f'Retrieved full details for {len(jobs)} jobs.')
         return GetJobsDetailOutput(jobs=jobs)
