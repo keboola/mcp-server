@@ -878,6 +878,28 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.post(endpoint='events', data=payload))
 
+    async def list_events(
+        self,
+        run_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """
+        Lists Storage API events filtered by run ID. Used to retrieve job execution logs.
+
+        :param run_id: The run ID to filter events by (corresponds to a job's runId).
+        :param limit: Maximum number of events to return (default 50, API max 10000).
+        :param offset: Offset for pagination (default 0).
+        :return: List of event dictionaries.
+        """
+        params: dict[str, Any] = {
+            'runId': run_id,
+            'limit': limit,
+            'offset': offset,
+            'forceUuid': 'true',
+        }
+        return cast(list[dict[str, Any]], await self.get(endpoint='events', params=params))
+
     async def workspace_create(
         self,
         login_type: str,
