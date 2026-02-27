@@ -935,8 +935,12 @@ class AsyncStorageClient(KeboolaServiceClient):
             # Cleanup config if workspace creation fails
             try:
                 await self.configuration_delete(component_id, config_id)
-            except Exception:
-                pass  # Ignore cleanup errors
+            except Exception as cleanup_err:
+                LOG.warning(
+                    f'Failed to clean up configuration {component_id}/{config_id} '
+                    f'after workspace creation failure: {cleanup_err}',
+                    exc_info=True,
+                )
             raise
 
     async def workspace_detail(self, workspace_id: int) -> JsonDict:

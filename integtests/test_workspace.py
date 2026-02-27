@@ -70,19 +70,28 @@ async def dynamic_manager(
             LOG.exception(f'Failed to delete workspace metadata {meta["id"]}: {e}')
 
     # Clean up configurations created under the MCP workspace component
-    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_NAME
+    # NOTE: This cleanup assumes a dedicated test environment. In shared environments,
+    # consider tracking created config IDs or filtering by metadata/naming convention.
+    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
     try:
         configs = storage_client.configurations.list(component_id=component_id)
-        for cfg in configs:
-            cfg_id = cfg.get('id')
-            if cfg_id:
-                try:
-                    storage_client.configurations.delete(component_id, cfg_id)
-                    # Double delete to skip trash
-                    storage_client.configurations.delete(component_id, cfg_id)
-                    LOG.info(f'Deleted component config: {component_id}/{cfg_id}')
-                except requests.HTTPError:
-                    LOG.exception(f'Failed to delete component config {component_id}/{cfg_id}')
+        # Safety check: if there are many configs, this might be a shared environment
+        if len(configs) > 10:
+            LOG.warning(
+                f'Found {len(configs)} configurations for {component_id}. '
+                f'Skipping cleanup to avoid deleting production configs in shared environment.'
+            )
+        else:
+            for cfg in configs:
+                cfg_id = cfg.get('id')
+                if cfg_id:
+                    try:
+                        storage_client.configurations.delete(component_id, cfg_id)
+                        # Double delete to skip trash
+                        storage_client.configurations.delete(component_id, cfg_id)
+                        LOG.info(f'Deleted component config: {component_id}/{cfg_id}')
+                    except requests.HTTPError:
+                        LOG.exception(f'Failed to delete component config {component_id}/{cfg_id}')
     except requests.HTTPError:
         LOG.exception(f'Failed to list configs for {component_id}')
 

@@ -537,7 +537,7 @@ class _WspInfo:
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
     MCP_META_KEY = 'KBC.McpServer.v2.workspaceId'
-    MCP_WORKSPACE_COMPONENT_NAME = 'keboola.mcp-server-tool'
+    MCP_WORKSPACE_COMPONENT_ID = 'keboola.mcp-server-tool'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'WorkspaceManager':
@@ -621,7 +621,7 @@ class WorkspaceManager:
         """
         Creates a new workspace under a component configuration and returns its info.
 
-        The workspace is created under the MCP_WORKSPACE_COMPONENT_NAME component so that
+        The workspace is created under the MCP_WORKSPACE_COMPONENT_ID component so that
         it is correctly attributed for billing. The storage client handles configuration
         creation and cleanup automatically.
 
@@ -639,7 +639,7 @@ class WorkspaceManager:
         try:
             if default_backend == 'snowflake':
                 resp = await self._client.storage_client.workspace_create_for_config(
-                    component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+                    component_id=self.MCP_WORKSPACE_COMPONENT_ID,
                     login_type='snowflake-person-sso',
                     backend=default_backend,
                     async_run=True,
@@ -647,7 +647,7 @@ class WorkspaceManager:
                 )
             elif default_backend == 'bigquery':
                 resp = await self._client.storage_client.workspace_create_for_config(
-                    component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
+                    component_id=self.MCP_WORKSPACE_COMPONENT_ID,
                     login_type='default',
                     backend=default_backend,
                     async_run=True,
@@ -656,9 +656,16 @@ class WorkspaceManager:
             else:
                 raise ValueError(f'Unexpected default backend: {default_backend}')
         except HTTPStatusError as e:
+            error_body = e.response.text if hasattr(e.response, 'text') else 'No response body'
+            error_details = {
+                'status': e.response.status_code,
+                'component': self.MCP_WORKSPACE_COMPONENT_ID,
+                'backend': default_backend,
+                'response': error_body[:500] if error_body else 'No details',
+            }
             raise RuntimeError(
-                f'Failed to create configuration under component {self.MCP_WORKSPACE_COMPONENT_NAME}. '
-                f'Ensure the component is registered in SAPI. Status: {e.response.status_code}'
+                f'Failed to create workspace under component {self.MCP_WORKSPACE_COMPONENT_ID}. '
+                f'Ensure the component is registered in SAPI. Details: {error_details}'
             ) from e
 
         assert 'id' in resp, f'Expected job ID in response: {resp}'
