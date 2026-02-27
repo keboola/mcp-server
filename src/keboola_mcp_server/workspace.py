@@ -3,7 +3,6 @@ import asyncio
 import json
 import logging
 import time
-import uuid
 from typing import Any, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
@@ -537,7 +536,7 @@ class _WspInfo:
 
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
-    MCP_META_KEY_PREFIX = 'KBC.McpServer.v2.workspaceId'
+    MCP_META_KEY = 'KBC.McpServer.v2.workspaceId'
     MCP_WORKSPACE_COMPONENT_NAME = 'keboola.mcp-server-tool'
 
     @classmethod
@@ -568,7 +567,6 @@ class WorkspaceManager:
         self._workspace_schema = workspace_schema
         self._workspace: _Workspace | None = None
         self._table_info_cache: dict[str, DbTableInfo] = {}
-        self._token_id: str | None = None
 
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
@@ -600,44 +598,21 @@ class WorkspaceManager:
             else:
                 raise e
 
-    @staticmethod
-    def _extract_token_id(token_info: Mapping[str, Any]) -> str:
-        """Extracts the token ID from the verify_token response."""
-        token_id = token_info.get('id')
-        if token_id is None:
-            raise RuntimeError(f'Unexpected verify_token response, missing top-level id: {token_info!r}')
-        return str(token_id)
-
-    async def _get_token_id(self) -> str:
-        """Returns the token ID, caching the result from verify_token."""
-        if self._token_id is None:
-            token_info = await self._client.storage_client.verify_token()
-            self._token_id = self._extract_token_id(token_info)
-        return self._token_id
-
-    def _meta_key(self, token_id: str) -> str:
-        """Returns the per-user metadata key for workspace lookup."""
-        return f'{self.MCP_META_KEY_PREFIX}.{token_id}'
-
     async def _find_ws_in_branch(self) -> _WspInfo | None:
-        """Finds the workspace info in the current branch for the current token."""
+        """Finds the workspace info in the current branch."""
 
-        token_id = await self._get_token_id()
-        meta_key = self._meta_key(token_id)
+        meta_key = self.MCP_META_KEY
         metadata = await self._client.storage_client.branch_metadata_get()
         for m in metadata:
             if m.get('key') == meta_key:
                 raw_workspace_id = m.get('value')
-                try:
-                    workspace_id = int(raw_workspace_id) if raw_workspace_id is not None else None
-                except (TypeError, ValueError):
-                    LOG.warning(
-                        'Ignoring invalid workspace_id metadata value %r for key %s',
-                        raw_workspace_id,
-                        meta_key,
-                    )
+                if raw_workspace_id is None:
                     continue
-                if workspace_id is not None and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
+                try:
+                    workspace_id = int(raw_workspace_id)
+                except (TypeError, ValueError):
+                    continue
+                if (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
                     return info
 
         return None
@@ -647,8 +622,8 @@ class WorkspaceManager:
         Creates a new workspace under a component configuration and returns its info.
 
         The workspace is created under the MCP_WORKSPACE_COMPONENT_NAME component so that
-        it is correctly attributed for billing. A new configuration is created first, then
-        the workspace is created under that configuration.
+        it is correctly attributed for billing. The storage client handles configuration
+        creation and cleanup automatically.
 
         :param timeout_sec: The number of seconds to wait for the workspace creation job to finish.
         :return: The workspace info if the workspace was created successfully, None otherwise.
@@ -661,34 +636,10 @@ class WorkspaceManager:
         owner_info = token_info.get('owner', {})
         default_backend = owner_info.get('defaultBackend')
 
-        # Cache the token ID from the already-fetched token info
-        self._token_id = self._extract_token_id(token_info)
-
-        # Create a configuration under the component for billing attribution
-        config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
-        try:
-            config_resp = await self._client.storage_client.configuration_create(
-                component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
-                name=config_name,
-                description='Auto-created by MCP server for workspace billing.',
-                configuration={},
-            )
-        except HTTPStatusError as e:
-            raise RuntimeError(
-                f'Failed to create configuration under component {self.MCP_WORKSPACE_COMPONENT_NAME}. '
-                f'Ensure the component is registered in SAPI. Status: {e.response.status_code}'
-            ) from e
-        config_id_raw = config_resp.get('id')
-        if not config_id_raw:
-            raise ValueError(f"Configuration creation response missing 'id': {config_resp!r}")
-        config_id = str(config_id_raw)
-        LOG.info(f'Created configuration {config_id} ({config_name}) under {self.MCP_WORKSPACE_COMPONENT_NAME}')
-
         try:
             if default_backend == 'snowflake':
                 resp = await self._client.storage_client.workspace_create_for_config(
                     component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
-                    config_id=config_id,
                     login_type='snowflake-person-sso',
                     backend=default_backend,
                     async_run=True,
@@ -697,7 +648,6 @@ class WorkspaceManager:
             elif default_backend == 'bigquery':
                 resp = await self._client.storage_client.workspace_create_for_config(
                     component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
-                    config_id=config_id,
                     login_type='default',
                     backend=default_backend,
                     async_run=True,
@@ -705,16 +655,11 @@ class WorkspaceManager:
                 )
             else:
                 raise ValueError(f'Unexpected default backend: {default_backend}')
-        except Exception:
-            LOG.warning(f'Workspace creation failed; cleaning up configuration {config_id}')
-            try:
-                await self._client.storage_client.configuration_delete(
-                    component_id=self.MCP_WORKSPACE_COMPONENT_NAME,
-                    configuration_id=config_id,
-                )
-            except Exception:
-                LOG.exception(f'Failed to clean up configuration {config_id}')
-            raise
+        except HTTPStatusError as e:
+            raise RuntimeError(
+                f'Failed to create configuration under component {self.MCP_WORKSPACE_COMPONENT_NAME}. '
+                f'Ensure the component is registered in SAPI. Status: {e.response.status_code}'
+            ) from e
 
         assert 'id' in resp, f'Expected job ID in response: {resp}'
         assert isinstance(resp['id'], int)
@@ -802,9 +747,9 @@ class WorkspaceManager:
         # create a new workspace and note its ID to the branch
         LOG.info('Creating workspace in the default branch.')
         if info := await self._create_ws():
-            # update the branch metadata with the workspace ID (per-user key)
-            token_id = await self._get_token_id()
-            meta = await self._client.storage_client.branch_metadata_update({self._meta_key(token_id): info.id})
+            # All tokens share the same read-only workspace
+            # Race conditions during initialization are acceptable (last-write-wins)
+            meta = await self._client.storage_client.branch_metadata_update({self.MCP_META_KEY: info.id})
             LOG.info(f'Set metadata in the default branch: {meta}')
             # use the newly created workspace
             self._workspace = self._init_workspace(info)
