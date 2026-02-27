@@ -380,7 +380,7 @@ async def get_jobs(
                 if not job.id:
                     return job
                 raw_events = await client.storage_client.list_events(
-                    run_id=job.id,
+                    job_id=job.id,
                     limit=log_tail_lines,
                 )
                 # Filter by event type client-side if requested

@@ -385,7 +385,7 @@ async def test_get_jobs_detail_with_logs(mocker: MockerFixture, mcp_context_clie
     assert job.logs[1].message == 'Finished'
 
     keboola_client.storage_client.list_events.assert_called_once_with(
-        run_id='123',
+        job_id='123',
         limit=50,
     )
 
@@ -448,6 +448,6 @@ async def test_get_jobs_detail_logs_empty_events(
     assert isinstance(result, GetJobsDetailOutput)
     assert result.jobs[0].logs == []
     keboola_client.storage_client.list_events.assert_called_once_with(
-        run_id='123',
+        job_id='123',
         limit=50,
     )

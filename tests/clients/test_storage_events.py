@@ -21,7 +21,7 @@ async def test_list_events_basic(storage_client: AsyncStorageClient):
     ]
     storage_client.raw_client.get.return_value = mock_events
 
-    result = await storage_client.list_events(run_id='456', limit=50)
+    result = await storage_client.list_events(job_id='456', limit=50)
 
     assert result == mock_events
     storage_client.raw_client.get.assert_called_once_with(
@@ -35,7 +35,7 @@ async def test_list_events_with_offset(storage_client: AsyncStorageClient):
     """Tests list_events passes offset correctly."""
     storage_client.raw_client.get.return_value = []
 
-    await storage_client.list_events(run_id='456', limit=10, offset=100)
+    await storage_client.list_events(job_id='456', limit=10, offset=100)
 
     storage_client.raw_client.get.assert_called_once_with(
         endpoint='events',
