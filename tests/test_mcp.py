@@ -555,6 +555,9 @@ class TestToolsFilteringMiddleware:
             ('guest', None, {'update_flow'}, {'modify_flow'}),
             # SAPI read-only - should NOT see either tool
             ('readOnly', None, set(), {'modify_flow', 'update_flow'}),
+            # Empty string bearer token - should behave same as None (not OAuth)
+            ('', '', {'update_flow'}, {'modify_flow'}),
+            ('admin', '', {'modify_flow'}, {'update_flow'}),
         ],
         ids=[
             'oauth_regular_user',
@@ -567,19 +570,21 @@ class TestToolsFilteringMiddleware:
             'sapi_regular',
             'sapi_guest',
             'sapi_readonly',
+            'sapi_regular_empty_bearer',
+            'sapi_admin_empty_bearer',
         ],
     )
     async def test_oauth_users_see_modify_flow(
         self,
         mcp_context_client,
+        keboola_client,
         token_role: str,
         bearer_token: str | None,
         expected_visible: set[str],
         expected_hidden: set[str],
     ) -> None:
         """Test that OAuth users have access to modify_flow regardless of role."""
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.bearer_token = bearer_token  # Configure mock property
+        keboola_client.bearer_token = bearer_token
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )
@@ -637,6 +642,10 @@ class TestToolsFilteringMiddleware:
             # SAPI regular users calling modify_flow - should fail (existing behavior)
             ('', None, 'modify_flow', True),
             ('guest', None, 'modify_flow', True),
+            # Empty string bearer token - same as no bearer token
+            ('', '', 'update_flow', False),
+            ('admin', '', 'modify_flow', False),
+            ('', '', 'modify_flow', True),
         ],
         ids=[
             'oauth_regular_modify',
@@ -653,19 +662,22 @@ class TestToolsFilteringMiddleware:
             'sapi_guest_update',
             'sapi_regular_modify',
             'sapi_guest_modify',
+            'sapi_regular_empty_bearer_update',
+            'sapi_admin_empty_bearer_modify',
+            'sapi_regular_empty_bearer_modify_fail',
         ],
     )
     async def test_oauth_users_can_call_modify_flow(
         self,
         mcp_context_client,
+        keboola_client,
         token_role: str,
         bearer_token: str | None,
         called_tool: str,
         expect_error: bool,
     ) -> None:
         """Test that OAuth users can call modify_flow tool."""
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.bearer_token = bearer_token  # Configure mock property
+        keboola_client.bearer_token = bearer_token
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )

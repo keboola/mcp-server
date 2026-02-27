@@ -299,7 +299,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         Returns True if bearer token is present, False otherwise.
         """
         keboola_client = KeboolaClient.from_state(ctx.session.state)
-        return keboola_client.bearer_token is not None
+        return bool(keboola_client.bearer_token)
 
     @staticmethod
     async def get_token_info(ctx: Context) -> JsonDict:
