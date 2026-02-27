@@ -266,7 +266,7 @@ async def get_jobs(
         Field(
             description=(
                 'Whether to include execution logs for each job. Only used when job_ids is provided (MODE 1). '
-                'Logs are fetched from the Storage API events endpoint using the job\'s runId. '
+                "Logs are fetched from the Storage API events endpoint using the job's runId. "
                 'Default is False.'
             ),
         ),
@@ -345,6 +345,18 @@ async def get_jobs(
     - job_ids=[], limit=50, offset=100 → pagination (skip first 100, get next 50)
     - job_ids=[], sort_by="endTime", sort_order="asc" → oldest completed first
     - job_ids=[], sort_by="durationSeconds", sort_order="desc" → longest running first
+
+    LOG RETRIEVAL (only in MODE 1):
+    - Set include_logs=True to fetch execution logs from the Storage API events
+    - Logs are fetched using the job's runId and returned in chronological order
+    - Use log_tail_lines to control how many recent log events to return (default 50, max 500)
+    - Use log_event_types to filter by event type: ["error"] for just errors, ["error", "warn"] for errors and warnings
+    - If a job has no runId (e.g., not yet started), logs will be None
+
+    EXAMPLES WITH LOGS:
+    - job_ids=["12345"], include_logs=True → job details + last 50 log events
+    - job_ids=["12345"], include_logs=True, log_event_types=["error"] → job details + only error events
+    - job_ids=["12345"], include_logs=True, log_tail_lines=200 → job details + last 200 log events
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
