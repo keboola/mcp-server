@@ -280,7 +280,26 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
     The middleware also intercepts the `on_call_tool()` call and raises an exception if a call is attempted to a tool
     that is not available in the current project.
+
+    Tool visibility for modify_flow and update_flow:
+
+    | Token Type       | Role        | modify_flow | update_flow | Read-Only Tools |
+    |-----------------|-------------|-------------|-------------|-----------------|
+    | OAuth (any)     | any         | ✅          | ❌          | ✅              |
+    | SAPI            | admin/share | ✅          | ❌          | ✅              |
+    | SAPI            | ''/guest    | ❌          | ✅          | ✅              |
+    | SAPI/OAuth      | readOnly    | ❌          | ❌          | ✅              |
     """
+
+    @staticmethod
+    def _is_oauth_authenticated(ctx: Context) -> bool:
+        """
+        Detect if the user is authenticated via OAuth.
+
+        Returns True if bearer token is present, False otherwise.
+        """
+        keboola_client = KeboolaClient.from_state(ctx.session.state)
+        return keboola_client.bearer_token is not None
 
     @staticmethod
     async def get_token_info(ctx: Context) -> JsonDict:
@@ -328,7 +347,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         else:
             tools = [t for t in tools if t.name != 'create_flow']
 
-        if token_role in ('admin', 'share'):
+        # Show modify_flow to: admin, share, OR OAuth users
+        # Show update_flow to: everyone else (except readOnly, handled below)
+        is_oauth = self._is_oauth_authenticated(context.fastmcp_context)
+        if token_role in ('admin', 'share') or is_oauth:
             tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
         else:
             tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
@@ -376,10 +398,11 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     'please use"create_conditional_flow" tool instead.'
                 )
 
-        if token_role in ('admin', 'share'):
+        is_oauth = self._is_oauth_authenticated(context.fastmcp_context)
+        if token_role in ('admin', 'share') or is_oauth:
             if tool.name == UPDATE_FLOW_TOOL_NAME:
                 raise ToolError(
-                    'The "update_flow" tool is not available for admin tokens. '
+                    'The "update_flow" tool is not available for admin/OAuth tokens. '
                     f'Use "{MODIFY_FLOW_TOOL_NAME}" to manage schedules instead.'
                 )
         else:
