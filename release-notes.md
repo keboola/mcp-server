@@ -12,7 +12,7 @@
 - **OAuth bearer token for Query Service authentication (AI-2638, PR #400)**: Query Service requests now prefer the OAuth bearer token (`Authorization: Bearer`) over the legacy storage token (`X-StorageAPI-Token`) when an OAuth token is available. Falls back transparently to the storage token for backward compatibility. Data app templates updated to detect and use the correct header type.
 
 ### Bug Fixes
-- **Read-only access control for `guest` and `readonly` roles (AI-2442, PR #397)**: The `guest` and `readonly` roles now only see and can call read-only tools. Attempts to call write tools return a clear error message. 403 errors in the tool event trigger are silently swallowed (expected for restricted roles). Also removed an implicit `requests` dependency from `cli.py`.
+- **Read-only access enforcement for `readonly` role (AI-2442, PR #397)**: The `readonly` role is now strictly enforced: `on_list_tools` filters the tool list to only tools annotated with `readOnlyHint=True`, and `on_call_tool` rejects any write-tool call with a clear error message. The `guest` role is unchanged — it follows the existing `modify_flow`/`update_flow` filtering and can still call write tools. Also: 403 errors from the analytics event-trigger HTTP call are now silently swallowed (expected for roles that lack write access to the analytics endpoint), and removed the implicit `requests` dependency and its `JSONDecodeError` handler from `cli.py`.
 - **Config-based search `match_scopes` broken by `jsonpath_ng` 1.8.0 (AI-2662, PR #401)**: `jsonpath_ng` 1.8.0 (released 2026-02-24) changed `Child.__str__()` to wrap path segments in parentheses and single-quote fields with special characters, corrupting `match_scopes` in search results. Added a `_clean_jsonpath_path_str()` helper to normalize path strings back to clean dot-bracket notation. Dependency constraint bumped from `~=1.7` to `~=1.8`.
 
 ## Plans for Customer Communication
@@ -24,7 +24,7 @@
 
 ## Impact Analysis
 
-- **Affected Users**: All MCP server users; `guest` and `readonly` role users are specifically restricted to read-only tools
+- **Affected Users**: All MCP server users; `readonly`-role users are specifically restricted to read-only tools
 - **Customer Action Required**: None — all changes are backward compatible
 - **Service interruption**: None expected — deployment is transparent
 - **Risk level**: Low
@@ -43,7 +43,7 @@
 - **Config-based search (AI-2161)**: Agents struggled to find configurations by content (e.g., which component uses a specific API endpoint). The search tool only covered bucket/table usage; configuration inspection required agents to iterate over all configs manually — expensive and error-prone.
 - **Role/toolset info in `get_project_info` (AI-2505)**: AI assistants were not aware of the user's role restrictions until they hit a blocked tool call, leading to confusing error-recovery loops. Surfacing role and toolset restrictions upfront enables better agent behavior from the start.
 - **OAuth bearer token for Query Service (AI-2638)**: Storage tokens are less secure and OAuth bearer tokens are the standard authentication method. Switching improves security posture while maintaining full backward compatibility.
-- **Read-only access control (AI-2442)**: `guest` and `readonly` role users were not properly restricted — they could see and call write tools, causing confusing permission errors at the Keboola API level rather than a clean early rejection.
+- **Read-only access enforcement (AI-2442)**: `readonly`-role users could previously see and invoke write tools, which would fail at the Keboola API level with confusing errors. Enforcing the restriction at the MCP layer gives a clear, early rejection. The 403 swallow prevents analytics-event failures from surfacing as tool errors for restricted roles.
 - **`jsonpath_ng` 1.8.0 compatibility (AI-2662)**: The `jsonpath_ng` library released a breaking change in its string representation; without this fix, all config-based searches (introduced in the same release) would return corrupted match scopes.
 
 ## Testing
