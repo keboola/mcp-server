@@ -37,7 +37,9 @@ WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
 DEV_STORAGE_API_URL_ENV_VAR = 'STORAGE_API_URL'
 DEV_STORAGE_TOKEN_ENV_VAR = 'KBC_STORAGE_TOKEN'
 DEV_WORKSPACE_SCHEMA_ENV_VAR = 'KBC_WORKSPACE_SCHEMA'
-INTEGTEST_CLIENT_INFO = Implementation(name='kbc-mcp-integtests', version=importlib.metadata.version('keboola_mcp_server'))
+INTEGTEST_CLIENT_INFO = Implementation(
+    name='kbc-mcp-integtests', version=importlib.metadata.version('keboola_mcp_server')
+)
 INTEGTEST_USER_AGENT = f'{INTEGTEST_CLIENT_INFO.name}/{INTEGTEST_CLIENT_INFO.version}'
 
 
