@@ -105,6 +105,14 @@ class JobListItem(BaseModel):
     )
 
 
+class JobLogEvent(BaseModel):
+    """Represents a single log event from a job's execution."""
+
+    message: str = Field(description='The log message.')
+    type: str = Field(description='The event type: info, warn, error, or success.')
+    created: datetime.datetime = Field(description='When the event was created.')
+
+
 class JobDetail(JobListItem):
     """Represents a detailed job with all available information."""
 
@@ -133,6 +141,10 @@ class JobDetail(JobListItem):
         default=None,
     )
     links: list[Link] = Field(..., description='The links relevant to the job.')
+    logs: Optional[list['JobLogEvent']] = Field(
+        description='Execution log events for the job, populated when include_logs=True.',
+        default=None,
+    )
 
     @field_validator('result', 'config_data', mode='before')
     @classmethod

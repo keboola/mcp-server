@@ -13,6 +13,7 @@ from keboola_mcp_server.tools.jobs import (
     GetJobsListOutput,
     JobDetail,
     JobListItem,
+    JobLogEvent,
     get_jobs,
     run_job,
 )
@@ -321,3 +322,36 @@ def test_job_detail_model_validate_dict_fields(
             assert job_detail.result == expected_result
         elif field_name == 'configData':
             assert job_detail.config_data == expected_result
+
+
+def test_job_log_event_model():
+    """Tests JobLogEvent model validates correctly."""
+    event = JobLogEvent.model_validate({
+        'message': 'Processing started',
+        'type': 'info',
+        'created': '2024-01-01T00:00:01Z',
+    })
+    assert event.message == 'Processing started'
+    assert event.type == 'info'
+    assert event.created is not None
+
+
+def test_job_detail_with_logs(mock_job: dict[str, Any]):
+    """Tests JobDetail accepts optional logs field."""
+    mock_job['links'] = []
+    mock_job['logs'] = [
+        {'message': 'Started', 'type': 'info', 'created': '2024-01-01T00:00:01Z'},
+        {'message': 'Error happened', 'type': 'error', 'created': '2024-01-01T00:00:02Z'},
+    ]
+    detail = JobDetail.model_validate(mock_job)
+    assert detail.logs is not None
+    assert len(detail.logs) == 2
+    assert detail.logs[0].message == 'Started'
+    assert detail.logs[1].type == 'error'
+
+
+def test_job_detail_without_logs(mock_job: dict[str, Any]):
+    """Tests JobDetail works without logs (backwards compatible)."""
+    mock_job['links'] = []
+    detail = JobDetail.model_validate(mock_job)
+    assert detail.logs is None
