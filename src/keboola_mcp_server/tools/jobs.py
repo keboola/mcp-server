@@ -180,6 +180,57 @@ GetJobsOutput = Union[GetJobsListOutput, GetJobsDetailOutput]
 
 # End of Job Base Models ########################################
 
+# Shared helpers ########################################
+
+
+async def fetch_job_details(
+    client: KeboolaClient,
+    links_manager: ProjectLinksManager,
+    job_ids: Sequence[str],
+    include_logs: bool = False,
+    log_tail_lines: int = 50,
+    log_event_types: Optional[Sequence[Literal['info', 'warn', 'error', 'success']]] = None,
+) -> list[JobDetail]:
+    """Fetch full details (and optionally logs) for the given job IDs.
+
+    This is the shared implementation used by ``get_jobs`` (MODE 1) and any
+    other tool that needs to retrieve job details with optional log tailing.
+    """
+
+    async def _fetch_single(job_id: str) -> JobDetail:
+        raw_job = await client.jobs_queue_client.get_job_detail(job_id)
+        links = links_manager.get_job_links(job_id)
+        LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
+        return JobDetail.model_validate(raw_job | {'links': links})
+
+    results = await process_concurrently(job_ids, _fetch_single)
+    jobs = unwrap_results(results, 'Failed to fetch one or more jobs')
+
+    # Fetch logs if requested
+    if include_logs:
+
+        async def _fetch_logs(job: JobDetail) -> JobDetail:
+            if not job.id:
+                return job
+            raw_events = await client.storage_client.list_events(
+                job_id=job.id,
+                limit=log_tail_lines,
+            )
+            # Filter by event type client-side if requested
+            if log_event_types:
+                type_set = set(log_event_types)
+                raw_events = [e for e in raw_events if e.get('type') in type_set]
+            # Events come newest-first from API; reverse to chronological order
+            raw_events.reverse()
+            job.logs = [JobLogEvent.model_validate(e) for e in raw_events]
+            return job
+
+        log_results = await process_concurrently(jobs, _fetch_logs)
+        jobs = unwrap_results(log_results, 'Failed to fetch logs for one or more jobs')
+
+    return jobs
+
+
 # MCP tools ########################################
 
 
@@ -363,38 +414,14 @@ async def get_jobs(
 
     # Case 1: job_ids provided - return full details for those jobs
     if job_ids:
-
-        async def fetch_job_detail(job_id: str) -> JobDetail:
-            raw_job = await client.jobs_queue_client.get_job_detail(job_id)
-            links = links_manager.get_job_links(job_id)
-            LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
-            return JobDetail.model_validate(raw_job | {'links': links})
-
-        results = await process_concurrently(job_ids, fetch_job_detail)
-        jobs = unwrap_results(results, 'Failed to fetch one or more jobs')
-
-        # Fetch logs if requested
-        if include_logs:
-
-            async def fetch_logs_for_job(job: JobDetail) -> JobDetail:
-                if not job.id:
-                    return job
-                raw_events = await client.storage_client.list_events(
-                    job_id=job.id,
-                    limit=log_tail_lines,
-                )
-                # Filter by event type client-side if requested
-                if log_event_types:
-                    type_set = set(log_event_types)
-                    raw_events = [e for e in raw_events if e.get('type') in type_set]
-                # Events come newest-first from API; reverse to chronological order
-                raw_events.reverse()
-                job.logs = [JobLogEvent.model_validate(e) for e in raw_events]
-                return job
-
-            log_results = await process_concurrently(jobs, fetch_logs_for_job)
-            jobs = unwrap_results(log_results, 'Failed to fetch logs for one or more jobs')
-
+        jobs = await fetch_job_details(
+            client=client,
+            links_manager=links_manager,
+            job_ids=job_ids,
+            include_logs=include_logs,
+            log_tail_lines=log_tail_lines,
+            log_event_types=log_event_types,
+        )
         LOG.info(f'Retrieved full details for {len(jobs)} jobs.')
         return GetJobsDetailOutput(jobs=jobs)
 
