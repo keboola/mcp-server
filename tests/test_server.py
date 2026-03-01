@@ -18,6 +18,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer, toon_serializer, toon_serializer_compact
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
+from keboola_mcp_server.tools.config_diff import CONFIG_DIFF_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.tools.data_apps import DATA_APP_TOOLS_TAG
 from keboola_mcp_server.tools.data_chart import DATA_CHART_TAG
@@ -61,6 +62,7 @@ class TestServer:
             'get_tables',
             'modify_data_app',
             'modify_flow',
+            'preview_config_diff',
             'query_data',
             'run_job',
             'search',
@@ -381,6 +383,8 @@ async def test_tool_annotations_and_tags():
         ('deploy_data_app', None, False, None, {DATA_APP_TOOLS_TAG}),
         # data chart
         ('visualize_data', True, None, None, {DATA_CHART_TAG}),
+        # config diff
+        ('preview_config_diff', True, None, None, {CONFIG_DIFF_TAG}),
     ],
 )
 async def test_tool_annotations_tags_values(
