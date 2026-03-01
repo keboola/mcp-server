@@ -17,6 +17,9 @@ description, and a list of created table names.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
 name or description.
 
+### Data Chart App
+- [visualize_data](#visualize_data): Renders an interactive chart from CSV data.
+
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
@@ -1753,6 +1756,86 @@ SQL & DATA TYPE RULES:
     "source_code",
     "packages",
     "authentication_type"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# Data Chart App
+<a name="visualize_data"></a>
+## visualize_data
+**Annotations**: `read-only`
+
+**Tags**: `data_chart`
+
+**Description**:
+
+Renders an interactive chart from CSV data.
+
+Takes raw CSV data and chart configuration, then displays a Chart.js chart
+in an interactive iframe. Supports bar, line, pie, scatter, doughnut, and
+area chart types with automatic multi-series support.
+
+Use this tool after calling query_data to visualize the results. Analyze
+the CSV columns first, then pick appropriate x_column (labels/categories)
+and y_columns (numeric values to plot).
+
+EXAMPLES:
+- csv_data="quarter,revenue\nQ1,100\nQ2,150", chart_type="bar",
+  title="Revenue", x_column="quarter", y_columns=["revenue"]
+- chart_type="line", x_column="date", y_columns=["sales", "costs"]
+  -> multi-series line chart
+- chart_type="pie", x_column="category", y_columns=["count"]
+  -> pie chart with category labels
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "csv_data": {
+      "type": "string"
+    },
+    "chart_type": {
+      "enum": [
+        "bar",
+        "line",
+        "pie",
+        "scatter",
+        "doughnut",
+        "area"
+      ],
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "x_column": {
+      "type": "string"
+    },
+    "y_columns": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "x_label": {
+      "default": null,
+      "type": "string"
+    },
+    "y_label": {
+      "default": null,
+      "type": "string"
+    }
+  },
+  "required": [
+    "csv_data",
+    "chart_type",
+    "title",
+    "x_column",
+    "y_columns"
   ],
   "type": "object"
 }

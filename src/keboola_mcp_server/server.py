@@ -28,6 +28,7 @@ from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
+from keboola_mcp_server.tools.data_chart import add_data_chart_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
 from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
@@ -239,6 +240,7 @@ def create_server(
 
     add_component_tools(mcp)
     add_data_app_tools(mcp)
+    add_data_chart_tools(mcp)
     add_doc_tools(mcp)
     add_flow_tools(mcp)
     add_job_tools(mcp)

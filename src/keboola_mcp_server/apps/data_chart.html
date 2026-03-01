@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Data Chart</title>
+  <style>
+    /* ── Theme Variables ── */
+    :root {
+      --bg-primary: #ffffff;
+      --text-primary: #212529;
+      --text-secondary: #6c757d;
+      --border-color: #dee2e6;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1a1b26;
+        --text-primary: #c0caf5;
+        --text-secondary: #9aa5ce;
+        --border-color: #3b3d57;
+      }
+    }
+
+    :root.dark {
+      --bg-primary: #1a1b26;
+      --text-primary: #c0caf5;
+      --text-secondary: #9aa5ce;
+      --border-color: #3b3d57;
+    }
+
+    :root.light {
+      --bg-primary: #ffffff;
+      --text-primary: #212529;
+      --text-secondary: #6c757d;
+      --border-color: #dee2e6;
+    }
+
+    /* ── Reset & Base ── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        Oxygen, Ubuntu, Cantarell, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      background: var(--bg-primary);
+    }
+
+    /* ── Loading State ── */
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+      color: var(--text-secondary);
+    }
+
+    .loading-spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border-color);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Error State ── */
+    .error-container {
+      text-align: center;
+      padding: 60px 20px;
+      color: #ef4444;
+    }
+
+    /* ── Chart Container ──
+       Fixed height so Chart.js gets enough vertical space.
+       The host already shows the title in its own card header,
+       so we skip the Chart.js title and maximize data area. */
+    .chart-container {
+      position: relative;
+      height: 500px;
+      padding: 8px 16px 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="content">
+    <div class="loading-container" id="loading-state">
+      <div class="loading-spinner"></div>
+      <span>Connecting...</span>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script type="module">
+    import { App } from 'https://unpkg.com/@modelcontextprotocol/ext-apps@1.1.2/app-with-deps';
+
+    // ── State ──
+    let chartInstance = null;
+    let isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    // ── Color Palette (works in both light and dark) ──
+    const COLORS = [
+      '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
+      '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16',
+    ];
+
+    // ── DOM refs ──
+    const contentEl = document.getElementById('content');
+
+    // ── App Setup ──
+    const app = new App({ name: 'Data Chart', version: '1.0.0' });
+
+    app.ontoolresult = (result) => {
+      const structured = result && result.structuredContent
+        ? result.structuredContent
+        : result;
+      if (structured) {
+        renderChart(structured);
+      }
+    };
+
+    app.onhostcontextchanged = (ctx) => {
+      if (ctx && ctx.theme) {
+        const root = document.documentElement;
+        root.classList.remove('light', 'dark');
+        if (ctx.theme === 'dark') {
+          root.classList.add('dark');
+          isDark = true;
+        } else if (ctx.theme === 'light') {
+          root.classList.add('light');
+          isDark = false;
+        }
+        updateChartTheme();
+      }
+    };
+
+    app.connect();
+
+    // ── Chart Rendering ──
+    function renderChart(data) {
+      try {
+        const csvData = data.csvData;
+        const config = data.chartConfig;
+
+        if (!csvData || !config) {
+          showError('Invalid data: missing csvData or chartConfig');
+          return;
+        }
+
+        // Parse CSV
+        const rows = parseCSV(csvData);
+        if (rows.length < 2) {
+          showError('CSV data must have at least a header row and one data row');
+          return;
+        }
+
+        const headers = rows[0];
+        const xIndex = headers.indexOf(config.xColumn);
+        if (xIndex === -1) {
+          showError(`Column "${config.xColumn}" not found in CSV`);
+          return;
+        }
+
+        const labels = rows.slice(1).map(row => row[xIndex]);
+
+        const datasets = config.yColumns.map((col, i) => {
+          const colIndex = headers.indexOf(col);
+          const values = rows.slice(1).map(row => {
+            const val = parseFloat(row[colIndex]);
+            return isNaN(val) ? 0 : val;
+          });
+
+          const color = COLORS[i % COLORS.length];
+          const chartType = config.chartType === 'area' ? 'line' : config.chartType;
+          const isPie = chartType === 'pie' || chartType === 'doughnut';
+
+          return {
+            label: col,
+            data: values,
+            backgroundColor: isPie
+              ? values.map((_, j) => COLORS[j % COLORS.length] + 'cc')
+              : color + '99',
+            borderColor: isPie
+              ? values.map((_, j) => COLORS[j % COLORS.length])
+              : color,
+            borderWidth: 2,
+            fill: config.chartType === 'area',
+            tension: 0.3,
+            pointRadius: chartType === 'scatter' ? 5 : 3,
+          };
+        });
+
+        // Build Chart.js config
+        const chartType = config.chartType === 'area' ? 'line' : config.chartType;
+        const isPieType = chartType === 'pie' || chartType === 'doughnut';
+        const textColor = isDark ? '#c0caf5' : '#212529';
+        const gridColor = isDark ? '#3b3d57' : '#dee2e6';
+
+        const chartConfig = {
+          type: chartType,
+          data: { labels, datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: {
+              padding: { top: 4, bottom: 4 },
+            },
+            plugins: {
+              // Host card already shows the title — skip it here to save space
+              title: { display: false },
+              legend: {
+                display: datasets.length > 1 || isPieType,
+                position: 'top',
+                labels: {
+                  color: textColor,
+                  padding: 12,
+                  usePointStyle: true,
+                  pointStyleWidth: 10,
+                  font: { size: 12 },
+                },
+              },
+              tooltip: {
+                mode: isPieType ? 'nearest' : 'index',
+                intersect: isPieType,
+              },
+            },
+            scales: !isPieType ? {
+              x: {
+                title: {
+                  display: !!config.xLabel,
+                  text: config.xLabel || '',
+                  color: textColor,
+                  font: { size: 12 },
+                },
+                ticks: {
+                  color: textColor,
+                  maxRotation: 45,
+                  font: { size: 11 },
+                },
+                grid: { color: gridColor },
+              },
+              y: {
+                title: {
+                  display: !!config.yLabel,
+                  text: config.yLabel || '',
+                  color: textColor,
+                  font: { size: 12 },
+                },
+                ticks: {
+                  color: textColor,
+                  font: { size: 11 },
+                },
+                grid: { color: gridColor },
+                beginAtZero: true,
+              },
+            } : undefined,
+          },
+        };
+
+        // Render
+        contentEl.innerHTML = '<div class="chart-container"><canvas id="chart-canvas"></canvas></div>';
+        const canvas = document.getElementById('chart-canvas');
+
+        if (chartInstance) {
+          chartInstance.destroy();
+        }
+        chartInstance = new Chart(canvas, chartConfig);
+      } catch (err) {
+        showError('Failed to render chart: ' + err.message);
+      }
+    }
+
+    function parseCSV(text) {
+      const rows = [];
+      let current = [];
+      let field = '';
+      let inQuotes = false;
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (i + 1 < text.length && text[i + 1] === '"') {
+              field += '"';
+              i++;
+            } else {
+              inQuotes = false;
+            }
+          } else {
+            field += ch;
+          }
+        } else {
+          if (ch === '"') {
+            inQuotes = true;
+          } else if (ch === ',') {
+            current.push(field.trim());
+            field = '';
+          } else if (ch === '\n' || ch === '\r') {
+            if (ch === '\r' && i + 1 < text.length && text[i + 1] === '\n') {
+              i++;
+            }
+            current.push(field.trim());
+            if (current.some(f => f !== '')) {
+              rows.push(current);
+            }
+            current = [];
+            field = '';
+          } else {
+            field += ch;
+          }
+        }
+      }
+      // Last field
+      current.push(field.trim());
+      if (current.some(f => f !== '')) {
+        rows.push(current);
+      }
+      return rows;
+    }
+
+    function updateChartTheme() {
+      if (!chartInstance) return;
+      const textColor = isDark ? '#c0caf5' : '#212529';
+      const gridColor = isDark ? '#3b3d57' : '#dee2e6';
+      const opts = chartInstance.options;
+      if (opts.plugins && opts.plugins.legend && opts.plugins.legend.labels) {
+        opts.plugins.legend.labels.color = textColor;
+      }
+      if (opts.scales) {
+        for (const axis of Object.values(opts.scales)) {
+          if (axis.title) axis.title.color = textColor;
+          if (axis.ticks) axis.ticks.color = textColor;
+          if (axis.grid) axis.grid.color = gridColor;
+        }
+      }
+      chartInstance.update();
+    }
+
+    function showError(message) {
+      contentEl.innerHTML = `<div class="error-container"><p>${esc(message)}</p></div>`;
+    }
+
+    function esc(str) {
+      if (str == null) return '';
+      const d = document.createElement('div');
+      d.textContent = String(str);
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>
