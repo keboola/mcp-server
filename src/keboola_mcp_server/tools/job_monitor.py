@@ -7,7 +7,7 @@ The ``poll_job_monitor`` tool is app-only (called by the iframe for live updates
 
 import importlib.resources
 import logging
-from typing import Annotated, Any, Optional, Sequence
+from typing import Annotated, Any, Sequence
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -91,7 +91,8 @@ def _build_result(
             job_dict = job.model_dump(by_alias=True, exclude_none=True)
         else:
             job_dict = job
-        if isinstance(job, JobListItem) and not isinstance(job, JobDetail):
+        # Ensure 'logs' key is always present (None or list) for consistent JS handling
+        if 'logs' not in job_dict:
             job_dict['logs'] = None
         serialized_jobs.append(job_dict)
 
@@ -115,38 +116,24 @@ async def job_monitor(
         ),
     ] = tuple(),
     component_id: Annotated[
-        Optional[str],
-        Field(
-            description=('Filter by component ID (only used when job_ids is empty).'),
-        ),
+        str,
+        Field(description='Filter by component ID (only used when job_ids is empty).'),
     ] = None,
     status: Annotated[
-        Optional[JOB_STATUS],
-        Field(
-            description=('Filter by job status (only used when job_ids is empty).'),
-        ),
+        JOB_STATUS,
+        Field(description='Filter by job status (only used when job_ids is empty).'),
     ] = None,
     limit: Annotated[
         int,
-        Field(
-            description='Max jobs to show (default 20, max 100).',
-            ge=1,
-            le=100,
-        ),
+        Field(description='Max jobs to show (default 20, max 100).', ge=1, le=100),
     ] = 20,
     include_logs: Annotated[
         bool,
-        Field(
-            description=('Include execution logs for each job. Default True.'),
-        ),
+        Field(description='Include execution logs for each job. Default True.'),
     ] = True,
     log_tail_lines: Annotated[
         int,
-        Field(
-            description='Max log events per job (default 50, max 500).',
-            ge=1,
-            le=500,
-        ),
+        Field(description='Max log events per job (default 50, max 500).', ge=1, le=500),
     ] = 50,
 ) -> dict[str, Any]:
     """
@@ -209,11 +196,11 @@ async def poll_job_monitor(
         Field(description='IDs of specific jobs to poll.'),
     ] = tuple(),
     component_id: Annotated[
-        Optional[str],
+        str,
         Field(description='Filter by component ID.'),
     ] = None,
     status: Annotated[
-        Optional[JOB_STATUS],
+        JOB_STATUS,
         Field(description='Filter by job status.'),
     ] = None,
     limit: Annotated[
