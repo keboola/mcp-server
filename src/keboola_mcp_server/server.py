@@ -27,6 +27,7 @@ from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.tools.components import add_component_tools
+from keboola_mcp_server.tools.config_diff import add_config_diff_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
 from keboola_mcp_server.tools.data_chart import add_data_chart_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
@@ -239,6 +240,7 @@ def create_server(
             custom_routes.add_to_mcp(mcp)
 
     add_component_tools(mcp)
+    add_config_diff_tools(mcp)
     add_data_app_tools(mcp)
     add_data_chart_tools(mcp)
     add_doc_tools(mcp)

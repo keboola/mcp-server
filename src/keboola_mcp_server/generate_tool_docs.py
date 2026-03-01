@@ -14,6 +14,7 @@ from mcp.types import ToolAnnotations
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
+from keboola_mcp_server.tools.config_diff import CONFIG_DIFF_TAG
 from keboola_mcp_server.tools.constants import FLOW_TOOLS_TAG
 from keboola_mcp_server.tools.data_chart import DATA_CHART_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
@@ -187,6 +188,7 @@ async def generate_docs() -> None:
             ToolCategory('Component Tools', COMPONENT_TOOLS_TAG),
             ToolCategory('Flow Tools', FLOW_TOOLS_TAG),
             ToolCategory('Jobs Tools', JOB_TOOLS_TAG),
+            ToolCategory('Config Diff App', CONFIG_DIFF_TAG),
             ToolCategory('Data Chart App', DATA_CHART_TAG),
             ToolCategory('Documentation Tools', DOC_TOOLS_TAG),
             ToolCategory('Search Tools', SEARCH_TOOLS_TAG),

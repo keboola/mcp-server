@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Config Diff</title>
+  <link rel="stylesheet" href="https://unpkg.com/jsondiffpatch@0.6.0/dist/formatters-styles/html.css">
+  <link rel="stylesheet" href="https://unpkg.com/jsondiffpatch@0.6.0/dist/formatters-styles/annotated.css">
+  <style>
+    /* ── Theme Variables ── */
+    :root {
+      --bg-primary: #ffffff;
+      --text-primary: #212529;
+      --text-secondary: #6c757d;
+      --border-color: #dee2e6;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1a1b26;
+        --text-primary: #c0caf5;
+        --text-secondary: #9aa5ce;
+        --border-color: #3b3d57;
+      }
+    }
+
+    :root.dark {
+      --bg-primary: #1a1b26;
+      --text-primary: #c0caf5;
+      --text-secondary: #9aa5ce;
+      --border-color: #3b3d57;
+    }
+
+    :root.light {
+      --bg-primary: #ffffff;
+      --text-primary: #212529;
+      --text-secondary: #6c757d;
+      --border-color: #dee2e6;
+    }
+
+    /* ── Reset & Base ── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        Oxygen, Ubuntu, Cantarell, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      background: var(--bg-primary);
+    }
+
+    /* ── Loading State ── */
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+      color: var(--text-secondary);
+    }
+
+    .loading-spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border-color);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Error State ── */
+    .error-container {
+      margin: 16px;
+      padding: 16px 20px;
+      border-radius: 8px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+
+    .error-container h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .error-container ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .error-container li {
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+
+    :root.dark .error-container {
+      background: #2d1b1b;
+      border-color: #5c2020;
+      color: #fca5a5;
+    }
+
+    /* ── No Changes State ── */
+    .no-changes-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+      color: var(--text-secondary);
+    }
+
+    .no-changes-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+      opacity: 0.6;
+    }
+
+    .no-changes-container p {
+      font-size: 15px;
+    }
+
+    /* ── Diff Container ── */
+    #diff-container {
+      padding: 16px;
+      overflow: auto;
+    }
+
+    /* ── jsondiffpatch Theme Overrides ── */
+    .jsondiffpatch-delta {
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono',
+        Menlo, Courier, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      width: 100%;
+    }
+
+    /* Light mode: keep defaults but ensure full width */
+    .jsondiffpatch-added .jsondiffpatch-property-name,
+    .jsondiffpatch-added .jsondiffpatch-value pre,
+    .jsondiffpatch-modified .jsondiffpatch-right-value pre,
+    .jsondiffpatch-textdiff-added {
+      background: #dff0d8;
+    }
+
+    .jsondiffpatch-deleted .jsondiffpatch-property-name,
+    .jsondiffpatch-deleted .jsondiffpatch-value pre,
+    .jsondiffpatch-modified .jsondiffpatch-left-value pre,
+    .jsondiffpatch-textdiff-deleted {
+      background: #f2dede;
+    }
+
+    /* Dark mode overrides for diff highlighting */
+    :root.dark .jsondiffpatch-added .jsondiffpatch-property-name,
+    :root.dark .jsondiffpatch-added .jsondiffpatch-value pre,
+    :root.dark .jsondiffpatch-modified .jsondiffpatch-right-value pre,
+    :root.dark .jsondiffpatch-textdiff-added {
+      background: #1a3a2a;
+    }
+
+    :root.dark .jsondiffpatch-deleted .jsondiffpatch-property-name,
+    :root.dark .jsondiffpatch-deleted .jsondiffpatch-value pre,
+    :root.dark .jsondiffpatch-modified .jsondiffpatch-left-value pre,
+    :root.dark .jsondiffpatch-textdiff-deleted {
+      background: #3a1a1a;
+    }
+
+    :root.dark .jsondiffpatch-delta pre {
+      color: var(--text-primary);
+    }
+
+    :root.dark .jsondiffpatch-property-name {
+      color: #7dcfff;
+    }
+
+    :root.dark .jsondiffpatch-unchanged {
+      color: var(--text-secondary);
+    }
+
+    /* prefers-color-scheme dark fallback (before host sends theme) */
+    @media (prefers-color-scheme: dark) {
+      .jsondiffpatch-added .jsondiffpatch-property-name,
+      .jsondiffpatch-added .jsondiffpatch-value pre,
+      .jsondiffpatch-modified .jsondiffpatch-right-value pre,
+      .jsondiffpatch-textdiff-added {
+        background: #1a3a2a;
+      }
+
+      .jsondiffpatch-deleted .jsondiffpatch-property-name,
+      .jsondiffpatch-deleted .jsondiffpatch-value pre,
+      .jsondiffpatch-modified .jsondiffpatch-left-value pre,
+      .jsondiffpatch-textdiff-deleted {
+        background: #3a1a1a;
+      }
+
+      .jsondiffpatch-delta pre {
+        color: #c0caf5;
+      }
+
+      .jsondiffpatch-property-name {
+        color: #7dcfff;
+      }
+
+      .jsondiffpatch-unchanged {
+        color: #9aa5ce;
+      }
+    }
+
+    /* Show/hide unchanged toggle animation */
+    .jsondiffpatch-unchanged-showing .jsondiffpatch-unchanged,
+    .jsondiffpatch-unchanged-hidden .jsondiffpatch-unchanged {
+      transition: all 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+  <div id="content">
+    <div class="loading-container" id="loading-state">
+      <div class="loading-spinner"></div>
+      <span>Waiting for preview data...</span>
+    </div>
+  </div>
+  <div id="diff-container" style="display: none;"></div>
+
+  <script src="https://unpkg.com/jsondiffpatch@0.6.0/dist/jsondiffpatch.umd.min.js"></script>
+  <script type="module">
+    import { App } from 'https://unpkg.com/@modelcontextprotocol/ext-apps@1.1.2/app-with-deps';
+
+    // ── DOM refs ──
+    const contentEl = document.getElementById('content');
+    const diffContainer = document.getElementById('diff-container');
+
+    // ── App Setup ──
+    const app = new App({ name: 'Config Diff', version: '1.0.0' });
+
+    app.ontoolresult = (result) => {
+      const structured = result && result.structuredContent
+        ? result.structuredContent
+        : result;
+      if (structured) {
+        renderDiff(structured);
+      }
+    };
+
+    app.onhostcontextchanged = (ctx) => {
+      if (ctx && ctx.theme) {
+        const root = document.documentElement;
+        root.classList.remove('light', 'dark');
+        if (ctx.theme === 'dark') {
+          root.classList.add('dark');
+        } else if (ctx.theme === 'light') {
+          root.classList.add('light');
+        }
+      }
+    };
+
+    app.connect();
+
+    // ── Diff Rendering ──
+    function renderDiff(data) {
+      try {
+        // Check validation
+        if (data.isValid === false) {
+          showValidationErrors(data.validationErrors || ['Unknown validation error']);
+          return;
+        }
+
+        const originalConfig = data.originalConfig;
+        const updatedConfig = data.updatedConfig;
+
+        if (originalConfig === undefined || updatedConfig === undefined) {
+          showError('Invalid data: missing originalConfig or updatedConfig');
+          return;
+        }
+
+        // Compute diff
+        const delta = jsondiffpatch.diff(originalConfig, updatedConfig);
+
+        if (delta === undefined) {
+          showNoChanges();
+          return;
+        }
+
+        // Render diff HTML
+        const diffHtml = jsondiffpatch.formatters.html.format(delta, originalConfig);
+        contentEl.style.display = 'none';
+        diffContainer.style.display = 'block';
+        diffContainer.innerHTML = diffHtml;
+
+        // Initially hide unchanged, then reveal with animation
+        jsondiffpatch.formatters.html.hideUnchanged(diffContainer);
+        setTimeout(() => {
+          jsondiffpatch.formatters.html.showUnchanged(true, diffContainer, 300);
+        }, 100);
+      } catch (err) {
+        showError('Failed to render diff: ' + err.message);
+      }
+    }
+
+    function showValidationErrors(errors) {
+      const errorList = Array.isArray(errors) ? errors : [String(errors)];
+      const listItems = errorList.map(e => `<li>${esc(e)}</li>`).join('');
+      contentEl.innerHTML =
+        `<div class="error-container">` +
+        `<h3>Validation Errors</h3>` +
+        `<ul>${listItems}</ul>` +
+        `</div>`;
+      contentEl.style.display = 'block';
+      diffContainer.style.display = 'none';
+    }
+
+    function showNoChanges() {
+      contentEl.innerHTML =
+        `<div class="no-changes-container">` +
+        `<div class="no-changes-icon">=</div>` +
+        `<p>No changes detected &mdash; the configuration is unchanged.</p>` +
+        `</div>`;
+      contentEl.style.display = 'block';
+      diffContainer.style.display = 'none';
+    }
+
+    function showError(message) {
+      contentEl.innerHTML =
+        `<div class="error-container">` +
+        `<p>${esc(message)}</p>` +
+        `</div>`;
+      contentEl.style.display = 'block';
+      diffContainer.style.display = 'none';
+    }
+
+    function esc(str) {
+      if (str == null) return '';
+      const d = document.createElement('div');
+      d.textContent = String(str);
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>
