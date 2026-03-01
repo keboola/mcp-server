@@ -13,6 +13,8 @@ from typing import Any
 
 LOG = logging.getLogger(__name__)
 
+__all__ = ['APP_RESOURCE_MIME_TYPE', 'build_app_tool_meta']
+
 APP_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app'
 
 
