@@ -32,9 +32,10 @@
       --log-warn: #f59e0b;
       --log-error: #ef4444;
       --log-success: #22c55e;
-      --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     }
 
+    /* NOTE: The dark theme variables below are duplicated in the media query and
+       the .dark class override. Keep them in sync when changing colors. */
     @media (prefers-color-scheme: dark) {
       :root {
         --bg-primary: #1a1b26;
@@ -61,11 +62,10 @@
         --log-warn: #e0af68;
         --log-error: #f7768e;
         --log-success: #9ece6a;
-        --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
       }
     }
 
-    /* Dark class override for host-provided theme */
+    /* Dark class override for host-provided theme (keep in sync with media query above) */
     :root.dark {
       --bg-primary: #1a1b26;
       --bg-secondary: #24253a;
@@ -91,9 +91,9 @@
       --log-warn: #e0af68;
       --log-error: #f7768e;
       --log-success: #9ece6a;
-      --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     }
 
+    /* Light class override for host-provided theme (keep in sync with :root defaults above) */
     :root.light {
       --bg-primary: #ffffff;
       --bg-secondary: #f8f9fa;
@@ -119,7 +119,6 @@
       --log-warn: #f59e0b;
       --log-error: #ef4444;
       --log-success: #22c55e;
-      --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     }
 
     /* ── Reset & Base ── */
@@ -524,8 +523,8 @@
     function schedulePoll() {
       if (!pollingActive) return;
       if (pollTimer) clearTimeout(pollTimer);
-      pollTimer = setTimeout(() => {
-        triggerPoll();
+      pollTimer = setTimeout(async () => {
+        await triggerPoll();
         schedulePoll();
       }, POLL_INTERVAL_MS);
     }
@@ -644,8 +643,9 @@
 
     function formatDuration(seconds) {
       if (seconds == null || seconds < 0) return '--';
-      const m = Math.floor(seconds / 60);
-      const s = seconds % 60;
+      const total = Math.round(seconds);
+      const m = Math.floor(total / 60);
+      const s = total % 60;
       if (m > 0) return `${m}m ${s}s`;
       return `${s}s`;
     }
