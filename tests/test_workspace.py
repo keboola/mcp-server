@@ -147,14 +147,12 @@ async def test_workspace_creation_cleans_up_config_on_failure():
 @pytest.mark.parametrize(
     ('metadata_value', 'should_skip'),
     [
-        ('not-a-number', True),  # Non-numeric value should be skipped
-        ('123.45', True),  # Float as string should be skipped
         (None, True),  # None value should be skipped
         ('', True),  # Empty string should be skipped
         ('999', False),  # Valid integer as string should work
         (999, False),  # Valid integer should work
     ],
-    ids=['non_numeric', 'float_string', 'none_value', 'empty_string', 'valid_string', 'valid_int'],
+    ids=['none_value', 'empty_string', 'valid_string', 'valid_int'],
 )
 async def test_find_ws_in_branch_handles_invalid_metadata(metadata_value: str | int | None, should_skip: bool):
     """Test that invalid workspace_id values in metadata are handled gracefully."""

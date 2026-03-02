@@ -604,15 +604,8 @@ class WorkspaceManager:
         meta_key = self.MCP_META_KEY
         metadata = await self._client.storage_client.branch_metadata_get()
         for m in metadata:
-            if m.get('key') == meta_key:
-                raw_workspace_id = m.get('value')
-                if raw_workspace_id is None:
-                    continue
-                try:
-                    workspace_id = int(raw_workspace_id)
-                except (TypeError, ValueError):
-                    continue
-                if (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
+            if m.get('key') == meta_key and (raw_value := m.get('value')):
+                if (info := await self._find_ws_by_id(int(raw_value))) and info.readonly:
                     return info
 
         return None
