@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
@@ -579,7 +580,7 @@ class WorkspaceManager:
 
         return None
 
-    async def _find_ws_by_id(self, workspace_id: int) -> _WspInfo | None:
+    async def _find_ws_by_id(self, workspace_id: str | int) -> _WspInfo | None:
         """Finds the workspace info by its ID."""
 
         try:
@@ -605,7 +606,7 @@ class WorkspaceManager:
         metadata = await self._client.storage_client.branch_metadata_get()
         for m in metadata:
             if m.get('key') == meta_key and (raw_value := m.get('value')):
-                if (info := await self._find_ws_by_id(int(raw_value))) and info.readonly:
+                if (info := await self._find_ws_by_id(raw_value)) and info.readonly:
                     return info
 
         return None
@@ -615,8 +616,8 @@ class WorkspaceManager:
         Creates a new workspace under a component configuration and returns its info.
 
         The workspace is created under the MCP_WORKSPACE_COMPONENT_ID component so that
-        it is correctly attributed for billing. The storage client handles configuration
-        creation and cleanup automatically.
+        it is correctly attributed for billing. This method creates the configuration,
+        creates the workspace under it, and cleans up the configuration on failure.
 
         :param timeout_sec: The number of seconds to wait for the workspace creation job to finish.
         :return: The workspace info if the workspace was created successfully, None otherwise.
@@ -629,37 +630,42 @@ class WorkspaceManager:
         owner_info = token_info.get('owner', {})
         default_backend = owner_info.get('defaultBackend')
 
+        if default_backend == 'snowflake':
+            login_type = 'snowflake-person-sso'
+        elif default_backend == 'bigquery':
+            login_type = 'default'
+        else:
+            raise ValueError(f'Unexpected default backend: {default_backend}')
+
+        component_id = self.MCP_WORKSPACE_COMPONENT_ID
+        config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
+        config_resp = await self._client.storage_client.configuration_create(
+            component_id=component_id,
+            name=config_name,
+            description='Auto-created by MCP server for workspace billing.',
+            configuration={},
+        )
+        config_id = str(config_resp['id'])
+
         try:
-            if default_backend == 'snowflake':
-                resp = await self._client.storage_client.workspace_create_for_config(
-                    component_id=self.MCP_WORKSPACE_COMPONENT_ID,
-                    login_type='snowflake-person-sso',
-                    backend=default_backend,
-                    async_run=True,
-                    read_only_storage_access=True,
+            resp = await self._client.storage_client.workspace_create_for_config(
+                component_id=component_id,
+                config_id=config_id,
+                login_type=login_type,
+                backend=default_backend,
+                async_run=True,
+                read_only_storage_access=True,
+            )
+        except Exception:
+            try:
+                await self._client.storage_client.configuration_delete(component_id, config_id)
+            except Exception as cleanup_err:
+                LOG.warning(
+                    f'Failed to clean up configuration {component_id}/{config_id} '
+                    f'after workspace creation failure: {cleanup_err}',
+                    exc_info=True,
                 )
-            elif default_backend == 'bigquery':
-                resp = await self._client.storage_client.workspace_create_for_config(
-                    component_id=self.MCP_WORKSPACE_COMPONENT_ID,
-                    login_type='default',
-                    backend=default_backend,
-                    async_run=True,
-                    read_only_storage_access=True,
-                )
-            else:
-                raise ValueError(f'Unexpected default backend: {default_backend}')
-        except HTTPStatusError as e:
-            error_body = e.response.text if hasattr(e.response, 'text') else 'No response body'
-            error_details = {
-                'status': e.response.status_code,
-                'component': self.MCP_WORKSPACE_COMPONENT_ID,
-                'backend': default_backend,
-                'response': error_body[:500] if error_body else 'No details',
-            }
-            raise RuntimeError(
-                f'Failed to create workspace under component {self.MCP_WORKSPACE_COMPONENT_ID}. '
-                f'Ensure the component is registered in SAPI. Details: {error_details}'
-            ) from e
+            raise
 
         assert 'id' in resp, f'Expected job ID in response: {resp}'
         assert isinstance(resp['id'], int)

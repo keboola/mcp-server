@@ -1,6 +1,5 @@
 import logging
 import math
-import uuid
 from datetime import datetime
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, cast
 
@@ -882,66 +881,26 @@ class AsyncStorageClient(KeboolaServiceClient):
     async def workspace_create_for_config(
         self,
         component_id: str,
+        config_id: str,
         login_type: str,
         backend: str,
         async_run: bool = True,
         read_only_storage_access: bool = False,
     ) -> JsonDict:
-        """
-        Creates a configuration and workspace under it.
-
-        This method creates a configuration under the specified component and then creates
-        a workspace under that configuration. If workspace creation fails, the configuration
-        is automatically cleaned up.
-
-        :param component_id: The component ID (e.g. 'keboola.mcp-server-tool').
-        :param login_type: The login type for the workspace.
-        :param backend: The backend type for the workspace.
-        :param async_run: If True, the workspace creation is run asynchronously.
-        :param read_only_storage_access: If True, the workspace has read-only access to the storage.
-        :return: The SAPI call response - created workspace job or raise an error.
-        :raises HTTPStatusError: If configuration creation fails (component not registered, etc.)
-        :raises Exception: If workspace creation fails
-        """
-        # 1. Create configuration
-        config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
-        config_resp = await self.configuration_create(
-            component_id=component_id,
-            name=config_name,
-            description='Auto-created by MCP server for workspace billing.',
-            configuration={},
+        """Thin wrapper for POST /branch/{branch_id}/components/{component_id}/configs/{config_id}/workspaces."""
+        data: dict[str, Any] = {
+            'readOnlyStorageAccess': read_only_storage_access,
+            'loginType': login_type,
+            'backend': backend,
+        }
+        return cast(
+            JsonDict,
+            await self.post(
+                endpoint=f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/workspaces',
+                params={'async': async_run},
+                data=data,
+            ),
         )
-        config_id_raw = config_resp.get('id')
-        if not config_id_raw:
-            raise ValueError(f"Configuration creation response missing 'id': {config_resp!r}")
-        config_id = str(config_id_raw)
-
-        # 2. Create workspace under config (with cleanup on failure)
-        try:
-            data: dict[str, Any] = {
-                'readOnlyStorageAccess': read_only_storage_access,
-                'loginType': login_type,
-                'backend': backend,
-            }
-            return cast(
-                JsonDict,
-                await self.post(
-                    endpoint=(f'branch/{self._branch_id}/components/{component_id}' f'/configs/{config_id}/workspaces'),
-                    params={'async': async_run},
-                    data=data,
-                ),
-            )
-        except Exception:
-            # Cleanup config if workspace creation fails
-            try:
-                await self.configuration_delete(component_id, config_id)
-            except Exception as cleanup_err:
-                LOG.warning(
-                    f'Failed to clean up configuration {component_id}/{config_id} '
-                    f'after workspace creation failure: {cleanup_err}',
-                    exc_info=True,
-                )
-            raise
 
     async def workspace_detail(self, workspace_id: int) -> JsonDict:
         """

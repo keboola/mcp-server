@@ -50,6 +50,14 @@ async def dynamic_manager(
             f'{[{"id": w["id"], "name": w["name"]} for w in workspaces]}'
         )
 
+    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
+    existing_configs = list(storage_client.configurations.list(component_id=component_id))
+    if existing_configs:
+        pytest.fail(
+            f'Expecting no MCP workspace configs in project {project_id}, '
+            f'but found: {[c.get("id") for c in existing_configs]}'
+        )
+
     yield await WorkspaceManager.create(keboola_client)
 
     LOG.info(f'Cleaning up workspaces in Keboola project with ID={project_id}')
@@ -70,28 +78,19 @@ async def dynamic_manager(
             LOG.exception(f'Failed to delete workspace metadata {meta["id"]}: {e}')
 
     # Clean up configurations created under the MCP workspace component
-    # NOTE: This cleanup assumes a dedicated test environment. In shared environments,
-    # consider tracking created config IDs or filtering by metadata/naming convention.
     component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
     try:
         configs = storage_client.configurations.list(component_id=component_id)
-        # Safety check: if there are many configs, this might be a shared environment
-        if len(configs) > 10:
-            LOG.warning(
-                f'Found {len(configs)} configurations for {component_id}. '
-                f'Skipping cleanup to avoid deleting production configs in shared environment.'
-            )
-        else:
-            for cfg in configs:
-                cfg_id = cfg.get('id')
-                if cfg_id:
-                    try:
-                        storage_client.configurations.delete(component_id, cfg_id)
-                        # Double delete to skip trash
-                        storage_client.configurations.delete(component_id, cfg_id)
-                        LOG.info(f'Deleted component config: {component_id}/{cfg_id}')
-                    except requests.HTTPError:
-                        LOG.exception(f'Failed to delete component config {component_id}/{cfg_id}')
+        for cfg in configs:
+            cfg_id = cfg.get('id')
+            if cfg_id:
+                try:
+                    storage_client.configurations.delete(component_id, cfg_id)
+                    # Double delete to skip trash
+                    storage_client.configurations.delete(component_id, cfg_id)
+                    LOG.info(f'Deleted component config: {component_id}/{cfg_id}')
+                except requests.HTTPError:
+                    LOG.exception(f'Failed to delete component config {component_id}/{cfg_id}')
     except requests.HTTPError:
         LOG.exception(f'Failed to list configs for {component_id}')
 

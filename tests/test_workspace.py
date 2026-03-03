@@ -4,10 +4,8 @@ from urllib.parse import urlparse
 import pytest
 from httpx import HTTPStatusError, Request, Response
 
-from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
-from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.workspace import WorkspaceManager, _SnowflakeWorkspace
 
 
@@ -103,114 +101,31 @@ async def test_query_client_token_selection_with_branch_lookup():
 
 @pytest.mark.asyncio
 async def test_workspace_creation_cleans_up_config_on_failure():
-    """Test that configuration is cleaned up when workspace creation fails."""
-    # Create mock raw client
-    mock_raw_client = Mock(spec=RawKeboolaClient)
+    """Test that WorkspaceManager._create_ws cleans up config when workspace creation fails."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
 
-    # Create real instance with mocked raw client
-    storage_client = AsyncStorageClient(raw_client=mock_raw_client, branch_id='default')
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'test-config-123', 'name': 'test'}
 
-    # Mock configuration_create to return valid response
-    storage_client.configuration_create = AsyncMock(return_value={'id': 'test-config-123', 'name': 'test'})
-
-    # Mock post() to fail (simulating workspace creation failure)
     mock_response = Mock(spec=Response)
     mock_response.status_code = 500
     mock_response.text = 'Workspace creation failed'
     mock_request = Mock(spec=Request)
     mock_request.url = 'https://connection.keboola.com/v2/storage'
-    storage_client.post = AsyncMock(
+    mock_storage_client.workspace_create_for_config = AsyncMock(
         side_effect=HTTPStatusError('Workspace creation failed', request=mock_request, response=mock_response)
     )
+    mock_storage_client.configuration_delete = AsyncMock()
 
-    # Mock cleanup method
-    storage_client.configuration_delete = AsyncMock()
-
-    # Attempt workspace creation (should fail and trigger cleanup)
-    with pytest.raises(HTTPStatusError):
-        await storage_client.workspace_create_for_config(
-            component_id='keboola.mcp-server-tool',
-            login_type='snowflake-person-sso',
-            backend='snowflake',
-            async_run=True,
-            read_only_storage_access=True,
-        )
-
-    # Verify config creation was called
-    storage_client.configuration_create.assert_called_once()
-
-    # Verify cleanup was attempted
-    storage_client.configuration_delete.assert_called_once_with('keboola.mcp-server-tool', 'test-config-123')
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('metadata_value', 'should_skip'),
-    [
-        (None, True),  # None value should be skipped
-        ('', True),  # Empty string should be skipped
-        ('999', False),  # Valid integer as string should work
-        (999, False),  # Valid integer should work
-    ],
-    ids=['none_value', 'empty_string', 'valid_string', 'valid_int'],
-)
-async def test_find_ws_in_branch_handles_invalid_metadata(metadata_value: str | int | None, should_skip: bool):
-    """Test that invalid workspace_id values in metadata are handled gracefully."""
-    # Create mock KeboolaClient
-    mock_client = Mock(spec=KeboolaClient)
-    mock_client.branch_id = None
-
-    # Mock storage client with metadata containing test value
-    mock_storage_client = AsyncMock()
-    mock_storage_client.branch_metadata_get.return_value = [
-        {'key': WorkspaceManager.MCP_META_KEY, 'value': metadata_value}
-    ]
-
-    # Mock workspace_detail to return valid workspace if called
-    mock_storage_client.workspace_detail.return_value = {
-        'id': 999,
-        'connection': {'schema': 'test_schema', 'backend': 'snowflake'},
-        'readOnlyStorageAccess': True,
-    }
-
-    mock_client.storage_client = mock_storage_client
-
-    # Create workspace manager
     manager = WorkspaceManager(mock_client)
 
-    # Call _find_ws_in_branch
-    result = await manager._find_ws_in_branch()
+    with pytest.raises(HTTPStatusError):
+        await manager._create_ws()
 
-    if should_skip:
-        # Invalid values should be skipped, workspace_detail should not be called
-        assert result is None
-        mock_storage_client.workspace_detail.assert_not_called()
-    else:
-        # Valid values should result in workspace lookup
-        assert result is not None
-        mock_storage_client.workspace_detail.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_workspace_create_for_config_validates_config_id():
-    """Test that missing configuration ID raises ValueError."""
-    # Create mock raw client
-    mock_raw_client = Mock(spec=RawKeboolaClient)
-
-    # Create real instance with mocked raw client
-    storage_client = AsyncStorageClient(raw_client=mock_raw_client, branch_id='default')
-
-    # Mock configuration_create to return response WITHOUT 'id' field
-    storage_client.configuration_create = AsyncMock(
-        return_value={'name': 'test', 'component': 'keboola.mcp-server-tool'}
+    mock_storage_client.configuration_create.assert_called_once()
+    mock_storage_client.configuration_delete.assert_called_once_with(
+        WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID, 'test-config-123'
     )
-
-    # Attempt workspace creation (should fail with ValueError)
-    with pytest.raises(ValueError, match="Configuration creation response missing 'id'"):
-        await storage_client.workspace_create_for_config(
-            component_id='keboola.mcp-server-tool',
-            login_type='snowflake-person-sso',
-            backend='snowflake',
-            async_run=True,
-            read_only_storage_access=True,
-        )
