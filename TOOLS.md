@@ -56,6 +56,8 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.
 
 ### Storage Tools
+- [get_branches](#get_branches): Lists all branches in the Keboola project, including the default (production) branch
+and any development branches.
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
 - [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
@@ -2895,6 +2897,27 @@ DATA VALIDATION:
 ---
 
 # Storage Tools
+<a name="get_branches"></a>
+## get_branches
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Lists all branches in the Keboola project, including the default (production) branch
+and any development branches.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
 <a name="get_buckets"></a>
 ## get_buckets
 **Annotations**: `read-only`

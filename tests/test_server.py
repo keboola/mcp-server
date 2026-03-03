@@ -47,6 +47,7 @@ class TestServer:
             'deploy_data_app',
             'docs_query',
             'find_component_id',
+            'get_branches',
             'get_buckets',
             'get_components',
             'get_config_examples',
@@ -128,7 +129,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info']
+        assert missing_properties == ['get_branches', 'get_project_info']
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()
