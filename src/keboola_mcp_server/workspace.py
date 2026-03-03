@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
@@ -536,7 +537,8 @@ class _WspInfo:
 
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
-    MCP_META_KEY = 'KBC.McpServer.workspaceId'
+    MCP_META_KEY = 'KBC.McpServer.v2.workspaceId'
+    MCP_WORKSPACE_COMPONENT_ID = 'keboola.mcp-server-tool'
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'WorkspaceManager':
@@ -578,7 +580,7 @@ class WorkspaceManager:
 
         return None
 
-    async def _find_ws_by_id(self, workspace_id: int) -> _WspInfo | None:
+    async def _find_ws_by_id(self, workspace_id: str | int) -> _WspInfo | None:
         """Finds the workspace info by its ID."""
 
         try:
@@ -600,18 +602,22 @@ class WorkspaceManager:
     async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the workspace info in the current branch."""
 
+        meta_key = self.MCP_META_KEY
         metadata = await self._client.storage_client.branch_metadata_get()
         for m in metadata:
-            if m.get('key') == self.MCP_META_KEY:
-                workspace_id = m.get('value')
-                if workspace_id and (info := await self._find_ws_by_id(workspace_id)) and info.readonly:
+            if m.get('key') == meta_key and (raw_value := m.get('value')):
+                if (info := await self._find_ws_by_id(raw_value)) and info.readonly:
                     return info
 
         return None
 
     async def _create_ws(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
         """
-        Creates a new workspace in the current branch and returns its info.
+        Creates a new workspace under a component configuration and returns its info.
+
+        The workspace is created under the MCP_WORKSPACE_COMPONENT_ID component so that
+        it is correctly attributed for billing. This method creates the configuration,
+        creates the workspace under it, and cleans up the configuration on failure.
 
         :param timeout_sec: The number of seconds to wait for the workspace creation job to finish.
         :return: The workspace info if the workspace was created successfully, None otherwise.
@@ -625,18 +631,41 @@ class WorkspaceManager:
         default_backend = owner_info.get('defaultBackend')
 
         if default_backend == 'snowflake':
-            resp = await self._client.storage_client.workspace_create(
-                login_type='snowflake-person-sso',
+            login_type = 'snowflake-person-sso'
+        elif default_backend == 'bigquery':
+            login_type = 'default'
+        else:
+            raise ValueError(f'Unexpected default backend: {default_backend}')
+
+        component_id = self.MCP_WORKSPACE_COMPONENT_ID
+        config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
+        config_resp = await self._client.storage_client.configuration_create(
+            component_id=component_id,
+            name=config_name,
+            description='Auto-created by MCP server for workspace billing.',
+            configuration={},
+        )
+        config_id = str(config_resp['id'])
+
+        try:
+            resp = await self._client.storage_client.workspace_create_for_config(
+                component_id=component_id,
+                config_id=config_id,
+                login_type=login_type,
                 backend=default_backend,
                 async_run=True,
                 read_only_storage_access=True,
             )
-        elif default_backend == 'bigquery':
-            resp = await self._client.storage_client.workspace_create(
-                login_type='default', backend=default_backend, async_run=True, read_only_storage_access=True
-            )
-        else:
-            raise ValueError(f'Unexpected default backend: {default_backend}')
+        except Exception:
+            try:
+                await self._client.storage_client.configuration_delete(component_id, config_id)
+            except Exception as cleanup_err:
+                LOG.warning(
+                    f'Failed to clean up configuration {component_id}/{config_id} '
+                    f'after workspace creation failure: {cleanup_err}',
+                    exc_info=True,
+                )
+            raise
 
         assert 'id' in resp, f'Expected job ID in response: {resp}'
         assert isinstance(resp['id'], int)
@@ -724,7 +753,8 @@ class WorkspaceManager:
         # create a new workspace and note its ID to the branch
         LOG.info('Creating workspace in the default branch.')
         if info := await self._create_ws():
-            # update the branch metadata with the workspace ID
+            # All tokens share the same read-only workspace
+            # Race conditions during initialization are acceptable (last-write-wins)
             meta = await self._client.storage_client.branch_metadata_update({self.MCP_META_KEY: info.id})
             LOG.info(f'Set metadata in the default branch: {meta}')
             # use the newly created workspace
