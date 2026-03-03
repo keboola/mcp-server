@@ -46,6 +46,14 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
     mcp.add_tool(
         FunctionTool.from_function(
+            get_branches,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            serializer=toon_serializer_compact,
+            tags={STORAGE_TOOLS_TAG},
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
             get_buckets,
             annotations=ToolAnnotations(readOnlyHint=True),
             serializer=toon_serializer_compact,
@@ -77,6 +85,21 @@ def _sum(a: int | None, b: int | None) -> int | None:
         return None
     else:
         return (a or 0) + (b or 0)
+
+
+class BranchInfo(BaseModel):
+    id: str = Field(description='Unique identifier for the branch.')
+    name: str = Field(description='Name of the branch.')
+    is_default: bool = Field(
+        description='Whether this is the default (production) branch.',
+        validation_alias=AliasChoices('isDefault', 'is_default'),
+        serialization_alias='isDefault',
+    )
+    created: str | None = Field(default=None, description='Creation timestamp of the branch.')
+
+
+class GetBranchesOutput(BaseModel):
+    branches: list[BranchInfo] = Field(description='List of branches in the project.')
 
 
 class BucketDetail(BaseModel):
@@ -467,6 +490,18 @@ async def _combine_buckets(
         raise ValueError('No buckets specified.')
 
     return bucket
+
+
+@tool_errors()
+async def get_branches(ctx: Context) -> GetBranchesOutput:
+    """
+    Lists all branches in the Keboola project, including the default (production) branch
+    and any development branches.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    branches_raw = await client.storage_client.branches_list()
+    branches = [BranchInfo.model_validate(b) for b in branches_raw]
+    return GetBranchesOutput(branches=branches)
 
 
 @tool_errors()

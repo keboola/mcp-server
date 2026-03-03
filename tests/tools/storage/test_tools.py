@@ -16,14 +16,17 @@ from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import (
+    BranchInfo,
     BucketCounts,
     BucketDetail,
     DescriptionUpdate,
+    GetBranchesOutput,
     GetBucketsOutput,
     GetTablesOutput,
     TableColumnInfo,
     TableDetail,
     UpdateDescriptionsOutput,
+    get_branches,
     get_buckets,
     get_tables,
     update_descriptions,
@@ -450,6 +453,47 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
             ]
         },
     }
+
+
+_SAPI_BRANCHES = [
+    {'id': 'default', 'name': 'Main', 'isDefault': True, 'created': '2025-01-01T00:00:00+0000'},
+    {'id': '1234567', 'name': 'feature-xyz', 'isDefault': False, 'created': '2025-06-01T00:00:00+0000'},
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('sapi_branches', 'expected_branches'),
+    [
+        (
+            _SAPI_BRANCHES,
+            [
+                BranchInfo(id='default', name='Main', is_default=True, created='2025-01-01T00:00:00+0000'),
+                BranchInfo(id='1234567', name='feature-xyz', is_default=False, created='2025-06-01T00:00:00+0000'),
+            ],
+        ),
+        (
+            [_SAPI_BRANCHES[0]],
+            [BranchInfo(id='default', name='Main', is_default=True, created='2025-01-01T00:00:00+0000')],
+        ),
+    ],
+    ids=['multiple_branches', 'default_branch_only'],
+)
+async def test_get_branches(
+    sapi_branches: list[dict],
+    expected_branches: list[BranchInfo],
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+) -> None:
+    """Test the get_branches tool."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.branches_list = mocker.AsyncMock(return_value=sapi_branches)
+
+    result = await get_branches(mcp_context_client)
+
+    assert isinstance(result, GetBranchesOutput)
+    assert result.branches == expected_branches
+    keboola_client.storage_client.branches_list.assert_called_once()
 
 
 @pytest.mark.asyncio
