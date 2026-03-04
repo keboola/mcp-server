@@ -414,23 +414,29 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'hidden_tools', 'visible_tools'),
+        ('token_role', 'bearer_token', 'hidden_tools', 'visible_tools'),
         [
-            ('admin', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('share', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
-            ('readOnly', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
-            ('guest', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('admin', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('share', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('readOnly', None, {'modify_flow', 'update_flow'}, {'read_only_tool'}),
+            ('guest', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            # OAuth users: regular/guest users get modify_flow access (different from SAPI)
+            ('', 'oauth_token', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            # Empty bearer token behaves the same as no bearer token (SAPI regular)
+            ('', '', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
         ],
     )
     async def test_list_tools_filters_flow_tools_by_role(
         self,
         mcp_context_client,
+        keboola_client,
         token_role: str,
+        bearer_token: str | None,
         hidden_tools: set[str],
         visible_tools: set[str],
     ) -> None:
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.bearer_token = bearer_token
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )
@@ -457,29 +463,36 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'called_tool', 'tool_read_only', 'expect_error'),
+        ('token_role', 'bearer_token', 'called_tool', 'tool_read_only', 'expect_error'),
         [
-            ('admin', 'modify_flow', False, False),
-            ('admin', 'update_flow', False, True),
-            ('share', 'modify_flow', False, False),
-            ('share', 'update_flow', False, True),
-            ('', 'modify_flow', False, True),
-            ('', 'update_flow', False, False),
-            ('guest', 'write_tool', False, False),
-            ('guest', 'read_only_tool', True, False),
-            ('readOnly', 'write_tool', False, True),
-            ('readOnly', 'read_only_tool', True, False),
+            ('admin', None, 'modify_flow', False, False),
+            ('admin', None, 'update_flow', False, True),
+            ('share', None, 'modify_flow', False, False),
+            ('share', None, 'update_flow', False, True),
+            ('', None, 'modify_flow', False, True),
+            ('', None, 'update_flow', False, False),
+            ('guest', None, 'write_tool', False, False),
+            ('guest', None, 'read_only_tool', True, False),
+            ('readOnly', None, 'write_tool', False, True),
+            ('readOnly', None, 'read_only_tool', True, False),
+            # OAuth users: regular users can call modify_flow (different from SAPI regular)
+            ('', 'oauth_token', 'modify_flow', False, False),
+            ('', 'oauth_token', 'update_flow', False, True),
+            # Empty bearer token behaves the same as no bearer token (SAPI regular)
+            ('', '', 'modify_flow', False, True),
         ],
     )
     async def test_call_tool_blocks_flow_tools_by_role(
         self,
         mcp_context_client,
+        keboola_client,
         token_role: str,
+        bearer_token: str | None,
         called_tool: str,
         tool_read_only: bool,
         expect_error: bool,
     ) -> None:
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.bearer_token = bearer_token
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )
@@ -531,169 +544,6 @@ class TestToolsFilteringMiddleware:
         middleware = ToolsFilteringMiddleware()
         if expect_error:
             with pytest.raises(ToolError, match='Data apps are supported only in the main production branch'):
-                await middleware.on_call_tool(context, call_next)
-        else:
-            result = await middleware.on_call_tool(context, call_next)
-            assert result is expected
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ('token_role', 'bearer_token', 'expected_visible', 'expected_hidden'),
-        [
-            # OAuth users (bearer_token present) - should see modify_flow regardless of role
-            ('', 'oauth_token_123', {'modify_flow'}, {'update_flow'}),
-            ('guest', 'oauth_token_456', {'modify_flow'}, {'update_flow'}),
-            ('admin', 'oauth_token_789', {'modify_flow'}, {'update_flow'}),
-            ('share', 'oauth_token_abc', {'modify_flow'}, {'update_flow'}),
-            # OAuth read-only - should NOT see either tool (read-only restriction takes precedence)
-            ('readOnly', 'oauth_ro_123', set(), {'modify_flow', 'update_flow'}),
-            # SAPI admin users (no bearer_token) - existing behavior
-            ('admin', None, {'modify_flow'}, {'update_flow'}),
-            ('share', None, {'modify_flow'}, {'update_flow'}),
-            # SAPI regular users (no bearer_token) - existing behavior
-            ('', None, {'update_flow'}, {'modify_flow'}),
-            ('guest', None, {'update_flow'}, {'modify_flow'}),
-            # SAPI read-only - should NOT see either tool
-            ('readOnly', None, set(), {'modify_flow', 'update_flow'}),
-            # Empty string bearer token - should behave same as None (not OAuth)
-            ('', '', {'update_flow'}, {'modify_flow'}),
-            ('admin', '', {'modify_flow'}, {'update_flow'}),
-        ],
-        ids=[
-            'oauth_regular_user',
-            'oauth_guest',
-            'oauth_admin',
-            'oauth_share',
-            'oauth_readonly',
-            'sapi_admin',
-            'sapi_share',
-            'sapi_regular',
-            'sapi_guest',
-            'sapi_readonly',
-            'sapi_regular_empty_bearer',
-            'sapi_admin_empty_bearer',
-        ],
-    )
-    async def test_oauth_users_see_modify_flow(
-        self,
-        mcp_context_client,
-        keboola_client,
-        token_role: str,
-        bearer_token: str | None,
-        expected_visible: set[str],
-        expected_hidden: set[str],
-    ) -> None:
-        """Test that OAuth users have access to modify_flow regardless of role."""
-        keboola_client.bearer_token = bearer_token
-        keboola_client.storage_client.verify_token = AsyncMock(
-            return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
-        )
-
-        tools = [
-            _tool('modify_flow'),
-            _tool('update_flow'),
-            _tool('other_tool'),
-            _tool('read_only_tool', read_only=True),
-        ]
-
-        async def call_next(_):
-            return tools
-
-        middleware = ToolsFilteringMiddleware()
-        context = SimpleNamespace(fastmcp_context=mcp_context_client)
-        result = await middleware.on_list_tools(context, call_next)
-
-        result_names = {t.name for t in result}
-
-        # Verify expected tools are visible
-        for tool_name in expected_visible:
-            assert tool_name in result_names, f'{tool_name} should be visible'
-
-        # Verify expected tools are hidden
-        for tool_name in expected_hidden:
-            assert tool_name not in result_names, f'{tool_name} should be hidden'
-
-        # All non-readOnly users should see read_only_tool and other_tool
-        if token_role != 'readOnly':
-            assert 'read_only_tool' in result_names
-            assert 'other_tool' in result_names
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ('token_role', 'bearer_token', 'called_tool', 'expect_error'),
-        [
-            # OAuth users calling modify_flow - should succeed
-            ('', 'oauth_token_123', 'modify_flow', False),
-            ('guest', 'oauth_token_456', 'modify_flow', False),
-            ('admin', 'oauth_token_789', 'modify_flow', False),
-            # OAuth users calling update_flow - should fail
-            ('', 'oauth_token_123', 'update_flow', True),
-            ('guest', 'oauth_token_456', 'update_flow', True),
-            ('admin', 'oauth_token_789', 'update_flow', True),
-            # SAPI admin calling modify_flow - should succeed (existing behavior)
-            ('admin', None, 'modify_flow', False),
-            ('share', None, 'modify_flow', False),
-            # SAPI admin calling update_flow - should fail (existing behavior)
-            ('admin', None, 'update_flow', True),
-            ('share', None, 'update_flow', True),
-            # SAPI regular users calling update_flow - should succeed (existing behavior)
-            ('', None, 'update_flow', False),
-            ('guest', None, 'update_flow', False),
-            # SAPI regular users calling modify_flow - should fail (existing behavior)
-            ('', None, 'modify_flow', True),
-            ('guest', None, 'modify_flow', True),
-            # Empty string bearer token - same as no bearer token
-            ('', '', 'update_flow', False),
-            ('admin', '', 'modify_flow', False),
-            ('', '', 'modify_flow', True),
-        ],
-        ids=[
-            'oauth_regular_modify',
-            'oauth_guest_modify',
-            'oauth_admin_modify',
-            'oauth_regular_update',
-            'oauth_guest_update',
-            'oauth_admin_update',
-            'sapi_admin_modify',
-            'sapi_share_modify',
-            'sapi_admin_update',
-            'sapi_share_update',
-            'sapi_regular_update',
-            'sapi_guest_update',
-            'sapi_regular_modify',
-            'sapi_guest_modify',
-            'sapi_regular_empty_bearer_update',
-            'sapi_admin_empty_bearer_modify',
-            'sapi_regular_empty_bearer_modify_fail',
-        ],
-    )
-    async def test_oauth_users_can_call_modify_flow(
-        self,
-        mcp_context_client,
-        keboola_client,
-        token_role: str,
-        bearer_token: str | None,
-        called_tool: str,
-        expect_error: bool,
-    ) -> None:
-        """Test that OAuth users can call modify_flow tool."""
-        keboola_client.bearer_token = bearer_token
-        keboola_client.storage_client.verify_token = AsyncMock(
-            return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
-        )
-
-        tool = _tool(called_tool)
-        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
-        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=called_tool))
-
-        expected = MagicMock()
-
-        async def call_next(_):
-            return expected
-
-        middleware = ToolsFilteringMiddleware()
-        if expect_error:
-            with pytest.raises(ToolError):
                 await middleware.on_call_tool(context, call_next)
         else:
             result = await middleware.on_call_tool(context, call_next)
