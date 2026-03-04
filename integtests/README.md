@@ -14,10 +14,13 @@ Create a `.env` file in the project root with the variables below.
 ### Required
 
 ```dotenv
-INTEGTEST_STORAGE_API_URL=https://connection.keboola.com
+INTEGTEST_POOL_STORAGE_API_URL=https://connection.europe-west3.gcp.keboola.com
 INTEGTEST_STORAGE_TOKENS=<master-token-of-your-test-project>
 INTEGTEST_WORKSPACE_SCHEMAS=<snowflake-workspace-schema>
 ```
+
+`INTEGTEST_POOL_STORAGE_API_URL` is the Keboola stack where the pool projects live. All
+test fixtures (`mcp_config`, `keboola_project`, etc.) use this same URL.
 
 `INTEGTEST_STORAGE_TOKENS` and `INTEGTEST_WORKSPACE_SCHEMAS` are space-separated lists of
 **equal length** — one entry per project in the pool. For a pool of one (the common local
@@ -143,8 +146,8 @@ is automatically blocked until the lock is held:
 
 ```
 env_file_loaded
-  └── storage_api_url
-        └── project_lock          ← lock acquired at session start
+  └── storage_api_url             ← reads INTEGTEST_POOL_STORAGE_API_URL
+        └── project_lock         ← lock acquired at session start
               ├── storage_api_token
               └── workspace_schema
                     └── env_init

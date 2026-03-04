@@ -146,6 +146,7 @@ description = "Run integration tests"
 extras = ["tests", "integtests"]
 pass_env = [
     "INTEGTEST_STORAGE_API_URL",
+    "INTEGTEST_POOL_STORAGE_API_URL",
     "INTEGTEST_STORAGE_TOKENS",
     "INTEGTEST_WORKSPACE_SCHEMAS",
     "INTEGTEST_STORAGE_TOKEN_PRJ2",

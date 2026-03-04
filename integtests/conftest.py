@@ -35,7 +35,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
-STORAGE_API_URL_ENV_VAR = 'INTEGTEST_STORAGE_API_URL'
+POOL_STORAGE_API_URL_ENV_VAR = 'INTEGTEST_POOL_STORAGE_API_URL'
 STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool of tokens
 WORKSPACE_SCHEMAS_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMAS'  # space-separated, same order as tokens
 # The second pair of token/schema for testing simultaneous access to two different projects.
@@ -146,8 +146,8 @@ def _data_dir() -> Path:
 
 @pytest.fixture(scope='session')
 def storage_api_url(env_file_loaded: bool) -> str:
-    storage_api_url = os.getenv(STORAGE_API_URL_ENV_VAR)
-    assert storage_api_url, f'{STORAGE_API_URL_ENV_VAR} must be set'
+    storage_api_url = os.getenv(POOL_STORAGE_API_URL_ENV_VAR)
+    assert storage_api_url, f'{POOL_STORAGE_API_URL_ENV_VAR} must be set'
     return storage_api_url
 
 
@@ -321,13 +321,14 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
 
 
 @pytest.fixture(scope='session')
-def project_lock(storage_api_url: str, env_file_loaded: bool) -> Generator[AcquiredProject, Any, None]:
+def project_lock(env_file_loaded: bool, storage_api_url: str) -> Generator[AcquiredProject, Any, None]:
     """
     Acquires a distributed lock on a Keboola test project via branch metadata.
 
-    Requires INTEGTEST_STORAGE_TOKENS and INTEGTEST_WORKSPACE_SCHEMAS to be set to
-    space-separated lists of equal length: tokens and workspace schema IDs for each
-    project in the pool, in matching order.
+    Requires INTEGTEST_STORAGE_TOKENS and INTEGTEST_WORKSPACE_SCHEMAS to be set.
+    The tokens and schemas must be space-separated lists of equal length, one entry
+    per project in the pool. The Storage API URL is provided by the storage_api_url
+    fixture (INTEGTEST_POOL_STORAGE_API_URL).
 
     Yields AcquiredProject(endpoint, lock_info) so callers know which project was
     selected. storage_api_token and workspace_schema fixtures read their values from

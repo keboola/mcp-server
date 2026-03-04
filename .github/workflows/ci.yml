@@ -126,7 +126,7 @@ jobs:
         if: github.repository == github.event.repository.full_name
         env:
           INTEGTEST_STORAGE_TOKENS: ${{ secrets.INTEGTEST_STORAGE_TOKENS }}
-          INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
+          INTEGTEST_POOL_STORAGE_API_URL: ${{ vars.INTEGTEST_POOL_STORAGE_API_URL }}
           INTEGTEST_WORKSPACE_SCHEMAS: ${{ vars.INTEGTEST_WORKSPACE_SCHEMAS }}
         run: |
           uv run tox -e integtests
