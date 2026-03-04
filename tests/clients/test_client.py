@@ -353,6 +353,41 @@ class TestKeboolaClient:
                 await keboola_client.with_branch_id('non-existent-branch')
             mock_client.get.assert_called_once()
 
+    @pytest.mark.parametrize(
+        ('bearer_token', 'storage_token', 'expected_scheduler_token'),
+        [
+            ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
+            (None, 'sapi_token_456', 'sapi_token_456'),
+            ('', 'sapi_token_456', 'sapi_token_456'),
+        ],
+        ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
+    )
+    def test_scheduler_client_token_selection(
+        self, bearer_token: str | None, storage_token: str, expected_scheduler_token: str
+    ):
+        """Test SchedulerClient uses bearer token when available, falls back to storage token."""
+        # Create KeboolaClient with different token configurations
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token=storage_token,
+            bearer_token=bearer_token,
+        )
+
+        # Verify scheduler client was initialized with correct token
+        # Check the headers of the underlying RawKeboolaClient
+        scheduler_headers = client.scheduler_client.raw_client.headers
+
+        if expected_scheduler_token.startswith('Bearer '):
+            # Should use Authorization header for bearer token
+            assert 'Authorization' in scheduler_headers
+            assert scheduler_headers['Authorization'] == expected_scheduler_token
+            assert 'X-StorageAPI-Token' not in scheduler_headers
+        else:
+            # Should use X-StorageAPI-Token header for storage token
+            assert 'X-StorageAPI-Token' in scheduler_headers
+            assert scheduler_headers['X-StorageAPI-Token'] == expected_scheduler_token
+            assert 'Authorization' not in scheduler_headers
+
 
 @pytest.mark.parametrize(
     ('metadata', 'key', 'provider', 'preferred_providers', 'default', 'expected'),
