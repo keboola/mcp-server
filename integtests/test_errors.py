@@ -5,6 +5,7 @@ import re
 import uuid
 from importlib.metadata import distribution
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -29,10 +30,12 @@ class TestHttpErrors:
         assert 'non.existent.bucket' in result.buckets_not_found
 
     @pytest.mark.asyncio
-    async def test_jobs_api_404_error_(self, mcp_context: Context):
+    async def test_jobs_api_404_error_(self, mcp_context: Context, storage_api_url: str):
+        hostname_suffix = urlparse(storage_api_url).hostname.split('connection.')[1]
+        queue_url = f'https://queue.{hostname_suffix}'
         match = re.compile(
-            r"Client error '404 Not Found' "
-            r"for url 'https://queue.keboola.com/jobs/999999999'\n"
+            r"Client error '404 [^']+' "
+            rf"for url '{re.escape(queue_url)}/jobs/999999999'\n"
             r'For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404\n'
             r'API error: Job "999999999" not found\n'
             r'Exception ID: .+\n'
@@ -49,11 +52,13 @@ class TestHttpErrors:
         assert match.search(str(err.exceptions[0])) is not None
 
     @pytest.mark.asyncio
-    async def test_docs_api_empty_query_error(self, mcp_context: Context):
+    async def test_docs_api_empty_query_error(self, mcp_context: Context, storage_api_url: str):
         """Test that docs_query raises 422 error for empty queries."""
+        hostname_suffix = urlparse(storage_api_url).hostname.split('connection.')[1]
+        ai_url = f'https://ai.{hostname_suffix}'
         match = re.compile(
-            r"Client error '422 Unprocessable Content' "
-            r"for url 'https://ai.keboola.com/docs/question'\n"
+            r"Client error '422 [^']+' "
+            rf"for url '{re.escape(ai_url)}/docs/question'\n"
             r'For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422\n'
             r'API error: Request contents is not valid\n'
             r'Exception ID: .+\n'
