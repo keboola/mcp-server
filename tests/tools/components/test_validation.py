@@ -82,6 +82,7 @@ def test_validate_storage_invalid(invalid_storage_path: str):
         )
     err = exc_info.value
     assert 'This is a test message' in str(err)
+    assert 'Failed validating' in str(err)
     assert f'{json.dumps(invalid_storage, indent=2)}' not in str(err)
 
 

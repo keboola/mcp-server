@@ -12,7 +12,7 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components import (
+from keboola_mcp_server.tools.components.tools import (
     add_config_row,
     create_config,
     create_sql_transformation,
