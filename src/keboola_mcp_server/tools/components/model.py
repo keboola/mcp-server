@@ -158,6 +158,11 @@ class Component(BaseModel):
 
     links: list[Link] = Field(default_factory=list, description='Links for UI navigation')
 
+    sync_actions: list[str] = Field(
+        default_factory=list,
+        description='Synchronous actions supported by the component (e.g., "testConnection")',
+    )
+
     @classmethod
     def from_api_response(cls, api_response: ComponentAPIResponse) -> 'Component':
         """
@@ -178,6 +183,7 @@ class Component(BaseModel):
             documentation=api_response.documentation,
             configuration_schema=api_response.configuration_schema,
             configuration_row_schema=api_response.configuration_row_schema,
+            sync_actions=api_response.data.get('synchronous_actions'),
         )
 
 
