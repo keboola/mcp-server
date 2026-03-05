@@ -155,6 +155,15 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         )
     )
 
+    # Sync action tools
+    mcp.add_tool(
+        FunctionTool.from_function(
+            run_sync_action,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=False),
+        )
+    )
+
     # SQL transformation tools
     mcp.add_tool(
         FunctionTool.from_function(
@@ -1660,3 +1669,72 @@ async def get_config_examples(
             markdown += f'{i}. Row Configuration:\n```json\n{json.dumps(example, indent=2)}\n```\n\n'
 
     return markdown
+
+
+# ============================================================================
+# SYNC ACTION TOOLS
+# ============================================================================
+
+
+@tool_errors()
+async def run_sync_action(
+    ctx: Context,
+    action_name: Annotated[
+        str,
+        Field(description='The sync action to execute (e.g., "testConnection", "getTables").'),
+    ],
+    component_id: Annotated[
+        str,
+        Field(description='The ID of the component (e.g., "keboola.ex-db-mysql").'),
+    ],
+    configuration_id: Annotated[
+        str,
+        Field(description='The ID of the configuration to use for the sync action.'),
+    ],
+    configuration_row_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                'Optional row ID for row-level actions. When provided, '
+                'the row parameters and storage are shallow-merged on top of root config.'
+            ),
+        ),
+    ] = None,
+) -> dict[str, Any]:
+    """Execute a synchronous action for a component configuration.
+
+    Sync actions run component code synchronously (e.g., test connections,
+    list remote tables/columns, validate credentials). The available sync
+    actions for a component can be found in the component's sync_actions field
+    returned by get_components.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    config_detail = await client.storage_client.configuration_detail(component_id, configuration_id)
+    config_response = ConfigurationAPIResponse.model_validate({**config_detail, 'componentId': component_id})
+    root_configuration = config_response.configuration
+    parameters = dict(root_configuration.get('parameters') or {})
+    storage = dict(root_configuration.get('storage') or {})
+
+    if configuration_row_id:
+        row_detail = await client.storage_client.configuration_row_detail(
+            component_id, configuration_id, configuration_row_id
+        )
+        row_configuration = row_detail.get('configuration') or {}
+        row_parameters = row_configuration.get('parameters') or {}
+        row_storage = row_configuration.get('storage') or {}
+        parameters = {**parameters, **row_parameters}
+        storage = {**storage, **row_storage}
+
+    config_data: dict[str, Any] = {
+        'parameters': parameters,
+        'storage': storage,
+    }
+
+    result = await client.sync_actions_client.execute_action(
+        component_id=component_id,
+        action=action_name,
+        config_data=config_data,
+        branch_id=client.branch_id,
+    )
+    return result

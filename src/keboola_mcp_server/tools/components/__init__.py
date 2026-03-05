@@ -13,6 +13,7 @@ from keboola_mcp_server.tools.components.tools import (
     get_components,
     get_config_examples,
     get_configs,
+    run_sync_action,
     update_config,
     update_config_row,
     update_sql_transformation,

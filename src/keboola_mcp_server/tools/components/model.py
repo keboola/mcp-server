@@ -183,7 +183,7 @@ class Component(BaseModel):
             documentation=api_response.documentation,
             configuration_schema=api_response.configuration_schema,
             configuration_row_schema=api_response.configuration_row_schema,
-            sync_actions=api_response.data.get('synchronous_actions'),
+            sync_actions=api_response.data.get('synchronous_actions') or [],
         )
 
 

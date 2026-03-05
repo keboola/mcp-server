@@ -12,6 +12,7 @@ description, and a list of created table names.
 - [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
 - [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
+- [run_sync_action](#run_sync_action): Execute a synchronous action for a component configuration.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
@@ -512,6 +513,61 @@ EXAMPLES:
       "type": "array"
     }
   },
+  "type": "object"
+}
+```
+
+---
+<a name="run_sync_action"></a>
+## run_sync_action
+**Annotations**: 
+
+**Tags**: `components`
+
+**Description**:
+
+Execute a synchronous action for a component configuration.
+
+Sync actions run component code synchronously (e.g., test connections,
+list remote tables/columns, validate credentials). The available sync
+actions for a component can be found in the component's sync_actions field
+returned by get_components.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "action_name": {
+      "description": "The sync action to execute (e.g., \"testConnection\", \"getTables\").",
+      "type": "string"
+    },
+    "component_id": {
+      "description": "The ID of the component (e.g., \"keboola.ex-db-mysql\").",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the configuration to use for the sync action.",
+      "type": "string"
+    },
+    "configuration_row_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional row ID for row-level actions. When provided, the row parameters and storage are shallow-merged on top of root config."
+    }
+  },
+  "required": [
+    "action_name",
+    "component_id",
+    "configuration_id"
+  ],
   "type": "object"
 }
 ```

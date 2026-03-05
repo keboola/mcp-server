@@ -244,7 +244,7 @@ async def fetch_component(
         # TODO: Consider adding the entire `data` section into the AI service catalog response
         #  to avoid this in the future
         component_detail_raw = await client.storage_client.component_detail(component_id=component_id)
-        raw_component['data'] = component_detail_raw.get('data',{})
+        raw_component['data'] = component_detail_raw.get('data', {})
 
         return ComponentAPIResponse.model_validate(raw_component)
 
