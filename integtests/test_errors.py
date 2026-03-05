@@ -69,7 +69,7 @@ class TestHttpErrors:
             await docs_query(ctx=mcp_context, query='')
 
     @pytest.mark.asyncio
-    async def test_sql_api_invalid_query_error(self, mcp_context: Context):
+    async def test_sql_api_invalid_query_error_snowflake(self, mcp_context: Context, require_snowflake: None):
         match = re.compile(
             r'Failed to run SQL query, error: SQL compilation error:\n'
             r"syntax error line 1 at position 0 unexpected 'INVALID'\.",
@@ -77,6 +77,16 @@ class TestHttpErrors:
         )
         with pytest.raises(ValueError, match=match):
             await query_data('INVALID SQL SYNTAX HERE', 'Invalid SQL query.', mcp_context)
+
+    @pytest.mark.asyncio
+    async def test_sql_api_invalid_query_error_bigquery(self, mcp_context: Context, require_bigquery: None):
+        match = re.compile(
+            r'Failed to run SQL query, error: Syntax error: Unexpected identifier "INVALID" at \[1:1]',
+            re.IGNORECASE,
+        )
+        with pytest.raises(ValueError, match=match):
+            await query_data('INVALID SQL SYNTAX HERE', 'Invalid SQL query.', mcp_context)
+
 
     @pytest.mark.asyncio
     async def test_concurrent_error_handling(self, mcp_context: Context):

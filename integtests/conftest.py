@@ -413,6 +413,20 @@ async def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str
     return await WorkspaceManager.create(keboola_client, workspace_schema)
 
 
+@pytest_asyncio.fixture()
+async def require_snowflake(workspace_manager: WorkspaceManager) -> None:
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    if sql_dialect != 'Snowflake':
+        pytest.skip(f'Snowflake backend required, got: {sql_dialect}')
+
+
+@pytest_asyncio.fixture()
+async def require_bigquery(workspace_manager: WorkspaceManager) -> None:
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    if sql_dialect != 'BigQuery':
+        pytest.skip(f'BigQuery backend required, got: {sql_dialect}')
+
+
 @pytest.fixture
 def mcp_context(
     mocker,
