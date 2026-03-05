@@ -881,9 +881,9 @@ class AsyncStorageClient(KeboolaServiceClient):
     async def list_events(
         self,
         job_id: str,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[dict[str, Any]]:
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[JsonDict]:
         """
         Lists Storage API events for a job. Used to retrieve job execution logs.
 
@@ -897,11 +897,11 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         params: dict[str, Any] = {
             'runId': job_id,
-            'limit': limit,
-            'offset': offset,
+            'limit': limit or 50,
+            'offset': offset or 0,
             'forceUuid': 'true',
         }
-        return cast(list[dict[str, Any]], await self.get(endpoint='events', params=params))
+        return cast(list[JsonDict], await self.get(endpoint='events', params=params))
 
     async def workspace_create(
         self,
