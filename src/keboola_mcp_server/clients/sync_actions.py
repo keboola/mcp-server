@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import Any
 
 from keboola_mcp_server.clients.base import JsonStruct, KeboolaServiceClient, RawKeboolaClient
 
