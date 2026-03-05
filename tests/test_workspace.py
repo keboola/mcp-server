@@ -2,10 +2,11 @@ from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import urlparse
 
 import pytest
+from httpx import HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
-from keboola_mcp_server.workspace import _SnowflakeWorkspace
+from keboola_mcp_server.workspace import WorkspaceManager, _SnowflakeWorkspace
 
 
 @pytest.mark.asyncio
@@ -96,3 +97,35 @@ async def test_query_client_token_selection_with_branch_lookup():
         call_kwargs = mock_qs_create.call_args.kwargs
         assert call_kwargs['token'] == 'Bearer oauth_bearer_123'
         assert call_kwargs['branch_id'] == '888'  # Found default branch
+
+
+@pytest.mark.asyncio
+async def test_workspace_creation_cleans_up_config_on_failure():
+    """Test that WorkspaceManager._create_ws cleans up config when workspace creation fails."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'test-config-123', 'name': 'test'}
+
+    mock_response = Mock(spec=Response)
+    mock_response.status_code = 500
+    mock_response.text = 'Workspace creation failed'
+    mock_request = Mock(spec=Request)
+    mock_request.url = 'https://connection.keboola.com/v2/storage'
+    mock_storage_client.workspace_create_for_config = AsyncMock(
+        side_effect=HTTPStatusError('Workspace creation failed', request=mock_request, response=mock_response)
+    )
+    mock_storage_client.configuration_delete = AsyncMock()
+
+    manager = WorkspaceManager(mock_client)
+
+    with pytest.raises(HTTPStatusError):
+        await manager._create_ws()
+
+    mock_storage_client.configuration_create.assert_called_once()
+    mock_storage_client.configuration_delete.assert_called_once_with(
+        WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID, 'test-config-123'
+    )
