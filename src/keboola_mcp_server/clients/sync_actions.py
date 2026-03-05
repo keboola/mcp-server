@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
+from keboola_mcp_server.clients.base import JsonStruct, KeboolaServiceClient, RawKeboolaClient
 
 
 class SyncActionsClient(KeboolaServiceClient):
@@ -35,7 +35,7 @@ class SyncActionsClient(KeboolaServiceClient):
         action: str,
         config_data: dict[str, Any],
         branch_id: str | None = None,
-    ) -> JsonDict:
+    ) -> JsonStruct:
         """
         Executes a synchronous action for a component.
 
@@ -43,7 +43,7 @@ class SyncActionsClient(KeboolaServiceClient):
         :param action: The sync action to execute (e.g., "testConnection").
         :param config_data: The configuration data payload.
         :param branch_id: Optional branch ID.
-        :return: The action result as a dictionary.
+        :return: The action result as a dict or list.
         """
         payload: dict[str, Any] = {
             'configData': config_data,
@@ -52,4 +52,4 @@ class SyncActionsClient(KeboolaServiceClient):
         }
         if branch_id:
             payload['branchId'] = branch_id
-        return cast(JsonDict, await self.post(endpoint='actions', data=payload))
+        return await self.post(endpoint='actions', data=payload)

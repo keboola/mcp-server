@@ -1700,7 +1700,7 @@ async def run_sync_action(
             ),
         ),
     ] = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | list[Any]:
     """Execute a synchronous action for a component configuration.
 
     Sync actions run component code synchronously (e.g., test connections,
