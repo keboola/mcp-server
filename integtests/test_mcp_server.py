@@ -158,6 +158,7 @@ async def _assert_basic_setup(client: Client):
         'deploy_data_app',
         'docs_query',
         'find_component_id',
+        'get_branches',
         'get_buckets',
         'get_components',
         'get_config_examples',
