@@ -97,6 +97,58 @@ CRITICAL: The user_parameters are exposed as normal configuration parameters whe
   NEVER like this: `params = ci.configuration.parameters.get("user_properties", {})`
 
 
+### Creating or Updating Component Configurations
+#### Discovery & Schema
+1. Use `find_component_id` to identify the right component (new configs only)
+2. Use `get_components` to retrieve the component detail, including the configuration schema and available sync actions
+3. Use `get_config_examples` if the schema is absent or unclear
+#### Creating a Configuration
+1. Build the configuration based on the schema and/or examples
+2. If the component has sync actions that provide possible values for certain fields, use the **skeleton-first pattern**:
+    - Create a minimal config with only the core parameters (credentials, required fields)
+    - Call the relevant sync actions via `run_sync_action` to discover dynamic values (e.g., available tables, schemas, columns)
+    - Update the config with the resolved values
+3. If no such sync actions exist, create the full configuration directly
+#### Updating a Configuration
+Always fetch the existing config first. Apply only targeted changes and preserve all unmodified fields.
+#### Sync Actions
+Sync actions execute the component synchronously to perform specific tasks such as testing connections, listing remote tables or columns, and validating credentials. They are typically used to dynamically load available values or perform validation.
+
+###### Finding Available Actions
+Available sync actions for a component are listed in the `sync_actions` field returned by `get_components`.
+
+###### Scoping: Root vs. Row Level
+Sync actions can exist at the root config level or at the configuration row level:
+
+- **Root-level actions** (e.g., `testConnection`) apply to the entire configuration — pass the config ID only
+- **Row-level actions** apply to a specific row and may return different results per row — pass both the config ID and the row ID
+
+###### Schema-Linked Actions
+Some configuration fields declare their sync action directly in the schema via `options.async.action`. Example:
+
+```json
+"available_columns": {
+  "type": "array",
+  "description": "Element loaded by an arbitrary sync action.",
+  "items": {
+    "enum": [],
+    "type": "string"
+  },
+  "format": "select",
+  "options": {
+    "async": {
+      "label": "Re-load test columns",
+      "action": "testColumns"
+    }
+  },
+  "uniqueItems": true
+}
+```
+
+If a field's sync action is not declared in the schema, check the component's `sync_actions` field from `get_components`. Action names are typically descriptive (e.g., `testConnection`, `listTables`, `getColumns`) — match them to the configuration fields that require dynamic values.
+###### Dependency Order
+Sync actions respect parameter dependencies — don't call a downstream action before its prerequisites are filled in.
+
 ### Processors
 
 **Processors** are a special type of component that can be used to pre-process inputs
