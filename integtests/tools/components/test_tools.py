@@ -156,7 +156,9 @@ async def test_get_configs_list_by_types(
 
 
 @pytest.mark.asyncio
-async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+async def test_create_config(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef, storage_api_url: str
+):
     """Tests that `create_config` creates a configuration with correct metadata."""
 
     # Use the first component from configs for testing
@@ -197,14 +199,14 @@ async def test_create_config(mcp_context: Context, configs: list[ConfigDef], keb
                     type='ui-detail',
                     title=f'Configuration: {test_name}',
                     url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+                        f'{storage_api_url}/admin/projects/{project_id}/components/{component_id}/'
                         + f'{created_config.configuration_id}'
                     ),
                 ),
                 Link(
                     type='ui-dashboard',
                     title=f'Component "{component_id}" Configurations Dashboard',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                    url=f'{storage_api_url}/admin/projects/{project_id}/components/{component_id}',
                 ),
             ]
         )
@@ -292,6 +294,7 @@ async def test_update_config(
     mcp_client: Client,
     keboola_project: ProjectDef,
     keboola_client: KeboolaClient,
+    storage_api_url: str,
 ):
     """Tests that `update_config` updates a configuration with correct metadata."""
     project_id = keboola_project.project_id
@@ -338,13 +341,12 @@ async def test_update_config(
             Link(
                 type='ui-detail',
                 title=f'Configuration: {expected_name}',
-                url='https://connection.keboola.com/admin'
-                f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+                url=f'{storage_api_url}/admin' f'/projects/{project_id}/components/{component_id}/{configuration_id}',
             ),
             Link(
                 type='ui-dashboard',
                 title=f'Component "{component_id}" Configurations Dashboard',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/components/{component_id}',
             ),
         ]
     )
@@ -388,7 +390,9 @@ async def test_update_config(
 
 
 @pytest.mark.asyncio
-async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+async def test_add_config_row(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef, storage_api_url: str
+):
     """Tests that `add_config_row` creates a row configuration with correct metadata."""
 
     # Use the first component from configs for testing
@@ -447,14 +451,14 @@ async def test_add_config_row(mcp_context: Context, configs: list[ConfigDef], ke
                     type='ui-detail',
                     title=f'Configuration: {row_name}',
                     url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}/'
+                        f'{storage_api_url}/admin/projects/{project_id}/components/{component_id}/'
                         + f'{root_config.configuration_id}'
                     ),
                 ),
                 Link(
                     type='ui-dashboard',
                     title=f'Component "{component_id}" Configurations Dashboard',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                    url=f'{storage_api_url}/admin/projects/{project_id}/components/{component_id}',
                 ),
             ]
         )
@@ -550,6 +554,7 @@ async def test_update_config_row(
     mcp_client: Client,
     keboola_project: ProjectDef,
     keboola_client: KeboolaClient,
+    storage_api_url: str,
 ):
     """Tests that `update_config_row` updates a row configuration with correct metadata."""
     project_id = keboola_project.project_id
@@ -593,13 +598,12 @@ async def test_update_config_row(
             Link(
                 type='ui-detail',
                 title=f'Configuration: {expected_row_name}',
-                url='https://connection.keboola.com/admin'
-                f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+                url=f'{storage_api_url}/admin' f'/projects/{project_id}/components/{component_id}/{configuration_id}',
             ),
             Link(
                 type='ui-dashboard',
                 title=f'Component "{component_id}" Configurations Dashboard',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/components/{component_id}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/components/{component_id}',
             ),
         ]
     )
@@ -650,7 +654,7 @@ async def test_update_config_row(
 
 
 @pytest.mark.asyncio
-async def test_create_sql_transformation(mcp_context: Context, keboola_project: ProjectDef):
+async def test_create_sql_transformation(mcp_context: Context, keboola_project: ProjectDef, storage_api_url: str):
     """Tests that `create_sql_transformation` creates a SQL transformation with correct configuration."""
 
     test_name = 'Test SQL Transformation'
@@ -694,14 +698,14 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
                     type='ui-detail',
                     title=f'Transformation: {test_name}',
                     url=(
-                        f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2/'
+                        f'{storage_api_url}/admin/projects/{project_id}/transformations-v2/'
                         f'{expected_component_id}/{created_transformation.configuration_id}'
                     ),
                 ),
                 Link(
                     type='ui-dashboard',
                     title='Transformations dashboard',
-                    url=(f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2'),
+                    url=(f'{storage_api_url}/admin/projects/{project_id}/transformations-v2'),
                 ),
             ]
         )
@@ -869,6 +873,7 @@ async def test_update_sql_transformation(
     mcp_client: Client,
     keboola_project: ProjectDef,
     keboola_client: KeboolaClient,
+    storage_api_url: str,
 ):
     """Tests that `update_sql_transformation` updates an existing SQL transformation correctly."""
     project_id = keboola_project.project_id
@@ -930,13 +935,13 @@ async def test_update_sql_transformation(
             Link(
                 type='ui-detail',
                 title=f'Transformation: {expected_name}',
-                url='https://connection.keboola.com/admin'
+                url=f'{storage_api_url}/admin'
                 f'/projects/{project_id}/transformations-v2/{component_id}/{configuration_id}',
             ),
             Link(
                 type='ui-dashboard',
                 title='Transformations dashboard',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/transformations-v2',
+                url=f'{storage_api_url}/admin/projects/{project_id}/transformations-v2',
             ),
         ]
     )

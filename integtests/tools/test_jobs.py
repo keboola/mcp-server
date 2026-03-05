@@ -95,7 +95,9 @@ async def test_get_jobs_listing_with_component_and_config_filter(mcp_context: Co
 
 
 @pytest.mark.asyncio
-async def test_run_job_and_get_jobs(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+async def test_run_job_and_get_jobs(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef, storage_api_url: str
+):
     """Tests that `run_job` creates a job and `get_jobs` retrieves its details."""
 
     project_id = keboola_project.project_id
@@ -117,12 +119,12 @@ async def test_run_job_and_get_jobs(mcp_context: Context, configs: list[ConfigDe
             Link(
                 type='ui-detail',
                 title=f'Job: {started_job.id}',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{started_job.id}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/queue/{started_job.id}',
             ),
             Link(
                 type='ui-dashboard',
                 title='Jobs in the project',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
+                url=f'{storage_api_url}/admin/projects/{project_id}/queue',
             ),
         ]
     )
@@ -144,19 +146,21 @@ async def test_run_job_and_get_jobs(mcp_context: Context, configs: list[ConfigDe
             Link(
                 type='ui-detail',
                 title=f'Job: {job_detail.id}',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{job_detail.id}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/queue/{job_detail.id}',
             ),
             Link(
                 type='ui-dashboard',
                 title='Jobs in the project',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
+                url=f'{storage_api_url}/admin/projects/{project_id}/queue',
             ),
         ]
     )
 
 
 @pytest.mark.asyncio
-async def test_get_jobs_detail(mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef):
+async def test_get_jobs_detail(
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef, storage_api_url: str
+):
     """Tests `get_jobs` by creating a job and then retrieving its details."""
 
     project_id = keboola_project.project_id
@@ -185,12 +189,12 @@ async def test_get_jobs_detail(mcp_context: Context, configs: list[ConfigDef], k
             Link(
                 type='ui-detail',
                 title=f'Job: {created_job.id}',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{created_job.id}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/queue/{created_job.id}',
             ),
             Link(
                 type='ui-dashboard',
                 title='Jobs in the project',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
+                url=f'{storage_api_url}/admin/projects/{project_id}/queue',
             ),
         ]
     )
@@ -198,7 +202,7 @@ async def test_get_jobs_detail(mcp_context: Context, configs: list[ConfigDef], k
 
 @pytest.mark.asyncio
 async def test_run_job_with_newly_created_config(
-    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef
+    mcp_context: Context, configs: list[ConfigDef], keboola_project: ProjectDef, storage_api_url: str
 ):
     """Tests that `run_job` works with a newly created configuration."""
 
@@ -234,12 +238,12 @@ async def test_run_job_with_newly_created_config(
                 Link(
                     type='ui-detail',
                     title=f'Job: {started_job.id}',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/queue/{started_job.id}',
+                    url=f'{storage_api_url}/admin/projects/{project_id}/queue/{started_job.id}',
                 ),
                 Link(
                     type='ui-dashboard',
                     title='Jobs in the project',
-                    url=f'https://connection.keboola.com/admin/projects/{project_id}/queue',
+                    url=f'{storage_api_url}/admin/projects/{project_id}/queue',
                 ),
             ]
         )
