@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import httpx
 import pytest
+from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import ServerRuntimeInfo
 from keboola_mcp_server.mcp import SessionStateMiddleware
 
@@ -150,6 +152,36 @@ class TestRawKeboolaClient:
 
 
 class TestAsyncStorageClient:
+    @pytest.fixture
+    def storage_client(self, mocker: MockerFixture) -> AsyncStorageClient:
+        raw = mocker.AsyncMock(RawKeboolaClient)
+        return AsyncStorageClient(raw_client=raw, branch_id=None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('limit', 'offset', 'expected_params'),
+        [
+            pytest.param(50, 0, {'runId': '456', 'limit': 50, 'offset': 0, 'forceUuid': 'true'}, id='basic'),
+            pytest.param(10, 100, {'runId': '456', 'limit': 10, 'offset': 100, 'forceUuid': 'true'}, id='with_offset'),
+        ],
+    )
+    async def test_list_events(
+        self,
+        storage_client: AsyncStorageClient,
+        limit: int,
+        offset: int,
+        expected_params: dict[str, Any],
+    ):
+        """Tests list_events calls the correct endpoint with the right params."""
+        storage_client.raw_client.get.return_value = []
+
+        await storage_client.list_events(job_id='456', limit=limit, offset=offset)
+
+        storage_client.raw_client.get.assert_called_once_with(
+            endpoint='events',
+            params=expected_params,
+        )
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('message', 'component_id', 'configuration_id', 'event_type', 'params', 'results', 'duration', 'run_id'),
