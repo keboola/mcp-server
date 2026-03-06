@@ -224,41 +224,19 @@ def _prepare_mutator(
     return mutator_fn, mutator_params
 
 
-async def preview_config_diff(rq: Request) -> Response:
-    preview_rq = PreviewConfigDiffRq.model_validate(await rq.json())
+async def compute_config_diff(
+    tool_name: str,
+    tool_params: dict[str, Any],
+    client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+) -> PreviewConfigDiffResp:
+    """
+    Compute a configuration diff preview for the given mutation tool.
 
-    LOG.info(f'[preview_config_diff] {preview_rq}')
-    LOG.info(f'[preview_config_diff] rq.app={rq.app}')
-    LOG.info(f'[preview_config_diff] rq.app.state={rq.app.state} vars={vars(rq.app.state)}')
-    LOG.info(f'[preview_config_diff] rq.state={rq.state} vars={vars(rq.state)}')
-
-    server_state = ServerState.from_starlette(rq.app)
-    config = SessionStateMiddleware.apply_request_config(rq, server_state.config)
-    state = await SessionStateMiddleware.create_session_state(config, server_state.runtime_info, readonly=True)
-    client = KeboolaClient.from_state(state)
-    workspace_manager = WorkspaceManager.from_state(state)
-
+    Shared by both the HTTP preview endpoint and the MCP preview_config_diff tool.
+    """
+    preview_rq = PreviewConfigDiffRq(tool_name=tool_name, tool_params=tool_params)
     coordinates = await _extract_coordinates(preview_rq.tool_name, preview_rq.tool_params, workspace_manager)
-
-    if tool_input_schema := rq.app.state.mcp_tools_input_schema.get(preview_rq.tool_name):
-        is_valid, validation_errors = await _validate_tool_params(
-            tool_name=preview_rq.tool_name,
-            tool_params=preview_rq.tool_params,
-            tool_input_schema=tool_input_schema,
-        )
-
-        if not is_valid:
-            preview_resp = PreviewConfigDiffResp(
-                coordinates=coordinates,
-                original_config={},
-                updated_config={},
-                is_valid=False,
-                validation_errors=[validation_errors],
-            )
-            return JSONResponse(preview_resp.model_dump(by_alias=True, exclude_none=True))
-    else:
-        LOG.warning(f'[preview_config_diff] No input schema found for tool "{preview_rq.tool_name}"')
-
     mutator_fn, mutator_params = _prepare_mutator(preview_rq, client, workspace_manager)
 
     try:
@@ -287,7 +265,7 @@ async def preview_config_diff(rq: Request) -> Response:
                 else:
                     raise ValueError(f'Invalid mutator preview key: "{key}"')
 
-        preview_resp = PreviewConfigDiffResp(
+        return PreviewConfigDiffResp(
             coordinates=coordinates,
             original_config=original_config,
             updated_config=updated_config,
@@ -296,13 +274,55 @@ async def preview_config_diff(rq: Request) -> Response:
         )
 
     except (pydantic.ValidationError, jsonschema.ValidationError, ValueError) as ex:
-        LOG.exception(f'[preview_config_diff] {ex}')
-        preview_resp = PreviewConfigDiffResp(
+        LOG.exception(f'[compute_config_diff] {ex}')
+        return PreviewConfigDiffResp(
             coordinates=coordinates,
             original_config={},
             updated_config={},
             is_valid=False,
             validation_errors=[str(ex)],
         )
+
+
+async def preview_config_diff(rq: Request) -> Response:
+    preview_rq = PreviewConfigDiffRq.model_validate(await rq.json())
+
+    LOG.info(f'[preview_config_diff] {preview_rq}')
+
+    server_state = ServerState.from_starlette(rq.app)
+    config = SessionStateMiddleware.apply_request_config(rq, server_state.config)
+    state = await SessionStateMiddleware.create_session_state(config, server_state.runtime_info, readonly=True)
+    client = KeboolaClient.from_state(state)
+    workspace_manager = WorkspaceManager.from_state(state)
+
+    # Validate tool params against JSON schema (HTTP-only, MCP tools validate via their own schema)
+    if tool_input_schema := rq.app.state.mcp_tools_input_schema.get(preview_rq.tool_name):
+        is_valid, validation_errors = await _validate_tool_params(
+            tool_name=preview_rq.tool_name,
+            tool_params=preview_rq.tool_params,
+            tool_input_schema=tool_input_schema,
+        )
+
+        if not is_valid:
+            coordinates = await _extract_coordinates(
+                preview_rq.tool_name, preview_rq.tool_params, workspace_manager
+            )
+            preview_resp = PreviewConfigDiffResp(
+                coordinates=coordinates,
+                original_config={},
+                updated_config={},
+                is_valid=False,
+                validation_errors=[validation_errors],
+            )
+            return JSONResponse(preview_resp.model_dump(by_alias=True, exclude_none=True))
+    else:
+        LOG.warning(f'[preview_config_diff] No input schema found for tool "{preview_rq.tool_name}"')
+
+    preview_resp = await compute_config_diff(
+        tool_name=preview_rq.tool_name,
+        tool_params=preview_rq.tool_params,
+        client=client,
+        workspace_manager=workspace_manager,
+    )
 
     return JSONResponse(preview_resp.model_dump(by_alias=True, exclude_none=True))

@@ -17,6 +17,12 @@ description, and a list of created table names.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
 name or description.
 
+### Config Diff App
+- [preview_config_diff](#preview_config_diff): Preview configuration changes before applying a mutation.
+
+### Data Chart App
+- [visualize_data](#visualize_data): Renders an interactive chart from CSV data.
+
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
@@ -1572,6 +1578,54 @@ Example 4 - Update storage mappings:
 
 ---
 
+# Config Diff App
+<a name="preview_config_diff"></a>
+## preview_config_diff
+**Annotations**: `read-only`
+
+**Tags**: `config_diff`
+
+**Description**:
+
+Preview configuration changes before applying a mutation.
+
+Shows a side-by-side diff of the original and updated configuration.
+Call this BEFORE calling any mutation tool (update_config, update_config_row,
+update_sql_transformation, update_flow, modify_flow, modify_data_app) to
+let the user review changes before they are applied.
+
+Pass the same tool_name and tool_params you would use for the mutation tool.
+
+EXAMPLES:
+- tool_name="update_config", tool_params={"component_id": "keboola.ex-aws-s3",
+  "configuration_id": "123", "change_description": "Update bucket",
+  "parameter_updates": [{"op": "set", "path": "bucket", "value": "new-bucket"}]}
+- tool_name="modify_flow", tool_params={"configuration_id": "456",
+  "flow_type": "keboola.orchestrator", "change_description": "Update phases", ...}
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "tool_name": {
+      "type": "string"
+    },
+    "tool_params": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  "required": [
+    "tool_name",
+    "tool_params"
+  ],
+  "type": "object"
+}
+```
+
+---
+
 # Other Tools
 <a name="deploy_data_app"></a>
 ## deploy_data_app
@@ -1753,6 +1807,86 @@ SQL & DATA TYPE RULES:
     "source_code",
     "packages",
     "authentication_type"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# Data Chart App
+<a name="visualize_data"></a>
+## visualize_data
+**Annotations**: `read-only`
+
+**Tags**: `data_chart`
+
+**Description**:
+
+Renders an interactive chart from CSV data.
+
+Takes raw CSV data and chart configuration, then displays a Chart.js chart
+in an interactive iframe. Supports bar, line, pie, scatter, doughnut, and
+area chart types with automatic multi-series support.
+
+Use this tool after calling query_data to visualize the results. Analyze
+the CSV columns first, then pick appropriate x_column (labels/categories)
+and y_columns (numeric values to plot).
+
+EXAMPLES:
+- csv_data="quarter,revenue\nQ1,100\nQ2,150", chart_type="bar",
+  title="Revenue", x_column="quarter", y_columns=["revenue"]
+- chart_type="line", x_column="date", y_columns=["sales", "costs"]
+  -> multi-series line chart
+- chart_type="pie", x_column="category", y_columns=["count"]
+  -> pie chart with category labels
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "csv_data": {
+      "type": "string"
+    },
+    "chart_type": {
+      "enum": [
+        "bar",
+        "line",
+        "pie",
+        "scatter",
+        "doughnut",
+        "area"
+      ],
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "x_column": {
+      "type": "string"
+    },
+    "y_columns": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "x_label": {
+      "default": null,
+      "type": "string"
+    },
+    "y_label": {
+      "default": null,
+      "type": "string"
+    }
+  },
+  "required": [
+    "csv_data",
+    "chart_type",
+    "title",
+    "x_column",
+    "y_columns"
   ],
   "type": "object"
 }

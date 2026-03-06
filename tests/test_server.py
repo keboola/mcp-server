@@ -18,8 +18,10 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer, toon_serializer, toon_serializer_compact
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
+from keboola_mcp_server.tools.config_diff import CONFIG_DIFF_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.tools.data_apps import DATA_APP_TOOLS_TAG
+from keboola_mcp_server.tools.data_chart import DATA_CHART_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
 from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
 from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
@@ -60,6 +62,7 @@ class TestServer:
             'get_tables',
             'modify_data_app',
             'modify_flow',
+            'preview_config_diff',
             'query_data',
             'run_job',
             'search',
@@ -68,6 +71,7 @@ class TestServer:
             'update_descriptions',
             'update_flow',
             'update_sql_transformation',
+            'visualize_data',
         ]
 
     @pytest.mark.asyncio
@@ -377,6 +381,10 @@ async def test_tool_annotations_and_tags():
         ('modify_data_app', None, True, None, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         ('get_data_apps', True, None, None, {DATA_APP_TOOLS_TAG}),
         ('deploy_data_app', None, False, None, {DATA_APP_TOOLS_TAG}),
+        # data chart
+        ('visualize_data', True, None, None, {DATA_CHART_TAG}),
+        # config diff
+        ('preview_config_diff', True, None, None, {CONFIG_DIFF_TAG}),
     ],
 )
 async def test_tool_annotations_tags_values(
