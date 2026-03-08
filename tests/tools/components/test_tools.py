@@ -12,17 +12,6 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.components import (
-    add_config_row,
-    create_config,
-    create_sql_transformation,
-    get_components,
-    get_config_examples,
-    get_configs,
-    update_config,
-    update_config_row,
-    update_sql_transformation,
-)
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentCapabilities,
@@ -48,6 +37,17 @@ from keboola_mcp_server.tools.components.model import (
     TfStrReplace,
 )
 from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_code
+from keboola_mcp_server.tools.components.tools import (
+    add_config_row,
+    create_config,
+    create_sql_transformation,
+    get_components,
+    get_config_examples,
+    get_configs,
+    update_config,
+    update_config_row,
+    update_sql_transformation,
+)
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     SNOWFLAKE_TRANSFORMATION_ID,
