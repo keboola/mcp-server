@@ -56,6 +56,12 @@ including essential context and base instructions for working with it
 - [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
 - [search](#search): Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.
 
+### Semantic Tools
+- [semantic_define](#semantic_define): Create, update, delete, or publish semantic definitions with schema validation.
+- [semantic_discover](#semantic_discover): Discover semantic models and ranked semantic entities for a query.
+- [semantic_get_definition](#semantic_get_definition): Get one authoritative semantic object definition by UUID or name.
+- [semantic_query_plan](#semantic_query_plan): Build a structured semantic query plan for a metric with deterministic checks.
+
 ### Storage Tools
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
@@ -2911,6 +2917,401 @@ scopes=["storage"]
   },
   "required": [
     "patterns"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# Semantic Tools
+<a name="semantic_define"></a>
+## semantic_define
+**Annotations**: `destructive`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Create, update, delete, or publish semantic definitions with schema validation.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "action": {
+      "description": "Define action: create, patch, replace, delete, publish.",
+      "enum": [
+        "create",
+        "patch",
+        "replace",
+        "delete",
+        "publish"
+      ],
+      "type": "string"
+    },
+    "entity_type": {
+      "description": "Semantic entity type being modified.",
+      "enum": [
+        "model",
+        "dataset",
+        "metric",
+        "relationship",
+        "glossary",
+        "constraint"
+      ],
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional object name (required for create when not present in data)."
+    },
+    "uuid": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Object UUID for patch/replace/delete/publish actions."
+    },
+    "data": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Semantic payload for create/patch/replace actions."
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional model UUID injected into payload when absent."
+    },
+    "dry_run": {
+      "default": false,
+      "description": "Validate and plan action without persisting changes.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "action",
+    "entity_type"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="semantic_discover"></a>
+## semantic_discover
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Discover semantic models and ranked semantic entities for a query.
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticEntityType": {
+      "enum": [
+        "model",
+        "dataset",
+        "metric",
+        "relationship",
+        "glossary",
+        "constraint"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "query": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional free-text query for semantic discovery."
+    },
+    "entity_types": {
+      "default": [],
+      "description": "Optional entity type filters for discovery ranking.",
+      "items": {
+        "$ref": "#/$defs/SemanticEntityType"
+      },
+      "type": "array"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional project ID filter."
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional semantic model UUID filter."
+    },
+    "scope": {
+      "default": "project",
+      "description": "Repository scope for list operations.",
+      "enum": [
+        "project",
+        "organization"
+      ],
+      "type": "string"
+    },
+    "limit": {
+      "default": 10,
+      "description": "Maximum number of ranked matches to return.",
+      "type": "integer"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="semantic_get_definition"></a>
+## semantic_get_definition
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Get one authoritative semantic object definition by UUID or name.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "entity_type": {
+      "description": "Semantic entity type to retrieve.",
+      "enum": [
+        "model",
+        "dataset",
+        "metric",
+        "relationship",
+        "glossary",
+        "constraint"
+      ],
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Semantic object name (or glossary term) for lookup."
+    },
+    "uuid": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Semantic object UUID for direct retrieval."
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional semantic model UUID to disambiguate name lookup."
+    },
+    "include_schema": {
+      "default": false,
+      "description": "Include metastore JSON schema in response.",
+      "type": "boolean"
+    },
+    "revision": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional revision number for historical retrieval."
+    }
+  },
+  "required": [
+    "entity_type"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="semantic_query_plan"></a>
+## semantic_query_plan
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Build a structured semantic query plan for a metric with deterministic checks.
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticFilter": {
+      "properties": {
+        "field": {
+          "description": "Filter field name.",
+          "type": "string"
+        },
+        "operator": {
+          "default": "=",
+          "description": "Filter operator.",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "description": "Filter value."
+        }
+      },
+      "required": [
+        "field",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "metric_name": {
+      "description": "Metric name to plan query for.",
+      "type": "string"
+    },
+    "dimensions": {
+      "default": [],
+      "description": "Optional list of requested dimensions.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "time_grain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional requested time grain, e.g. day/week/month."
+    },
+    "filters": {
+      "default": [],
+      "description": "Optional normalized filters for query planning.",
+      "items": {
+        "$ref": "#/$defs/SemanticFilter"
+      },
+      "type": "array"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional semantic model UUID to disambiguate the metric."
+    },
+    "strict": {
+      "default": true,
+      "description": "If true, unresolved dimensions and severe constraints invalidate the plan.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "metric_name"
   ],
   "type": "object"
 }
