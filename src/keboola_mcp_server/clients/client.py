@@ -10,6 +10,7 @@ from keboola_mcp_server.clients.ai_service import AIServiceClient
 from keboola_mcp_server.clients.data_science import DataScienceClient
 from keboola_mcp_server.clients.encryption import EncryptionClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
+from keboola_mcp_server.clients.metastore import MetastoreClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 
@@ -151,6 +152,7 @@ class KeboolaClient:
 
         self._hostname_suffix = sapi_url_parsed.hostname.split('connection.')[1]
         self._storage_api_url = urlunparse(('https', f'connection.{self._hostname_suffix}', '', '', '', ''))
+        metastore_api_url = urlunparse(('https', f'metastore.{self._hostname_suffix}', '', '', '', ''))
         queue_api_url = urlunparse(('https', f'queue.{self._hostname_suffix}', '', '', '', ''))
         ai_service_api_url = urlunparse(('https', f'ai.{self._hostname_suffix}', '', '', '', ''))
         data_science_api_url = urlunparse(('https', f'data-science.{self._hostname_suffix}', '', '', '', ''))
@@ -185,6 +187,12 @@ class KeboolaClient:
         )
         self._scheduler_client = SchedulerClient.create(
             root_url=scheduler_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
+        )
+        self._metastore_client = MetastoreClient.create(
+            root_url=metastore_api_url,
+            token=self._token,
+            headers=self._headers,
+            readonly=readonly,
         )
 
     @property
@@ -242,3 +250,7 @@ class KeboolaClient:
     @property
     def scheduler_client(self) -> 'SchedulerClient':
         return self._scheduler_client
+
+    @property
+    def metastore_client(self) -> 'MetastoreClient':
+        return self._metastore_client

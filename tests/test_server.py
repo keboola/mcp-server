@@ -26,6 +26,7 @@ from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
 from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
 from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG
 from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
+from keboola_mcp_server.tools.semantic import SEMANTIC_TOOLS_TAG
 from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
 from keboola_mcp_server.tools.storage.tools import STORAGE_TOOLS_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -63,6 +64,10 @@ class TestServer:
             'query_data',
             'run_job',
             'search',
+            'semantic_define',
+            'semantic_discover',
+            'semantic_get_definition',
+            'semantic_query_plan',
             'update_config',
             'update_config_row',
             'update_descriptions',
@@ -371,6 +376,11 @@ async def test_tool_annotations_and_tags():
         ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
         ('docs_query', True, None, None, {DOC_TOOLS_TAG}),
         ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
+        # semantic
+        ('semantic_discover', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('semantic_get_definition', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('semantic_query_plan', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('semantic_define', None, True, None, {SEMANTIC_TOOLS_TAG}),
         # oauth
         ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
         # data apps
