@@ -127,6 +127,10 @@ If the winning entry is older than `INTEGTEST_LOCK_TTL_MINUTES` it is considered
    configurations from the project, restoring the clean state the tests require.
 3. Re-enters the acquisition protocol from step 1.
 
+If the integration tests ever take close to
+60 minutes to complete, raise `INTEGTEST_LOCK_TTL_MINUTES` to roughly 2× the expected
+duration — otherwise a slow-but-healthy runner may have its lock stolen mid-run.
+
 ### Pool of projects
 
 `ProjectPool` holds a list of `ProjectEndpoint` objects. During each acquisition pass it
