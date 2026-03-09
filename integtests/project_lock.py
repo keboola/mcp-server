@@ -18,6 +18,7 @@ httpx (already a project dependency) for direct Storage API calls.
 import json
 import logging
 import os
+import random
 import socket
 import time
 import uuid
@@ -391,7 +392,9 @@ class ProjectPool:
                     f'(pool size: {len(self._endpoints)})'
                 )
 
-            for endpoint in self._endpoints:
+            start = random.randrange(len(self._endpoints))
+            rotated = self._endpoints[start:] + self._endpoints[:start]
+            for endpoint in rotated:
                 LOG.info(
                     f'[project_pool] Trying to acquire lock for '
                     f'"{endpoint.project_name}" ({endpoint.project_id}) (...{endpoint.storage_api_token[-4:]})'

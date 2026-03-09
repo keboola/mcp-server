@@ -87,7 +87,6 @@ class TestHttpErrors:
         with pytest.raises(ValueError, match=match):
             await query_data('INVALID SQL SYNTAX HERE', 'Invalid SQL query.', mcp_context)
 
-
     @pytest.mark.asyncio
     async def test_concurrent_error_handling(self, mcp_context: Context):
         # Run multiple concurrent operations that will trigger 404 errors

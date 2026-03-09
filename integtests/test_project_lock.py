@@ -693,6 +693,7 @@ def test_pool_first_busy_second_free(mocker):
     mock_lock2._try_acquire_once.return_value = lock_info
 
     mocker.patch.object(pool, '_make_lock', side_effect=[mock_lock1, mock_lock2])
+    mocker.patch('integtests.project_lock.random.randrange', return_value=0)
     sleep_mock = mocker.patch('time.sleep')
 
     result = pool.acquire()
@@ -725,6 +726,7 @@ def test_pool_all_busy_then_one_frees(mocker):
     mock_lock1b._try_acquire_once.return_value = lock_info
 
     mocker.patch.object(pool, '_make_lock', side_effect=[mock_lock1a, mock_lock2a, mock_lock1b])
+    mocker.patch('integtests.project_lock.random.randrange', return_value=0)
     sleep_mock = mocker.patch('time.sleep')
 
     result = pool.acquire()
@@ -754,6 +756,7 @@ def test_pool_stale_project_claimed_not_skipped(mocker):
     mock_lock1._try_acquire_once.return_value = lock_info
 
     make_lock_mock = mocker.patch.object(pool, '_make_lock', return_value=mock_lock1)
+    mocker.patch('integtests.project_lock.random.randrange', return_value=0)
     mocker.patch('time.sleep')
 
     result = pool.acquire()
@@ -863,12 +866,46 @@ def test_pool_selects_correct_schema_for_acquired_endpoint(mocker):
     mock_lock2 = mocker.MagicMock()
     mock_lock2._try_acquire_once.return_value = lock_info
     mocker.patch.object(pool, '_make_lock', side_effect=[mock_lock1, mock_lock2])
+    mocker.patch('integtests.project_lock.random.randrange', return_value=0)
     mocker.patch('time.sleep')
 
     result = pool.acquire()
 
     assert result.endpoint == endpoint2
     assert result.endpoint.workspace_schema == 'SCHEMA_BBB'
+
+
+# ---------------------------------------------------------------------------
+# test_pool_acquire_randomizes_start_per_pass
+# ---------------------------------------------------------------------------
+
+
+def test_pool_acquire_randomizes_start_per_pass(mocker):
+    """random.randrange is called once per pool pass."""
+    endpoints = [
+        _make_endpoint(token='token-aaa'),
+        _make_endpoint(token='token-bbb'),
+        _make_endpoint(token='token-ccc'),
+    ]
+    pool = _make_pool(endpoints=endpoints, poll_interval_seconds=1)
+
+    lock_info = _make_lock_info('rand-start-001')
+    # Pass 1: all busy (None). Pass 2: first tried endpoint succeeds.
+    try_once_results = iter([None, None, None, lock_info])
+    mock_lock = mocker.MagicMock()
+    mock_lock._try_acquire_once.side_effect = lambda: next(try_once_results)
+    mocker.patch.object(pool, '_make_lock', return_value=mock_lock)
+    mocker.patch('time.sleep')
+
+    randrange_mock = mocker.patch('integtests.project_lock.random.randrange', return_value=0)
+
+    pool.acquire()
+
+    # randrange must be called once per pass (2 passes: one all-busy + one with a winner)
+    assert randrange_mock.call_count == 2
+    # Each call must pass the pool size as the upper bound
+    for c in randrange_mock.call_args_list:
+        assert c == call(len(endpoints))
 
 
 # ===========================================================================
