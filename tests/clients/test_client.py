@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import httpx
 import pytest
+from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import ServerRuntimeInfo
 from keboola_mcp_server.mcp import SessionStateMiddleware
 
@@ -150,6 +152,36 @@ class TestRawKeboolaClient:
 
 
 class TestAsyncStorageClient:
+    @pytest.fixture
+    def storage_client(self, mocker: MockerFixture) -> AsyncStorageClient:
+        raw = mocker.AsyncMock(RawKeboolaClient)
+        return AsyncStorageClient(raw_client=raw, branch_id=None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('limit', 'offset', 'expected_params'),
+        [
+            pytest.param(50, 0, {'runId': '456', 'limit': 50, 'offset': 0, 'forceUuid': 'true'}, id='basic'),
+            pytest.param(10, 100, {'runId': '456', 'limit': 10, 'offset': 100, 'forceUuid': 'true'}, id='with_offset'),
+        ],
+    )
+    async def test_list_events(
+        self,
+        storage_client: AsyncStorageClient,
+        limit: int,
+        offset: int,
+        expected_params: dict[str, Any],
+    ):
+        """Tests list_events calls the correct endpoint with the right params."""
+        storage_client.raw_client.get.return_value = []
+
+        await storage_client.list_events(job_id='456', limit=limit, offset=offset)
+
+        storage_client.raw_client.get.assert_called_once_with(
+            endpoint='events',
+            params=expected_params,
+        )
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('message', 'component_id', 'configuration_id', 'event_type', 'params', 'results', 'duration', 'run_id'),
@@ -352,6 +384,41 @@ class TestKeboolaClient:
             with pytest.raises(httpx.HTTPStatusError, match=expected_match):
                 await keboola_client.with_branch_id('non-existent-branch')
             mock_client.get.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ('bearer_token', 'storage_token', 'expected_scheduler_token'),
+        [
+            ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
+            (None, 'sapi_token_456', 'sapi_token_456'),
+            ('', 'sapi_token_456', 'sapi_token_456'),
+        ],
+        ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
+    )
+    def test_scheduler_client_token_selection(
+        self, bearer_token: str | None, storage_token: str, expected_scheduler_token: str
+    ):
+        """Test SchedulerClient uses bearer token when available, falls back to storage token."""
+        # Create KeboolaClient with different token configurations
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token=storage_token,
+            bearer_token=bearer_token,
+        )
+
+        # Verify scheduler client was initialized with correct token
+        # Check the headers of the underlying RawKeboolaClient
+        scheduler_headers = client.scheduler_client.raw_client.headers
+
+        if expected_scheduler_token.startswith('Bearer '):
+            # Should use Authorization header for bearer token
+            assert 'Authorization' in scheduler_headers
+            assert scheduler_headers['Authorization'] == expected_scheduler_token
+            assert 'X-StorageAPI-Token' not in scheduler_headers
+        else:
+            # Should use X-StorageAPI-Token header for storage token
+            assert 'X-StorageAPI-Token' in scheduler_headers
+            assert scheduler_headers['X-StorageAPI-Token'] == expected_scheduler_token
+            assert 'Authorization' not in scheduler_headers
 
 
 @pytest.mark.parametrize(

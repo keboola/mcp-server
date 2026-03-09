@@ -878,30 +878,52 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(JsonDict, await self.post(endpoint='events', data=payload))
 
-    async def workspace_create(
+    async def list_events(
         self,
+        job_id: str,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[JsonDict]:
+        """
+        Lists Storage API events for a job. Used to retrieve job execution logs.
+
+        Note: The Storage API ``runId`` query parameter matches the **job's id**, not the
+        job's hierarchical ``runId`` field (e.g. ``"parent.child"``).
+
+        :param job_id: The job ID to fetch events for.
+        :param limit: Maximum number of events to return (default 50, API max 10000).
+        :param offset: Offset for pagination (default 0).
+        :return: List of event dictionaries.
+        """
+        params: dict[str, Any] = {
+            'runId': job_id,
+            'limit': limit or 50,
+            'offset': offset or 0,
+            'forceUuid': 'true',
+        }
+        return cast(list[JsonDict], await self.get(endpoint='events', params=params))
+
+    async def workspace_create_for_config(
+        self,
+        component_id: str,
+        config_id: str,
         login_type: str,
         backend: str,
         async_run: bool = True,
         read_only_storage_access: bool = False,
     ) -> JsonDict:
-        """
-        Creates a new workspace.
-
-        :param async_run: If True, the workspace creation is run asynchronously.
-        :param read_only_storage_access: If True, the workspace has read-only access to the storage.
-        :return: The SAPI call response - created workspace or raise an error.
-        """
+        """Thin wrapper for POST /branch/{branch_id}/components/{component_id}/configs/{config_id}/workspaces."""
+        data: dict[str, Any] = {
+            'readOnlyStorageAccess': read_only_storage_access,
+            'loginType': login_type,
+            'backend': backend,
+        }
         return cast(
             JsonDict,
             await self.post(
-                endpoint=f'branch/{self._branch_id}/workspaces',
+                endpoint=f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/workspaces',
                 params={'async': async_run},
-                data={
-                    'readOnlyStorageAccess': read_only_storage_access,
-                    'loginType': login_type,
-                    'backend': backend,
-                },
+                data=data,
             ),
         )
 

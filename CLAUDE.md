@@ -16,6 +16,8 @@
 - Run all checks: `tox`
 - **Write parameterized tests** (`@pytest.mark.parametrize`) to reduce boilerplate
 - **Be careful with mocking** - don't mock too much or tests will just test the mocks, not the real code
+- **Extend existing tests instead of adding new ones** - when adding new scenarios (e.g. OAuth bearer token cases), add parameters to an existing parametrized test rather than writing a separate test function; this avoids test bloat and keeps related cases together
+- **Only test what's necessary** - add test cases that cover genuinely new behavior, not duplicates of cases already covered by existing parametrize entries
 
 ## Virtual Environments
 - Look for a venv folder in the project root (e.g., `3.10.venv/`, `.venv/`) that contains an editable install of the project, or ask the user which venv to use

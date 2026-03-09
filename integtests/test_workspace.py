@@ -50,6 +50,14 @@ async def dynamic_manager(
             f'{[{"id": w["id"], "name": w["name"]} for w in workspaces]}'
         )
 
+    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
+    existing_configs = list(storage_client.configurations.list(component_id=component_id))
+    if existing_configs:
+        pytest.fail(
+            f'Expecting no MCP workspace configs in project {project_id}, '
+            f'but found: {[c.get("id") for c in existing_configs]}'
+        )
+
     yield await WorkspaceManager.create(keboola_client)
 
     LOG.info(f'Cleaning up workspaces in Keboola project with ID={project_id}')
@@ -68,6 +76,23 @@ async def dynamic_manager(
             LOG.info(f'Deleted workspaces metadata: {meta["id"]}')
         except requests.HTTPError as e:
             LOG.exception(f'Failed to delete workspace metadata {meta["id"]}: {e}')
+
+    # Clean up configurations created under the MCP workspace component
+    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
+    try:
+        configs = storage_client.configurations.list(component_id=component_id)
+        for cfg in configs:
+            cfg_id = cfg.get('id')
+            if cfg_id:
+                try:
+                    storage_client.configurations.delete(component_id, cfg_id)
+                    # Double delete to skip trash
+                    storage_client.configurations.delete(component_id, cfg_id)
+                    LOG.info(f'Deleted component config: {component_id}/{cfg_id}')
+                except requests.HTTPError:
+                    LOG.exception(f'Failed to delete component config {component_id}/{cfg_id}')
+    except requests.HTTPError:
+        LOG.exception(f'Failed to list configs for {component_id}')
 
 
 class TestWorkspaceManager:

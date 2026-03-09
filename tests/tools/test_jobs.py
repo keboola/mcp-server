@@ -13,6 +13,7 @@ from keboola_mcp_server.tools.jobs import (
     GetJobsListOutput,
     JobDetail,
     JobListItem,
+    JobLogEvent,
     get_jobs,
     run_job,
 )
@@ -321,3 +322,108 @@ def test_job_detail_model_validate_dict_fields(
             assert job_detail.result == expected_result
         elif field_name == 'configData':
             assert job_detail.config_data == expected_result
+
+
+def test_job_log_event_model():
+    """Tests JobLogEvent model validates correctly."""
+    event = JobLogEvent.model_validate(
+        {
+            'message': 'Processing started',
+            'type': 'info',
+            'created': '2024-01-01T00:00:01Z',
+        }
+    )
+    assert event.message == 'Processing started'
+    assert event.type == 'info'
+    assert event.created is not None
+
+
+def test_job_detail_with_logs(mock_job: dict[str, Any]):
+    """Tests JobDetail accepts optional logs field."""
+    mock_job['links'] = []
+    mock_job['logs'] = [
+        {'message': 'Started', 'type': 'info', 'created': '2024-01-01T00:00:01Z'},
+        {'message': 'Error happened', 'type': 'error', 'created': '2024-01-01T00:00:02Z'},
+    ]
+    detail = JobDetail.model_validate(mock_job)
+    assert detail.logs is not None
+    assert len(detail.logs) == 2
+    assert detail.logs[0].message == 'Started'
+    assert detail.logs[1].type == 'error'
+
+
+def test_job_detail_without_logs(mock_job: dict[str, Any]):
+    """Tests JobDetail works without logs (backwards compatible)."""
+    mock_job['links'] = []
+    detail = JobDetail.model_validate(mock_job)
+    assert detail.logs is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('get_jobs_kwargs', 'mock_events', 'expected_list_events_kwargs', 'expected_log_messages'),
+    [
+        pytest.param(
+            {},
+            None,
+            None,
+            None,
+            id='without_logs',
+        ),
+        pytest.param(
+            {'include_logs': True, 'log_tail_lines': 50},
+            [
+                {'uuid': 'evt-2', 'message': 'Finished', 'type': 'success', 'created': '2024-01-01T00:00:02Z'},
+                {'uuid': 'evt-1', 'message': 'Started', 'type': 'info', 'created': '2024-01-01T00:00:01Z'},
+            ],
+            {'job_id': '123', 'limit': 50},
+            ['Started', 'Finished'],
+            id='with_logs',
+        ),
+        pytest.param(
+            {'include_logs': True, 'log_event_types': ['error']},
+            [
+                {'uuid': 'evt-3', 'message': 'Error happened', 'type': 'error', 'created': '2024-01-01T00:00:03Z'},
+                {'uuid': 'evt-2', 'message': 'Finished row', 'type': 'info', 'created': '2024-01-01T00:00:02Z'},
+                {'uuid': 'evt-1', 'message': 'Started', 'type': 'info', 'created': '2024-01-01T00:00:01Z'},
+            ],
+            {'job_id': '123', 'limit': 50},
+            ['Error happened'],
+            id='logs_type_filter',
+        ),
+        pytest.param(
+            {'include_logs': True},
+            [],
+            {'job_id': '123', 'limit': 50},
+            [],
+            id='logs_empty_events',
+        ),
+    ],
+)
+async def test_get_jobs_detail_logs(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    mock_job: dict[str, Any],
+    get_jobs_kwargs: dict[str, Any],
+    mock_events: list[dict[str, Any]] | None,
+    expected_list_events_kwargs: dict[str, Any] | None,
+    expected_log_messages: list[str] | None,
+):
+    """Tests get_jobs log-fetching behavior when retrieving job details."""
+    context = mcp_context_client
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    keboola_client.jobs_queue_client.get_job_detail = mocker.AsyncMock(return_value=mock_job)
+    keboola_client.storage_client.list_events = mocker.AsyncMock(return_value=mock_events or [])
+
+    result = await get_jobs(ctx=context, job_ids=('123',), **get_jobs_kwargs)
+
+    assert isinstance(result, GetJobsDetailOutput)
+    job = result.jobs[0]
+
+    if expected_log_messages is None:
+        assert job.logs is None
+        keboola_client.storage_client.list_events.assert_not_called()
+    else:
+        assert job.logs is not None
+        assert [log.message for log in job.logs] == expected_log_messages
+        keboola_client.storage_client.list_events.assert_called_once_with(**expected_list_events_kwargs)

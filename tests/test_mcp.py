@@ -414,23 +414,29 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'hidden_tools', 'visible_tools'),
+        ('token_role', 'bearer_token', 'hidden_tools', 'visible_tools'),
         [
-            ('admin', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('share', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
-            ('readOnly', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
-            ('guest', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('admin', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('share', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('readOnly', None, {'modify_flow', 'update_flow'}, {'read_only_tool'}),
+            ('guest', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            # OAuth users: regular/guest users get modify_flow access (different from SAPI)
+            ('', 'oauth_token', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            # Empty bearer token behaves the same as no bearer token (SAPI regular)
+            ('', '', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
         ],
     )
     async def test_list_tools_filters_flow_tools_by_role(
         self,
         mcp_context_client,
+        keboola_client,
         token_role: str,
+        bearer_token: str | None,
         hidden_tools: set[str],
         visible_tools: set[str],
     ) -> None:
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.bearer_token = bearer_token
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )
@@ -457,29 +463,36 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'called_tool', 'tool_read_only', 'expect_error'),
+        ('token_role', 'bearer_token', 'called_tool', 'tool_read_only', 'expect_error'),
         [
-            ('admin', 'modify_flow', False, False),
-            ('admin', 'update_flow', False, True),
-            ('share', 'modify_flow', False, False),
-            ('share', 'update_flow', False, True),
-            ('', 'modify_flow', False, True),
-            ('', 'update_flow', False, False),
-            ('guest', 'write_tool', False, False),
-            ('guest', 'read_only_tool', True, False),
-            ('readOnly', 'write_tool', False, True),
-            ('readOnly', 'read_only_tool', True, False),
+            ('admin', None, 'modify_flow', False, False),
+            ('admin', None, 'update_flow', False, True),
+            ('share', None, 'modify_flow', False, False),
+            ('share', None, 'update_flow', False, True),
+            ('', None, 'modify_flow', False, True),
+            ('', None, 'update_flow', False, False),
+            ('guest', None, 'write_tool', False, False),
+            ('guest', None, 'read_only_tool', True, False),
+            ('readOnly', None, 'write_tool', False, True),
+            ('readOnly', None, 'read_only_tool', True, False),
+            # OAuth users: regular users can call modify_flow (different from SAPI regular)
+            ('', 'oauth_token', 'modify_flow', False, False),
+            ('', 'oauth_token', 'update_flow', False, True),
+            # Empty bearer token behaves the same as no bearer token (SAPI regular)
+            ('', '', 'modify_flow', False, True),
         ],
     )
     async def test_call_tool_blocks_flow_tools_by_role(
         self,
         mcp_context_client,
+        keboola_client,
         token_role: str,
+        bearer_token: str | None,
         called_tool: str,
         tool_read_only: bool,
         expect_error: bool,
     ) -> None:
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.bearer_token = bearer_token
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )

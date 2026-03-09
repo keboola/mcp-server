@@ -3,6 +3,7 @@ import uuid
 from importlib.metadata import distribution
 from unittest.mock import ANY
 
+import jsonschema
 import pytest
 import yaml
 from fastmcp import Client, Context, FastMCP
@@ -17,6 +18,7 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
+from keboola_mcp_server.tools.validation import RecoverableValidationError, ValidationContext
 
 
 @pytest.fixture
@@ -25,6 +27,37 @@ def function_with_value_error():
 
     async def func(_ctx: Context):
         raise ValueError('Simulated ValueError')
+
+    return func
+
+
+@pytest.fixture
+def function_with_jsonschema_validation_error():
+    """A function that raises jsonschema.ValidationError for testing validation wrapping."""
+
+    async def func(_ctx: Context):
+        raise jsonschema.ValidationError('Simulated jsonschema validation error')
+
+    return func
+
+
+@pytest.fixture
+def function_with_recoverable_jsonschema_validation_error():
+    """A function that raises RecoverableValidationError to test rich __str__ propagation."""
+
+    async def func(_ctx: Context):
+        try:
+            jsonschema.validate({'embedding_settings': {'provider_type': 'gpt-9000'}}, {'type': 'string'})
+        except jsonschema.ValidationError as e:
+            raise RecoverableValidationError.create_from_values(
+                e,
+                initial_message='The "parameters" field is not valid.',
+                validation_context=ValidationContext(
+                    component_id='keboola.wr-pinecone-embeddings',
+                    configuration_id='cfg-1',
+                    scope='parameters',
+                ),
+            )
 
     return func
 
@@ -107,6 +140,34 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error, mcp_
     assert caplog.records[0].levelno == logging.ERROR
     assert 'MCP tool "func" call failed. ValueError: Simulated ValueError' in caplog.records[0].message
     assert 'Simulated ValueError' in caplog.records[0].message
+
+
+@pytest.mark.asyncio
+async def test_jsonschema_validation_error_wrapped(
+    function_with_jsonschema_validation_error, mcp_context_client: Context
+):
+    decorated_func = tool_errors()(function_with_jsonschema_validation_error)
+
+    with pytest.raises(ToolError) as excinfo:
+        await decorated_func(mcp_context_client)
+
+    message = str(excinfo.value)
+    assert 'Simulated jsonschema validation error' in message
+
+
+@pytest.mark.asyncio
+async def test_recoverable_jsonschema_validation_error_uses_original_str(
+    function_with_recoverable_jsonschema_validation_error, mcp_context_client: Context
+):
+    decorated_func = tool_errors()(function_with_recoverable_jsonschema_validation_error)
+
+    with pytest.raises(ToolError) as excinfo:
+        await decorated_func(mcp_context_client)
+
+    message = str(excinfo.value)
+    assert 'Failed validating' in message
+    assert 'The "parameters" field is not valid.' in message
+    assert 'Validation component context: component_id=keboola.wr-pinecone-embeddings' in message
 
 
 @pytest.mark.asyncio
