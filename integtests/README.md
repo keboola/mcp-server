@@ -53,6 +53,19 @@ it calls `list_tools`, `list_resources`, and `get_project_info`, and never creat
 modifies, or deletes any object. Any future test that writes to PRJ2 must acquire a lock
 for it first.
 
+### Optional — Metastore tests
+
+A subset of tests exercises the Metastore API. They read two additional variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `INTEGTEST_METASTORE_URL` | `https://metastore.canary-orion.keboola.dev` | Base URL of the Metastore service |
+| `INTEGTEST_METASTORE_TOKEN` | value of `INTEGTEST_STORAGE_TOKENS` (first token) | Keboola Storage API token for Metastore authentication |
+
+Both variables are optional. If omitted, the defaults shown above are used. Set them
+explicitly only when targeting a non-default Metastore instance or when you need a
+different token than the main pool token.
+
 ### Optional — lock tuning
 
 The defaults work for both local and CI use. Override only if you have a reason to.
