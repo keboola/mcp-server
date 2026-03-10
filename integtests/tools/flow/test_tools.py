@@ -411,6 +411,7 @@ async def test_update_flow(
     mcp_client: Client,
     keboola_project: ProjectDef,
     keboola_client: KeboolaClient,
+    storage_api_url: str,
 ) -> None:
     """Tests that 'update_flow' tool works as expected."""
     flow_id = initial_lf.configuration_id if flow_type == ORCHESTRATOR_COMPONENT_ID else initial_cf.configuration_id
@@ -460,12 +461,12 @@ async def test_update_flow(
             Link(
                 type='ui-detail',
                 title=f'Flow: {expected_name}',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/{flow_path}/{flow_id}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/{flow_path}/{flow_id}',
             ),
             Link(
                 type='ui-dashboard',
                 title=f'{flow_label} in the project',
-                url=f'https://connection.keboola.com/admin/projects/{project_id}/{flow_path}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/{flow_path}',
             ),
             Link(type='docs', title='Documentation for Keboola Flows', url='https://help.keboola.com/flows/'),
         ]
@@ -563,7 +564,11 @@ async def test_get_flows_empty(mcp_context: Context) -> None:
 
 @pytest.mark.asyncio
 async def test_get_flows_list(
-    keboola_project: ProjectDef, mcp_client: Client, initial_lf: FlowToolOutput, initial_cf: FlowToolOutput
+    keboola_project: ProjectDef,
+    mcp_client: Client,
+    initial_lf: FlowToolOutput,
+    initial_cf: FlowToolOutput,
+    storage_api_url: str,
 ) -> None:
     """Tests that `get_flows` tool works as expected when listing all flows."""
     tool_call_result = await mcp_client.call_tool(name='get_flows', arguments={})
@@ -575,12 +580,12 @@ async def test_get_flows_list(
             Link(
                 type='ui-dashboard',
                 title='Flows in the project',
-                url=f'https://connection.keboola.com/admin/projects/{keboola_project.project_id}/flows',
+                url=f'{storage_api_url}/admin/projects/{keboola_project.project_id}/flows',
             ),
             Link(
                 type='ui-dashboard',
                 title='Conditional Flows in the project',
-                url=f'https://connection.keboola.com/admin/projects/{keboola_project.project_id}/flows-v2',
+                url=f'{storage_api_url}/admin/projects/{keboola_project.project_id}/flows-v2',
             ),
         ]
     )

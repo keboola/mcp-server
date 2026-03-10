@@ -469,10 +469,11 @@ To run integration tests locally, use `uv run tox -e integtests`.
 NOTE: You will need to set the following environment variables:
 
 - `INTEGTEST_STORAGE_API_URL`
-- `INTEGTEST_STORAGE_TOKEN`
-- `INTEGTEST_WORKSPACE_SCHEMA`
+- `INTEGTEST_STORAGE_TOKENS`
+- `INTEGTEST_WORKSPACE_SCHEMAS`
 
 In order to get these values, you need a dedicated Keboola project for integration tests.
+See `integtests/README.md` for detailed setup instructions and design documentation.
 
 ### Updating `uv.lock`
 

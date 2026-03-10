@@ -2450,6 +2450,18 @@ MODE 2 - List/search jobs:
 - job_ids=[], sort_by="endTime", sort_order="asc" → oldest completed first
 - job_ids=[], sort_by="durationSeconds", sort_order="desc" → longest running first
 
+LOG RETRIEVAL (only in MODE 1):
+- Set include_logs=True to fetch execution logs from the Storage API events
+- Logs are fetched using the job's runId and returned in chronological order
+- Use log_tail_lines to control how many recent log events to return (default 50, max 500)
+- Use log_event_types to filter by event type: ["error"] for just errors, ["error", "warn"] for errors and warnings
+- If a job has no runId (e.g., not yet started), logs will be None
+
+EXAMPLES WITH LOGS:
+- job_ids=["12345"], include_logs=True → job details + last 50 log events
+- job_ids=["12345"], include_logs=True, log_event_types=["error"] → job details + only error events
+- job_ids=["12345"], include_logs=True, log_tail_lines=200 → job details + last 200 log events
+
 
 **Input JSON Schema**:
 ```json
@@ -2522,6 +2534,39 @@ MODE 2 - List/search jobs:
         "desc"
       ],
       "type": "string"
+    },
+    "include_logs": {
+      "default": false,
+      "description": "Whether to include execution logs for each job. Only used when job_ids is provided (MODE 1). Logs are fetched from the Storage API events endpoint using the job's runId. Default is False.",
+      "type": "boolean"
+    },
+    "log_tail_lines": {
+      "default": 50,
+      "description": "Maximum number of log events to return per job (most recent first). Only used when include_logs=True. Default = 50, max = 500.",
+      "maximum": 500,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "log_event_types": {
+      "anyOf": [
+        {
+          "items": {
+            "enum": [
+              "info",
+              "warn",
+              "error",
+              "success"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Filter log events by type. Only used when include_logs=True. If None, all event types are included. Example: [\"error\"] to only show errors, [\"error\", \"warn\"] for errors and warnings."
     }
   },
   "type": "object"

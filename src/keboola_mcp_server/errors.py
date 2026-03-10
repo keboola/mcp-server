@@ -6,6 +6,7 @@ from functools import wraps
 from typing import Any, Callable, Mapping, Optional, Type, TypeVar, cast
 
 import httpx
+import jsonschema
 import yaml
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
@@ -152,7 +153,10 @@ def tool_errors(
                     error_msg = prettify_validation_error(e)
                     if recovery_msg:
                         error_msg += f'\nRecovery: {recovery_msg}'
-
+                elif isinstance(e, jsonschema.ValidationError):
+                    error_msg = str(e)
+                    if recovery_msg:
+                        error_msg += f'\nRecovery: {recovery_msg}'
                 elif recovery_msg:
                     error_msg = f'{e}\nRecovery: {recovery_msg}'
 
