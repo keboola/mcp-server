@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.clients.base import JsonStruct, KeboolaServiceClient, RawKeboolaClient
 
