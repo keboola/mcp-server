@@ -7,6 +7,7 @@ from mcp.server.fastmcp import Context
 
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.tools.storage.tools import get_buckets, get_tables
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -36,9 +37,13 @@ async def test_query_data(mcp_context: Context):
     csv_reader = csv.reader(StringIO(result.csv_data))
     rows = list(csv_reader)
 
+    manager = WorkspaceManager.from_state(mcp_context.session.state)
+    sql_dialect = await manager.get_sql_dialect()
+
     # Should have a header and one data row
     assert len(rows) == 2, 'COUNT query should return header + one data row'
-    assert rows[0] == ['ROW_COUNT'], f'Header should be ["row_count"], got {rows[0]}'
+    expected_header = 'ROW_COUNT' if sql_dialect == 'Snowflake' else 'row_count'
+    assert rows[0] == [expected_header], f'Expected [{expected_header!r}], got {rows[0]}'
 
     # Count should be a number
     count_value = rows[1][0]

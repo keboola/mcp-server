@@ -1244,7 +1244,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "1.48.1"
+version = "1.48.2"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

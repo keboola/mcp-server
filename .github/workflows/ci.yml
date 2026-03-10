@@ -125,9 +125,9 @@ jobs:
         # run actual tests only for pushes to the same repository (not forks)
         if: github.repository == github.event.repository.full_name
         env:
-          INTEGTEST_STORAGE_TOKEN: ${{ secrets.INTEGTEST_STORAGE_TOKEN }}
-          INTEGTEST_STORAGE_API_URL: ${{ vars.INTEGTEST_STORAGE_API_URL }}
-          INTEGTEST_WORKSPACE_SCHEMA: ${{ vars.INTEGTEST_WORKSPACE_SCHEMA }}
+          INTEGTEST_STORAGE_TOKENS: ${{ secrets.INTEGTEST_STORAGE_TOKENS }}
+          INTEGTEST_POOL_STORAGE_API_URL: ${{ vars.INTEGTEST_POOL_STORAGE_API_URL }}
+          INTEGTEST_WORKSPACE_SCHEMAS: ${{ vars.INTEGTEST_WORKSPACE_SCHEMAS }}
         run: |
           uv run tox -e integtests
 

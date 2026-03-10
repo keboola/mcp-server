@@ -19,6 +19,14 @@ from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
+from integtests.project_lock import (
+    DEFAULT_MAX_WAIT_MINUTES,
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_TTL_MINUTES,
+    AcquiredProject,
+    ProjectPool,
+    verify_project_endpoint,
+)
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
@@ -27,9 +35,9 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
-STORAGE_API_URL_ENV_VAR = 'INTEGTEST_STORAGE_API_URL'
-STORAGE_API_TOKEN_ENV_VAR = 'INTEGTEST_STORAGE_TOKEN'
-WORKSPACE_SCHEMA_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMA'
+POOL_STORAGE_API_URL_ENV_VAR = 'INTEGTEST_POOL_STORAGE_API_URL'
+STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool of tokens
+WORKSPACE_SCHEMAS_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMAS'  # space-separated, same order as tokens
 # The second pair of token/schema for testing simultaneous access to two different projects.
 STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
 WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
@@ -138,16 +146,14 @@ def _data_dir() -> Path:
 
 @pytest.fixture(scope='session')
 def storage_api_url(env_file_loaded: bool) -> str:
-    storage_api_url = os.getenv(STORAGE_API_URL_ENV_VAR)
-    assert storage_api_url, f'{STORAGE_API_URL_ENV_VAR} must be set'
+    storage_api_url = os.getenv(POOL_STORAGE_API_URL_ENV_VAR)
+    assert storage_api_url, f'{POOL_STORAGE_API_URL_ENV_VAR} must be set'
     return storage_api_url
 
 
 @pytest.fixture(scope='session')
-def storage_api_token(env_file_loaded: bool) -> str:
-    storage_api_token = os.getenv(STORAGE_API_TOKEN_ENV_VAR)
-    assert storage_api_token, f'{STORAGE_API_TOKEN_ENV_VAR} must be set'
-    return storage_api_token
+def storage_api_token(project_lock: AcquiredProject) -> str:
+    return project_lock.endpoint.storage_api_token
 
 
 @pytest.fixture(scope='session')
@@ -156,10 +162,8 @@ def mcp_config(storage_api_token: str, storage_api_url: str) -> Config:
 
 
 @pytest.fixture(scope='session')
-def workspace_schema(env_file_loaded: bool) -> str:
-    workspace_schema = os.getenv(WORKSPACE_SCHEMA_ENV_VAR)
-    assert workspace_schema, f'{WORKSPACE_SCHEMA_ENV_VAR} must be set'
-    return workspace_schema
+def workspace_schema(project_lock: AcquiredProject) -> str:
+    return project_lock.endpoint.workspace_schema
 
 
 @pytest.fixture(scope='session')
@@ -317,6 +321,58 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
 
 
 @pytest.fixture(scope='session')
+def project_lock(env_file_loaded: bool, storage_api_url: str) -> Generator[AcquiredProject, Any, None]:
+    """
+    Acquires a distributed lock on a Keboola test project via branch metadata.
+
+    Requires INTEGTEST_STORAGE_TOKENS and INTEGTEST_WORKSPACE_SCHEMAS to be set.
+    The tokens and schemas must be space-separated lists of equal length, one entry
+    per project in the pool. The Storage API URL is provided by the storage_api_url
+    fixture (INTEGTEST_POOL_STORAGE_API_URL).
+
+    Yields AcquiredProject(endpoint, lock_info) so callers know which project was
+    selected. storage_api_token and workspace_schema fixtures read their values from
+    the acquired endpoint.
+    """
+    tokens_raw = os.getenv(STORAGE_API_TOKENS_ENV_VAR, '').strip()
+    if not tokens_raw:
+        pytest.fail(f'{STORAGE_API_TOKENS_ENV_VAR} must be set to a non-empty space-separated list of project tokens')
+    tokens = tokens_raw.split()
+
+    schemas_raw = os.getenv(WORKSPACE_SCHEMAS_ENV_VAR, '').strip()
+    if not schemas_raw:
+        pytest.fail(f'{WORKSPACE_SCHEMAS_ENV_VAR} must be set to a non-empty space-separated list of workspace schemas')
+    schemas = schemas_raw.split()
+
+    if len(tokens) != len(schemas):
+        pytest.fail(
+            f'{STORAGE_API_TOKENS_ENV_VAR} has {len(tokens)} token(s) but '
+            f'{WORKSPACE_SCHEMAS_ENV_VAR} has {len(schemas)} schema(s) — '
+            f'they must have the same number of entries'
+        )
+
+    endpoints = []
+    for t, s in zip(tokens, schemas):
+        try:
+            endpoints.append(verify_project_endpoint(storage_api_url, t, s))
+        except Exception as exc:
+            pytest.fail(f'Failed to verify Storage API token ...{t[-4:]}: {exc}')
+    pool = ProjectPool(
+        endpoints=endpoints,
+        ttl_minutes=int(os.getenv('INTEGTEST_LOCK_TTL_MINUTES', str(DEFAULT_TTL_MINUTES))),
+        poll_interval_seconds=int(
+            os.getenv('INTEGTEST_LOCK_POLL_INTERVAL_SECONDS', str(DEFAULT_POLL_INTERVAL_SECONDS))
+        ),
+        max_wait_minutes=int(os.getenv('INTEGTEST_LOCK_MAX_WAIT_MINUTES', str(DEFAULT_MAX_WAIT_MINUTES))),
+    )
+    acquired = pool.acquire()
+    try:
+        yield acquired
+    finally:
+        pool.release(acquired)
+
+
+@pytest.fixture(scope='session')
 def buckets(keboola_project: ProjectDef) -> list[BucketDef]:
     return keboola_project.buckets
 
@@ -355,6 +411,20 @@ def unique_id() -> str:
 @pytest_asyncio.fixture
 async def workspace_manager(keboola_client: KeboolaClient, workspace_schema: str) -> WorkspaceManager:
     return await WorkspaceManager.create(keboola_client, workspace_schema)
+
+
+@pytest_asyncio.fixture()
+async def require_snowflake(workspace_manager: WorkspaceManager) -> None:
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    if sql_dialect != 'Snowflake':
+        pytest.skip(f'Snowflake backend required, got: {sql_dialect}')
+
+
+@pytest_asyncio.fixture()
+async def require_bigquery(workspace_manager: WorkspaceManager) -> None:
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    if sql_dialect != 'BigQuery':
+        pytest.skip(f'BigQuery backend required, got: {sql_dialect}')
 
 
 @pytest.fixture
