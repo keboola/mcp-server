@@ -24,7 +24,9 @@ def _jsonapi_item(name: str, resource_id: str, object_type: str = 'semantic-mode
 @pytest.mark.asyncio
 async def test_list_objects_maps_jsonapi() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
-    client.raw_client.get = AsyncMock(return_value={'data': [_jsonapi_item('finance-core', 'u1')]})  # type: ignore[assignment]
+    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
+        return_value={'data': [_jsonapi_item('finance-core', 'u1')]}
+    )
 
     first = await client.list_objects('semantic-model')
 
@@ -40,7 +42,9 @@ async def test_list_objects_maps_jsonapi() -> None:
 @pytest.mark.asyncio
 async def test_create_object_calls_post() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
-    client.raw_client.post = AsyncMock(return_value={'data': _jsonapi_item('new-metric', 'm1', 'semantic-metric')})  # type: ignore[assignment]
+    client.raw_client.post = AsyncMock(  # type: ignore[assignment]
+        return_value={'data': _jsonapi_item('new-metric', 'm1', 'semantic-metric')}
+    )
 
     created = await client.create_object(
         'semantic-metric',
@@ -74,7 +78,13 @@ async def test_create_object_calls_post() -> None:
     ],
     ids=['latest', 'versioned'],
 )
-async def test_get_schema(version: str | None, response: dict, expected_endpoint: str, expected_title: str | None, expected_version: str | None) -> None:
+async def test_get_schema(
+    version: str | None,
+    response: dict,
+    expected_endpoint: str,
+    expected_title: str | None,
+    expected_version: str | None,
+) -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
     client.raw_client.get = AsyncMock(return_value=response)  # type: ignore[assignment]
 
@@ -82,13 +92,17 @@ async def test_get_schema(version: str | None, response: dict, expected_endpoint
 
     assert schema.title == expected_title
     assert schema.version == expected_version
-    client.raw_client.get.assert_awaited_once_with(endpoint=expected_endpoint, params=None)  # type: ignore[attr-defined]
+    client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
+        endpoint=expected_endpoint, params=None
+    )
 
 
 @pytest.mark.asyncio
 async def test_health_check_true_when_status_ok() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
-    client.raw_client.get = AsyncMock(return_value={'status': 'ok'})  # type: ignore[assignment]
+    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
+        return_value={'status': 'ok'}
+    )
 
     health = await client.health_check()
     assert health.status == 'ok'
