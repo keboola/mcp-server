@@ -662,9 +662,7 @@ async def test_create_sql_transformation_fail(
                     'blocks': [
                         {
                             'name': 'Updated Blocks',
-                            'codes': [
-                                {'name': 'Existing Code', 'script': ['SELECT 1;', 'SELECT * FROM new_table;']}
-                            ],
+                            'codes': [{'name': 'Existing Code', 'script': ['SELECT 1;', 'SELECT * FROM new_table;']}],
                         }
                     ]
                 },
