@@ -1105,12 +1105,12 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='Block A',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT\n  *\nFROM new_table;'),
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
                         ],
                     ),
                 ]
             ),
-            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Changed code with id 'b0.c0' in block 'b0'",
         ),
         # Multiple non-structural operations - should return message from set_code
         (
@@ -1133,12 +1133,12 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='Renamed Block',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT\n  *\nFROM new_table;'),
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
                         ],
                     ),
                 ]
             ),
-            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Changed code with id 'b0.c0' in block 'b0'",
         ),
         # Structural change + string replacement - should report both
         (
