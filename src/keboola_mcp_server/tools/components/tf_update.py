@@ -21,7 +21,6 @@ from keboola_mcp_server.tools.components.model import (
 from keboola_mcp_server.tools.components.sql_utils import (
     format_simplified_tf_block,
     format_simplified_tf_code,
-    format_sql,
 )
 
 # Operations that change the structure of the transformation
@@ -179,15 +178,15 @@ def set_code(params: dict, op: TfSetCode, sql_dialect: str) -> tuple[dict, str]:
     """
     Set the SQL script of an existing code in an existing block in the transformation.
 
+    The script is stored as-is without reformatting to preserve the user's original
+    SQL formatting, comments, and non-ASCII characters.
+
     :param params: The transformation parameters dictionary with 'blocks' key
     :param op: The set_code operation
     :return: Tuple of (modified parameters dictionary, change summary message)
     """
     if not op.script.strip():
         raise ValueError('Invalid operation: script cannot be empty')
-
-    formatted_script = format_sql(sql=op.script, dialect=sql_dialect)
-    is_reformatted = formatted_script != op.script
 
     # Target the specific code's script field directly
     expr = parse_jsonpath(f"$.blocks[?(@.id = '{op.block_id}')].codes[?(@.id = '{op.code_id}')].script")
@@ -196,16 +195,17 @@ def set_code(params: dict, op: TfSetCode, sql_dialect: str) -> tuple[dict, str]:
     if not matches:
         raise ValueError(f"Code with id '{op.code_id}' in block '{op.block_id}' does not exist")
 
-    # Update the script field
+    # Update the script field — store as-is, do not reformat
     message = f"Changed code with id '{op.code_id}' in block '{op.block_id}'"
-    if is_reformatted:
-        message += ' (code was automatically reformatted)'
-    return expr.update(params, formatted_script), message
+    return expr.update(params, op.script), message
 
 
 def add_script(params: dict, op: TfAddScript, sql_dialect: str) -> tuple[dict, str]:
     """
     Append or prepend SQL script text to an existing code in an existing block in the transformation.
+
+    The script is stored as-is without reformatting to preserve the user's original
+    SQL formatting, comments, and non-ASCII characters.
 
     :param params: The transformation parameters dictionary with 'blocks' key
     :param op: The add_script operation
@@ -224,20 +224,15 @@ def add_script(params: dict, op: TfAddScript, sql_dialect: str) -> tuple[dict, s
 
     current_script = matches[0].value
 
-    # Compute new script based on position
+    # Compute new script based on position — store as-is, do not reformat
     if op.position == 'start':
         new_script = f'{op.script} {current_script}' if current_script else op.script
     else:  # 'end'
         new_script = f'{current_script} {op.script}' if current_script else op.script
 
-    formatted_script = format_sql(sql=new_script, dialect=sql_dialect)
-    is_reformatted = formatted_script != new_script
-
     # Update the script field
     message = f"Added script to code with id '{op.code_id}' in block '{op.block_id}'"
-    if is_reformatted:
-        message += ' (code was automatically reformatted)'
-    return expr.update(params, formatted_script), message
+    return expr.update(params, new_script), message
 
 
 def str_replace(params: dict, op: TfStrReplace, sql_dialect: str) -> tuple[dict, str]:
